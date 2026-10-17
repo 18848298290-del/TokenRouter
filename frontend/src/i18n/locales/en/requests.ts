@@ -63,7 +63,23 @@ export default {
     "events": "Timeline (from arrival)",
     "notAdmitted": "No slot acquired"
   },
+  usageCreatedAt: 'Usage recorded at',
+  upstreamDuration: 'Upstream duration',
+  failureTimings: 'Failure timing',
+  usageWriteStates: {
+    persisted: 'Usage persistence confirmed',
+    pending: 'Usage persistence pending',
+    unknown: 'Usage persistence not confirmed',
+    not_persisted: 'Usage was not persisted',
+    skipped: 'No usage record was produced',
+  },
   "timingNames": {
+    upstream_started_ms: 'Upstream request started',
+    upstream_first_output_ms: 'First upstream content',
+    upstream_last_output_ms: 'Last upstream content',
+    upstream_finished_ms: 'Upstream exchange ended',
+    upstream_completed_ms: 'Upstream response completed',
+
     "request_body_read_ms": "Body read",
     "preprocess_ms": "Preprocess",
     "user_slot_wait_ms": "User queue",

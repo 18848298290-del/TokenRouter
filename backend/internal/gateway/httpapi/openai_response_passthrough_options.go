@@ -11,7 +11,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/moderationflow"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	gatewaytelemetry "github.com/TokenFlux/TokenRouter/internal/gateway/telemetry"
-	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -49,7 +48,7 @@ func (p *OpenAIResponseOutput) PassthroughOptions(ctx context.Context, c *gin.Co
 	stream := upstreamopenai.StreamOptions{
 		NativeOpenAI: provider != nil && provider.Record.Platform == capability.PlatformOpenAI,
 		MaxLineSize:  OpenAIResponseDefaultMaxLineSize,
-		TTFTMode:     func() string { return p.TTFTMode(ctx) },
+
 		Logf: func(format string, args ...any) {
 			logging.LegacyPrintf("service.openai_gateway", format, args...)
 		},
@@ -85,10 +84,10 @@ func (p *OpenAIResponseOutput) PassthroughOptions(ctx context.Context, c *gin.Co
 		EmptyCompleted: func(id string) error {
 			return NewOpenAIResponsesEmptyCompletedFailoverError(c, ExecutionErrorProvider(provider), id)
 		},
-		BuildOpenAIResponseFailedSSE:        gatewayprovider.BuildOpenAIResponseFailedSSE,
-		WrapOpenAIUpstreamWarningIfCyber:    gatewayprovider.WrapOpenAIUpstreamWarningIfCyber,
-		TruncateString:                      logredact.TruncateUTF8,
-		OpenAIStreamDataStartsTTFT:          gatewayprovider.OpenAIStreamDataStartsTTFT,
+		BuildOpenAIResponseFailedSSE:     gatewayprovider.BuildOpenAIResponseFailedSSE,
+		WrapOpenAIUpstreamWarningIfCyber: gatewayprovider.WrapOpenAIUpstreamWarningIfCyber,
+		TruncateString:                   logredact.TruncateUTF8,
+
 		OpenAIStreamEventIsTerminalWithType: openai.OpenAIStreamEventIsTerminalWithType,
 	}
 	if provider != nil {
@@ -96,16 +95,6 @@ func (p *OpenAIResponseOutput) PassthroughOptions(ctx context.Context, c *gin.Co
 	}
 	if p.Options.Configured && p.Options.MaxLineSize > 0 {
 		stream.MaxLineSize = p.Options.MaxLineSize
-	}
-	stream.MarkTime = func(moment upstreamopenai.StreamTime) {
-		switch moment {
-		case upstreamopenai.StreamTimeFlush:
-			MarkOpsTimestamp(c, telemetry.FirstDownstreamFlushAt)
-		case upstreamopenai.StreamTimeData:
-			MarkOpsTimestamp(c, telemetry.FirstSSEDataAt)
-		case upstreamopenai.StreamTimeVisible:
-			MarkOpsTimestamp(c, telemetry.FirstVisibleOutputAt)
-		}
 	}
 	nonstream := p.NonStreamOptions(ctx, c, provider)
 	nonstream.TerminalFailover = func(resp *http.Response, event string, body []byte, message, model string) error {

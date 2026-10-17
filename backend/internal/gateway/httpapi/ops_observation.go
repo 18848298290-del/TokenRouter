@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"slices"
 	"strings"
 	"time"
@@ -39,12 +38,11 @@ const (
 	OpsUpstreamModelKey        = "ops_upstream_model"
 
 	// These keys store optional nonnegative millisecond stage observations read
-	// by final error capture for latency diagnostics and first-token attribution.
-	OpsAuthLatencyMsKey      = "ops_auth_latency_ms"
-	OpsRoutingLatencyMsKey   = "ops_routing_latency_ms"
-	OpsUpstreamLatencyMsKey  = "ops_upstream_latency_ms"
-	OpsResponseLatencyMsKey  = "ops_response_latency_ms"
-	OpsTimeToFirstTokenMsKey = "ops_time_to_first_token_ms"
+	// by final error capture to locate time spent in failed request stages.
+	OpsAuthLatencyMsKey     = "ops_auth_latency_ms"
+	OpsRoutingLatencyMsKey  = "ops_routing_latency_ms"
+	OpsUpstreamLatencyMsKey = "ops_upstream_latency_ms"
+	OpsResponseLatencyMsKey = "ops_response_latency_ms"
 	// These keys associate WebSocket queue/pick timing and connection reuse with
 	// request diagnostics set by the transport observation adapters.
 	OpsOpenAIWSQueueWaitMsKey = "ops_openai_ws_queue_wait_ms"
@@ -153,39 +151,15 @@ func SetOpsLatencyMs(c *gin.Context, key string, value int64) {
 	c.Set(key, value)
 }
 
-// MarkOpsTimestamp records the first typed stage time in request context.
-// Missing requests or empty keys skip publication, and an existing time.Time,
-// including zero time, wins; other stored types allow a new timestamp.
-// Observed HTTP text requests obtain stream events from actual transport
-// reads and successful delivery, so legacy parser-side stream marks are ignored.
-func MarkOpsTimestamp(c *gin.Context, key telemetry.ContextKey) {
-	if c == nil || c.Request == nil || key == "" {
-		return
-	}
-	ctx := c.Request.Context()
-	// The shared observer owns HTTP text delivery times. A legacy parser can
-	// see staged or failed output before actual delivery, so its mark must not win.
-	if timing.StagesFromContext(ctx) != nil && (key == telemetry.FirstSSEDataAt || key == telemetry.FirstVisibleOutputAt || key == telemetry.FirstDownstreamFlushAt) {
-		return
-	}
-	if _, exists := ctx.Value(key).(time.Time); exists {
-		return
-	}
-	ctx = context.WithValue(ctx, key, time.Now())
-	c.Request = c.Request.WithContext(ctx)
-}
-
-// MarkOpsProviderSlotAcquired freezes initial HTTP text admission and records
-// the legacy provider-capacity timestamp. Observed text requests use the collector
-// endpoint; requests outside that scope retain their first typed context value.
-// Repeated provider acquisitions during retries leave initial admission unchanged.
+// MarkOpsProviderSlotAcquired freezes initial admission in the HTTP text collector.
+// Requests outside that scope have no admission observation. Repeated provider
+// acquisitions during retries leave the first successful admission endpoint unchanged.
 func MarkOpsProviderSlotAcquired(c *gin.Context) {
 	if c != nil && c.Request != nil {
 		if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
 			stages.Admit()
 		}
 	}
-	MarkOpsTimestamp(c, telemetry.ProviderSlotAcquiredAt)
 }
 
 // SetOpsUpstreamModel stores a nonblank trimmed effective model before an
@@ -554,12 +528,28 @@ func AppendOpsUpstreamError(c *gin.Context, ev ops.OpsUpstreamErrorEvent) {
 			// Cap request-attempt metadata while continuing to append Ops evidence and
 			// correlation aliases, so request indexing does not grow indefinitely during
 			// repeated failures.
-			if len(record.Attempts) < 256 {
-				outcome := "failed"
-				if ev.Kind == "usage_invalid" {
-					outcome = "usage_unknown"
+			number := 0
+			if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
+				number = int(stages.Attempt())
+			}
+			outcome := "failed"
+			if ev.Kind == "usage_invalid" {
+				outcome = "usage_unknown"
+			}
+			matched := false
+			for i := range record.Attempts {
+				attempt := &record.Attempts[i]
+				if attempt.Number == number && (number > 0 || attempt.ProviderID == ev.ProviderID && attempt.RequestID == ev.UpstreamRequestID) {
+					attempt.Outcome, attempt.Status, attempt.RequestID = outcome, ev.UpstreamStatusCode, ev.UpstreamRequestID
+					attempt.Stage, attempt.Reason = ev.Stage, ev.Reason
+					matched = true
+					break
 				}
-				record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: len(record.Attempts) + 1, ProviderID: ev.ProviderID, RequestID: ev.UpstreamRequestID, Status: ev.UpstreamStatusCode, Outcome: outcome})
+			}
+			if !matched && len(record.Attempts) < 256 {
+				// Failures before an observed exchange retain their provider evidence;
+				// zero ordinal denotes an unstarted or unobserved transport attempt.
+				record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: number, ProviderID: ev.ProviderID, RequestID: ev.UpstreamRequestID, Status: ev.UpstreamStatusCode, Outcome: outcome, Stage: ev.Stage, Reason: ev.Reason})
 			}
 		})
 		telemetry.AddRequestAlias(c.Request.Context(), "upstream", ev.UpstreamRequestID)

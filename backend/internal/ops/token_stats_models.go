@@ -5,9 +5,10 @@ import "time"
 // token_stats_models.go defines filters and response values for model-grouped
 // token statistics.
 // Model token statistics group saved usage observations by their execution
-// model and rank them by request count. The token-rate average divides output
-// by the full recorded duration, while first-token latency has its own sample
-// set; pagination and leading-model limits select different response metadata.
+// model and rank them by request count. TPS uses complete upstream content
+// intervals, while TTFT uses the event selected in each usage snapshot. These
+// metrics have separate sample sets; pagination and leading-model limits select
+// different response metadata.
 
 // OpsTokenStatsFilter selects model-grouped usage statistics and one
 // result-limiting mode.
@@ -40,20 +41,20 @@ type OpsTokenStatsFilter struct {
 type OpsTokenStatsItem struct {
 	Model        string `json:"model"`         // saved usage model dimension
 	RequestCount int64  `json:"request_count"` // model usage observation count
-	// AvgTokensPerSec is the mean output_tokens times 1000 divided by full
-	// duration_ms for rows with positive output and duration. The query rounds to
-	// two decimals and returns nil when no row qualifies.
+	// AvgTokensPerSec averages eligible per-usage TPS estimates from the first to
+	// last useful upstream content. The query rounds the mean to two decimals and
+	// returns nil when no complete stream has a valid content interval.
 	AvgTokensPerSec *float64 `json:"avg_tokens_per_sec"`
-	// AvgFirstTokenMs is the mean nonnull first_token_ms in milliseconds, rounded
-	// to two decimals. Nil represents the absence of first-token latency samples
+	// AvgTTFTMs is the mean selected upstream latency in milliseconds, rounded
+	// to two decimals. Nil represents the absence of TTFT latency samples
 	// for this model.
-	AvgFirstTokenMs   *float64 `json:"avg_first_token_ms"`
+	AvgTTFTMs         *float64 `json:"avg_ttft_ms"`
 	TotalOutputTokens int64    `json:"total_output_tokens"` // summed model output tokens
 	// AvgDurationMs is the rounded mean of nonnull recorded durations in
 	// milliseconds. Zero is returned when the model has no duration samples;
 	// recorded zero durations contribute to the mean.
 	AvgDurationMs int64 `json:"avg_duration_ms"`
-	// nonnull first-token latency samples
+	// nonnull TTFT latency samples
 	RequestsWithFirstToken int64 `json:"requests_with_first_token"`
 }
 

@@ -314,13 +314,17 @@ app 为所有需要幂等的用户和管理员 HTTP 处理器绑定同一个协�
 
 错误实体只在 `pkg/apperror` 定义，HTTP 映射和面板 envelope 在 `server/httpx`。使用方直接使用具名的错误类别，code 数值、字段、`errors.Is/As`、cause 和 metadata 的复制方式都保持兼容；自定义状态码按原值映射。
 
-管理员 `GET /api/v1/admin/usage` 的每条记录可以带 `detailed_timing`，按内部请求 ID 批量关联 `http.access` 日志。HTTP 文本请求使用同一套可选字段，按字段含义区分阶段时长与事件时刻；`timing_stream` 和 `timing_admitted` 使用 0/1 表示客户端流式模式和首次提供商准入是否完成。
+使用记录的性能观测唯一保存在 `usage_logs.timings`。普通用量接口返回由该行派生的 `ttft_ms`、`tps` 和 `ttft_mode`；管理员接口另返回 `detailed_timing`。请求详情按已有请求 ID 批量关联 usage，分别展示每条 usage 的指标，不把这些指标再写回请求摘要，也不从 Ops 日志补值。历史 usage 没有新快照时显示未记录。
 
-`request_body_read_ms`、`preprocess_ms`、`user_slot_wait_ms`、`provider_slot_wait_ms` 是首次准入前互不重叠的毫秒时长，合计对应 `provider_slot_acquired_ms`。排队期间的容量查询耗时归入前置处理，两类等待只统计查询之间的排队时间。准入失败时，四项统计到请求结束，不产生成功准入时刻。`retry_provider_slot_wait_ms` 单列后续提供商排队，不包含上游耗时、容量查询或重试退避。
+`timings` 保存当次模式、上游流式与完成状态、usage 完整性，以及 `values` 中的毫秒观测。事件时刻以所属逻辑请求的入口为参考；`upstream_started_ms`、`upstream_first_event_ms`、`upstream_first_output_ms`、`upstream_last_output_ms` 和 `upstream_finished_ms` 属于产生该条 usage 的同一次尝试。首包和首字分别减去本次上游开始时刻，排队和之前提供商的失败不会进入该提供商的延迟。`duration_ms` 是该次上游尝试耗时，请求摘要里的总耗时则覆盖整个逻辑请求。
 
-`provider_slot_acquired_ms`、上游连接、发送、首字节、`upstream_first_event_ms`、`first_visible_output_ms` 和 `first_downstream_flush_ms` 都是距请求进入网关的事件时刻，不能相加。`upstream_first_sse_data_ms` 保留 SSE 专用含义，通用首事件也支持 Bedrock EventStream。有效输出包含正文、明文思考和工具调用，排除心跳、元数据、签名和密文；下游指标只观察上游输出通道成功写出及既有 Flush。网关本地产生的错误事件不建立交付指标；若此前已有成功写出但尚未刷新的上游事件，后续 Flush 仍会记录这些数据的首次刷新。
+`request_body_read_ms`、`preprocess_ms`、`user_slot_wait_ms`、`provider_slot_wait_ms` 分解 HTTP 首次准入前的耗时。原始 Body 的读取才计入读取时间，容量检查执行时间属于其他处理，等待只统计检查之间的排队。`retry_provider_slot_wait_ms` 单列后续等待。`provider_slot_acquired_ms` 是首次取得执行资格的时刻；它与连接、发送、响应和输出事件都不能作为时长相加。
 
-数值 0 表示实测零毫秒。字段缺失时显示 `-`，不能据此判断事件没有发生。读取首个上游事件时优先使用 `upstream_first_event_ms`，缺失才回退到历史的 `upstream_first_sse_data_ms`，实测 0 不触发回退。前端在四项时长的标题旁显示合计，准入成功时注明它等于取得槽位的时刻；重试排队单独列出，不计入合计。历史记录没有四项时长，前端只显示事件时刻；同步请求不显示三项流式专属事件。`timing_admitted` 为 0 时，取得槽位一项显示“未取得槽位”。WebSocket、媒体、实时语音及异步任务不进入 HTTP 文本计时。
+首事件允许正常元数据，排除心跳和空的保活 delta。有效内容包含正文、明文思考、工具名称及实际参数，排除单独的角色、ID、空占位、签名和密文；重复的完整终态不延长内容输出区间。`first_visible_output_ms` 表示成功写入最终下游 writer，`first_downstream_flush_ms` 表示包含上游事件的首次 HTTP Flush，可由元数据触发。二者不证明客户端已经收到或渲染内容，本地产生的错误与排队心跳不建立这些交付指标。
+
+TPS 使用同一上游尝试的 `输出 token × 1000 /（最后有效内容时刻 − 首个有效内容时刻）`，由服务端统一保留一位小数。上游须正常完成、usage 完整、输出 token 为正、至少有两次新增有效内容且时间区间为正，否则没有 TPS。它按数据块估算，受网络、背压、合并发送及未明文输出的思考影响，首字／首包设置不改变它的计算。
+
+HTTP 文本流、协议转换和文本 WebSocket 使用相同内容判定；WS 每轮请求及其重试保持各自归属。真正非流式上游没有首字、首事件或 TPS 观测；上游流式、下游缓冲时按各自模式展示。未知字段保持缺失，实测零保留为零，HTTP Flush 等协议不适用字段不补造。
 
 网关内置错误固定使用英文。网关错误使用调用方协议的格式：OpenAI 入口用 `error` 对象，Anthropic 用 `type: error` 加嵌套错误，Google 用 HTTP code、message 和 status。认证失败、未分组、复合 Key 和本地能力拒绝，都使用当前协议的 writer；Google 或 Anthropic 客户端收到面板 envelope 会无法解析。
 

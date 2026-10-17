@@ -669,12 +669,12 @@ func (p *openAIWSEntryAdapter) CompletionObserver() func(int64, string, error) {
 // image-aware submission service. A nil result supplies zero images; nonnil
 // results supply ImageCount, while the service owns its background or overflow
 // execution policy.
-func (p *openAIWSEntryAdapter) SubmitCompletion(result *gatewayws.ForwardResult, task func(context.Context)) {
+func (p *openAIWSEntryAdapter) SubmitCompletion(source context.Context, result *gatewayws.ForwardResult, task func(context.Context)) {
 	images := 0
 	if result != nil {
 		images = result.ImageCount
 	}
-	p.bindings.Common.Support.Submission.SubmitImages(p.c, images, task)
+	p.bindings.Common.Support.Submission.SubmitImages(source, images, task)
 }
 
 // MappedModel resolves the selected provider's mapped model for entry
@@ -683,7 +683,7 @@ func (t *openAIWSEntryTarget) MappedModel(model string) string {
 	return gatewayprovider.ExecutionModelPolicy(t.provider).Mapped(model)
 }
 
-// Report submits the selected provider outcome and optional first-token
+// Report submits the selected provider outcome and optional TTFT
 // observation to the bound reporter.
 func (t *openAIWSEntryTarget) Report(model string, ok bool, first *int) {
 	t.root.bindings.ReportSelection(t.selection, t.provider.Record.ID, model, ok, first)

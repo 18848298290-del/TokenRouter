@@ -161,20 +161,13 @@ func (s *Antigravity) ForwardAsChatCompletions(
 	claudeBody = prepareAntigravityCompatTools(c, claudeBody)
 
 	return s.forwardAntigravityCompat(ctx, c, provider, antigravityCompatRequest{
-		protocol: antigravityCompatChatCompletions,
-
-		originalBody: body,
-
-		claudeBody: claudeBody,
-
-		originalModel: request.Model,
-
-		clientStream: request.Stream,
-
-		includeUsage: request.StreamOptions != nil && request.StreamOptions.IncludeUsage,
-
-		startTime: time.Now(),
-
+		protocol:        antigravityCompatChatCompletions,
+		originalBody:    body,
+		claudeBody:      claudeBody,
+		originalModel:   request.Model,
+		clientStream:    request.Stream,
+		includeUsage:    request.StreamOptions != nil && request.StreamOptions.IncludeUsage,
+		startTime:       time.Now(),
 		reasoningEffort: protocolforward.ExtractEffort(body, true, capability.NormalizeRecordedOpenAIEffortForModel),
 	})
 }
@@ -227,20 +220,13 @@ func (s *Antigravity) ForwardAsResponses(
 	claudeBody = prepareAntigravityCompatTools(c, claudeBody)
 
 	return s.forwardAntigravityCompat(ctx, c, provider, antigravityCompatRequest{
-		protocol: antigravityCompatResponses,
-
-		originalBody: body,
-
-		claudeBody: claudeBody,
-
-		originalModel: request.Model,
-
-		clientStream: request.Stream,
-
-		startTime: time.Now(),
-
-		reasoningEffort: protocolforward.ExtractEffort(body, false, capability.NormalizeRecordedOpenAIEffortForModel),
-
+		protocol:          antigravityCompatResponses,
+		originalBody:      body,
+		claudeBody:        claudeBody,
+		originalModel:     request.Model,
+		clientStream:      request.Stream,
+		startTime:         time.Now(),
+		reasoningEffort:   protocolforward.ExtractEffort(body, false, capability.NormalizeRecordedOpenAIEffortForModel),
 		clientToolMapping: clientToolMapping,
 	})
 }
@@ -294,35 +280,21 @@ func (s *Antigravity) forwardAntigravityCompat(
 	}
 
 	retry, params := s.antigravityRetryAdapter(antigravityRetryLoopParams{
-		ctx: call.ctx,
-
-		prefix: call.prefix,
-
-		provider: provider,
-
-		proxyURL: call.proxyURL,
-
-		accessToken: call.accessToken,
-
-		action: "streamGenerateContent",
-
-		body: call.geminiBody,
-
-		c: c,
-
-		httpUpstream: s.Transport,
-
-		providerRepo: s.Store,
-
-		handleError: s.handleUpstreamError,
-
-		requestedModel: request.originalModel,
-
+		ctx:             call.ctx,
+		prefix:          call.prefix,
+		provider:        provider,
+		proxyURL:        call.proxyURL,
+		accessToken:     call.accessToken,
+		action:          "streamGenerateContent",
+		body:            call.geminiBody,
+		c:               c,
+		httpUpstream:    s.Transport,
+		providerRepo:    s.Store,
+		handleError:     s.handleUpstreamError,
+		requestedModel:  request.originalModel,
 		isStickySession: false,
-
-		groupID: 0,
-
-		sessionHash: "",
+		groupID:         0,
+		sessionHash:     "",
 	})
 	mode := antigravity.ModeChatResponse
 	wireProtocol := protocol.ProtocolOpenAIChatCompletions
@@ -374,7 +346,7 @@ func (s *Antigravity) forwardAntigravityCompat(
 		UpstreamModel:         call.billingModel,
 		Stream:                request.clientStream,
 		Duration:              result.Duration,
-		FirstTokenMs:          result.FirstTokenMs,
+		Timings:               result.Timings,
 		ReasoningEffort:       request.reasoningEffort,
 		ClientDisconnect:      result.ClientDisconnect,
 	}, nil
@@ -438,19 +410,13 @@ func (s *Antigravity) prepareAntigravityCompatCall(
 
 	request.reasoningEffort = gatewayprovider.ApplyThinkingEnabledFallback(request.reasoningEffort, request.originalBody, mappedModel)
 	return &antigravityCompatUpstreamCall{
-		request: request,
-
-		ctx: modelCtx,
-
+		request:      request,
+		ctx:          modelCtx,
 		billingModel: mappedModel,
-
-		prefix: logPrefix(c.GetHeader("session_id"), provider.Record.Name),
-
-		proxyURL: antigravityCompatProxyURL(provider),
-
-		accessToken: accessToken,
-
-		geminiBody: geminiBody,
+		prefix:       logPrefix(c.GetHeader("session_id"), provider.Record.Name),
+		proxyURL:     antigravityCompatProxyURL(provider),
+		accessToken:  accessToken,
+		geminiBody:   geminiBody,
 	}, nil
 }
 
@@ -581,21 +547,14 @@ func (s *Antigravity) handleAntigravityCompatHTTPError(
 	if s.shouldFailoverUpstreamError(resp.StatusCode) {
 		message := logredact.SanitizeUpstreamQueries(strings.TrimSpace(google.ExtractPlatformMessage(body)))
 		event := ops.OpsUpstreamErrorEvent{
-			Platform: provider.Record.Platform,
-
-			ProviderID: provider.Record.ID,
-
-			ProviderName: provider.Record.Name,
-
+			Platform:           provider.Record.Platform,
+			ProviderID:         provider.Record.ID,
+			ProviderName:       provider.Record.Name,
 			UpstreamStatusCode: resp.StatusCode,
-
-			UpstreamRequestID: resp.Header.Get("x-request-id"),
-
-			Kind: "failover",
-
-			Message: message,
-
-			Detail: s.getUpstreamErrorDetail(body),
+			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			Kind:               "failover",
+			Message:            message,
+			Detail:             s.getUpstreamErrorDetail(body),
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
 			event.Stage = string(protocolforward.GatewayFailureStageProviderAuth)
@@ -622,20 +581,14 @@ func (s *Antigravity) handleAntigravityCompatHTTPError(
 // message instead of raw authorization text.
 func antigravityCredentialRejectedError(resp *http.Response, body []byte) *protocolforward.UpstreamFailoverError {
 	return &protocolforward.UpstreamFailoverError{
-		StatusCode: resp.StatusCode,
-
-		ResponseBody: body,
-
-		ResponseHeaders: resp.Header.Clone(),
-
-		Stage: protocolforward.GatewayFailureStageProviderAuth,
-
-		Scope: protocolforward.GatewayFailureScopeProvider,
-
+		StatusCode:         resp.StatusCode,
+		ResponseBody:       body,
+		ResponseHeaders:    resp.Header.Clone(),
+		Stage:              protocolforward.GatewayFailureStageProviderAuth,
+		Scope:              protocolforward.GatewayFailureScopeProvider,
 		Reason:             protocolforward.AntigravityCredentialRejectedReason,
 		NextProviderAction: protocolforward.NextProviderRetry,
 		ClientStatusCode:   http.StatusBadGateway,
-
-		ClientMessage: protocolforward.AntigravityCredentialRejectedClientMessage,
+		ClientMessage:      protocolforward.AntigravityCredentialRejectedClientMessage,
 	}
 }

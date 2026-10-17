@@ -125,6 +125,8 @@ setup 的数据库和 Redis 连接测试由精简版 bootstrap 执行，输入�
 <a id="runtime_settings"></a>
 ## 数据库运行时设置
 
+全局 `ttft_mode` 位于网关通用设置：`first_output` 表示首有效内容，`first_event` 表示首个非心跳上游事件，新安装默认 `first_output`。每个 HTTP 请求或 WS 逻辑回合在开始时固定当次有效配置，重试沿用该选择；修改设置按现有缓存发布和刷新规则影响新请求，不重算历史记录，也不改变 TPS。
+
 `settings` 是一张 `key/value/updated_at` 表，删除某个键表示恢复它的 getter 的默认行为。`settings.Store` 和它的 PostgreSQL 适配层负责通用的读写、版本字段和更新通知。身份的注册、安全和验证码设置，OAuth 配置的解释，提供商冷却，推广开关，用量排行，审计保留期和网关策略，分别由所属模块读取和解释；面板限流的配置和缓存在 `server/runtimeconfig`。
 
 运行时设置包括：注册和邮件验证、第三方登录、SMTP、TOTP、会话绑定、step-up、登录协议、面板限流、部分冷却和流超时、支付展示，以及各种功能开关。不同 getter 在缺键时的回退值，可能来自代码常量，也可能来自 app 传入的启动选项，所以缺失的键不一定等于 `false`。

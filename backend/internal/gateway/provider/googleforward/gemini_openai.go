@@ -304,19 +304,13 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 				if decision.ShouldFailover(gatewayprovider.ExecutionErrorPolicy(provider), resp.StatusCode, googleConfigError || s.shouldFailoverGeminiUpstreamError(resp.StatusCode)) {
 					upstreamMsg := logredact.SanitizeUpstreamQueries(strings.TrimSpace(upstream.ExtractErrorMessage(evBody)))
 					c.Observe(ops.OpsUpstreamErrorEvent{
-						Platform: provider.Record.Platform,
-
-						ProviderID: provider.Record.ID,
-
-						ProviderName: provider.Record.Name,
-
+						Platform:           provider.Record.Platform,
+						ProviderID:         provider.Record.ID,
+						ProviderName:       provider.Record.Name,
 						UpstreamStatusCode: resp.StatusCode,
-
-						UpstreamRequestID: requestID,
-
-						Kind: "failover",
-
-						Message: upstreamMsg,
+						UpstreamRequestID:  requestID,
+						Kind:               "failover",
+						Message:            upstreamMsg,
 					})
 					return nil, &protocolforward.UpstreamFailoverError{
 						StatusCode: resp.StatusCode,
@@ -344,7 +338,6 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 	}
 	requestID = result.RequestID
 	usage := &result.Usage
-	firstTokenMs := result.FirstTokenMs
 
 	imageCount := 0
 	imageInputSize := s.extractImageInputSize(geminiReq)
@@ -357,32 +350,20 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 	}
 
 	return &protocolforward.MessagesResult{
-		RequestID: requestID,
-
+		RequestID:             requestID,
 		UpstreamHeaders:       result.UpstreamHeaders,
 		UpstreamResponseModel: result.UpstreamResponseModel,
-
-		Usage: *usage,
-
-		Model: originalModel,
-
-		UpstreamModel: mappedModel,
-
-		Stream: clientStream,
-
-		Duration: result.Duration,
-
-		FirstTokenMs: firstTokenMs,
-
-		ReasoningEffort: reasoningEffort,
-
-		ImageCount: imageCount,
-
-		ImageSize: imageSize,
-
-		ImageInputSize: imageInputSize,
-
-		ClientDisconnect: false,
+		Usage:                 *usage,
+		Model:                 originalModel,
+		UpstreamModel:         mappedModel,
+		Stream:                clientStream,
+		Duration:              result.Duration,
+		Timings:               result.Timings,
+		ReasoningEffort:       reasoningEffort,
+		ImageCount:            imageCount,
+		ImageSize:             imageSize,
+		ImageInputSize:        imageInputSize,
+		ClientDisconnect:      false,
 	}, nil
 }
 

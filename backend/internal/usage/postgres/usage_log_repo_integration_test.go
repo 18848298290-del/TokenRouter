@@ -290,7 +290,7 @@ func TestUsageLogRepositoryCreateBestEffort_BatchPathDuplicateRequestID(t *testi
 
 // TestUsageLogRepositoryCreateBestEffort_QueueFullBlocksUntilCtxDeadline fills a
 // controlled acknowledgement queue with no consumer. It checks the call waits
-// near its deadline before returning a Dropped error.
+// near its deadline before reporting that admission never reached persistence.
 func TestUsageLogRepositoryCreateBestEffort_QueueFullBlocksUntilCtxDeadline(t *testing.T) {
 	// Prefill a queue with no worker so admission cannot proceed; the returned
 	// disposition must come from the caller deadline rather than database
@@ -318,7 +318,7 @@ func TestUsageLogRepositoryCreateBestEffort_QueueFullBlocksUntilCtxDeadline(t *t
 	})
 
 	require.Error(t, err)
-	require.True(t, usage.IsUsageLogCreateDropped(err))
+	require.True(t, usage.IsUsageLogCreateNotPersisted(err))
 	// Allow a fifty-millisecond margin around the configured admission deadline.
 	require.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond)
 }

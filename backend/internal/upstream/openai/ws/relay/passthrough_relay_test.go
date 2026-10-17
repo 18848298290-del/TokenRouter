@@ -1165,7 +1165,7 @@ func TestRelay_BasicRelayAndUsage(t *testing.T) {
 	require.Equal(t, 7, result.Usage.InputTokens)
 	require.Equal(t, 3, result.Usage.OutputTokens)
 	require.Equal(t, 2, result.Usage.CacheReadInputTokens)
-	require.Nil(t, result.FirstTokenMs)
+	require.Nil(t, result.Timings.TTFTMs())
 	require.Equal(t, int64(1), result.ClientToUpstreamFrames)
 	require.Equal(t, int64(1), result.UpstreamToClientFrames)
 	require.Equal(t, int64(0), result.DroppedDownstreamFrames)
@@ -1518,7 +1518,7 @@ func TestRelay_MultipleUpstreamMessages(t *testing.T) {
 	require.Equal(t, 10, result.Usage.InputTokens)
 	require.Equal(t, 5, result.Usage.OutputTokens)
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
-	require.NotNil(t, result.FirstTokenMs)
+	require.NotNil(t, result.Timings.TTFTMs())
 
 	clientWrites := clientConn.Writes()
 	require.Len(t, clientWrites, 3)
@@ -1732,10 +1732,10 @@ func TestRelay_OnTurnComplete_ProvidesTurnMetrics(t *testing.T) {
 	require.Nil(t, relayExit)
 	require.Equal(t, "resp_metric", turn.RequestID)
 	require.Equal(t, "response.completed", turn.TerminalEventType)
-	require.NotNil(t, turn.FirstTokenMs)
-	require.GreaterOrEqual(t, *turn.FirstTokenMs, 0)
+	require.NotNil(t, turn.Timings.TTFTMs())
+	require.GreaterOrEqual(t, *turn.Timings.TTFTMs(), 0)
 	require.Greater(t, turn.Duration.Milliseconds(), int64(0))
-	require.NotNil(t, result.FirstTokenMs)
+	require.NotNil(t, result.Timings.TTFTMs())
 	require.Greater(t, result.Duration.Milliseconds(), int64(0))
 }
 
@@ -2194,11 +2194,11 @@ func (c *errorOnWriteFrameConn) Close() error {
 	return nil
 }
 
-// TestRelay_NoSemanticOutputTerminalSequence_FirstTokenMsNil sends structural
+// TestRelay_NoSemanticOutputTerminalSequence_TTFTNil sends structural
 // progress and done frames followed by either completed or done. All five
 // frames are delivered while callback and session first-token values remain
 // nil.
-func TestRelay_NoSemanticOutputTerminalSequence_FirstTokenMsNil(t *testing.T) {
+func TestRelay_NoSemanticOutputTerminalSequence_TTFTNil(t *testing.T) {
 	t.Parallel()
 
 	for _, terminalEvent := range []string{"response.completed", "response.done"} {
@@ -2243,9 +2243,9 @@ func TestRelay_NoSemanticOutputTerminalSequence_FirstTokenMsNil(t *testing.T) {
 
 			require.Nil(t, relayExit)
 			require.Equal(t, terminalEvent, turn.TerminalEventType)
-			require.Nil(t, turn.FirstTokenMs)
+			require.Nil(t, turn.Timings.TTFTMs())
 			require.Equal(t, terminalEvent, result.TerminalEventType)
-			require.Nil(t, result.FirstTokenMs)
+			require.Nil(t, result.Timings.TTFTMs())
 			require.Equal(t, int64(5), result.UpstreamToClientFrames)
 		})
 	}
@@ -2305,19 +2305,19 @@ func TestRelay_NoDeltaOutputDoneEvent_RecordsFirstTokenBeforeTerminal(t *testing
 			)
 
 			require.Nil(t, relayExit)
-			require.NotNil(t, turn.FirstTokenMs)
-			require.Less(t, int64(*turn.FirstTokenMs), turn.Duration.Milliseconds())
-			require.NotNil(t, result.FirstTokenMs)
-			require.Less(t, int64(*result.FirstTokenMs), result.Duration.Milliseconds())
+			require.NotNil(t, turn.Timings.TTFTMs())
+			require.Less(t, int64(*turn.Timings.TTFTMs()), turn.Duration.Milliseconds())
+			require.NotNil(t, result.Timings.TTFTMs())
+			require.Less(t, int64(*result.Timings.TTFTMs()), result.Duration.Milliseconds())
 		})
 	}
 }
 
-// TestRelay_OnTurnComplete_RealOpenAIStream_FirstTokenMs uses local
+// TestRelay_OnTurnComplete_RealOpenAIStream_TTFT uses local
 // created/delta/completed fixtures and an advancing clock. Callback and session
 // latency are observed, and callback first-token time remains below terminal
 // duration.
-func TestRelay_OnTurnComplete_RealOpenAIStream_FirstTokenMs(t *testing.T) {
+func TestRelay_OnTurnComplete_RealOpenAIStream_TTFT(t *testing.T) {
 	t.Parallel()
 
 	clientConn := newPassthroughTestFrameConn(nil, false)
@@ -2368,17 +2368,17 @@ func TestRelay_OnTurnComplete_RealOpenAIStream_FirstTokenMs(t *testing.T) {
 	require.Equal(t, "resp_real", turn.RequestID)
 	require.Equal(t, "response.completed", turn.TerminalEventType)
 
-	require.NotNil(t, turn.FirstTokenMs, "per-turn FirstTokenMs must be captured for real OpenAI streams")
+	require.NotNil(t, turn.Timings.TTFTMs(), "per-turn TTFT must be captured for real OpenAI streams")
 	require.Greater(t, turn.Duration.Milliseconds(), int64(0))
 
 	require.Less(t,
-		int64(*turn.FirstTokenMs),
+		int64(*turn.Timings.TTFTMs()),
 		turn.Duration.Milliseconds(),
-		"per-turn FirstTokenMs (%dms) should be strictly less than Duration (%dms); "+
+		"per-turn TTFT (%dms) should be strictly less than Duration (%dms); "+
 			"equality indicates the bug where first_token is mistakenly stamped on the terminal event",
-		*turn.FirstTokenMs, turn.Duration.Milliseconds(),
+		*turn.Timings.TTFTMs(), turn.Duration.Milliseconds(),
 	)
 
-	require.NotNil(t, result.FirstTokenMs)
-	require.Greater(t, *result.FirstTokenMs, 0)
+	require.NotNil(t, result.Timings.TTFTMs())
+	require.Greater(t, *result.Timings.TTFTMs(), 0)
 }

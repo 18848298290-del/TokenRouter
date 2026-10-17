@@ -12,6 +12,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -97,11 +98,10 @@ type Result struct {
 	ServiceTier, ReasoningEffort *string
 	Stream                       bool          // client streaming choice
 	Duration                     time.Duration // elapsed request duration
-	// FirstTokenMs reports milliseconds from the supplied start time using the
-	// selected reader's rule. Anthropic conversion includes its first decoded metadata
-	// event; nil means no timing was recorded.
-	FirstTokenMs *int
-	ImageCount   int // observed generated images
+	// Timings is captured from the shared observer after response processing.
+	// Callers retain this immutable exchange snapshot until completion copies it for persistence.
+	Timings    *timing.Performance
+	ImageCount int // observed generated images
 	// ImageSize is the generated-image tier; ImageInputSize is the input-image
 	// tier.
 	ImageSize, ImageInputSize string
@@ -267,7 +267,7 @@ func RunHTTP(ctx context.Context, input HTTPInput, o HTTPOptions) (*Result, erro
 		tier := o.ExtractServiceTier(body)
 		o.ReleaseDecodedRequest()
 		var usage *wire.ForwardUsage
-		var firstToken *int
+		var performance *timing.Performance
 		responseID := ""
 		imageCount := 0
 		var imageSizes []string
@@ -301,7 +301,7 @@ func RunHTTP(ctx context.Context, input HTTPInput, o HTTPOptions) (*Result, erro
 				return nil, readErr
 			}
 			usage = result.Usage
-			firstToken = result.FirstTokenMs
+			performance = timing.PerformanceFromContext(ctx)
 			responseID = strings.TrimSpace(result.ResponseID)
 			imageCount = result.ImageCount
 			imageSizes = result.ImageOutputSizes
@@ -342,7 +342,7 @@ func RunHTTP(ctx context.Context, input HTTPInput, o HTTPOptions) (*Result, erro
 			RequestID: resp.Header.Get("x-request-id"), ResponseID: responseID, Headers: resp.Header,
 			Usage: *usage, Model: input.OriginalModel, BillingModel: input.BillingModel, UpstreamModel: upstreamModel,
 			UpstreamResponseServiceTier: o.ObservedServiceTier(), ServiceTier: o.ResolvedServiceTier(tier), ReasoningEffort: input.ReasoningEffort,
-			Stream: input.Stream, Duration: time.Since(input.StartedAt), FirstTokenMs: firstToken,
+			Stream: input.Stream, Duration: time.Since(input.StartedAt), Timings: performance,
 		}
 		// Observed generated images switch billing to the image identity and carry
 		// size evidence, while text-only results retain the text billing model.

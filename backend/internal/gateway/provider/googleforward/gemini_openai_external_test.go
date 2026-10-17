@@ -61,13 +61,9 @@ func TestGeminiForwardAsResponsesReturnsResponsesFormat(t *testing.T) {
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation,
 			ID:           201,
-
-			Platform: capability.PlatformGemini,
-
-			Type: capability.ProviderTypeAPIKey,
-
-			Concurrency: 1,
-
+			Platform:     capability.PlatformGemini,
+			Type:         capability.ProviderTypeAPIKey,
+			Concurrency:  1,
 			Credentials: map[string]any{
 				"api_key": "gemini-key",
 				"model_mapping": map[string]any{
@@ -106,15 +102,10 @@ func TestGeminiForwardAsResponsesReturnsResponsesFormat(t *testing.T) {
 func TestGeminiForwardAsResponsesOAuthCollectsReasoningTextAndTools(t *testing.T) {
 	upstreamBody := strings.Join([]string{
 		`data: {"response":{"candidates":[{"content":{"parts":[{"text":"plan ","thought":true}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"thoughtsTokenCount":1}}}`,
-
 		`data: {"response":{"candidates":[{"content":{"parts":[{"text":"carefully","thought":true}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"thoughtsTokenCount":2}}}`,
-
 		`data: {"response":{"candidates":[{"content":{"parts":[{"text":"answer"}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2,"thoughtsTokenCount":2}}}`,
-
 		`data: {"response":{"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{"id":42}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2,"thoughtsTokenCount":2}}}`,
-
 		"data: [DONE]",
-
 		"",
 	}, "\n\n")
 	httpStub := &geminiCompatHTTPUpstreamStub{response: &http.Response{
@@ -135,13 +126,9 @@ func TestGeminiForwardAsResponsesOAuthCollectsReasoningTextAndTools(t *testing.T
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation,
 			ID:           204,
-
-			Platform: capability.PlatformGemini,
-
-			Type: capability.ProviderTypeOAuth,
-
-			Concurrency: 1,
-
+			Platform:     capability.PlatformGemini,
+			Type:         capability.ProviderTypeOAuth,
+			Concurrency:  1,
 			Credentials: map[string]any{
 				"access_token": "ya29.test-token",
 				"project_id":   "project-1",
@@ -173,13 +160,9 @@ func TestGeminiForwardAsResponsesOAuthCollectsReasoningTextAndTools(t *testing.T
 func TestGeminiForwardAsResponsesStreamsReasoningTextToolAndUsage(t *testing.T) {
 	upstreamBody := strings.Join([]string{
 		`data: {"candidates":[{"content":{"parts":[{"text":"plan","thought":true}]}}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1,"thoughtsTokenCount":1}}`,
-
 		`data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":2,"thoughtsTokenCount":1}}`,
-
 		`data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{"id":42}}}]} ,"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":2,"thoughtsTokenCount":1}}`,
-
 		"data: [DONE]",
-
 		"",
 	}, "\n\n")
 	httpStub := &geminiCompatHTTPUpstreamStub{response: &http.Response{
@@ -208,7 +191,7 @@ func TestGeminiForwardAsResponsesStreamsReasoningTextToolAndUsage(t *testing.T) 
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.Stream)
-	require.NotNil(t, result.FirstTokenMs)
+	require.Nil(t, result.Timings.TTFTMs())
 	require.Equal(t, 2, result.Usage.InputTokens)
 	require.Equal(t, 3, result.Usage.OutputTokens)
 	streamBody := recorder.Body.String()
@@ -411,11 +394,8 @@ func TestGeminiForwardAsChatCompletions_OAuthRoutesToGeminiAndReturnsChatFormat(
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation,
 			ID:           101,
-
-			Platform: capability.PlatformGemini,
-
-			Type: capability.ProviderTypeOAuth,
-
+			Platform:     capability.PlatformGemini,
+			Type:         capability.ProviderTypeOAuth,
 			Credentials: map[string]any{
 				"access_token": "ya29.test-token",
 
@@ -425,7 +405,6 @@ func TestGeminiForwardAsChatCompletions_OAuthRoutesToGeminiAndReturnsChatFormat(
 					"gemini-2.5-flash": "gemini-2.5-flash-upstream",
 				},
 			},
-
 			Concurrency: 1,
 		},
 	}
@@ -504,15 +483,11 @@ func TestGeminiForwardAsChatCompletions_StreamsOpenAIChunksFromGeminiSSE(t *test
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation,
 			ID:           102,
-
-			Platform: capability.PlatformGemini,
-
-			Type: capability.ProviderTypeAPIKey,
-
+			Platform:     capability.PlatformGemini,
+			Type:         capability.ProviderTypeAPIKey,
 			Credentials: map[string]any{
 				"api_key": "gemini-api-key",
 			},
-
 			Concurrency: 1,
 		},
 	}
@@ -567,15 +542,11 @@ func TestGeminiForwardAsChatCompletions_FunctionNamedWebSearchStaysClientSide(t 
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation,
 			ID:           103,
-
-			Platform: capability.PlatformGemini,
-
-			Type: capability.ProviderTypeAPIKey,
-
+			Platform:     capability.PlatformGemini,
+			Type:         capability.ProviderTypeAPIKey,
 			Credentials: map[string]any{
 				"api_key": "gemini-api-key",
 			},
-
 			Concurrency: 1,
 		},
 	}

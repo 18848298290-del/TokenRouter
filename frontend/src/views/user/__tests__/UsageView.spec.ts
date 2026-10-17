@@ -60,7 +60,9 @@ const messages: Record<string, string> = {
   'usage.rate': 'Rate Multiplier',
   'usage.userBilled': 'Billed Cost',
   'usage.original': 'Original Cost',
-  'usage.firstToken': 'First Token (ms)',
+  'usage.firstToken': 'TTFT (ms)',
+  'usage.ttftMode': 'TTFT mode',
+  'usage.latencyFirstToken': 'First output',
   'usage.duration': 'Duration (ms)',
   'usage.tps': 'TPS',
   'usage.tpsExport': 'TPS (tok/s)',
@@ -166,7 +168,9 @@ const usageLog = {
   cache_creation_1h_tokens: 0,
   image_count: 0,
   image_size: null,
-  first_token_ms: 12,
+  ttft_ms: 12,
+  ttft_mode: 'first_output',
+  tps: 303.3,
   duration_ms: 345,
   created_at: '2026-03-08T00:00:00Z',
   model: 'gpt-5.4',
@@ -483,8 +487,8 @@ describe('user UsageView', () => {
     expect(showSuccess).toHaveBeenCalled()
     expect(csvContent.startsWith('\uFEFF')).toBe(true)
     expect(csvContent.slice(1)).toBe([
-      'Time,API Key,Model,Reasoning Effort,Inbound Endpoint,IP Address,Type,Billing mode,Input Tokens,Output Tokens,Cache Read Tokens,Cache Creation Tokens,Rate Multiplier,Billed Cost,Original Cost,First Token (ms),Duration (ms),TPS (tok/s)',
-      '2026-03-08T00:00:00Z,demo-key,gpt-5.4,"\'-",,203.0.113.10,Sync,Token,4057,101,278272,4,1,0.09288300,0.09288300,12,345,303.3',
+      'Time,API Key,Model,Reasoning Effort,Inbound Endpoint,IP Address,Type,Billing mode,Input Tokens,Output Tokens,Cache Read Tokens,Cache Creation Tokens,Rate Multiplier,Billed Cost,Original Cost,TTFT (ms),TTFT mode,Duration (ms),TPS (tok/s)',
+      '2026-03-08T00:00:00Z,demo-key,gpt-5.4,"\'-",,203.0.113.10,Sync,Token,4057,101,278272,4,1,0.09288300,0.09288300,12,First output,345,303.3',
     ].join('\n'))
     expect(csvContent).toContain('IP Address')
     expect(csvContent).toContain('203.0.113.10')
@@ -507,9 +511,9 @@ describe('user UsageView', () => {
     query.mockReset()
       .mockResolvedValueOnce({ items: Array.from({ length: 100 }, () => usageLog), total: 103, pages: 2 })
       .mockResolvedValueOnce({ items: [
-        { ...usageLog, output_tokens: 23, duration_ms: 21000, first_token_ms: 1000 },
-        { ...usageLog, output_tokens: 469, duration_ms: 21000, first_token_ms: 1000 },
-        { ...usageLog, first_token_ms: null },
+        { ...usageLog, output_tokens: 23, duration_ms: 21000, ttft_ms: 1000, tps: 1.2 },
+        { ...usageLog, output_tokens: 469, duration_ms: 21000, ttft_ms: 1000, tps: 23.5 },
+        { ...usageLog, ttft_ms: null, tps: null },
       ], total: 103, pages: 2 })
     let csvContent = ''
     const OriginalBlob = globalThis.Blob
@@ -531,8 +535,8 @@ describe('user UsageView', () => {
       expect(lines).toHaveLength(104)
       expect(lines[1][tpsIndex]).toBe('303.3')
       expect(lines[100][tpsIndex]).toBe('303.3')
-      expect(lines[101][tpsIndex]).toBe('1.1')
-      expect(lines[102][tpsIndex]).toBe('23.4')
+      expect(lines[101][tpsIndex]).toBe('1.2')
+      expect(lines[102][tpsIndex]).toBe('23.5')
       expect(lines[103][tpsIndex]).toBe('')
       expect(lines.every(line => line.length === lines[0].length)).toBe(true)
     } finally {
@@ -549,6 +553,9 @@ describe('user UsageView', () => {
         {
           ...usageLog,
           request_id: 'req-user-export-legacy-image',
+          ttft_ms: null,
+          ttft_mode: null,
+          tps: null,
           actual_cost: 0.2,
           total_cost: 0.2,
           input_cost: 0,

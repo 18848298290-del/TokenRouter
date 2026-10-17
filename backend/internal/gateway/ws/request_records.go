@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
@@ -71,6 +73,9 @@ func newEntryRequestRecords(ctx context.Context) *entryRequestRecords {
 func (r *entryRequestRecords) newTurn(at time.Time) context.Context {
 	ctx := telemetry.WithChildRequest(r.root, telemetry.RequestRecord{RequestID: telemetry.NewRequestID(), State: "running", StartedAt: at.UTC()})
 	ctx = routing.RenewModelAttributes(ctx)
+	ctx = context.WithValue(ctx, telemetry.RequestStartedAt, at)
+	mode := timing.ModeFromContext(r.root)
+	ctx = timing.WithModeReader(ctx, func(context.Context) string { return mode })
 	r.pending[telemetry.RequestIDValue(ctx)] = ctx
 	return ctx
 }
@@ -117,6 +122,11 @@ func (a *entryAttemptRecords) context(base context.Context, turn int) context.Co
 	}
 	base = context.WithValue(base, telemetry.RequestID, telemetry.RequestIDValue(ctx))
 	base = routing.CopyModelAttributes(base, ctx)
+	if at, ok := ctx.Value(telemetry.RequestStartedAt).(time.Time); ok {
+		base = context.WithValue(base, telemetry.RequestStartedAt, at)
+	}
+	mode := timing.ModeFromContext(ctx)
+	base = timing.WithModeReader(base, func(context.Context) string { return mode })
 	return telemetry.CopyRequestCapture(base, ctx)
 }
 
@@ -141,15 +151,52 @@ func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, 
 		if capture.Err != nil || capture.Result == nil || !entrySucceeded(capture.Result) {
 			outcome = "failed"
 		}
-		// Cap retained attempts while final state and duration still describe the request.
-		if len(record.Attempts) < 256 {
-			record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: len(record.Attempts) + 1, ProviderID: providerID, Outcome: outcome})
+		number := 0
+		if capture.Result != nil && capture.Result.Timings != nil {
+			number = int(capture.Result.Timings.Values["attempt_number"])
+		}
+		index := -1
+		for i := range record.Attempts {
+			if (number > 0 && record.Attempts[i].Number == number) || (number == 0 && record.Attempts[i].ProviderID == providerID && record.Attempts[i].Outcome == "running") {
+				index = i
+			}
+		}
+		if index < 0 && len(record.Attempts) < 256 {
+			record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: len(record.Attempts) + 1, ProviderID: providerID})
+			index = len(record.Attempts) - 1
+		}
+		if index >= 0 {
+			attempt := &record.Attempts[index]
+			attempt.Outcome = outcome
+			if capture.Err != nil {
+				attempt.Reason = logredact.SanitizeUpstreamQueries(logredact.RedactText(capture.Err.Error()))
+			}
+			if (retry || capture.Result == nil) && attempt.StartedAt != nil {
+				ms := time.Since(*attempt.StartedAt).Milliseconds()
+				attempt.DurationMs = &ms
+			}
+			if capture.Result != nil {
+				attempt.RequestID = capture.Result.RequestID
+				if capture.Result.Timings != nil {
+					capture.Result.Timings.Values["attempt_number"] = int64(attempt.Number)
+				}
+			}
 		}
 		if !retry {
-			now := time.Now().UTC()
+			now := time.Now()
+			if record.ClientDisconnectedAt != nil && record.ClientDisconnectedAt.Before(now) {
+				now = *record.ClientDisconnectedAt
+			}
 			record.FinishedAt = &now
-			record.DurationMs = now.Sub(record.StartedAt).Milliseconds()
+			origin := record.StartedAt
+			if started, ok := ctx.Value(telemetry.RequestStartedAt).(time.Time); ok {
+				origin = started
+			}
+			record.DurationMs = now.Sub(origin).Milliseconds()
 			record.State = outcome
+			if record.ClientDisconnectedAt != nil {
+				record.State = "canceled"
+			}
 			if outcome == "failed" {
 				record.ErrorCode = "websocket_turn_failed"
 			}
@@ -192,12 +239,28 @@ func (r *entryRequestRecords) close() {
 	defer r.mu.Unlock()
 	for _, ctx := range r.pending {
 		telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
-			now := time.Now().UTC()
+			now := time.Now()
+			if record.ClientDisconnectedAt != nil && record.ClientDisconnectedAt.Before(now) {
+				now = *record.ClientDisconnectedAt
+			}
 			record.FinishedAt = &now
-			record.DurationMs = now.Sub(record.StartedAt).Milliseconds()
+			origin := record.StartedAt
+			if started, ok := ctx.Value(telemetry.RequestStartedAt).(time.Time); ok {
+				origin = started
+			}
+			record.DurationMs = now.Sub(origin).Milliseconds()
 			record.State = "failed"
 			record.ErrorCode = "websocket_turn_incomplete"
-			if r.root.Err() != nil {
+			for i := range record.Attempts {
+				if record.Attempts[i].Outcome == "running" {
+					record.Attempts[i].Outcome = "failed"
+					if record.Attempts[i].StartedAt != nil {
+						ms := time.Since(*record.Attempts[i].StartedAt).Milliseconds()
+						record.Attempts[i].DurationMs = &ms
+					}
+				}
+			}
+			if r.root.Err() != nil || record.ClientDisconnectedAt != nil {
 				record.State = "canceled"
 			}
 		})

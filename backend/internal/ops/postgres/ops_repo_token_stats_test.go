@@ -36,7 +36,7 @@ func TestOpsRepositoryGetTokenStats_PaginationMode(t *testing.T) {
 		"model",
 		"request_count",
 		"avg_tokens_per_sec",
-		"avg_first_token_ms",
+		"avg_ttft_ms",
 		"total_output_tokens",
 		"avg_duration_ms",
 		"requests_with_first_token",
@@ -64,8 +64,8 @@ func TestOpsRepositoryGetTokenStats_PaginationMode(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4", resp.Items[0].Model)
 	require.NotNil(t, resp.Items[0].AvgTokensPerSec)
 	require.InDelta(t, 21.56, *resp.Items[0].AvgTokensPerSec, 0.0001)
-	require.NotNil(t, resp.Items[0].AvgFirstTokenMs)
-	require.InDelta(t, 120.34, *resp.Items[0].AvgFirstTokenMs, 0.0001)
+	require.NotNil(t, resp.Items[0].AvgTTFTMs)
+	require.InDelta(t, 120.34, *resp.Items[0].AvgTTFTMs, 0.0001)
 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -90,7 +90,7 @@ func TestOpsRepositoryGetTokenStats_TopNMode(t *testing.T) {
 		"model",
 		"request_count",
 		"avg_tokens_per_sec",
-		"avg_first_token_ms",
+		"avg_ttft_ms",
 		"total_output_tokens",
 		"avg_duration_ms",
 		"requests_with_first_token",
@@ -112,7 +112,7 @@ func TestOpsRepositoryGetTokenStats_TopNMode(t *testing.T) {
 	require.Equal(t, 0, resp.PageSize)
 	require.Len(t, resp.Items, 1)
 	require.Nil(t, resp.Items[0].AvgTokensPerSec)
-	require.Nil(t, resp.Items[0].AvgFirstTokenMs)
+	require.Nil(t, resp.Items[0].AvgTTFTMs)
 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -140,7 +140,7 @@ func TestOpsRepositoryGetTokenStats_EmptyResult(t *testing.T) {
 			"model",
 			"request_count",
 			"avg_tokens_per_sec",
-			"avg_first_token_ms",
+			"avg_ttft_ms",
 			"total_output_tokens",
 			"avg_duration_ms",
 			"requests_with_first_token",

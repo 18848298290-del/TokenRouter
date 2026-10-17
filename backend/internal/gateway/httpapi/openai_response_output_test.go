@@ -155,7 +155,7 @@ func TestGrokNativeObservationRetainsPartialUsageAfterReadError(t *testing.T) {
 	require.True(t, result.Served)
 	require.True(t, result.HasUsage)
 	require.True(t, result.HttpCommitted)
-	require.NotNil(t, result.FirstSemanticOutput)
+	require.True(t, result.Served)
 	require.False(t, result.ObservedOnly)
 	require.Equal(t, 9, result.Usage.InputTokens)
 	require.Equal(t, 2, result.Usage.OutputTokens)
@@ -1098,7 +1098,6 @@ func TestOpenAINativeFirstOutputTimeoutDisarmsAfterSemanticOutput(t *testing.T) 
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.NotNil(t, result.FirstTokenMs)
 	require.Contains(t, rec.Body.String(), "response.output_text.delta")
 	require.Contains(t, rec.Body.String(), "response.completed")
 	require.Equal(t, "request-winning", rec.Result().Header.Get("X-Request-Id"))
@@ -1191,7 +1190,7 @@ func assertOpenAINativeLargeOpenEventTimesOutWithoutLeak(t *testing.T, line stri
 
 // TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine ends a
 // usage terminal without a blank separator. It checks final ID/usage and
-// headers, no visible first-token timing and no synthesized double newline.
+// forwarded headers, and preservation of the single trailing newline at EOF.
 func TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine(t *testing.T) {
 	cfg := &responsesFixtureOptions{Response: OpenAIResponseOptions{OpenAIFirstOutputTimeoutSeconds: 1, MaxLineSize: OpenAIResponseDefaultMaxLineSize}}
 	svc := newResponsesFixture(responsesFixtureInputs{options: cfg, headers: compileHTTPFixtureHeaders(cfg)})
@@ -1212,7 +1211,6 @@ func TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine(t *te
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Nil(t, result.FirstTokenMs, "usage-only terminal event is not visible output")
 	require.Equal(t, "resp_eof", result.ResponseID)
 	require.Equal(t, 3, result.Usage.InputTokens)
 	require.Equal(t, 2, result.Usage.OutputTokens)
@@ -1330,7 +1328,6 @@ func TestOpenAINativeFirstOutputScannerAllowsLargeEventAfterSemanticBoundary(t *
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.NotNil(t, result.FirstTokenMs)
 	require.Equal(t, "resp_large_image", result.ResponseID)
 	require.Equal(t, 4, result.Usage.InputTokens)
 	require.Equal(t, 3, result.Usage.OutputTokens)
@@ -2432,7 +2429,7 @@ func TestOpenAIStreamingTimeoutTiming(t *testing.T) {
 	}{
 		{name: "empty"},
 		{name: "buffered_metadata", prefix: "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\",\"model\":\"model\"}}\n\n", wantFlush: true},
-		{name: "visible", prefix: "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n", wantFlush: true, wantVisible: true},
+		{name: "first_output", prefix: "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n", wantFlush: true, wantVisible: true},
 		{name: "failed_write", failWrite: true},
 	}
 	for _, tt := range cases {
@@ -2456,7 +2453,7 @@ func TestOpenAIStreamingTimeoutTiming(t *testing.T) {
 					defer func() { _ = pw.Close() }()
 					go func() { _, _ = io.WriteString(pw, tt.prefix) }()
 					resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: pr}
-					timing.ObserveResponse(c.Request.Context(), resp)
+					timing.ObserveResponse(timing.BeginHTTPTrace(c.Request.Context()), resp)
 					target := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 1, Platform: providercore.PlatformOpenAI}}
 					result, err := svc.Output.ReadStreamObservation(c.Request.Context(), resp, c, target, time.Now(), "model", "model", "")
 					require.ErrorContains(t, err, "stream data interval timeout")
@@ -4114,16 +4111,16 @@ func TestOpenAIResponsesTTFTStartsAtVisibleOutput(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			result := runSyntheticVisibleTTFTStream(t, passthrough, 120*time.Millisecond, 0,
 				`{"type":"response.output_text.delta","delta":"test output"}`)
-			require.NotNil(t, result.FirstTokenMs)
+			require.NotNil(t, result.TTFTMs())
 			// Leave a twenty-millisecond gap below the 120-ms visible-event delay.
-			require.GreaterOrEqual(t, *result.FirstTokenMs, 100)
+			require.GreaterOrEqual(t, *result.TTFTMs(), 100)
 		})
 	}
 }
 
 // TestOpenAIResponsesTTFTStartsAtCompletedImage delays a completed image item
-// by 120 ms behind metadata in both reader modes. It checks present visible
-// first-token timing against a 100-ms lower bound.
+// by 120 ms behind metadata in both reader modes. It verifies that an image
+// artifact alone leaves the shared text TTFT measurement absent.
 func TestOpenAIResponsesTTFTStartsAtCompletedImage(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		name := "native"
@@ -4133,9 +4130,7 @@ func TestOpenAIResponsesTTFTStartsAtCompletedImage(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			result := runSyntheticVisibleTTFTStream(t, passthrough, 120*time.Millisecond, 0,
 				`{"type":"response.output_item.done","item":{"id":"item_test","type":"image_generation_call","result":"dGVzdA=="}}`)
-			require.NotNil(t, result.FirstTokenMs)
-			// Leave a twenty-millisecond gap below the 120-ms visible-event delay.
-			require.GreaterOrEqual(t, *result.FirstTokenMs, 100)
+			require.Nil(t, result.TTFTMs(), "image artifacts do not establish text performance")
 		})
 	}
 }
@@ -4144,7 +4139,7 @@ func TestOpenAIResponsesTTFTStartsAtCompletedImage(t *testing.T) {
 // created and empty reasoning metadata before expiry. It checks safe typed
 // recovery, absent client body and eventual local writer exit.
 func TestOpenAINativeMetadataDoesNotDisarmFirstOutputTimeout(t *testing.T) {
-	svc := newResponsesFixture(responsesFixtureInputs{readers: newHTTPReadersFixture(&gatewaytestkit.FastPolicySettingsRepo{Values: map[string]string{gateway.SettingKeyOpenAITTFTMode: gateway.OpenAITTFTModeVisible}}, nil), options: &responsesFixtureOptions{Response: OpenAIResponseOptions{MaxLineSize: OpenAIResponseDefaultMaxLineSize, OpenAIFirstOutputTimeoutSeconds: 1}}})
+	svc := newResponsesFixture(responsesFixtureInputs{readers: newHTTPReadersFixture(&gatewaytestkit.FastPolicySettingsRepo{Values: map[string]string{gateway.SettingKeyTTFTMode: gateway.TTFTModeFirstOutput}}, nil), options: &responsesFixtureOptions{Response: OpenAIResponseOptions{MaxLineSize: OpenAIResponseDefaultMaxLineSize, OpenAIFirstOutputTimeoutSeconds: 1}}})
 	reader, writer := io.Pipe()
 	writerDone := make(chan struct{})
 	// Send only created and empty-reasoning metadata, then keep EOF unavailable
@@ -4187,15 +4182,14 @@ func TestOpenAINativeMetadataDoesNotDisarmFirstOutputTimeout(t *testing.T) {
 // Callers supply valid JSON event text; timeoutSeconds selects the reader
 // first-output budget.
 //
-// The helper configures visible TTFT in both modes and asserts client output
-// before waiting for writer exit. Passthrough returns a new result containing
-// FirstTokenMs alone. Producer errors are discarded while the read and output
-// assertions observe the exchange, and a one-second wait bounds writer-exit
-// observation.
-func runSyntheticVisibleTTFTStream(t *testing.T, passthrough bool, visibleDelay time.Duration, timeoutSeconds int, visibleEvent string) *responseupstream.StreamingResult {
+// The helper installs the shared request collector for both reader modes and
+// returns its performance snapshot after asserting output and waiting for writer
+// exit. Producer errors are discarded while the read and output assertions
+// observe the exchange, and a one-second wait bounds writer-exit observation.
+func runSyntheticVisibleTTFTStream(t *testing.T, passthrough bool, visibleDelay time.Duration, timeoutSeconds int, visibleEvent string) *timing.Performance {
 	t.Helper()
 
-	svc := newResponsesFixture(responsesFixtureInputs{readers: newHTTPReadersFixture(&gatewaytestkit.FastPolicySettingsRepo{Values: map[string]string{gateway.SettingKeyOpenAITTFTMode: gateway.OpenAITTFTModeVisible}}, nil), options: &responsesFixtureOptions{Response: OpenAIResponseOptions{MaxLineSize: OpenAIResponseDefaultMaxLineSize, OpenAIFirstOutputTimeoutSeconds: timeoutSeconds}}})
+	svc := newResponsesFixture(responsesFixtureInputs{readers: newHTTPReadersFixture(&gatewaytestkit.FastPolicySettingsRepo{Values: map[string]string{gateway.SettingKeyTTFTMode: gateway.TTFTModeFirstOutput}}, nil), options: &responsesFixtureOptions{Response: OpenAIResponseOptions{MaxLineSize: OpenAIResponseDefaultMaxLineSize, OpenAIFirstOutputTimeoutSeconds: timeoutSeconds}}})
 	reader, writer := io.Pipe()
 	writerDone := make(chan struct{})
 	// Publish metadata before delaying visible output, then send terminal usage.
@@ -4217,6 +4211,10 @@ func runSyntheticVisibleTTFTStream(t *testing.T, passthrough bool, visibleDelay 
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 1, Name: "provider_test", Platform: capability.PlatformOpenAI}}
 	started := time.Now()
+	TextRequestTiming()(c)
+	observedCtx := timing.BeginHTTPTrace(c.Request.Context())
+	resp.Header.Set("Content-Type", "text/event-stream")
+	timing.ObserveResponse(observedCtx, resp)
 
 	var result *responseupstream.StreamingResult
 	var err error
@@ -4224,7 +4222,7 @@ func runSyntheticVisibleTTFTStream(t *testing.T, passthrough bool, visibleDelay 
 		var passthroughResult *responseupstream.StreamingResult
 		passthroughResult, err = responseupstream.ReadPassthroughStreaming(context.Background(), resp, upstreamcore.NewOutputContext(ResponseSink{Writer: c.Writer}), svc.Output.PassthroughOptions(context.Background(), c, provider), started, "test-model", "test-model")
 		if passthroughResult != nil {
-			result = &responseupstream.StreamingResult{FirstTokenMs: passthroughResult.FirstTokenMs}
+			result = passthroughResult
 		}
 	} else {
 		result, err = svc.Output.ReadStreamObservation(context.Background(), resp, c, provider, started, "test-model", "test-model", "")
@@ -4240,7 +4238,7 @@ func runSyntheticVisibleTTFTStream(t *testing.T, passthrough bool, visibleDelay 
 	case <-time.After(time.Second):
 		t.Fatal("synthetic upstream writer did not exit")
 	}
-	return result
+	return timing.PerformanceFromContext(observedCtx)
 }
 
 // GetProvider returns the address of this value receiver's provider copy,

@@ -83,9 +83,9 @@ type SelectionPorts struct {
 	// the prior provider's session registration.
 	RecordOpenAIProviderSwitchForSelection func(selection *gatewaycapture.SelectionResult)
 	// ReportOpenAIProviderScheduleResult reports model-specific success or
-	// failure with optional first-token latency. Callers supply the final
+	// failure with optional TTFT latency. Callers supply the final
 	// scheduling-model identity for the current attempt.
-	ReportOpenAIProviderScheduleResult func(providerOrID *gatewaycapture.ExecutionProvider, model string, success bool, firstTokenMs *int, observedErr ...error) bool
+	ReportOpenAIProviderScheduleResult func(providerOrID *gatewaycapture.ExecutionProvider, model string, success bool, ttftMs *int, observedErr ...error) bool
 	// SelectProviderWithSchedulerForCapability resolves the requested model
 	// under capability and transport constraints. Returned acquisition or
 	// wait metadata is consumed by the slot adapter.
@@ -186,7 +186,7 @@ type openAIExecutionDependencies struct {
 	// mapped request byte replacer
 	replaceModelInBody func(body []byte, newModel string) []byte
 	// model-specific scheduling result observer
-	reportOpenAIProviderScheduleResult func(providerOrID *gatewaycapture.ExecutionProvider, model string, success bool, firstTokenMs *int, observedErr ...error) bool
+	reportOpenAIProviderScheduleResult func(providerOrID *gatewaycapture.ExecutionProvider, model string, success bool, ttftMs *int, observedErr ...error) bool
 	// requested-model capability selection callback
 	selectProviderWithSchedulerForCapability func(
 		ctx context.Context,
@@ -322,7 +322,7 @@ func New(b Bindings) *Runtime {
 			// reaching this callback. Use observed image count to
 			// select Submission's queue and fallback policy for
 			// that task.
-			support.Submission.SubmitImages(c, images, task)
+			support.Submission.SubmitImages(c.Request.Context(), images, task)
 		},
 	}
 	return &Runtime{dependencies: d}

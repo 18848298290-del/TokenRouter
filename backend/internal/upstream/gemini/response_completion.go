@@ -32,25 +32,24 @@ import (
 // conversion and the collected usage replaces converted usage when its input
 // or output count is positive. Image observations use the serialized combined
 // response. Serialization recovery delegates to OutputContext.JSON; callers
-// inspect output errors separately from conversion errors. Legacy first-token
-// timing is supplied by the streaming adapter and remains nil for buffered
-// completion.
-func (s *ResponseAdapter) CompleteMessages(c *upstream.OutputContext, resp *http.Response, startTime time.Time, originalModel string, stream, useUpstreamStream bool) (*upstream.TokenUsage, *int, error) {
+// inspect output errors separately from conversion errors. The upstream body
+// observer collects arrival times for both direct streaming and buffered SSE
+// before this adapter converts or writes the response.
+func (s *ResponseAdapter) CompleteMessages(c *upstream.OutputContext, resp *http.Response, startTime time.Time, originalModel string, stream, useUpstreamStream bool) (*upstream.TokenUsage, error) {
 	var err error
 	var usage *upstream.TokenUsage
-	var firstTokenMs *int
+
 	if stream {
 		streamRes, err := s.HandleStreamingResponse(c, resp, startTime, originalModel)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		usage = streamRes.Usage
-		firstTokenMs = streamRes.FirstTokenMs
 	} else {
 		if useUpstreamStream {
 			collected, usageObj, err := CollectGeminiSSE(resp.Body, true, s.Options.ObserveRaw)
 			if err != nil {
-				return nil, nil, s.Options.ClaudeError(http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
+				return nil, s.Options.ClaudeError(http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
 			}
 			// Collected maps contain decoded JSON values. Their encoding has no custom
 			// marshaler or reference cycle; optional raw observers already received each
@@ -77,12 +76,12 @@ func (s *ResponseAdapter) CompleteMessages(c *upstream.OutputContext, resp *http
 		} else {
 			usage, err = s.HandleNonStreamingResponse(c, resp, originalModel)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 		}
 	}
 
-	return usage, firstTokenMs, nil
+	return usage, nil
 }
 
 // CompleteNative selects native streaming, buffered SSE collection, or
@@ -93,24 +92,22 @@ func (s *ResponseAdapter) CompleteMessages(c *upstream.OutputContext, resp *http
 // Collected SSE is reencoded as one native JSON response and observed for
 // images before output. Direct buffered forwarding retains upstream status,
 // whereas collection emits a successful combined response. Stream adapters
-// report their legacy first-payload timing, while buffered paths keep it nil.
+// supply parsed usage for the execution owner.
 // Read and conversion failures return before a completed result is supplied.
-func (s *ResponseAdapter) CompleteNative(c *upstream.OutputContext, resp *http.Response, startTime time.Time, stream, useUpstreamStream, isOAuth bool) (*upstream.TokenUsage, *int, error) {
+func (s *ResponseAdapter) CompleteNative(c *upstream.OutputContext, resp *http.Response, startTime time.Time, stream, useUpstreamStream, isOAuth bool) (*upstream.TokenUsage, error) {
 	var usage *upstream.TokenUsage
-	var firstTokenMs *int
 
 	if stream {
 		streamRes, err := s.HandleNativeStreamingResponse(c, resp, startTime, isOAuth)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		usage = streamRes.Usage
-		firstTokenMs = streamRes.FirstTokenMs
 	} else {
 		if useUpstreamStream {
 			collected, usageObj, err := CollectGeminiSSE(resp.Body, isOAuth, s.Options.ObserveRaw)
 			if err != nil {
-				return nil, nil, s.Options.GoogleError(http.StatusBadGateway, "Failed to read upstream stream")
+				return nil, s.Options.GoogleError(http.StatusBadGateway, "Failed to read upstream stream")
 			}
 			// Collection supplies ordinary JSON-decoded maps, so serialization errors
 			// are discarded on this combined native path; raw observers have already
@@ -123,7 +120,7 @@ func (s *ResponseAdapter) CompleteNative(c *upstream.OutputContext, resp *http.R
 		} else {
 			usageResp, err := s.HandleNativeNonStreamingResponse(c, resp, isOAuth)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			usage = usageResp
 		}
@@ -133,7 +130,7 @@ func (s *ResponseAdapter) CompleteNative(c *upstream.OutputContext, resp *http.R
 		usage = &upstream.TokenUsage{}
 	}
 
-	return usage, firstTokenMs, nil
+	return usage, nil
 }
 
 // CompleteOpenAI selects Chat or Responses output and streamed, collected, or
@@ -144,24 +141,23 @@ func (s *ResponseAdapter) CompleteNative(c *upstream.OutputContext, resp *http.R
 // offered as the complete override observation; the bridge decides whether
 // that override qualifies. Responses output restores client tool
 // representations, while Chat output can delegate serialization recovery to
-// OutputContext.JSON. Missing returned usage becomes zero counters, legacy
-// timing comes from the streaming adapter, and callers inspect OutputContext
-// for client-write errors.
-func (s *ResponseAdapter) CompleteOpenAI(c *upstream.OutputContext, resp *http.Response, startTime time.Time, originalModel string, clientStream, useUpstreamStream, isOAuth, includeUsage bool, protocol OpenAICompatProtocol, clientToolMapping bridge.ResponsesClientToolMapping) (*upstream.TokenUsage, *int, error) {
+// OutputContext.JSON. Missing returned usage becomes zero counters. Callers
+// inspect OutputContext for client-write errors before capturing the shared
+// performance observations retained by the request collector.
+func (s *ResponseAdapter) CompleteOpenAI(c *upstream.OutputContext, resp *http.Response, startTime time.Time, originalModel string, clientStream, useUpstreamStream, isOAuth, includeUsage bool, protocol OpenAICompatProtocol, clientToolMapping bridge.ResponsesClientToolMapping) (*upstream.TokenUsage, error) {
 	var err error
 	var usage *upstream.TokenUsage
-	var firstTokenMs *int
+
 	if clientStream {
 		streamRes, err := s.HandleOpenAICompatStreamingResponseFromGemini(c, resp, startTime, originalModel, isOAuth, includeUsage, protocol, clientToolMapping)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		usage = streamRes.Usage
-		firstTokenMs = streamRes.FirstTokenMs
 	} else if useUpstreamStream {
 		collected, usageObj, err := CollectGeminiSSE(resp.Body, isOAuth, s.Options.ObserveRaw)
 		if err != nil {
-			return nil, nil, s.Options.CompatError(protocol, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
+			return nil, s.Options.CompatError(protocol, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
 		}
 		// Collected maps contain decoded JSON values. Encoding them has no custom
 		// marshaler or reference cycle; optional raw observers already received the
@@ -170,16 +166,16 @@ func (s *ResponseAdapter) CompleteOpenAI(c *upstream.OutputContext, resp *http.R
 		if protocol == OpenAICompatResponses {
 			responsesResp, usageObj2, convertErr := GeminiResponseToResponses(collected, originalModel, collectedBytes, usageObj)
 			if convertErr != nil {
-				return nil, nil, s.Options.CompatError(protocol, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
+				return nil, s.Options.CompatError(protocol, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 			}
 			if err = s.WriteGeminiResponsesResponse(c, resp, responsesResp, clientToolMapping); err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			usage = usageObj2
 		} else {
 			chatResp, usageObj2, convertErr := GeminiResponseToChatCompletions(collected, originalModel, collectedBytes, usageObj)
 			if convertErr != nil {
-				return nil, nil, s.Options.CompatError(protocol, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
+				return nil, s.Options.CompatError(protocol, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 			}
 			if responseBytes, marshalErr := json.Marshal(chatResp); marshalErr == nil {
 				c.NextEvent(bridge.CompatJSONHasContent(responseBytes), true)
@@ -200,7 +196,7 @@ func (s *ResponseAdapter) CompleteOpenAI(c *upstream.OutputContext, resp *http.R
 			usageResp, err = s.HandleChatCompletionsNonStreamingResponseFromGemini(c, resp, originalModel, isOAuth)
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		usage = usageResp
 	}
@@ -209,5 +205,5 @@ func (s *ResponseAdapter) CompleteOpenAI(c *upstream.OutputContext, resp *http.R
 		usage = &upstream.TokenUsage{}
 	}
 
-	return usage, firstTokenMs, nil
+	return usage, nil
 }

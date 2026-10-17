@@ -2,90 +2,74 @@ package timing
 
 import (
 	"context"
-	"net/http"
+	"errors"
 	"net/http/httptrace"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
-// Transport trace fixtures call installed net/http callbacks directly,
-// isolating timestamps and counters from real connections. Repeated
-// installation retains the same context, and a first upstream transition
-// clears preflight observations before one retained upstream attempt is
-// recorded.
-
-// TestWithHTTPTraceRecordsTransportStages invokes connection, write, and
-// response-byte hooks through a fake transport. It requires populated stage
-// timestamps, one counted acquired/write/byte event, and the retained
-// connection-reuse flag.
-func TestWithHTTPTraceRecordsTransportStages(t *testing.T) {
-	ctx := WithHTTPTrace(context.Background())
-	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		trace := httptrace.ContextClientTrace(req.Context())
-		if trace == nil {
-			t.Fatal("client trace missing from request context")
-		}
-		trace.GetConn("api.example.test:443")
-		trace.GotConn(httptrace.GotConnInfo{Reused: true})
-		trace.WroteRequest(httptrace.WroteRequestInfo{})
-		trace.GotFirstResponseByte()
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody, Request: req}, nil
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.example.test/v1/responses", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := base.RoundTrip(req); err != nil {
-		t.Fatal(err)
-	}
-
-	snapshot, ok := HTTPTraceSnapshotFromContext(ctx)
-	if !ok {
-		t.Fatal("trace snapshot missing")
-	}
-	if snapshot.GetConnAt.IsZero() || snapshot.GotConnAt.IsZero() || snapshot.WroteRequestAt.IsZero() || snapshot.GotFirstResponseByteAt.IsZero() {
-		t.Fatalf("incomplete trace snapshot: %+v", snapshot)
-	}
-	if snapshot.GotConnCount != 1 || snapshot.WroteRequestCount != 1 || snapshot.FirstResponseByteCount != 1 {
-		t.Fatalf("unexpected trace counts: %+v", snapshot)
-	}
-	if !snapshot.ConnectionReused {
-		t.Fatal("connection reuse flag not recorded")
-	}
-}
-
-// TestWithHTTPTraceIsIdempotent installs trace callbacks twice on the same
-// derived context. It requires the second call to return the identical
-// context, protecting shared state from repeated trace installation.
-func TestWithHTTPTraceIsIdempotent(t *testing.T) {
-	first := WithHTTPTrace(context.Background())
-	second := WithHTTPTrace(first)
-	if first != second {
-		t.Fatal("repeated trace installation should preserve the original context")
-	}
-}
-
-// TestBeginHTTPTraceDropsPreflightEvents records preflight connection and
-// write hooks before beginning upstream collection. It requires exactly one
-// event for each later upstream stage, protecting the initial reset of
-// preflight observations.
-func TestBeginHTTPTraceDropsPreflightEvents(t *testing.T) {
-	ctx := WithHTTPTrace(context.Background())
-	trace := httptrace.ContextClientTrace(ctx)
-	trace.GetConn("moderation.example.test:443")
-	trace.WroteRequest(httptrace.WroteRequestInfo{})
-
-	ctx = BeginHTTPTrace(ctx)
-	trace = httptrace.ContextClientTrace(ctx)
-	trace.GetConn("api.example.test:443")
-	trace.GotConn(httptrace.GotConnInfo{})
+// TestHTTPTraceRecordsIntoUsageCollector invokes transport hooks for one exchange.
+// The shared snapshot must retain real zero values and successful write milestones.
+func TestHTTPTraceRecordsIntoUsageCollector(t *testing.T) {
+	ctx, stages := WithStages(t.Context(), time.Now(), nil)
+	trace := httptrace.ContextClientTrace(BeginHTTPTrace(ctx))
+	trace.GetConn("upstream.test")
+	trace.GotConn(httptrace.GotConnInfo{Reused: true})
 	trace.WroteRequest(httptrace.WroteRequestInfo{})
 	trace.GotFirstResponseByte()
+	snapshot := stages.Snapshot()
+	for _, key := range []string{"upstream_get_conn_ms", "upstream_got_conn_ms", "upstream_wrote_request_ms", "upstream_first_response_byte_ms"} {
+		require.Contains(t, snapshot, key)
+	}
+	require.Equal(t, int64(1), snapshot["upstream_connection_reused"])
+	require.Equal(t, int64(1), snapshot["upstream_attempt_count"])
+}
 
-	snapshot, ok := HTTPTraceSnapshotFromContext(ctx)
-	if !ok {
-		t.Fatal("trace snapshot missing")
-	}
-	if snapshot.GetConnCount != 1 || snapshot.GotConnCount != 1 || snapshot.WroteRequestCount != 1 || snapshot.FirstResponseByteCount != 1 {
-		t.Fatalf("preflight trace was not cleared: %+v", snapshot)
-	}
+// TestHTTPTraceRejectsLateAttemptCallbacks sends a delayed acquired-connection event
+// from a failed provider after replacement. No timestamp or reuse flag may cross attempts.
+func TestHTTPTraceRejectsLateAttemptCallbacks(t *testing.T) {
+	ctx, stages := WithStages(t.Context(), time.Now(), nil)
+	previous := httptrace.ContextClientTrace(BeginHTTPTrace(ctx))
+	previous.GetConn("old.test")
+	next := httptrace.ContextClientTrace(BeginHTTPTrace(ctx))
+	next.GetConn("new.test")
+	previous.GotConn(httptrace.GotConnInfo{Reused: true})
+	previous.GotFirstResponseByte()
+	snapshot := stages.Snapshot()
+	require.NotContains(t, snapshot, "upstream_got_conn_ms")
+	require.NotContains(t, snapshot, "upstream_first_response_byte_ms")
+	require.NotContains(t, snapshot, "upstream_connection_reused")
+	next.GotConn(httptrace.GotConnInfo{})
+	require.Contains(t, stages.Snapshot(), "upstream_got_conn_ms")
+	require.Equal(t, int64(2), stages.Snapshot()["upstream_attempt_count"])
+}
+
+// TestHTTPTraceConnectionRecoveryKeepsOneSequence replaces a broken reused connection
+// within one exchange. Successful stage offsets belong to the replacement connection,
+// while counters and the observed write error retain evidence of the recovery.
+func TestHTTPTraceConnectionRecoveryKeepsOneSequence(t *testing.T) {
+	ctx, stages := WithStages(t.Context(), time.Now(), nil)
+	trace := httptrace.ContextClientTrace(BeginHTTPTrace(ctx))
+	trace.GetConn("upstream.test")
+	trace.GotConn(httptrace.GotConnInfo{Reused: true})
+	trace.WroteRequest(httptrace.WroteRequestInfo{Err: errors.New("closed connection")})
+	require.NotContains(t, stages.Snapshot(), "upstream_wrote_request_ms")
+	trace.GetConn("upstream.test")
+	require.NotContains(t, stages.Snapshot(), "upstream_got_conn_ms")
+	trace.GotConn(httptrace.GotConnInfo{})
+	trace.WroteRequest(httptrace.WroteRequestInfo{})
+	snapshot := stages.Snapshot()
+	require.Equal(t, int64(2), snapshot["upstream_get_conn_count"])
+	require.Equal(t, int64(1), snapshot["upstream_wrote_request_error"])
+	require.Contains(t, snapshot, "upstream_wrote_request_ms")
+	require.Contains(t, snapshot, "upstream_connection_reused")
+	require.Zero(t, snapshot["upstream_connection_reused"])
+}
+
+// TestHTTPTraceLeavesUnobservedRequestsAlone excludes auxiliary requests that have
+// no usage collector. Beginning such a request must not install another timing model.
+func TestHTTPTraceLeavesUnobservedRequestsAlone(t *testing.T) {
+	require.Nil(t, httptrace.ContextClientTrace(BeginHTTPTrace(context.Background())))
 }

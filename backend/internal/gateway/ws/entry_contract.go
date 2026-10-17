@@ -199,7 +199,7 @@ type EntryTarget interface {
 	// feedback.
 	MappedModel(string) string
 	// Report records the outcome for the supplied scheduling model and optional
-	// first-token milliseconds. Nil denotes unobserved TTFT; RunEntry forwards
+	// TTFT milliseconds. Nil denotes unobserved TTFT; RunEntry forwards
 	// the selected turn's result pointer after excluding local warmup completion.
 	Report(string, bool, *int)
 	// Switched records replacement of this selection in scheduler attempt
@@ -456,7 +456,7 @@ type EntryPorts interface {
 	// count to select submission policy. The task already holds its logical
 	// request context and completion input; submission may choose an inline path
 	// under its configured pool policy.
-	SubmitCompletion(*ForwardResult, func(context.Context))
+	SubmitCompletion(context.Context, *ForwardResult, func(context.Context))
 }
 
 // EntryField identifies a log key and one typed value for the entry logger.

@@ -6,6 +6,9 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
+	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
 // usage_writer.go persists usage records and supplements request summaries with
@@ -33,9 +36,27 @@ import (
 // own the row during these updates and use SnapshotLogWriter when repositories
 // may mutate their arguments. Write errors are observed and do not resubmit funds.
 func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey string) {
+	writeStarted := time.Now()
 	if s.logs == nil || usageLog == nil {
+		observeUsageWrite(ctx, "skipped", "usage writer or row unavailable", nil)
 		return
 	}
+	var finalError error
+	mayHaveWritten := false
+	acknowledged := false
+	defer func() {
+		state, message := "persisted", ""
+		if !acknowledged && finalError == nil {
+			state, message = "unknown", "usage write exited before acknowledgement"
+		}
+		if finalError != nil {
+			state, message = "unknown", finalError.Error()
+			if !mayHaveWritten && usage.IsUsageLogCreateNotPersisted(finalError) {
+				state = "not_persisted"
+			}
+		}
+		observeUsageWrite(ctx, state, message, usageLog.Timings, time.Since(writeStarted))
+	}()
 	applyClientModel(ctx, usageLog)
 	if s.requestRecords != nil {
 		now := time.Now().UTC()
@@ -48,9 +69,6 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 		}
 		if usageLog.InboundEndpoint != nil {
 			record.Path = *usageLog.InboundEndpoint
-		}
-		if usageLog.DurationMs != nil {
-			record.DurationMs = int64(*usageLog.DurationMs)
 		}
 		if usageLog.BillingKey != "" {
 			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "billing", Value: usageLog.BillingKey})
@@ -77,7 +95,7 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 		} else {
 			// A task or otherwise unmatched ID needs its own summary; submitting this
 			// record leaves the polling request's lifecycle and financial aliases unchanged.
-			s.requestRecords(record)
+			ctx = telemetry.WithRequestCapture(context.WithValue(ctx, telemetry.RequestID, record.RequestID), record, s.requestRecords)
 		}
 	}
 	usageCtx, cancel := detachedBillingContext(ctx)
@@ -85,6 +103,7 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 
 	if writer, ok := s.logs.(BestEffortLogWriter); ok {
 		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil {
+			mayHaveWritten = !usage.IsUsageLogCreateNotPersisted(err)
 			s.printf(logKey, "Create usage log failed: %v", err)
 			// Rejected analysis writes retry from the same row after the funds outcome
 			// is already known; this path performs persistence alone and can also fail.
@@ -97,8 +116,13 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 				defer fallbackCancel()
 			}
 			if _, syncErr := s.logs.Create(fallbackCtx, usageLog); syncErr != nil {
+				finalError = syncErr
 				s.printf(logKey, "Create usage log sync fallback failed: %v", syncErr)
+			} else {
+				acknowledged = true
 			}
+		} else {
+			acknowledged = true
 		}
 		return
 	}
@@ -106,8 +130,55 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 	// A synchronous-only repository has no queue recovery path; report its failure
 	// while leaving the earlier funds outcome and captured analysis identity intact.
 	if _, err := s.logs.Create(usageCtx, usageLog); err != nil {
+		finalError = err
 		s.printf(logKey, "Create usage log failed: %v", err)
+	} else {
+		acknowledged = true
 	}
+}
+
+// observeUsageWrite records persistence evidence without copying usage performance.
+// Pending describes submission, while persisted requires a database acknowledgement.
+// Unknown retains timeout evidence even if a queued write later becomes visible;
+// request detail resolves that row through its ordinary indexed usage query.
+//
+// Only rejected or unsuccessful persistence keeps the bounded stage subset needed
+// to locate the failure. Content intervals and TTFT policy stay with the queued
+// usage payload. The shared request capture serializes this result with handler
+// completion, preserving the request's own outcome and any earlier failed attempts.
+func observeUsageWrite(ctx context.Context, state, message string, p *timing.Performance, elapsed ...time.Duration) {
+	if p == nil {
+		p = timing.PerformanceFromContext(ctx)
+	}
+	message = logredact.RedactText(message)
+	if len(message) > 512 {
+		message = message[:512]
+	}
+	telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
+		record.UsageWriteUpdatedAt = time.Now().UTC()
+		if len(elapsed) > 0 {
+			ms := elapsed[0].Milliseconds()
+			record.UsageWriteDurationMs = &ms
+		}
+		record.UsageWriteState = state
+		record.UsageWriteError = message
+		if p != nil {
+			record.UsageAttempt = p.Values["attempt_number"]
+			if state != "pending" && state != "persisted" {
+				record.FailureTimings = p.FailureTimings()
+			}
+		}
+
+		for i := range record.Attempts {
+			if int64(record.Attempts[i].Number) == record.UsageAttempt && state == "persisted" {
+				// Database acknowledgement completes a still-running attempt. Earlier
+				// failure outcomes remain intact because partial usage can also be persisted.
+				if record.Attempts[i].Outcome == "running" {
+					record.Attempts[i].Outcome = "completed"
+				}
+			}
+		}
+	})
 }
 
 // applyProviderStatsCost attaches a provider base amount independently of user

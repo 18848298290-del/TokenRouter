@@ -213,7 +213,7 @@ export interface OpsTokenStatsItem {
   model: string
   request_count: number
   avg_tokens_per_sec?: number | null
-  avg_first_token_ms?: number | null
+  avg_ttft_ms?: number | null
   total_output_tokens: number
   avg_duration_ms: number
   requests_with_first_token: number
@@ -728,7 +728,6 @@ export interface OpsErrorDetail extends OpsErrorLog {
   routing_latency_ms?: number | null
   upstream_latency_ms?: number | null
   response_latency_ms?: number | null
-  time_to_first_token_ms?: number | null
 
   is_business_limited: boolean
 

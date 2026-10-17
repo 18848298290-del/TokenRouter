@@ -207,7 +207,7 @@ func buildSystemSettingsResponse(
 		BackendModeEnabled:                               settings.BackendModeEnabled,
 		ResponsesWS:                                      settings.ResponsesWS,
 		ResponsesWSEffective:                             settings.ResponsesWSEffective,
-		OpenAITTFTMode:                                   settings.OpenAITTFTMode,
+		TTFTMode:                                         settings.TTFTMode,
 		EnableFingerprintUnification:                     settings.EnableFingerprintUnification,
 		EnableMetadataPassthrough:                        settings.EnableMetadataPassthrough,
 		EnableCCHSigning:                                 settings.EnableCCHSigning,

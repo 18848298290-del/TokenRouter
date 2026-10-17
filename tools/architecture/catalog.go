@@ -1,5 +1,10 @@
 package architecture
 
+// catalog.go declares supported package roles, internal module relationships,
+// and narrow file permissions for architecture checks. Policy matching consumes
+// these tables so a dependency selected for reviewed instrumentation cannot
+// silently authorize neighboring files or unrelated adapters in another module.
+
 // 纯包只使用明确的内存计算和编码库；不能通过通用标准库许可获得 I/O。
 const pureStandard = `bufio bytes context crypto/rand crypto/sha256 encoding/base64 encoding/hex encoding/json errors fmt
 golang.org/x/mod/semver golang.org/x/net/http/httpguts golang.org/x/sync/singleflight io iter maps
@@ -38,7 +43,7 @@ github.com/google/uuid github.com/google/wire github.com/gorilla/websocket
 github.com/klauspost/compress/zstd github.com/tidwall/gjson github.com/tidwall/sjson go.uber.org/zap
 golang.org/x/net/http/httpguts golang.org/x/net/http2 golang.org/x/sync/singleflight`, Tests: `github.com/cespare/xxhash/v2 github.com/imroc/req/v3 github.com/stretchr/testify/assert
 github.com/stretchr/testify/require go.uber.org/zap/zaptest/observer`},
-		"infra": {Production: `github.com/andybalholm/brotli github.com/imroc/req/v3 github.com/klauspost/compress/zstd
+		"infra": {Production: `github.com/tidwall/gjson github.com/andybalholm/brotli github.com/imroc/req/v3 github.com/klauspost/compress/zstd
 github.com/lib/pq github.com/redis/go-redis/v9 github.com/refraction-networking/utls
 github.com/zeromicro/go-zero/core/collection go.uber.org/zap go.uber.org/zap/zapcore
 golang.org/x/net/http2 golang.org/x/net/proxy gopkg.in/natefinch/lumberjack.v2`, Tests: `github.com/DATA-DOG/go-sqlmock github.com/alicebob/miniredis/v2 github.com/stretchr/testify/assert
@@ -397,6 +402,8 @@ internal/upstream/zhipu/...`, Tests: ""},
 
 	// 窄权限属于指定文件，不能由相邻文件或目标子包继承。
 	filePermissions = []filePermission{
+		// Protocol-event inspection is confined to the performance observer and its existing HTTP fixture.
+		{Scope: "internal/infra", Imports: "github.com/tidwall/gjson", Files: "telemetry/timing/events.go telemetry/timing/performance.go httpclient/upstream_pool_test.go"},
 		// 目录读取与测试数据构造按实际调用文件登记。
 		{Scope: "internal/gateway/provider", Imports: "internal/modelcatalog", Files: "model_display.go model_attributes.go model_catalogue.go creative_catalog.go execution_provider.go qoder_runtime.go responses_effort.go grok_codec_test.go model_attributes_test.go googleforward/antigravity_openai.go googleforward/model_attributes.go googleforward/gemini_attempts_external_test.go googleforward/gemini_openai_external_test.go grokforward/contracts.go grokforward/responses.go openaiforward/transform_ports.go messageforward/bedrock.go modelidentity/thinking.go"},
 		{Scope: "internal/gateway/provider", Imports: "internal/modelcatalog/testkit", Files: "grok_codec_test.go model_attributes_test.go googleforward/gemini_openai_external_test.go googleforward/gemini_attempts_external_test.go"},
@@ -410,7 +417,7 @@ internal/upstream/zhipu/...`, Tests: ""},
 		{Scope: "internal/usage/postgres", Imports: "internal/testutil/rediscontainer", Files: "main_integration_test.go"},
 		{Scope: "internal/usage/rediscache", Imports: "internal/testutil/rediscontainer", Files: "dashboard_integration_test.go"},
 		{Scope: "internal/testutil/rediscontainer", Imports: "github.com/testcontainers/testcontainers-go github.com/testcontainers/testcontainers-go/wait", Files: "run.go"},
-		{Scope: "migrations", Imports: "internal/infra/postgres github.com/lib/pq github.com/testcontainers/testcontainers-go/modules/postgres", Files: "platform_independent_groups_integration_test.go platform_independent_pricing_integration_test.go provider_names_integration_test.go product_brand_integration_test.go antigravity_retirement_integration_test.go user_localization_integration_test.go responses_ws_integration_test.go request_lookup_integration_test.go provider_balance_alert_integration_test.go"},
+		{Scope: "migrations", Imports: "internal/infra/postgres github.com/lib/pq github.com/testcontainers/testcontainers-go/modules/postgres", Files: "platform_independent_groups_integration_test.go platform_independent_pricing_integration_test.go provider_names_integration_test.go product_brand_integration_test.go antigravity_retirement_integration_test.go user_localization_integration_test.go responses_ws_integration_test.go request_lookup_integration_test.go provider_balance_alert_integration_test.go usage_performance_integration_test.go"},
 		{Scope: "internal/usage/postgres", Imports: "internal/ops/postgres", Files: "platform_snapshot_scenario_integration_test.go"},
 		{Scope: "internal/provider", Imports: "internal/provider/provider", Files: "admin_edit_external_test.go helpers_external_test.go shadow_external_test.go"},
 		{Scope: "internal/apikey", Imports: "internal/apikey/postgres", Files: "admin_external_test.go"},

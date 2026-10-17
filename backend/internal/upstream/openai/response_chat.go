@@ -62,10 +62,8 @@ type CompatResponseResult struct {
 	Usage           wire.ForwardUsage // observed upstream billing usage
 	Stream          bool              // client streaming response mode
 	Duration        time.Duration     // total response handling duration
-	// FirstTokenMs measures milliseconds from the supplied start time to a
-	// reader-specific first event; nil means that event was not observed.
-	FirstTokenMs *int
-	SearchCount  int // observed native search calls
+
+	SearchCount int // observed native search calls
 }
 
 // ChatFailure selects pre-output recovery or client error presentation for
@@ -139,9 +137,9 @@ type ChatResponseOptions struct {
 	// queried at stream entry; positive results enable their respective timer work,
 	// and the producer arrival clock remains independent of downstream conversion.
 	StreamInterval, KeepaliveInterval func() time.Duration
-	// RestoreToolNames transforms each stream payload before first-data timing,
-	// search counts, typed decoding, usage observation, and protocol conversion
-	// occur.
+	// RestoreToolNames transforms each stream payload before search counting,
+	// typed decoding, usage observation, and protocol conversion. The transformed
+	// bytes therefore supply both accounting inspection and client output.
 	RestoreToolNames func([]byte) []byte
 	// Observe receives restored payloads after successful typed decoding, before
 	// terminal usage and error policy; gateway binding updates service-tier
@@ -266,9 +264,8 @@ func ReadChatBuffered(resp *http.Response, c *upstream.OutputContext, options Ch
 
 // ReadChatStreaming converts Responses SSE to Chat chunks while retaining usage
 // and optional search observations. Supply stream callbacks and keep the
-// response body owned by the executor. FirstTokenMs records the first
-// dispatched data payload before JSON validity, while result ClientDisconnect
-// and ResponseID remain unpopulated.
+// response body owned by the executor. Result ClientDisconnect and ResponseID
+// remain unpopulated by this conversion reader.
 //
 // Tool-name restoration precedes decoding; nested terminal response usage wins
 // over event usage. Large-request refusal detection can hold converted output
@@ -288,8 +285,7 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 	state.IncludeUsage = true
 
 	var usage wire.ForwardUsage
-	var firstTokenMs *int
-	firstChunk := true
+
 	clientDisconnected := false
 	clientOutputStarted := false
 	pendingSSE := make([]string, 0, 4)
@@ -326,7 +322,6 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 			ServiceTier:     options.ServiceTier(),
 			Stream:          true,
 			Duration:        time.Since(startTime),
-			FirstTokenMs:    firstTokenMs,
 		}
 		if searchCount > 0 {
 			out.SearchCount = searchCount
@@ -336,13 +331,6 @@ func ReadChatStreaming(resp *http.Response, c *upstream.OutputContext, options C
 
 	processDataLine := func(payload string) bool {
 		payload = string(options.RestoreToolNames([]byte(payload)))
-		// Time the first dispatched data before JSON decoding; malformed or
-		// lifecycle data can therefore establish this reader's first-data observation.
-		if firstChunk {
-			firstChunk = false
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
-		}
 		if countSearch {
 			searchCount += options.StreamSearch([]byte(payload), streamSearchSeen)
 		}

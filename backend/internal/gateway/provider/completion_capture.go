@@ -13,6 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -222,6 +223,11 @@ func CaptureMessages(ctx context.Context, in *MessagesCapture) *completion.Input
 		QuotaUpdates:       in.APIKeyService != nil,
 		PricingUsageFields: in.PricingUsageFields,
 	}
+	if out.Result != nil && out.Result.Timings == nil {
+		if observed := timing.PerformanceFromContext(ctx); observed != nil {
+			out.Result.Timings = observed
+		}
+	}
 	if in.Result != nil {
 		captureRequestIdentity(ctx, out, in.Result.RequestID)
 		out.RequestedReasoningEffort = requeststate.CanonicalRequestedReasoningEffort(in.RequestBody)
@@ -257,6 +263,11 @@ func CaptureOpenAI(ctx context.Context, in *OpenAICapture) *completion.Input {
 		PricingAt:                in.PricingAt,
 		PricingUsageFields:       in.PricingUsageFields,
 		RequestedReasoningEffort: requeststate.CanonicalRequestedReasoningEffort(in.RequestBody),
+	}
+	if out.Result != nil && out.Result.Timings == nil {
+		if observed := timing.PerformanceFromContext(ctx); observed != nil {
+			out.Result.Timings = observed
+		}
 	}
 	if in.Result != nil {
 		captureRequestIdentity(ctx, out, in.Result.RequestID)
@@ -348,14 +359,29 @@ func captureRequestIdentity(ctx context.Context, out *completion.Input, upstream
 			if out.Provider != nil {
 				record.ProviderID = out.Provider.ID
 				record.Platform = out.Provider.Platform
-				attempt := telemetry.RequestAttempt{Number: len(record.Attempts) + 1, ProviderID: out.Provider.ID, Outcome: "completed", DurationMs: out.Result.Duration.Milliseconds()}
-				if out.Result.UpstreamRequestID != nil {
-					attempt.RequestID = *out.Result.UpstreamRequestID
+				number := 0
+				if out.Result.Timings != nil {
+					number = int(out.Result.Timings.Values["attempt_number"])
 				}
-				// Child completion already belongs to its own request relationship. Append
-				// main-request attempts only below the cap, retaining aliases even when history is full.
-				if !childRequest && len(record.Attempts) < 256 {
-					record.Attempts = append(record.Attempts, attempt)
+				index := -1
+				for i := range record.Attempts {
+					if number > 0 && record.Attempts[i].Number == number {
+						index = i
+						break
+					}
+				}
+				if index < 0 && !childRequest && len(record.Attempts) < 256 {
+					record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: len(record.Attempts) + 1, ProviderID: out.Provider.ID, Outcome: "completed"})
+					index = len(record.Attempts) - 1
+				}
+				if index >= 0 {
+					attempt := &record.Attempts[index]
+					if attempt.Outcome == "running" {
+						attempt.Outcome = "completed"
+					}
+					if out.Result.UpstreamRequestID != nil {
+						attempt.RequestID = *out.Result.UpstreamRequestID
+					}
 				}
 			}
 		})
@@ -372,12 +398,11 @@ func captureRequestIdentity(ctx context.Context, out *completion.Input, upstream
 	// the active request record; carry settlement aliases and captured actor/provider identity.
 	if out.RequestID != telemetry.RequestIDValue(ctx) {
 		record := telemetry.RequestRecord{RequestID: out.RequestID, State: "completed", Model: out.Result.Model, StartedAt: out.PricingAt}
-		// Without a turn pricing timestamp, infer start from the observed duration
-		// at capture time so the related completion record still has a useful request window.
+		// A task without an observed request start receives its capture time.
+		// Upstream duration stays on usage and cannot reconstruct a request lifecycle.
 		if record.StartedAt.IsZero() {
-			record.StartedAt = time.Now().Add(-out.Result.Duration)
+			record.StartedAt = time.Now()
 		}
-		record.DurationMs = out.Result.Duration.Milliseconds()
 		record.Aliases = []telemetry.RequestAlias{{Kind: "billing", Value: out.BillingKey}}
 		if upstreamID != "" {
 			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "upstream", Value: upstreamID})

@@ -260,21 +260,14 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 						upstreamDetail = logredact.TruncateUTF8(string(respBody), maxBytes)
 					}
 					c.Observe(ops.OpsUpstreamErrorEvent{
-						Platform: provider.Record.Platform,
-
-						ProviderID: provider.Record.ID,
-
-						ProviderName: provider.Record.Name,
-
+						Platform:           provider.Record.Platform,
+						ProviderID:         provider.Record.ID,
+						ProviderName:       provider.Record.Name,
 						UpstreamStatusCode: resp.StatusCode,
-
-						UpstreamRequestID: upstreamReqID,
-
-						Kind: "failover",
-
-						Message: upstreamMsg,
-
-						Detail: upstreamDetail,
+						UpstreamRequestID:  upstreamReqID,
+						Kind:               "failover",
+						Message:            upstreamMsg,
+						Detail:             upstreamDetail,
 					})
 					if googleConfigError {
 						log.Printf("[Gemini] status=400 google_config_error failover=true upstream_message=%q provider=%d", upstreamMsg, provider.Record.ID)
@@ -318,7 +311,6 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	}
 	requestID = result.RequestID
 	usage := &result.Usage
-	firstTokenMs := result.FirstTokenMs
 
 	// Combine request size hints with the attempt observation after
 	// reading; observed image counts take precedence over model-name
@@ -328,28 +320,18 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	imageCount := c.imageCount(originalModel, mappedModel)
 
 	return &forwardcore.MessagesResult{
-		RequestID: requestID,
-
+		RequestID:             requestID,
 		UpstreamHeaders:       result.UpstreamHeaders,
 		UpstreamResponseModel: result.UpstreamResponseModel,
-
-		Usage: *usage,
-
-		Model: originalModel,
-
-		UpstreamModel: mappedModel,
-
-		Stream: req.Stream,
-
-		Duration: result.Duration,
-
-		FirstTokenMs: firstTokenMs,
-
-		ImageCount: imageCount,
-
-		ImageSize: imageSize,
-
-		ImageInputSize: imageInputSize,
+		Usage:                 *usage,
+		Model:                 originalModel,
+		UpstreamModel:         mappedModel,
+		Stream:                req.Stream,
+		Duration:              result.Duration,
+		Timings:               result.Timings,
+		ImageCount:            imageCount,
+		ImageSize:             imageSize,
+		ImageInputSize:        imageInputSize,
 	}, nil
 }
 
@@ -483,21 +465,13 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 					estimated := gemininative.EstimateGeminiCountTokens(body)
 					c.Count(estimated)
 					return &forwardcore.MessagesResult{
-						RequestID: requestID,
-
+						RequestID:       requestID,
 						UpstreamHeaders: resp.Header,
-
-						Usage: upstream.TokenUsage{},
-
-						Model: originalModel,
-
-						UpstreamModel: mappedModel,
-
-						Stream: false,
-
-						Duration: time.Since(startTime),
-
-						FirstTokenMs: nil,
+						Usage:           upstream.TokenUsage{},
+						Model:           originalModel,
+						UpstreamModel:   mappedModel,
+						Stream:          false,
+						Duration:        time.Since(startTime),
 					}, nil
 				}
 
@@ -533,21 +507,14 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 						upstreamDetail = logredact.TruncateUTF8(string(evBody), maxBytes)
 					}
 					c.Observe(ops.OpsUpstreamErrorEvent{
-						Platform: provider.Record.Platform,
-
-						ProviderID: provider.Record.ID,
-
-						ProviderName: provider.Record.Name,
-
+						Platform:           provider.Record.Platform,
+						ProviderID:         provider.Record.ID,
+						ProviderName:       provider.Record.Name,
 						UpstreamStatusCode: resp.StatusCode,
-
-						UpstreamRequestID: requestID,
-
-						Kind: "failover",
-
-						Message: upstreamMsg,
-
-						Detail: upstreamDetail,
+						UpstreamRequestID:  requestID,
+						Kind:               "failover",
+						Message:            upstreamMsg,
+						Detail:             upstreamDetail,
 					})
 					if googleConfigError {
 						log.Printf("[Gemini] status=400 google_config_error failover=true upstream_message=%q provider=%d", upstreamMsg, provider.Record.ID)
@@ -593,7 +560,6 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 	}
 	requestID = result.RequestID
 	usage := &result.Usage
-	firstTokenMs := result.FirstTokenMs
 
 	// Combine request size hints with the attempt observation after
 	// reading; observed image counts take precedence over model-name
@@ -603,28 +569,18 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 	imageCount := c.imageCount(originalModel, mappedModel)
 
 	return &forwardcore.MessagesResult{
-		RequestID: requestID,
-
+		RequestID:             requestID,
 		UpstreamHeaders:       result.UpstreamHeaders,
 		UpstreamResponseModel: result.UpstreamResponseModel,
-
-		Usage: *usage,
-
-		Model: originalModel,
-
-		UpstreamModel: mappedModel,
-
-		Stream: result.Stream,
-
-		Duration: result.Duration,
-
-		FirstTokenMs: firstTokenMs,
-
-		ImageCount: imageCount,
-
-		ImageSize: imageSize,
-
-		ImageInputSize: imageInputSize,
+		Usage:                 *usage,
+		Model:                 originalModel,
+		UpstreamModel:         mappedModel,
+		Stream:                result.Stream,
+		Duration:              result.Duration,
+		Timings:               result.Timings,
+		ImageCount:            imageCount,
+		ImageSize:             imageSize,
+		ImageInputSize:        imageInputSize,
 	}, nil
 }
 
@@ -713,21 +669,14 @@ func (s *Gemini) skippedErrorPolicyFailoverError(c *attempt, provider *gatewaypr
 	}
 	upstreamMsg := logredact.SanitizeUpstreamQueries(strings.TrimSpace(upstream.ExtractErrorMessage(respBody)))
 	c.Observe(ops.OpsUpstreamErrorEvent{
-		Platform: provider.Record.Platform,
-
-		ProviderID: provider.Record.ID,
-
-		ProviderName: provider.Record.Name,
-
+		Platform:           provider.Record.Platform,
+		ProviderID:         provider.Record.ID,
+		ProviderName:       provider.Record.Name,
 		UpstreamStatusCode: statusCode,
-
-		UpstreamRequestID: upstreamRequestID,
-
-		Kind: "failover",
-
-		Message: upstreamMsg,
-
-		Detail: s.upstreamErrorDetail(respBody),
+		UpstreamRequestID:  upstreamRequestID,
+		Kind:               "failover",
+		Message:            upstreamMsg,
+		Detail:             s.upstreamErrorDetail(respBody),
 	})
 	return &forwardcore.UpstreamFailoverError{
 		StatusCode: statusCode,

@@ -10,6 +10,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	protocolwire "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -28,9 +29,6 @@ import (
 // starts. Standard and passthrough readers supply observations and partial
 // usage through callbacks and returned state; failures retain those
 // observations along with cancellation and timing information.
-// FirstSemanticOutput follows content observation, while FirstTokenMs follows
-// the reader's data-arrival rule, so neither field alone establishes successful
-// client delivery.
 
 // Target supplies one provider's Messages exchange, response rules, and ordered
 // observation hooks. Callers keep its callbacks and referenced options usable
@@ -109,6 +107,7 @@ func (t *Target) GoString() string { return t.String() }
 // request's fast marker. Failures retain cancellation classification and
 // duration, including failures that occur before any usage is observed.
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
+	defer func() { result.CapturePerformance(ctx, failure) }()
 	// Failure can occur before a response supplies usage or a start timestamp.
 	// Classify cancellation and fill missing failure timing at return so these
 	// early attempts remain observable.
@@ -191,23 +190,18 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		}
 		result.HasUsage = result.HasUsage || observation.HasUsage
 		result.Served = result.Served || observation.Semantic
-		if observation.Semantic && result.FirstSemanticOutput == nil {
-			elapsed := time.Since(started)
-			result.FirstSemanticOutput = &elapsed
-		}
 	}
 	priorState := response.ObserveState
 	// Readers update usage incrementally, including after a downstream
 	// disconnect. Copy their current counters into the attempt result while
 	// retaining the existing state-observation callback.
-	response.ObserveState = func(usage *upstream.TokenUsage, first *int) {
+	response.ObserveState = func(usage *upstream.TokenUsage) {
 		if priorState != nil {
-			priorState(usage, first)
+			priorState(usage)
 		}
 		if usage != nil {
 			result.Usage = *usage
 		}
-		result.FirstTokenMs = first
 	}
 	output := upstream.NewOutputContext(sink)
 	if input.Stream {
@@ -220,6 +214,9 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		} else {
 			stream, err = StreamResponse(ctx, resp, output, response.StreamOptions, started, input.ResponseModel, target.Model, target.MimicClaudeCode)
 		}
+		if stages := timing.StagesFromContext(ctx); stages != nil {
+			stages.FinishAttempt(stages.Attempt())
+		}
 		if target.OnStream != nil {
 			target.OnStream(stream, err)
 		}
@@ -227,7 +224,7 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 			if stream.Usage != nil {
 				result.Usage = *stream.Usage
 			}
-			result.FirstTokenMs = stream.FirstTokenMs
+
 			result.ClientDisconnect = stream.ClientDisconnect
 		}
 	} else {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
@@ -44,11 +45,10 @@ type RelayResult struct {
 	// relay selected response identifier
 	RequestID         string
 	TerminalEventType string // relay retained terminal label
-	// FirstTokenMs follows the upstream relay's token-label predicate and remains
-	// nil when no eligible nonnegative timing is recorded. It is independent of
-	// pooled StreamPort.IsToken.
-	FirstTokenMs *int          // optional first-token elapsed milliseconds
-	Duration     time.Duration // elapsed connection relay duration
+	// Timings carries the shared content observations for the settled exchange.
+	// It remains absent when no performance observer was attached to that request.
+	Timings  *timing.Performance // frozen exchange performance observations
+	Duration time.Duration       // elapsed connection relay duration
 	// ClientToUpstreamFrames and UpstreamToClientFrames count forwarded frames by
 	// direction. DroppedDownstreamFrames counts upstream frames drained after
 	// downstream delivery is suppressed; those frames still contribute
@@ -70,13 +70,13 @@ type RelayTurnResult struct {
 	// current response correlation identifier
 	RequestID         string
 	TerminalEventType string // current terminal event label
-	// StartedAt, Duration, and FirstTokenMs come from the settled response timing
+	// StartedAt, Duration, and Timings come from the settled response timing
 	// record. Accepted timestamps seed that record when available; otherwise the
 	// relay clock supplies its start. An unassociated bare error can leave timing
 	// at zero or nil.
-	StartedAt    time.Time     // accepted turn start time
-	Duration     time.Duration // elapsed current turn duration
-	FirstTokenMs *int          // optional first-token elapsed milliseconds
+	StartedAt time.Time           // accepted turn start time
+	Duration  time.Duration       // elapsed current turn duration
+	Timings   *timing.Performance // frozen exchange performance observations
 }
 
 // RelayExit identifies the stage, cause, and downstream state of a connection
@@ -94,6 +94,9 @@ type RelayExit struct {
 // RelayOptions supplies bidirectional timing, observation, and client-write
 // lifecycle callbacks.
 type RelayOptions struct {
+	// BeginPerformance binds a dispatched request to its logical turn and provider attempt.
+	BeginPerformance func(int, time.Time) *timing.Performance
+
 	// WriteTimeout supplies the fallback budget for synchronous frame sends.
 	// Nonpositive values use two minutes; a positive WriteTimeoutForTurn result
 	// takes precedence for the current send.

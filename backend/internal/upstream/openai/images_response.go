@@ -207,10 +207,6 @@ func ReadImagesOAuthNonStreaming(
 // Partial images are delivered immediately; completed items wait for terminal
 // reconciliation or EOF. Result keys are registered before attempted client
 // writes, so counts include observed completions after disconnection.
-// FirstTokenMs measures the first dispatched SSE data payload, including
-// invalid JSON and lifecycle data. The timed reader stops queued sends on
-// return but needs owner body closure to unblock reads; completed/error events
-// end consumption without draining later events.
 func ReadImagesOAuthStreaming(
 	resp *http.Response,
 	c *upstream.OutputContext, options ImageResponseOptions,
@@ -218,7 +214,7 @@ func ReadImagesOAuthStreaming(
 	responseFormat string,
 	streamPrefix string,
 	fallbackModel string,
-) (wire.ForwardUsage, int, []string, *int, error) {
+) (wire.ForwardUsage, int, []string, error) {
 	options.ResponseHeaders(c.Writer.Header(), resp.Header)
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -227,7 +223,7 @@ func ReadImagesOAuthStreaming(
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		return wire.ForwardUsage{}, 0, nil, nil, fmt.Errorf("streaming is not supported by response writer")
+		return wire.ForwardUsage{}, 0, nil, fmt.Errorf("streaming is not supported by response writer")
 	}
 
 	format := strings.ToLower(strings.TrimSpace(responseFormat))
@@ -238,7 +234,7 @@ func ReadImagesOAuthStreaming(
 	usage := wire.ForwardUsage{}
 	imageCount := 0
 	var imageOutputSizes []string
-	var firstTokenMs *int
+
 	emitted := make(map[string]struct{})
 	pendingResults := make([]OpenAIResponsesImageResult, 0, 1)
 	pendingSeen := make(map[string]struct{})
@@ -272,10 +268,7 @@ func ReadImagesOAuthStreaming(
 		}
 		// Record data arrival before validating JSON; lifecycle and malformed
 		// payloads therefore contribute to this reader-specific latency measurement.
-		if firstTokenMs == nil {
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
-		}
+
 		ParseOpenAIImagesSSEUsageBytes(dataBytes, &usage)
 		if !gjson.ValidBytes(dataBytes) {
 			return
@@ -472,33 +465,33 @@ func ReadImagesOAuthStreaming(
 			line, err := reader.ReadBytes('\n')
 			done, processErr := processLine(line)
 			if processErr != nil {
-				return usage, imageCount, imageOutputSizes, firstTokenMs, processErr
+				return usage, imageCount, imageOutputSizes, processErr
 			}
 			if done {
-				return usage, imageCount, imageOutputSizes, firstTokenMs, nil
+				return usage, imageCount, imageOutputSizes, nil
 			}
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
 				if done, processErr := flushData(); processErr != nil {
-					return usage, imageCount, imageOutputSizes, firstTokenMs, processErr
+					return usage, imageCount, imageOutputSizes, processErr
 				} else if done {
-					return usage, imageCount, imageOutputSizes, firstTokenMs, nil
+					return usage, imageCount, imageOutputSizes, nil
 				}
 				err = options.ClassifyReadError(err)
-				return usage, imageCount, imageOutputSizes, firstTokenMs, err
+				return usage, imageCount, imageOutputSizes, err
 			}
 		}
 		if done, processErr := flushData(); processErr != nil {
-			return usage, imageCount, imageOutputSizes, firstTokenMs, processErr
+			return usage, imageCount, imageOutputSizes, processErr
 		} else if done {
-			return usage, imageCount, imageOutputSizes, firstTokenMs, nil
+			return usage, imageCount, imageOutputSizes, nil
 		}
 		if err := finalizePending(); err != nil {
-			return usage, imageCount, imageOutputSizes, firstTokenMs, err
+			return usage, imageCount, imageOutputSizes, err
 		}
-		return usage, imageCount, imageOutputSizes, firstTokenMs, nil
+		return usage, imageCount, imageOutputSizes, nil
 	}
 
 	// readEvent transports one read line or failure into the timed image consumer.
@@ -571,30 +564,30 @@ func ReadImagesOAuthStreaming(
 		case ev, ok := <-events:
 			if !ok {
 				if done, processErr := flushData(); processErr != nil {
-					return usage, imageCount, imageOutputSizes, firstTokenMs, processErr
+					return usage, imageCount, imageOutputSizes, processErr
 				} else if done {
-					return usage, imageCount, imageOutputSizes, firstTokenMs, nil
+					return usage, imageCount, imageOutputSizes, nil
 				}
 				if err := finalizePending(); err != nil {
-					return usage, imageCount, imageOutputSizes, firstTokenMs, err
+					return usage, imageCount, imageOutputSizes, err
 				}
-				return usage, imageCount, imageOutputSizes, firstTokenMs, nil
+				return usage, imageCount, imageOutputSizes, nil
 			}
 			if ev.err != nil {
 				if done, processErr := flushData(); processErr != nil {
-					return usage, imageCount, imageOutputSizes, firstTokenMs, processErr
+					return usage, imageCount, imageOutputSizes, processErr
 				} else if done {
-					return usage, imageCount, imageOutputSizes, firstTokenMs, nil
+					return usage, imageCount, imageOutputSizes, nil
 				}
 				ev.err = options.ClassifyReadError(ev.err)
-				return usage, imageCount, imageOutputSizes, firstTokenMs, ev.err
+				return usage, imageCount, imageOutputSizes, ev.err
 			}
 			done, processErr := processLine(ev.line)
 			if processErr != nil {
-				return usage, imageCount, imageOutputSizes, firstTokenMs, processErr
+				return usage, imageCount, imageOutputSizes, processErr
 			}
 			if done {
-				return usage, imageCount, imageOutputSizes, firstTokenMs, nil
+				return usage, imageCount, imageOutputSizes, nil
 			}
 		case <-intervalCh:
 			// Timer delivery can lag behind processing, so consult the atomic read
@@ -604,11 +597,11 @@ func ReadImagesOAuthStreaming(
 				continue
 			}
 			if clientDisconnected {
-				return usage, imageCount, imageOutputSizes, firstTokenMs, fmt.Errorf("image stream incomplete after timeout")
+				return usage, imageCount, imageOutputSizes, fmt.Errorf("image stream incomplete after timeout")
 			}
 			options.Logf("[OpenAI] Images responses stream data interval timeout: interval=%s", streamInterval)
 			TryWriteImagesStreamEvent(c, options, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", BuildOpenAIImagesStreamErrorBody(fmt.Sprintf("upstream image stream idle for %s", streamInterval)))
-			return usage, imageCount, imageOutputSizes, firstTokenMs, fmt.Errorf("image stream data interval timeout")
+			return usage, imageCount, imageOutputSizes, fmt.Errorf("image stream data interval timeout")
 		case <-keepaliveCh:
 			// Heartbeats follow successful downstream delivery, and a write failure
 			// suppresses further client writes while observations remain available.

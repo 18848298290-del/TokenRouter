@@ -50,7 +50,7 @@ func ToForwardResult(result *Result) *forwardcore.OpenAIResult {
 		ReasoningEffort:             result.ReasoningEffort,
 		Stream:                      result.Stream,
 		Duration:                    result.Duration,
-		FirstTokenMs:                result.FirstTokenMs,
+		Timings:                     result.Timings,
 		ImageCount:                  result.ImageCount,
 		ImageSize:                   result.ImageSize,
 		ImageInputSize:              result.ImageInputSize,
@@ -97,7 +97,7 @@ func FromForwardResult(r *forwardcore.OpenAIResult) *Result {
 		ReasoningEffort:             r.ReasoningEffort,
 		Stream:                      r.Stream,
 		Duration:                    r.Duration,
-		FirstTokenMs:                r.FirstTokenMs,
+		Timings:                     r.Timings,
 		ClientDisconnect:            r.ClientDisconnect,
 		SearchCount:                 r.SearchCount,
 		ImageCount:                  r.ImageCount,
@@ -119,5 +119,5 @@ func FromCompatResult(r *openai.CompatResponseResult, billing string) *Result {
 	if r == nil {
 		return nil
 	}
-	return &Result{RequestID: r.RequestID, ResponseID: r.ResponseID, Headers: r.UpstreamHeaders, Usage: r.Usage, Model: r.Model, BillingModel: billing, UpstreamModel: r.UpstreamModel, UpstreamResponseServiceTier: r.ServiceTier, ServiceTier: r.ResolvedTier, ReasoningEffort: r.ReasoningEffort, Stream: r.Stream, Duration: r.Duration, FirstTokenMs: r.FirstTokenMs, ClientDisconnect: r.ClientDisconnect, SearchCount: r.SearchCount}
+	return &Result{RequestID: r.RequestID, ResponseID: r.ResponseID, Headers: r.UpstreamHeaders, Usage: r.Usage, Model: r.Model, BillingModel: billing, UpstreamModel: r.UpstreamModel, UpstreamResponseServiceTier: r.ServiceTier, ServiceTier: r.ResolvedTier, ReasoningEffort: r.ReasoningEffort, Stream: r.Stream, Duration: r.Duration, ClientDisconnect: r.ClientDisconnect, SearchCount: r.SearchCount}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
 // service.go buffers request snapshots, flushes versioned batches, and drains
@@ -64,6 +65,12 @@ type Repository interface {
 // Usage exposes retained usage-record cost and token counts in request
 // diagnostics.
 type Usage struct {
+	DurationMs *int64 `json:"duration_ms"` // measured upstream execution duration
+
+	Timings *timing.Performance `json:"timings,omitempty"` // usage-owned performance snapshot
+	TTFTMs  *int                `json:"ttft_ms"`           // selected upstream latency milliseconds
+	TPS     *float64            `json:"tps"`               // estimated useful-output throughput
+
 	ID           int64   `json:"id"`            // retained usage row ID
 	Model        string  `json:"model"`         // requested model or stored model
 	InputTokens  int64   `json:"input_tokens"`  // recorded input token count
@@ -457,8 +464,16 @@ func (s *Service) ack(record telemetry.RequestRecord) {
 // local record returns nil error even after repository failure, supporting
 // local diagnostics during storage outages. Other results retain the repository
 // error and its returned items.
-func (s *Service) Find(ctx context.Context, id string, userID int64, admin bool) ([]Detail, error) {
-	items, err := s.repo.Find(ctx, id, userID, admin)
+func (s *Service) Find(ctx context.Context, id string, userID int64, admin bool) (items []Detail, err error) {
+	defer func() {
+		for i := range items {
+			writeFailure := items[i].UsageWriteState == "unknown" || items[i].UsageWriteState == "not_persisted" || items[i].UsageWriteState == "skipped"
+			if len(items[i].Usage) > 0 || (!writeFailure && items[i].State != "failed" && items[i].State != "canceled") {
+				items[i].FailureTimings = nil
+			}
+		}
+	}()
+	items, err = s.repo.Find(ctx, id, userID, admin)
 	s.mu.Lock()
 	record, found := s.pending[id]
 	s.mu.Unlock()

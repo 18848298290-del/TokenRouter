@@ -1,12 +1,15 @@
 package app
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	keyhttp "github.com/TokenFlux/TokenRouter/internal/apikey/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/config"
+	"github.com/TokenFlux/TokenRouter/internal/gateway"
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
@@ -36,12 +39,18 @@ func provideGatewayRouteMiddleware(
 	queue *ops.ErrorLogQueue,
 	clients *messageHTTPBindings,
 	attributes *routing.ModelAttributeService,
+	settings *gateway.RuntimeSettings,
 ) gatewayhttp.RouteMiddleware {
 	var clientFallback gatewayhttp.ClientGroupFallbackResolver
 	if clients != nil {
 		clientFallback = clients.bindings.ClientGroupFallback
 	}
+	var ttftMode func(context.Context) string
+	if settings != nil {
+		ttftMode = settings.GetTTFTMode
+	}
 	return gatewayhttp.RouteMiddleware{
+		TTFTMode: ttftMode,
 		ModelAttributes: func(c *gin.Context) {
 			c.Request = c.Request.WithContext(routing.WithModelAttributes(c.Request.Context(), attributes))
 			c.Next()

@@ -129,7 +129,7 @@ func executeInput(target *Target, stream bool) upstream.AttemptInput {
 
 // TestExecuteNonStreamObservedZero supplies semantic buffered responses with
 // explicit zero usage in both modes. It checks usage presence, model identity,
-// semantic timing, unchanged payload bytes, sink classification, and one body
+// absent text TTFT, unchanged payload bytes, sink classification, and one body
 // close.
 func TestExecuteNonStreamObservedZero(t *testing.T) {
 	for _, pass := range []bool{false, true} {
@@ -146,8 +146,8 @@ func TestExecuteNonStreamObservedZero(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, result.HasUsage)
 			require.True(t, result.Served)
-			require.NotNil(t, result.FirstSemanticOutput)
-			require.Nil(t, result.FirstTokenMs)
+			require.True(t, result.Served)
+			require.Nil(t, result.Timings.TTFTMs())
 			require.Equal(t, "local-request", result.RequestID)
 			require.Equal(t, "claude-runtime", result.UpstreamResponseModel)
 			require.Equal(t, payload, sink.body.String())
@@ -226,8 +226,8 @@ func TestExecuteStreamingProgressAndPartialFailure(t *testing.T) {
 				// assertions.
 				require.True(t, result.HasUsage)
 				require.True(t, result.Served)
-				require.NotNil(t, result.FirstTokenMs)
-				require.NotNil(t, result.FirstSemanticOutput)
+				require.Nil(t, result.Timings.TTFTMs())
+				require.True(t, result.Served)
 				require.Contains(t, sink.body.String(), "visible")
 				require.EqualValues(t, 1, closed.Load())
 				sawSemantic := false

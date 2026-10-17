@@ -95,6 +95,7 @@ func (t *Target) GoString() string { return t.String() }
 // records cancellation and elapsed time even when configuration or
 // registration fails before a response exists.
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
+	defer func() { result.CapturePerformance(ctx, failure) }()
 	// Attach failure timing before target validation so invalid configuration and
 	// rejected lifecycle entry still carry elapsed work and cancellation
 	// classification in their result.
@@ -162,17 +163,13 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 			}
 			result.HasUsage = result.HasUsage || observation.HasUsage
 			result.Served = result.Served || observation.Semantic
-			if observation.Semantic && result.FirstSemanticOutput == nil {
-				elapsed := time.Since(started)
-				result.FirstSemanticOutput = &elapsed
-			}
 		}
 		stream, streamErr := StreamResponse(ctx, resp, upstream.NewOutputContext(sink), options, started, input.ResponseModel)
 		if stream != nil {
 			if stream.Usage != nil {
 				result.Usage = *stream.Usage
 			}
-			result.FirstTokenMs = stream.FirstTokenMs
+
 			result.ClientDisconnect = stream.ClientDisconnect
 		}
 		result.Duration = time.Since(started)
@@ -198,10 +195,6 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	result.UpstreamResponseModel = observation.Model
 	result.HasUsage = observation.HasUsage
 	result.Served = observation.Semantic
-	if result.Served {
-		elapsed := time.Since(started)
-		result.FirstSemanticOutput = &elapsed
-	}
 	head := http.Header{"Content-Type": []string{"application/json"}}
 	if id := resp.Header.Get("x-amzn-requestid"); id != "" {
 		head.Set("x-request-id", id)

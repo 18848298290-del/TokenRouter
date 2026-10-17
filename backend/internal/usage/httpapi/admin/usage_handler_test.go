@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
-	"github.com/TokenFlux/TokenRouter/internal/ops"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
@@ -60,13 +60,6 @@ type adminUsageRepoCapture struct {
 	listFilters              usage.UsageLogFilters       // captured usage list selectors
 	statsFilters             usage.UsageLogFilters       // captured usage statistics selectors
 	logs                     []usage.UsageLog            // configured shared usage record rows
-}
-
-// adminUsageTimingOpsRepo supplies persisted timing observations for
-// administrator response enrichment tests.
-type adminUsageTimingOpsRepo struct {
-	ops.OpsRepository                                  // unused Ops repository method slots
-	timings           map[string]*ops.OpsRequestTiming // configured shared request stage map
 }
 
 // searchUsersAdminStub captures account suggestion filters and supplies
@@ -180,7 +173,7 @@ func setupCleanupRouter(cleanupService *usage.UsageCleanupService, userID int64)
 		})
 	}
 
-	handler := NewUsageHandler(nil, nil, nil, cleanupService, nil, timezone.NewCalendar(time.Local))
+	handler := NewUsageHandler(nil, nil, nil, cleanupService, timezone.NewCalendar(time.Local))
 	router.POST("/api/v1/admin/usage/cleanup-tasks", handler.CreateCleanupTask)
 	router.GET("/api/v1/admin/usage/cleanup-tasks", handler.ListCleanupTasks)
 	router.POST("/api/v1/admin/usage/cleanup-tasks/:id/cancel", handler.CancelCleanupTask)
@@ -594,12 +587,6 @@ func (s *adminUsageRepoCapture) ListWithFilters(ctx context.Context, params pagi
 	}, nil
 }
 
-// ListRequestTimings returns the configured shared timing map for
-// administrator enrichment fixtures.
-func (r *adminUsageTimingOpsRepo) ListRequestTimings(_ context.Context, ids []string) (map[string]*ops.OpsRequestTiming, error) {
-	return r.timings, nil
-}
-
 // TestAdminUsageListIncludesDetailedTiming supplies a historical
 // client-prefixed request and a matching timing observation. It requires the
 // decoded row's optional timing and exact first-byte offset.
@@ -608,13 +595,12 @@ func TestAdminUsageListIncludesDetailedTiming(t *testing.T) {
 	usageRepo := &adminUsageRepoCapture{logs: []usage.UsageLog{{
 		RequestID: "client:req-internal-1",
 		Model:     "gpt-5",
+		Timings:   &timing.Performance{Values: map[string]int64{"upstream_first_response_byte_ms": firstByte}},
 	}}}
-	opsRepo := &adminUsageTimingOpsRepo{timings: map[string]*ops.OpsRequestTiming{
-		"req-internal-1": {UpstreamFirstResponseByteMs: &firstByte},
-	}}
+
 	usageSvc := usage.NewUsageService(usageRepo)
-	opsSvc := ops.NewOpsService(opsRepo, nil, nil, nil, nil, nil, nil, nil)
-	handler := NewUsageHandler(usageSvc, nil, nil, nil, opsSvc, timezone.NewCalendar(time.Local))
+
+	handler := NewUsageHandler(usageSvc, nil, nil, nil, timezone.NewCalendar(time.Local))
 	router := gin.New()
 	router.GET("/admin/usage", handler.List)
 
@@ -649,7 +635,7 @@ func (s *adminUsageRepoCapture) GetStatsWithFilters(ctx context.Context, filters
 // statistics routes with a capture fixture.
 func newAdminUsageRequestTypeTestRouter(repo *adminUsageRepoCapture) *gin.Engine {
 	usageSvc := usage.NewUsageService(repo)
-	handler := NewUsageHandler(usageSvc, nil, nil, nil, nil, timezone.NewCalendar(time.Local))
+	handler := NewUsageHandler(usageSvc, nil, nil, nil, timezone.NewCalendar(time.Local))
 	router := gin.New()
 	router.GET("/admin/usage", handler.List)
 	router.GET("/admin/usage/stats", handler.Stats)
@@ -890,7 +876,7 @@ func (s *searchUsersAdminStub) ListUsers(ctx context.Context, page, pageSize int
 // returned rows and their decoded deletion flags.
 func TestAdminUsageSearchUsers_IncludesDeletedAndFlags(t *testing.T) {
 	stub := &searchUsersAdminStub{}
-	handler := NewUsageHandler(nil, nil, stub, nil, nil, timezone.NewCalendar(time.Local))
+	handler := NewUsageHandler(nil, nil, stub, nil, timezone.NewCalendar(time.Local))
 	router := gin.New()
 	router.GET("/admin/usage/search-users", handler.SearchUsers)
 

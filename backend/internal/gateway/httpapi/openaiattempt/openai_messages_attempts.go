@@ -196,9 +196,7 @@ func (b *openAIMessageAttemptBridge) Forward() textflow.ResponseOutcome {
 		responseLatencyMs = forwardDurationMs - upstreamLatencyMs
 	}
 	gatewayhttp.SetOpsLatencyMs(b.c, gatewayhttp.OpsResponseLatencyMsKey, responseLatencyMs)
-	if err == nil && b.result != nil && b.result.FirstTokenMs != nil {
-		gatewayhttp.SetOpsLatencyMs(b.c, gatewayhttp.OpsTimeToFirstTokenMsKey, int64(*b.result.FirstTokenMs))
-	}
+
 	out := textflow.ResponseOutcome{Outcome: textflow.Outcome{Attempt: openAIObservedAttempt(b.result, err), Err: err, HasResult: b.result != nil}, Images: b.result != nil && b.result.ImageCount > 0}
 	out.NativePartial = err != nil && b.result != nil && b.result.NativeUsage != nil && (b.result.NativeUsage.HasObservedTokens() || b.result.ImageCount > 0)
 	out.Attempt.HTTPCommitted = b.c.Writer.Written()
@@ -375,12 +373,12 @@ func (b *openAIMessageAttemptBridge) OtherFailure(err error) {
 }
 
 // Success reports Messages scheduling success under currentRoutingModel and
-// observed latency. Missing result reports success with nil first-token
+// observed latency. Missing result reports success with nil TTFT
 // latency. Request completion and settlement use their independently captured
 // result rather than this feedback callback.
 func (b *openAIMessageAttemptBridge) Success() {
 	if b.result != nil {
-		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.currentRoutingModel, false, b.result), true, b.result.FirstTokenMs)
+		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.currentRoutingModel, false, b.result), true, b.result.Timings.TTFTMs())
 	} else {
 		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.currentRoutingModel, false, b.result), true, nil)
 	}

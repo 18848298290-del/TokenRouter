@@ -8,6 +8,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
@@ -48,6 +50,10 @@ var ErrModelPricingUnavailable = pricing.ErrModelPricingUnavailable
 
 // Result contains observed usage and metadata needed for completion processing.
 type Result struct {
+	// Timings owns the frozen observations of the exchange producing this usage.
+	// Completion clones it before asynchronous processing and never mutates its values.
+	Timings *timing.Performance
+
 	// UpstreamResponseModel retains the pre-conversion declaration; an empty
 	// value yields unknown mismatch evidence rather than a requested-model substitute.
 	UpstreamResponseModel string
@@ -73,7 +79,7 @@ type Result struct {
 	// nonblank; Stream records the client protocol mode in the usage row.
 	Stream, OpenAIWSMode bool
 	Duration             time.Duration // upstream execution duration
-	FirstTokenMs         *int          // milliseconds
+
 	// ImageCount: producer image quantity. VideoCount: completed video quantity.
 	// VideoDurationSeconds: producer duration seconds. WebSearchCalls: Alpha search calls.
 	// SearchCount: additional search operations. ImageCount may be a model-derived
@@ -517,7 +523,21 @@ func NewRecorder(d Dependencies, o RecorderOptions) *Recorder {
 // result, key, payer, and provider data; RecordOpenAI reports missing inputs. The
 // snapshot is normalized and settled before an analysis write is attempted, and
 // a returned settlement error can accompany an unsettled zero-ActualCost usage row.
-func (s *Recorder) Record(ctx context.Context, input *Input, openAI bool) error {
+func (s *Recorder) Record(ctx context.Context, input *Input, openAI bool) (err error) {
+	defer func() {
+		if err == nil {
+			return
+		}
+		p := timing.PerformanceFromContext(ctx)
+		telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
+			if record.UsageWriteState == "pending" {
+				record.UsageWriteState = "skipped"
+				record.UsageWriteError = logredact.RedactText(err.Error())
+				record.UsageWriteUpdatedAt = time.Now().UTC()
+				record.FailureTimings = p.FailureTimings()
+			}
+		})
+	}()
 	input = Snapshot(input)
 	if openAI && (input == nil || input.Result == nil || !input.Result.NativeUsage) {
 		return s.RecordOpenAI(ctx, input)

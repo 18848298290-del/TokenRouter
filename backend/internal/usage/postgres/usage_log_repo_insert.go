@@ -91,7 +91,7 @@ const (
 			stream,
 			openai_ws_mode,
 			duration_ms,
-			first_token_ms,
+			timings,
 			user_agent,
 			ip_address,
 			image_count,
@@ -187,7 +187,7 @@ var usageLogInsertArgTypes = [...]string{
 	"boolean",     // stream
 	"boolean",     // openai_ws_mode
 	"integer",     // duration_ms
-	"integer",     // first_token_ms
+	"jsonb",       // timings
 	"text",        // user_agent
 	"text",        // ip_address
 	"integer",     // image_count
@@ -348,7 +348,7 @@ func (r *Store) CreateBestEffort(ctx context.Context, log *usage.UsageLog) error
 	r.batchLifecycleMu.RLock()
 	defer r.batchLifecycleMu.RUnlock()
 	if r.batchStopped {
-		return usage.MarkUsageLogCreateDropped(fmt.Errorf("usage log batcher stopped"))
+		return usage.MarkUsageLogCreateNotPersisted(fmt.Errorf("usage log batcher stopped"))
 	}
 
 	if log == nil {
@@ -387,7 +387,7 @@ func (r *Store) CreateBestEffort(ctx context.Context, log *usage.UsageLog) error
 	select {
 	case r.bestEffortBatchCh <- req:
 	case <-ctx.Done():
-		return usage.MarkUsageLogCreateDropped(ctx.Err())
+		return usage.MarkUsageLogCreateNotPersisted(ctx.Err())
 	}
 
 	// Once admitted, the worker owns a background deadline. Abandoning this wait
@@ -653,10 +653,9 @@ func (r *Store) runBestEffortBatcher(db *sql.DB) {
 // Equal request/key pairs share the first prepared payload. SQL/scan errors can
 // permit individual recovery with detached deadlines; decoded-result errors
 // retain available identity evidence and disable that recovery. Confirmed
-// insertion belongs to the first grouped caller. On a partial-state error, an
-// unresolved group's first caller receives the error while later duplicates can
-// receive false with nil error even when no identity was recovered. Callers
-// interpret those results using the available row state.
+// insertion belongs to the first grouped caller. On a partial-state error, every
+// caller in an unresolved group receives the error. A nil acknowledgement requires
+// evidence of an inserted or existing row, including for duplicate waiters.
 func (r *Store) flushCreateBatch(db *sql.DB, batch []usageLogCreateRequest) {
 	if len(batch) == 0 {
 		return
@@ -716,9 +715,8 @@ func (r *Store) flushCreateBatch(db *sql.DB, batch []usageLogCreateRequest) {
 							req.log.ID = state.ID
 							req.log.CreatedAt = state.CreatedAt
 						}
-						// Partial batch resolution retains observed identities;
-						// the first unresolved caller receives its error, while
-						// later duplicates can receive false and nil.
+						// Partial resolution confirms only rows whose identities were returned.
+						// Every unresolved duplicate receives the uncertainty so none can claim persistence.
 						switch {
 						case inserted && idx == 0:
 							completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: true, err: nil})
@@ -726,10 +724,8 @@ func (r *Store) flushCreateBatch(db *sql.DB, batch []usageLogCreateRequest) {
 							completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: false, err: nil})
 						case hasState:
 							completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: false, err: nil})
-						case idx == 0:
-							completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: false, err: err})
 						default:
-							completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: false, err: nil})
+							completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: false, err: err})
 						}
 					}
 				}
@@ -960,8 +956,8 @@ func completeUsageLogCreateRequest(req usageLogCreateRequest, res usageLogCreate
 // permission because the SQL may already have written records. Decoded rows are
 // keyed by request/APIKey identity; a count mismatch returns available maps with
 // an error, leaving the flush layer to decide each caller's observable result.
-// ID and CreatedAt are not validated, so matching map cardinality can still
-// include zero identity values decoded from SQL null.
+// Missing row identities are excluded from the confirmed map, so a concurrent
+// conflict unresolved in the SQL snapshot cannot be acknowledged as persistence.
 func (r *Store) batchInsertUsageLogs(db *sql.DB, keys []string, preparedByKey map[string]usageLogInsertPrepared) (map[string]bool, map[string]usageLogBatchState, bool, error) {
 	if len(keys) == 0 {
 		return map[string]bool{}, map[string]usageLogBatchState{}, false, nil
@@ -983,6 +979,9 @@ func (r *Store) batchInsertUsageLogs(db *sql.DB, keys []string, preparedByKey ma
 	insertedMap := make(map[string]bool, len(keys))
 	stateMap := make(map[string]usageLogBatchState, len(keys))
 	for _, row := range rows {
+		if row.ID <= 0 || row.CreatedAt.IsZero() {
+			continue
+		}
 		key := usageLogBatchKey(row.RequestID, row.APIKeyID)
 		insertedMap[key] = row.Inserted
 		stateMap[key] = usageLogBatchState{
@@ -1169,7 +1168,13 @@ func prepareUsageLogInsert(log *usage.UsageLog) usageLogInsertPrepared {
 	groupID := nullInt64(log.GroupID)
 	subscriptionID := nullInt64(log.SubscriptionID)
 	duration := nullInt(log.DurationMs)
-	firstToken := nullInt(log.FirstTokenMs)
+	var timingJSON any
+	if log.Timings != nil {
+		// The snapshot contains only finite integer observations and a mode string,
+		// so encoding cannot fail or retain mutable request-owned collections.
+		encoded, _ := json.Marshal(log.Timings)
+		timingJSON = string(encoded)
+	}
 	userAgent := nullString(log.UserAgent)
 	ipAddress := nullString(log.IPAddress)
 	imageSize := nullString(log.ImageSize)
@@ -1269,7 +1274,7 @@ func prepareUsageLogInsert(log *usage.UsageLog) usageLogInsertPrepared {
 			log.Stream,
 			log.OpenAIWSMode,
 			duration,
-			firstToken,
+			timingJSON,
 			userAgent,
 			ipAddress,
 			log.ImageCount,

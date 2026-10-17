@@ -28,8 +28,8 @@ import (
 // The executor holds optional lifecycle registration through final body
 // closing and selects output behavior independently from the accepted client
 // protocol. Successful adapter usage can replace raw accumulation, while a
-// read failure retains accumulated usage already seen. Semantic output,
-// first-content timing, and retry commitment remain separate observations: any
+// read failure retains accumulated usage already seen. Semantic output and
+// retry commitment remain separate observations: any
 // nonempty emitted bytes can close the retry window, including keepalive
 // output that carries no model content.
 
@@ -125,6 +125,7 @@ func (t *Target) GoString() string { return t.String() }
 // tracking starts.
 // @project-doc docs/interfaces/antigravity_upstream.md#antigravity_native_execution
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
+	defer func() { result.CapturePerformance(ctx, failure) }()
 	target, ok := input.Target.(*Target)
 	if !ok || target == nil || target.Exchange == nil {
 		return result, errors.New("antigravity execution target is not configured")
@@ -206,10 +207,6 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		}
 		result.HasUsage = result.HasUsage || hasUsage
 		result.Served = result.Served || served
-		if served && result.FirstSemanticOutput == nil {
-			elapsed := time.Since(started)
-			result.FirstSemanticOutput = &elapsed
-		}
 	}
 	output := upstream.NewOutputContext(&observedSink{OutputSink: sink, nonStream: !input.Stream})
 	if result.RequestID != "" {
@@ -251,7 +248,7 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		if stream.Usage != nil && (err == nil || !result.HasUsage) {
 			result.Usage = *stream.Usage
 		}
-		result.FirstTokenMs = stream.FirstTokenMs
+
 		result.ClientDisconnect = stream.ClientDisconnect
 	}
 	if err != nil && target.OutputError != nil {
@@ -278,7 +275,7 @@ func (s *observedSink) InitialOutput() upstream.OutputHead {
 // Existing semantic and terminal flags remain set as observations accumulate
 // across lines. Any nonempty data marks CommitForRetry even when it carries
 // only keepalive or framing text, so retry closure is independent from model
-// content and first-content timing. The underlying sink decides whether
+// content. The underlying sink decides whether
 // writing succeeds, and its error returns unchanged.
 func (s *observedSink) Emit(event upstream.OutputEvent) error {
 	if s.nonStream && len(event.Data) > 0 {

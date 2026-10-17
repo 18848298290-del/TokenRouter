@@ -225,7 +225,21 @@ func NewUpstreamPool() *UpstreamPool {
 // construction and callback configuration remain separate from provider retry
 // policy.
 // @project-doc docs/operations/upstream_transport_security.md#upstream_client_pool
-func (s *UpstreamPool) Do(req *http.Request, opts UpstreamRequestOptions) (*http.Response, error) {
+func (s *UpstreamPool) Do(req *http.Request, opts UpstreamRequestOptions) (response *http.Response, failure error) {
+	var attemptNumber int64
+	defer func() {
+		if failure != nil && req != nil {
+			if stages := servertiming.StagesFromContext(req.Context()); stages != nil {
+				stages.FinishAttempt(attemptNumber)
+			}
+		}
+	}()
+	if req != nil {
+		req = req.WithContext(servertiming.BeginHTTPTrace(req.Context()))
+		if stages := servertiming.StagesFromContext(req.Context()); stages != nil {
+			attemptNumber = stages.Attempt()
+		}
+	}
 	entry, err := s.acquire(opts)
 	if err != nil {
 		return nil, err
@@ -241,9 +255,6 @@ func (s *UpstreamPool) Do(req *http.Request, opts UpstreamRequestOptions) (*http
 	client := &requestClient
 	if opts.PrepareClient != nil {
 		client = opts.PrepareClient(client)
-	}
-	if req != nil {
-		req = req.WithContext(servertiming.BeginHTTPTrace(req.Context()))
 	}
 	resp, err := servertiming.Do(client, req)
 	if opts.ObserveResult != nil {

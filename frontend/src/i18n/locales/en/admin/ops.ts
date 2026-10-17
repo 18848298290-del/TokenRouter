@@ -58,7 +58,7 @@ export default {
       errorRate: 'error_rate:',
       upstreamRate: 'upstream_rate:',
       latencyDuration: 'Request Duration',
-      ttftLabel: 'TTFT (first_token_ms)',
+      ttftLabel: 'TTFT (ttft_ms)',
       p50: 'p50:',
       p90: 'p90:',
       p95: 'p95:',
@@ -128,7 +128,7 @@ export default {
           model: 'Model',
           requestCount: 'Requests',
           avgTokensPerSec: 'Avg Tokens/sec',
-          avgFirstTokenMs: 'Avg First Token Latency (ms)',
+          avgTTFTMs: 'Avg TTFT (ms)',
           totalOutputTokens: 'Total Output Tokens',
           avgDurationMs: 'Avg Duration (ms)',
           requestsWithFirstToken: 'Requests With First Token'

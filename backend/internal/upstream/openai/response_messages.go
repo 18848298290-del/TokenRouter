@@ -138,8 +138,7 @@ func ReadMessagesBuffered(resp *http.Response, c *upstream.OutputContext, option
 // blocked scan depends on body closure.
 //
 // Top-level terminal usage overrides nested response usage, and terminal IDs
-// populate ResponseID. FirstTokenMs starts before JSON validation, using the
-// first dispatched data payload. Output events and pings mark local output,
+// populate ResponseID. Output events and pings mark local output,
 // while cyber policy latches ClientDisconnect even after successful error
 // delivery. Missing terminals are classified through separate pre-output and
 // post-output callbacks. Terminals without a selected error outcome, including
@@ -152,8 +151,7 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 	state.Model = originalModel
 	var usage wire.ForwardUsage
 	responseID := ""
-	var firstTokenMs *int
-	firstChunk := true
+
 	clientDisconnected := false
 	clientOutputStarted := false
 	var cyberPolicyErr error
@@ -190,7 +188,6 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 			ServiceTier:      options.ServiceTier(),
 			Stream:           true,
 			Duration:         time.Since(startTime),
-			FirstTokenMs:     firstTokenMs,
 			ClientDisconnect: clientDisconnected,
 		}
 		if searchCount > 0 {
@@ -199,15 +196,10 @@ func ReadMessagesStreaming(resp *http.Response, c *upstream.OutputContext, optio
 		return out
 	}
 
-	// Restore tool names before timing, search, and typed observation; a
-	// malformed payload can establish first-data latency but cannot advance bridge conversion.
+	// Restore tool names before search counting and typed observation so those
+	// consumers inspect the same payload that supplies downstream protocol conversion.
 	processDataLine := func(payload string) bool {
 		payload = string(options.RestoreToolNames([]byte(payload)))
-		if firstChunk {
-			firstChunk = false
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
-		}
 		if countSearch {
 			searchCount += options.StreamSearch([]byte(payload), streamSearchSeen)
 		}

@@ -13,6 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
@@ -92,7 +93,7 @@ func TestGenerationResultViewCopiesFieldsAndMutableStorage(t *testing.T) {
 	result := generationResultView(source)
 	require.Equal(t, generationConversionMediaFixture(), result)
 
-	*source.FirstTokenMs = 99
+	source.Timings.Values["upstream_first_output_ms"] = 99
 	source.ImageOutputSizes[0] = "source-size"
 	source.ImageSizeBreakdown["1K"] = 7
 	source.ImageSizeBreakdown["source-only"] = 1
@@ -102,7 +103,7 @@ func TestGenerationResultViewCopiesFieldsAndMutableStorage(t *testing.T) {
 	source.ResponseHeaders["SourceOnly"] = []string{"response"}
 	require.Equal(t, generationConversionMediaFixture(), result)
 
-	*result.FirstTokenMs = 101
+	result.Timings.Values["upstream_first_output_ms"] = 101
 	result.ImageOutputSizes[0] = "returned-size"
 	result.ImageSizeBreakdown["1K"] = 9
 	result.ImageSizeBreakdown["returned-only"] = 1
@@ -110,7 +111,7 @@ func TestGenerationResultViewCopiesFieldsAndMutableStorage(t *testing.T) {
 	result.Headers["ReturnedOnly"] = []string{"upstream"}
 	result.ResponseHeaders["Result"][0] = "returned-response"
 	result.ResponseHeaders["ReturnedOnly"] = []string{"response"}
-	require.Equal(t, 99, *source.FirstTokenMs)
+	require.Equal(t, 99, *source.Timings.TTFTMs())
 	require.Equal(t, "source-size", source.ImageOutputSizes[0])
 	require.Equal(t, 7, source.ImageSizeBreakdown["1K"])
 	require.NotContains(t, source.ImageSizeBreakdown, "returned-only")
@@ -128,7 +129,7 @@ func TestLegacyGenerationResultCopiesFieldsAndMutableStorage(t *testing.T) {
 	result := legacyGenerationResult(source)
 	require.Equal(t, generationConversionForwardFixture(), result)
 
-	*source.FirstTokenMs = 99
+	source.Timings.Values["upstream_first_output_ms"] = 99
 	source.ImageOutputSizes[0] = "source-size"
 	source.ImageSizeBreakdown["1K"] = 7
 	source.ImageSizeBreakdown["source-only"] = 1
@@ -138,7 +139,7 @@ func TestLegacyGenerationResultCopiesFieldsAndMutableStorage(t *testing.T) {
 	source.ResponseHeaders["SourceOnly"] = []string{"response"}
 	require.Equal(t, generationConversionForwardFixture(), result)
 
-	*result.FirstTokenMs = 101
+	result.Timings.Values["upstream_first_output_ms"] = 101
 	result.ImageOutputSizes[0] = "returned-size"
 	result.ImageSizeBreakdown["1K"] = 9
 	result.ImageSizeBreakdown["returned-only"] = 1
@@ -146,7 +147,7 @@ func TestLegacyGenerationResultCopiesFieldsAndMutableStorage(t *testing.T) {
 	result.UpstreamHeaders["ReturnedOnly"] = []string{"upstream"}
 	result.ResponseHeaders["Result"][0] = "returned-response"
 	result.ResponseHeaders["ReturnedOnly"] = []string{"response"}
-	require.Equal(t, 99, *source.FirstTokenMs)
+	require.Equal(t, 99, *source.Timings.TTFTMs())
 	require.Equal(t, "source-size", source.ImageOutputSizes[0])
 	require.Equal(t, 7, source.ImageSizeBreakdown["1K"])
 	require.NotContains(t, source.ImageSizeBreakdown, "returned-only")
@@ -197,7 +198,7 @@ func TestGenerationResultConversionsPreserveCollectionShapes(t *testing.T) {
 			require.Equal(t, testCase.headers, result.ResponseHeaders)
 			require.Equal(t, testCase.imageOutputSizes, result.ImageOutputSizes)
 			require.Equal(t, testCase.imageSizeBreakdown, result.ImageSizeBreakdown)
-			require.Nil(t, result.FirstTokenMs)
+			require.Nil(t, result.Timings.TTFTMs())
 			if testCase.headers != nil {
 				result.Headers["ReturnedOnly"] = []string{"upstream"}
 				require.NotContains(t, testCase.headers, "ReturnedOnly")
@@ -218,7 +219,7 @@ func TestGenerationResultConversionsPreserveCollectionShapes(t *testing.T) {
 			require.Equal(t, testCase.headers, result.ResponseHeaders)
 			require.Equal(t, testCase.imageOutputSizes, result.ImageOutputSizes)
 			require.Equal(t, testCase.imageSizeBreakdown, result.ImageSizeBreakdown)
-			require.Nil(t, result.FirstTokenMs)
+			require.Nil(t, result.Timings.TTFTMs())
 			if testCase.headers != nil {
 				result.UpstreamHeaders["ReturnedOnly"] = []string{"upstream"}
 				require.NotContains(t, testCase.headers, "ReturnedOnly")
@@ -252,7 +253,7 @@ func generationConversionForwardFixture() *forward.OpenAIResult {
 		},
 		Stream:               true,
 		Duration:             43 * time.Millisecond,
-		FirstTokenMs:         &first,
+		Timings:              &timing.Performance{Stream: true, Values: map[string]int64{"upstream_started_ms": 0, "upstream_first_output_ms": int64(first)}},
 		ImageCount:           2,
 		VideoCount:           3,
 		VideoState:           "completed",
@@ -290,7 +291,7 @@ func generationConversionMediaFixture() *media.GenerationResult {
 		},
 		Stream:               true,
 		Duration:             43 * time.Millisecond,
-		FirstTokenMs:         &first,
+		Timings:              &timing.Performance{Stream: true, Values: map[string]int64{"upstream_started_ms": 0, "upstream_first_output_ms": int64(first)}},
 		ImageCount:           2,
 		VideoCount:           3,
 		VideoState:           "completed",

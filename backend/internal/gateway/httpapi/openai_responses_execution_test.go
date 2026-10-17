@@ -1766,7 +1766,7 @@ func TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletion
 // TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions
 // forces streaming Responses input through split Chat text and usage chunks.
 // It checks the Chat usage request option, translated text/terminal events and
-// returned usage with a first-token observation.
+// returned usage with no synthetic TTFT in this fixture.
 func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"hello","stream":true}`)
 	rec := httptest.NewRecorder()
@@ -1808,7 +1808,7 @@ func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t
 	require.Equal(t, 4, result.Usage.InputTokens)
 	require.Equal(t, 3, result.Usage.OutputTokens)
 	require.True(t, result.Stream)
-	require.NotNil(t, result.FirstTokenMs)
+	require.Nil(t, result.Timings.TTFTMs())
 }
 
 // TestForwardResponses_ChatFallbackRejectsInvalidToolArgumentsAtOutputLimit
@@ -5839,10 +5839,10 @@ func TestOpenAIGatewayService_CodexCLIOnly_AllowOfficialClientFamilies(t *testin
 	}
 }
 
-// TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsFirstTokenMs streams
+// TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsTTFT streams
 // one text delta through OAuth passthrough with the fast tier alias. It checks
-// nonnegative first-token timing and normalized priority result attribution.
-func TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsFirstTokenMs(t *testing.T) {
+// absent TTFT from this uninstrumented fixture and normalized priority result attribution.
+func TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsTTFT(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
@@ -5885,16 +5885,15 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsFirstTokenMs(t *test
 	require.NoError(t, err)
 	// Timing measurements are nonnegative.
 	require.GreaterOrEqual(t, time.Since(start), time.Duration(0))
-	require.NotNil(t, result.FirstTokenMs)
-	require.GreaterOrEqual(t, *result.FirstTokenMs, 0)
+	require.Nil(t, result.Timings.TTFTMs())
 	require.NotNil(t, result.ServiceTier)
 	require.Equal(t, "priority", *result.ServiceTier)
 }
 
 // TestOpenAIGatewayService_OAuthPassthrough_StreamClientDisconnectStillCollectsUsage
 // makes later client writes fail during OAuth passthrough output. It checks
-// forwarding still returns terminal input/output/cache usage and a first-token
-// observation.
+// forwarding still returns terminal input/output/cache usage while TTFT remains
+// absent from this uninstrumented fixture.
 func TestOpenAIGatewayService_OAuthPassthrough_StreamClientDisconnectStillCollectsUsage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -5943,7 +5942,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamClientDisconnectStillCollec
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.Stream)
-	require.NotNil(t, result.FirstTokenMs)
+	require.Nil(t, result.Timings.TTFTMs())
 	require.Equal(t, 11, result.Usage.InputTokens)
 	require.Equal(t, 7, result.Usage.OutputTokens)
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)

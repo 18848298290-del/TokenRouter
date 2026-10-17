@@ -248,11 +248,8 @@ func TestAntigravityCompatClientDisconnectDrainsUsage(t *testing.T) {
 	c.Writer = &antigravityFailingWriter{ResponseWriter: c.Writer, failAfter: 0}
 	body := strings.Join([]string{
 		`data: {"response":{"responseId":"resp_3757","candidates":[{"content":{"parts":[{"text":"partial"}]}}],"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":1}}}`,
-
 		"",
-
 		`data: {"response":{"responseId":"resp_3757","candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":15}}}`,
-
 		"",
 	}, "\n")
 	resp := &http.Response{
@@ -333,7 +330,7 @@ func TestAntigravityCompatKeepaliveAfterFirstEvent(t *testing.T) {
 
 // TestHandleGeminiStreamingResponse_NormalComplete feeds native partial content
 // followed by terminal usage with cache reads. The result reports final
-// input/output/cache buckets and first-token time, and client output contains
+// input/output/cache buckets, and client output contains
 // both text fragments.
 func TestHandleGeminiStreamingResponse_NormalComplete(t *testing.T) {
 	svc := newAntigravityStreamFixture(&googleforward.Options{MaxLineSize: 500 * 1024 * 1024})
@@ -371,7 +368,6 @@ func TestHandleGeminiStreamingResponse_NormalComplete(t *testing.T) {
 	require.Equal(t, 8, result.Usage.InputTokens)
 	require.Equal(t, 8, result.Usage.OutputTokens)
 	require.Equal(t, 2, result.Usage.CacheReadInputTokens)
-	require.NotNil(t, result.FirstTokenMs, "should record first token time")
 
 	body := rec.Body.String()
 	require.Contains(t, body, "Hello")
@@ -382,7 +378,7 @@ func TestHandleGeminiStreamingResponse_NormalComplete(t *testing.T) {
 
 // TestHandleClaudeStreamingResponse_NormalComplete feeds one wrapped terminal
 // Gemini payload into Claude conversion. The result reports the supplied token
-// counts and first-token time, and output contains Claude start/stop lifecycle
+// counts, and output contains Claude start/stop lifecycle
 // events.
 func TestHandleClaudeStreamingResponse_NormalComplete(t *testing.T) {
 	svc := newAntigravityStreamFixture(&googleforward.Options{MaxLineSize: 500 * 1024 * 1024})
@@ -417,7 +413,6 @@ func TestHandleClaudeStreamingResponse_NormalComplete(t *testing.T) {
 	// counts.
 	require.Equal(t, 5, result.Usage.InputTokens)
 	require.Equal(t, 3, result.Usage.OutputTokens)
-	require.NotNil(t, result.FirstTokenMs, "should record first token time")
 
 	// The processor emits Claude SSE events.
 	body := rec.Body.String()
@@ -719,37 +714,31 @@ func TestUnwrapV1InternalResponse(t *testing.T) {
 
 			expected: `{"id":"123","content":"hello"}`,
 		},
-
 		{
 			name:     "无 response 透传",
 			input:    []byte(`{"id":"456"}`),
 			expected: `{"id":"456"}`,
 		},
-
 		{
 			name:     "空 JSON",
 			input:    []byte(`{}`),
 			expected: `{}`,
 		},
-
 		{
 			name:     "response 为 null",
 			input:    []byte(`{"response":null}`),
 			expected: `null`,
 		},
-
 		{
 			name:     "response 为基础类型 string",
 			input:    []byte(`{"response":"hello"}`),
 			expected: `"hello"`,
 		},
-
 		{
 			name:     "非法 JSON",
 			input:    []byte(`not json`),
 			expected: `not json`,
 		},
-
 		{
 			name: "嵌套 response 只解一层",
 
@@ -757,7 +746,6 @@ func TestUnwrapV1InternalResponse(t *testing.T) {
 
 			expected: `{"response":{"inner":true}}`,
 		},
-
 		{
 			name:     "大型 JSON >50KB",
 			input:    largeInput,

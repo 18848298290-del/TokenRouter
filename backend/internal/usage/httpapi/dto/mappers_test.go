@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
@@ -45,17 +44,14 @@ func TestUsageLogFromService_IncludesOpenAIWSMode(t *testing.T) {
 func TestUsageLogTimingFromService_MapsStages(t *testing.T) {
 	t.Parallel()
 
-	firstByte := int64(1200)
-	attempts := int64(2)
-	got := TimingFromOps(&ops.OpsRequestTiming{
-		UpstreamFirstResponseByteMs: &firstByte,
-		UpstreamAttemptCount:        &attempts,
-		UpstreamConnectionReused:    true,
-	})
+	var row usage.UsageLog
+	require.NoError(t, json.Unmarshal([]byte(`{"Timings":{"values":{"upstream_first_response_byte_ms":1200,"upstream_attempt_count":2,"upstream_connection_reused":1}}}`), &row))
+	got := TimingFromUsage(&row)
 	require.NotNil(t, got)
 	require.Equal(t, int64(1200), *got.UpstreamFirstResponseByteMs)
 	require.Equal(t, int64(2), *got.UpstreamAttemptCount)
-	require.True(t, got.UpstreamConnectionReused)
+	require.NotNil(t, got.UpstreamConnectionReused)
+	require.True(t, *got.UpstreamConnectionReused)
 }
 
 // TestUsageLogFromService_PrefersRequestTypeForLegacyFields supplies explicit

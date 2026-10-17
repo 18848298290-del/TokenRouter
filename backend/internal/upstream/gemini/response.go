@@ -31,18 +31,16 @@ import (
 // adjacent text parts with matching thought flags. It copies modified map
 // containers during merging but keeps nested values shared, and merging text
 // retains the earlier part metadata. Stream adapters differ in their handling
-// of decode errors, write failures, and first-token timing; those rules belong
+// of decode errors and write failures; those rules belong
 // to their methods, while the executor owns response-body closing.
 
 // ResponseOptions supplies payload observers, response readers, header
 // handling, and protocol error mapping.
 type ResponseOptions struct {
-	// ObserveRaw and ObserveState are optional synchronous observers. Payload
-	// bytes and usage pointers are passed directly; callbacks leave these inputs
-	// unchanged during conversion and copy mutable data retained for later use.
+	// ObserveRaw receives upstream payload bytes synchronously before conversion.
+	// Its callback leaves borrowed input unchanged and copies bytes retained after returning.
 	ObserveRaw func([]byte) // raw payload observation callback
-	// usage and legacy timing observation
-	ObserveState func(*upstream.TokenUsage, *int)
+
 	// GoogleError, ReadBody, WriteHeaders, ObserveImages, ReverseTools,
 	// ClaudeError, ChatError, and CompatError are supplied for the output paths
 	// that invoke them; these adapters call applicable handlers directly.
@@ -64,19 +62,15 @@ type (
 	// ResponseAdapter reads Gemini payloads and delivers one selected client
 	// protocol through its options.
 	ResponseAdapter struct{ Options ResponseOptions } // Options supplies conversion and output callbacks.
-	// StreamResult holds converted stream usage and its legacy first-event timing
-	// observation.
+	// StreamResult holds normalized usage collected during converted stream delivery.
 	StreamResult struct {
-		Usage        *upstream.TokenUsage // observed normalized token usage
-		FirstTokenMs *int                 // milliseconds to adapter first event
+		Usage *upstream.TokenUsage // observed normalized token usage
 	}
 )
 
-// NativeStreamResult holds native payload usage and the first nonempty data
-// timing.
+// NativeStreamResult holds normalized usage collected from Gemini stream payloads.
 type NativeStreamResult struct {
-	Usage        *upstream.TokenUsage // observed normalized token usage
-	FirstTokenMs *int                 // milliseconds to first native payload
+	Usage *upstream.TokenUsage // observed normalized token usage
 }
 
 // HandleNonStreamingResponse reads at most eight MiB, unwraps Gemini JSON, and
@@ -115,14 +109,13 @@ func (s *ResponseAdapter) HandleNonStreamingResponse(c *upstream.OutputContext, 
 }
 
 // HandleStreamingResponse converts Gemini data lines into synchronous Messages
-// SSE events and returns bridge usage and first-token timing. Callers close
+// SSE events and returns the bridge's accumulated usage. Callers close
 // the source response body and supply a flusher-capable output context.
 //
 // The bridge opens the message before payload reads and owns block ordering
 // and final events. Invalid decoded payloads are skipped; non-EOF read errors
-// abort with an error. First-token timing follows the bridge event flag, while
-// OutputContext records writer failures even though WriteSSE ignores
-// individual writes. Each data line is processed separately, including a final
+// abort with an error. OutputContext records writer failures even though
+// WriteSSE ignores individual writes. Each data line is processed separately, including a final
 // line without a trailing newline.
 func (s *ResponseAdapter) HandleStreamingResponse(c *upstream.OutputContext, resp *http.Response, startTime time.Time, originalModel string) (*StreamResult, error) {
 	c.Header("Content-Type", "text/event-stream")
@@ -137,15 +130,8 @@ func (s *ResponseAdapter) HandleStreamingResponse(c *upstream.OutputContext, res
 	}
 
 	state := bridge.NewNativeGeminiMessagesStream(bridge.NativeGeminiRuntime{RandomHex: upstream.RandomHex, MessageID: upstream.GenerateAnthropicMsgID})
-	var firstTokenMs *int
+
 	writeEvent := func(event bridge.NativeMessageEvent) {
-		if event.FirstToken && firstTokenMs == nil {
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
-			if s.Options.ObserveState != nil {
-				s.Options.ObserveState(nil, firstTokenMs)
-			}
-		}
 		if event.Name != "" {
 			WriteSSE(c.Writer, event.Name, event.Data, func(payload []byte) {
 				semantic, terminal := bridge.CompatOutputMeaning(append([]byte("data: "), payload...))
@@ -208,7 +194,7 @@ func (s *ResponseAdapter) HandleStreamingResponse(c *upstream.OutputContext, res
 	for event := range state.Finish() {
 		writeEvent(event)
 	}
-	return &StreamResult{Usage: LegacyNativeGeminiUsage(state.Usage()), FirstTokenMs: firstTokenMs}, nil
+	return &StreamResult{Usage: LegacyNativeGeminiUsage(state.Usage())}, nil
 }
 
 // WriteSSE serializes data into an event/data frame and invokes optional
@@ -480,14 +466,13 @@ func (s *ResponseAdapter) HandleNativeNonStreamingResponse(c *upstream.OutputCon
 }
 
 // HandleNativeStreamingResponse forwards native data lines and returns the
-// latest usage with first-payload timing. Callers close resp.Body and supply a
+// latest parsed usage. Callers close resp.Body and supply a
 // flusher-capable OutputContext; header forwarding follows HasHeaderFilter.
 //
 // OAuth data lines are unwrapped and rewritten as complete data frames, while
 // REST lines retain their incoming spelling. Empty data and DONE pass through,
-// and nondata lines are also forwarded. First-token timing starts at the first
-// nonempty payload, independently of semantic content. Writer failures remain
-// in OutputContext while reading continues; non-EOF read errors return an
+// and nondata lines are also forwarded. Writer failures remain in OutputContext
+// while reading continues; non-EOF read errors return an
 // error and discard the returned stream snapshot.
 func (s *ResponseAdapter) HandleNativeStreamingResponse(c *upstream.OutputContext, resp *http.Response, startTime time.Time, isOAuth bool) (*NativeStreamResult, error) {
 	if s.Options.DebugHeaders {
@@ -522,7 +507,6 @@ func (s *ResponseAdapter) HandleNativeStreamingResponse(c *upstream.OutputContex
 
 	reader := bufio.NewReader(resp.Body)
 	usage := &upstream.TokenUsage{}
-	var firstTokenMs *int
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -560,14 +544,6 @@ func (s *ResponseAdapter) HandleNativeStreamingResponse(c *upstream.OutputContex
 					s.observeRaw(rawBytes)
 					s.Options.ObserveImages(rawBytes)
 
-					if firstTokenMs == nil {
-						ms := int(time.Since(startTime).Milliseconds())
-						firstTokenMs = &ms
-						if s.Options.ObserveState != nil {
-							s.Options.ObserveState(nil, firstTokenMs)
-						}
-					}
-
 					observed := geminiwire.ObservePayload(rawBytes)
 					c.NextEvent(observed.Semantic, observed.Terminal)
 					if isOAuth {
@@ -597,7 +573,7 @@ func (s *ResponseAdapter) HandleNativeStreamingResponse(c *upstream.OutputContex
 		}
 	}
 
-	return &NativeStreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, nil
+	return &NativeStreamResult{Usage: usage}, nil
 }
 
 // UnwrapGeminiResponse extracts the raw object or array in response as new

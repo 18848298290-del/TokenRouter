@@ -2243,7 +2243,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_HTTPBridgeModeRe
 		require.Equal(t, 2, result.Usage.InputTokens)
 		require.Equal(t, 1, result.Usage.OutputTokens)
 		require.Equal(t, 1, result.Usage.CacheReadInputTokens)
-		require.NotNil(t, result.FirstTokenMs)
+		require.NotNil(t, result.Timings.TTFTMs())
 		require.NotNil(t, result.ReasoningEffort)
 		require.Equal(t, "max", *result.ReasoningEffort)
 	case <-time.After(2 * time.Second):

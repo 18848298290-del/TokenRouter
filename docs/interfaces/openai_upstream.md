@@ -237,9 +237,9 @@ WS 的报文、模型字段恢复和 usage 解析在 `protocol/openai`；OpenAI 
 
 ### TTFT 的计算
 
-Responses WebSocket 的 TTFT 只按实际的 token delta 计算；上游没有 delta 时，带完整文本或工具参数的 `response.output_text.done`、`response.function_call_arguments.done` 也算作语义输出。`response.completed`、`response.done`，以及 content part、output item 等结构性的终态不产生 TTFT，纯终态的响应保持未观测，总耗时不会被误记成首 token 延迟。
+OpenAI HTTP/SSE、Chat/Messages 转换和文本 WebSocket 使用全局 `ttft_mode`。首包取首个非心跳上游事件，首字取首个有效内容，两者均从本次生成请求发起计时。内容分类、TPS 和存储归属见 [HTTP 接口](http_api.md#response_errors)，设置规则见 [配置](configuration.md#runtime_settings)。
 
-Responses HTTP/SSE 同样区分结构进度和可见输出：`response.created`、空的 reasoning item 等进度，可以提交当前的 attempt、解除首输出超时，并关闭输出前的 failover 窗口，但不记录 TTFT；非空的文本或工具 delta、完整的文本或工具参数、图片结果，以及终态里实际的 output，才开始计算 TTFT。只带 usage 的终态保持 TTFT 未观测。
+HTTP 提交、首输出超时与重试资格仍由响应处理策略判断。统计口径不改变这些状态，也不为非流式响应、图片结果或纯 usage 终态补造文本首字时间。
 
 ### Codex 基础指令和 Responses Lite
 

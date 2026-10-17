@@ -649,7 +649,7 @@ export interface SystemSettings {
   // 分组隔离
 
   // Gateway forwarding behavior
-  openai_ttft_mode: string;
+  ttft_mode: string;
   enable_fingerprint_unification: boolean;
   enable_metadata_passthrough: boolean;
   enable_cch_signing: boolean;
@@ -959,7 +959,7 @@ export interface UpdateSettingsRequest {
   ops_metrics_interval_seconds?: number;
   min_claude_code_version?: string;
   max_claude_code_version?: string;
-  openai_ttft_mode?: string;
+  ttft_mode?: string;
   enable_fingerprint_unification?: boolean;
   enable_metadata_passthrough?: boolean;
   enable_cch_signing?: boolean;

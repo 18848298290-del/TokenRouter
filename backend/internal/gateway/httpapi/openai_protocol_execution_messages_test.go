@@ -3207,7 +3207,7 @@ func TestForwardAsAnthropic_ForceChatCompletionsStreamingClosesOpenBlockOnDone(t
 	require.Equal(t, 4, result.Usage.InputTokens)
 	require.Equal(t, 3, result.Usage.OutputTokens)
 	require.True(t, result.Stream)
-	require.NotNil(t, result.FirstTokenMs)
+	require.Nil(t, result.Timings.TTFTMs())
 }
 
 // TestForwardAsAnthropic_ForceChatCompletionsStreamingToolCallAggregation

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/requestlog"
 )
 
@@ -138,4 +140,44 @@ func TestFindStopsWhenLookupIsCanceled(t *testing.T) {
 	_, err = NewStore(db).Find(t.Context(), "id", 42, false)
 	require.ErrorIs(t, err, context.Canceled)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestFindUsagePerformanceUsesOneBatch reads two logical requests through one usage
+// query. Each row keeps its own attempt, selected latency and throughput while the
+// enclosing request lifecycle remains unchanged and receives no performance copy.
+func TestFindUsagePerformanceUsesOneBatch(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { mock.ExpectClose(); require.NoError(t, db.Close()) }()
+	p := timing.NewPerformance(timing.FirstEvent, 100)
+	p.Stream, p.Complete, p.UsageComplete = true, true, true
+	p.Values["upstream_first_event_ms"] = 150
+	p.Values["upstream_first_output_ms"] = 300
+	p.Values["upstream_last_output_ms"] = 800
+	p.Values["upstream_output_event_count"] = 2
+	p.Values["attempt_number"] = 2
+	first, err := json.Marshal(p)
+	require.NoError(t, err)
+	p.Mode = timing.FirstOutput
+	p.Values["attempt_number"] = 1
+	second, err := json.Marshal(p)
+	require.NoError(t, err)
+	ids := []string{"first", "second"}
+	rows := sqlmock.NewRows([]string{"id", "request_id", "created_at", "user_id", "team_id", "api_key_id", "model", "input_tokens", "output_tokens", "actual_cost", "duration_ms", "timings"}).
+		AddRow(1, "first", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, first).
+		AddRow(2, "second", time.Now(), 101, 0, 201, "model", 20, 10, 0.5, 1000, second)
+	mock.ExpectQuery("SELECT id,COALESCE\\(request_id").WithArgs(pq.Array(ids), int64(101), true, "first", true).WillReturnRows(rows)
+	result := []requestlog.Detail{
+		{RequestRecord: telemetry.RequestRecord{RequestID: "first", DurationMs: 3000}},
+		{RequestRecord: telemetry.RequestRecord{RequestID: "second", DurationMs: 4000}},
+	}
+	require.NoError(t, NewStore(db).findUsage(t.Context(), ids, "first", 101, true, true, &result, map[string]int{"first": 0, "second": 1}))
+	require.NoError(t, mock.ExpectationsWereMet())
+	require.Equal(t, 50, *result[0].Usage[0].TTFTMs)
+	require.Equal(t, 200, *result[1].Usage[0].TTFTMs)
+	require.Equal(t, 20.0, *result[0].Usage[0].TPS)
+	require.Equal(t, int64(2), result[0].Usage[0].Timings.Values["attempt_number"])
+	require.Equal(t, int64(1000), *result[0].Usage[0].DurationMs)
+	require.Equal(t, int64(3000), result[0].DurationMs)
+	require.Nil(t, result[0].FailureTimings)
 }

@@ -1806,7 +1806,9 @@ export interface UsageLog {
   openai_ws_mode?: boolean
   native_compaction_v2?: boolean
   duration_ms: number | null
-  first_token_ms: number | null
+  ttft_ms: number | null
+  tps?: number | null
+  ttft_mode?: string
 
   // 图片生成字段
   image_count: number
@@ -1866,6 +1868,15 @@ export interface AdminUsageLog extends UsageLog {
 
 // UsageLogTiming carries optional admission durations and ingress-relative transport observations.
 export interface UsageLogTiming {
+  upstream_stream?: boolean // Actual upstream streaming mode.
+  upstream_complete?: boolean // Successful upstream terminal observed.
+  usage_complete?: boolean // Final output usage observed.
+  upstream_started_ms?: number | null // Milliseconds from request ingress.
+  upstream_first_output_ms?: number | null // Milliseconds from request ingress.
+  upstream_last_output_ms?: number | null // Milliseconds from request ingress.
+  upstream_completed_ms?: number | null // Milliseconds from request ingress.
+  upstream_finished_ms?: number | null // Milliseconds from request ingress.
+  attempt_number?: number | null // Usage-producing exchange ordinal.
   // Request metadata preserves absent body length and unknown stream or admission state.
   request_content_length?: number | null // Observed request body bytes.
   timing_stream?: number | null // Client streaming flag, zero or one.
@@ -1886,7 +1897,6 @@ export interface UsageLogTiming {
   upstream_wrote_request_ms?: number | null // Milliseconds from request ingress.
   upstream_first_response_byte_ms?: number | null // Milliseconds from request ingress.
   upstream_first_event_ms?: number | null // Milliseconds from request ingress.
-  upstream_first_sse_data_ms?: number | null // Milliseconds from request ingress.
   first_visible_output_ms?: number | null // Milliseconds from request ingress.
   first_downstream_flush_ms?: number | null // Milliseconds from request ingress.
 

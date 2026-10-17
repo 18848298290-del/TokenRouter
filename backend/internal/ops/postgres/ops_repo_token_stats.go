@@ -12,15 +12,15 @@ import (
 // ops_repo_token_stats.go queries model token statistics with ranked or
 // paginated results and nullable latency measurements.
 // Model rankings count saved usage rows by execution model while token-rate and
-// first-token measurements use different sample sets. A row with no positive
-// output or duration still contributes to request count and output totals, but
-// contributes no token-rate sample. First-token averages include every nonnull
-// recorded value, including zero.
+// TTFT measurements use different sample sets. TPS requires complete streaming
+// usage and a positive interval between at least two useful content events.
+// Rows without an estimate still contribute to request and output-token totals.
+// TTFT uses each row's captured event mode and includes measured zero latency.
 //
 // The grouped statistics CTE supplies both the ranked selection and the model
 // total in one statement. A left join keeps that total available when
 // pagination selects no model, with has_item distinguishing the synthetic row
-// from actual items. Nullable rate and first-token averages remain absent in
+// from actual items. Nullable rate and TTFT averages remain absent in
 // the response, so callers can distinguish missing measurements from recorded
 // zero. Repository calls expect pagination already normalized by OpsService.
 
@@ -34,9 +34,9 @@ import (
 //
 // The total counts all grouped models before limiting. A synthetic row
 // preserves that total for an empty page and is excluded from Items, whose
-// empty slice remains available. Token rate averages positive output divided by
-// positive full duration, latency averages nonnull first-token values, and
-// nullable averages become nil pointers. Query and scan failures reject the
+// empty slice remains available. Token rate averages the usage-derived TPS
+// estimates, latency averages nonnull TTFT values, and nullable averages become
+// nil pointers. Query and scan failures reject the
 // response; the supplied filter is read without mutation.
 func (r *Store) GetTokenStats(ctx context.Context, filter *ops.OpsTokenStatsFilter) (*ops.OpsTokenStatsResponse, error) {
 	if r == nil || r.db == nil {
@@ -62,10 +62,9 @@ func (r *Store) GetTokenStats(ctx context.Context, filter *ops.OpsTokenStatsFilt
 
 	join, where, baseArgs, next := buildUsageWhere(dashboardFilter, dashboardFilter.StartTime, dashboardFilter.EndTime, 1)
 
-	// Multiplying output tokens by 1000 converts recorded milliseconds to seconds;
-	// positive output and duration select rate samples independently of other
-	// averages. SQL rounds rates and first-token averages to two decimals and
-	// duration averages to whole milliseconds.
+	// Shared expressions apply the same content-window and captured-mode rules as
+	// usage DTOs. SQL averages their eligible samples independently, rounding rate
+	// and TTFT means to two decimals and duration means to whole milliseconds.
 	baseCTE := `
 WITH stats AS (
   SELECT
@@ -73,17 +72,14 @@ WITH stats AS (
     COUNT(*)::bigint AS request_count,
     ROUND(
       AVG(
-        CASE
-          WHEN ul.duration_ms > 0 AND ul.output_tokens > 0
-          THEN ul.output_tokens * 1000.0 / ul.duration_ms
-        END
+        ` + usageTPSSQL("ul") + `
       )::numeric,
       2
     )::float8 AS avg_tokens_per_sec,
-    ROUND(AVG(ul.first_token_ms)::numeric, 2)::float8 AS avg_first_token_ms,
+    ROUND(AVG(` + usageTTFTSQL("ul") + `)::numeric, 2)::float8 AS avg_ttft_ms,
     COALESCE(SUM(ul.output_tokens), 0)::bigint AS total_output_tokens,
     COALESCE(ROUND(AVG(ul.duration_ms)::numeric, 0), 0)::bigint AS avg_duration_ms,
-    COUNT(CASE WHEN ul.first_token_ms IS NOT NULL THEN 1 END)::bigint AS requests_with_first_token
+    COUNT(CASE WHEN ` + usageTTFTSQL("ul") + ` IS NOT NULL THEN 1 END)::bigint AS requests_with_first_token
   FROM usage_logs ul
   ` + join + `
   ` + where + `
@@ -97,7 +93,7 @@ SELECT
   model,
   request_count,
   avg_tokens_per_sec,
-  avg_first_token_ms,
+  avg_ttft_ms,
   total_output_tokens,
   avg_duration_ms,
   requests_with_first_token
@@ -124,7 +120,7 @@ SELECT
   p.model,
   p.request_count,
   p.avg_tokens_per_sec,
-  p.avg_first_token_ms,
+  p.avg_ttft_ms,
   p.total_output_tokens,
   p.avg_duration_ms,
   p.requests_with_first_token,
@@ -187,7 +183,7 @@ ORDER BY p.request_count DESC NULLS LAST, p.model ASC`
 		}
 		if avgFirstToken.Valid {
 			v := avgFirstToken.Float64
-			item.AvgFirstTokenMs = &v
+			item.AvgTTFTMs = &v
 		}
 		items = append(items, item)
 	}

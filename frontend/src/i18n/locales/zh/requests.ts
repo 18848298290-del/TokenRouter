@@ -63,7 +63,23 @@ export default {
     "events": "时间线（距请求进入）",
     "notAdmitted": "未取得槽位"
   },
+  usageCreatedAt: '用量记录时间',
+  upstreamDuration: '上游耗时',
+  failureTimings: '失败阶段计时',
+  usageWriteStates: {
+    persisted: '使用记录已写入',
+    pending: '使用记录待写入',
+    unknown: '使用记录写入结果尚未确认',
+    not_persisted: '使用记录未写入',
+    skipped: '未生成使用记录',
+  },
   "timingNames": {
+    upstream_started_ms: '上游请求发起',
+    upstream_first_output_ms: '上游首有效内容',
+    upstream_last_output_ms: '上游最后有效内容',
+    upstream_finished_ms: '上游调用结束',
+    upstream_completed_ms: '上游响应完成',
+
     "request_body_read_ms": "读取请求体",
     "preprocess_ms": "前置处理",
     "user_slot_wait_ms": "用户排队",

@@ -68,7 +68,7 @@ func SnapshotResult(in *Result) *Result {
 	out.ServiceTier = cloneString(in.ServiceTier)
 	out.ReasoningEffort = cloneString(in.ReasoningEffort)
 	out.RequestedReasoningEffort = cloneString(in.RequestedReasoningEffort)
-	out.FirstTokenMs = cloneInt(in.FirstTokenMs)
+	out.Timings = in.Timings.Clone()
 	out.ImageOutputSizes = slices.Clone(in.ImageOutputSizes)
 	out.ImageSizeBreakdown = maps.Clone(in.ImageSizeBreakdown)
 	if in.AudioUsage != nil {
@@ -157,17 +157,6 @@ func cloneString(v *string) *string {
 // Nil input remains nil, allowing callers to retain the distinction between an
 // absent observation and a present zero value during asynchronous capture.
 func cloneInt64(v *int64) *int64 {
-	if v == nil {
-		return nil
-	}
-	out := *v
-	return &out
-}
-
-// cloneInt copies optional integer metadata into separate pointer storage.
-// Nil input remains nil, allowing callers to retain the distinction between an
-// absent observation and a present zero value during asynchronous capture.
-func cloneInt(v *int) *int {
 	if v == nil {
 		return nil
 	}

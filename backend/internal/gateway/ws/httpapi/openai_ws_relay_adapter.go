@@ -66,7 +66,8 @@ func relayExitProjection(e openaiwsv2.RelayExit) gatewayws.RelayExit {
 func (p *wsPassthroughAdapter) RunRelay(input gatewayws.RelayInput) (gatewayws.RelayResult, *gatewayws.RelayExit) {
 	o := input.Options
 	opts := openaiwsv2.RelayOptions{
-		WriteTimeout: o.WriteTimeout, WriteTimeoutForTurn: o.WriteTimeoutForTurn, IdleTimeout: o.IdleTimeout, UpstreamDrainTimeout: o.UpstreamDrainTimeout,
+		BeginPerformance: o.BeginPerformance,
+		WriteTimeout:     o.WriteTimeout, WriteTimeoutForTurn: o.WriteTimeoutForTurn, IdleTimeout: o.IdleTimeout, UpstreamDrainTimeout: o.UpstreamDrainTimeout,
 		FirstTurnStartedAt: o.FirstTurnStartedAt, TakeNextTurnStartedAt: o.TakeNextTurnStartedAt,
 		FirstMessageType: coderws.MessageType(o.FirstMessageType), FirstMessageSent: o.FirstMessageSent, StartClientAfterFirstDownstream: o.StartClientAfterFirstDownstream,
 		OnUsageParseFailure: o.OnUsageParseFailure, OnUpstreamEvent: o.OnUpstreamEvent, Now: o.Now,
@@ -82,7 +83,7 @@ func (p *wsPassthroughAdapter) RunRelay(input gatewayws.RelayInput) (gatewayws.R
 				TerminalEventType:     t.TerminalEventType,
 				StartedAt:             t.StartedAt,
 				Duration:              t.Duration,
-				FirstTokenMs:          t.FirstTokenMs,
+				Timings:               t.Timings,
 			})
 		}
 	}
@@ -119,7 +120,7 @@ func (p *wsPassthroughAdapter) RunRelay(input gatewayws.RelayInput) (gatewayws.R
 		Usage:                   relayUsage(result.Usage),
 		RequestID:               result.RequestID,
 		TerminalEventType:       result.TerminalEventType,
-		FirstTokenMs:            result.FirstTokenMs,
+		Timings:                 result.Timings,
 		Duration:                result.Duration,
 		ClientToUpstreamFrames:  result.ClientToUpstreamFrames,
 		UpstreamToClientFrames:  result.UpstreamToClientFrames,

@@ -254,9 +254,8 @@ func ResponsesFromAnthropicBuffered(resp *http.Response, c *upstream.OutputConte
 
 // ResponsesFromAnthropicStreaming converts paired Anthropic event/data lines
 // into Responses SSE with request-local tool restoration. It commits streaming
-// headers before reading, and FirstTokenMs records the first decoded event even
-// when that event emits no visible content. The caller retains final response-
-// body cleanup.
+// headers before reading. The caller retains final response-body cleanup
+// and captures performance from the shared observer after conversion returns.
 //
 // A failed client write stops further output while conversion state and
 // trailing usage continue advancing. Idle expiry closes the body and returns
@@ -285,8 +284,7 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 	clientToolRestorer := bridge.NewResponsesClientToolStreamRestorer(clientToolMapping)
 
 	var usage upstream.TokenUsage
-	var firstTokenMs *int
-	firstChunk := true
+
 	clientDisconnected := false
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -308,7 +306,7 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 			ReasoningEffort:  reasoningEffort,
 			Stream:           true,
 			Duration:         time.Since(startTime),
-			FirstTokenMs:     firstTokenMs,
+
 			ClientDisconnect: clientDisconnected,
 		}
 	}
@@ -344,11 +342,6 @@ func ResponsesFromAnthropicStreaming(resp *http.Response, c *upstream.OutputCont
 		// Measure the first decoded vendor event, including metadata-only events,
 		// from request start; this observation can precede the first client-visible
 		// converted chunk.
-		if firstChunk {
-			firstChunk = false
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
-		}
 
 		if event.Type == "message_delta" && event.Usage != nil {
 			protocolanthropic.MergeAnthropicUsage(&usage, *event.Usage)
@@ -648,8 +641,8 @@ func ChatFromAnthropicBuffered(resp *http.Response, c *upstream.OutputContext, o
 
 // ChatFromAnthropicStreaming converts Anthropic events through Responses state
 // into Chat SSE and optional usage output. It commits streaming headers before
-// reading and records the first decoded event as FirstTokenMs. The caller
-// closes the borrowed response body after processing.
+// reading. The caller closes the borrowed response body after processing
+// and obtains performance from the shared exchange observer.
 //
 // Client write failure stops ordinary event conversion and output while
 // message_start and message_delta continue contributing usage. Idle expiry
@@ -680,8 +673,7 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 	ccState.IncludeUsage = includeUsage
 
 	var usage upstream.TokenUsage
-	var firstTokenMs *int
-	firstChunk := true
+
 	clientDisconnected := false
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -703,7 +695,7 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 			ReasoningEffort:  reasoningEffort,
 			Stream:           true,
 			Duration:         time.Since(startTime),
-			FirstTokenMs:     firstTokenMs,
+
 			ClientDisconnect: clientDisconnected,
 		}
 	}
@@ -761,11 +753,6 @@ func ChatFromAnthropicStreaming(resp *http.Response, c *upstream.OutputContext, 
 		// Measure the first decoded vendor event, including metadata-only events,
 		// from request start; this observation can precede the first client-visible
 		// converted chunk.
-		if firstChunk {
-			firstChunk = false
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
-		}
 
 		// Update usage before the disconnect guard so trailing message_delta tokens
 		// remain available even after conversion output has stopped for that client.

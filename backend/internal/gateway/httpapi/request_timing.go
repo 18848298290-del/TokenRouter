@@ -1,10 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"io"
-	"maps"
 	"net/http"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
@@ -38,14 +38,17 @@ const requestTimingWriterKey = "http_text_timing_writer"
 type timingResponseBody struct {
 	io.ReadCloser               // original upstream response body
 	frames        *timingFrames // per-response framing state
+	done          func()        // exchange completion observer
+	arrivedAt     time.Time     // last underlying read completion
 }
 
 // timingWriter observes successful HTTP writes and existing downstream flushes.
 type timingWriter struct {
-	gin.ResponseWriter                // original HTTP writer and optional capabilities
-	stages             *timing.Stages // shared request timing state
-	frames             timingFrames   // delivered event framing state
-	pending            bool           // unflushed response event data
+	gin.ResponseWriter                 // original HTTP writer and optional capabilities
+	stages             *timing.Stages  // shared request timing state
+	ctx                context.Context // request lifecycle observations
+	frames             timingFrames    // delivered event framing state
+	pending            bool            // unflushed response event data
 	// upstreamWrites scopes synchronous upstream sink emission. Heartbeat workers
 	// may read the counter concurrently, so source publication uses atomic access.
 	upstreamWrites atomic.Int32 // active upstream emission scopes
@@ -85,43 +88,47 @@ func TextRequestTiming() gin.HandlerFunc {
 		}
 		var stages *timing.Stages
 		ctx, stages := timing.WithStages(c.Request.Context(), start, func(resp *http.Response) {
-			if resp.Body == nil || resp.StatusCode >= http.StatusBadRequest || !stages.Streaming() {
+			if resp.Body == nil {
 				return
 			}
-			// Transport observation belongs to this reader only. Every retry creates a
-			// fresh frame parser while preserving first observations in the collector.
-			parser := &timingFrames{}
-			parser.observe = func(data, event string) {
-				if timingDataEvent(data, event) {
-					stages.Mark("upstream_first_event_ms")
-					parser.stopped = true
-					if event != "@json" {
-						stages.Mark("upstream_first_sse_data_ms")
+			attempt := stages.Attempt()
+			body := &timingResponseBody{ReadCloser: resp.Body, done: func() { stages.FinishAttempt(attempt) }}
+			contentType := resp.Header.Get("Content-Type")
+			sse := strings.Contains(contentType, "text/event-stream")
+			nativeStream := resp.Request != nil && strings.Contains(resp.Request.URL.Path, "streamGenerateContent")
+			if resp.StatusCode < http.StatusBadRequest && !strings.Contains(contentType, "eventstream") && (sse || nativeStream || stages.Streaming()) {
+				body.frames = &timingFrames{observe: func(data, event string) {
+					if event != "@json" || nativeStream {
+						stages.ObserveEventAt(attempt, data, event, body.arrivedAt)
 					}
-				}
+				}}
 			}
-			if !strings.Contains(resp.Header.Get("Content-Type"), "eventstream") {
-				resp.Body = &timingResponseBody{ReadCloser: resp.Body, frames: parser}
-			}
+			resp.Body = body
 		})
+		stages.SetMode(timing.ModeFromContext(ctx))
 		stages.SetStream(strings.HasSuffix(path, ":streamGenerateContent"))
+		stages.SetContentLength(c.Request.ContentLength)
 		ctx = scheduler.WithWaitObservation(ctx, stages.Wait)
 		ctx = scheduler.WithAdmissionObservation(ctx, stages.Admit)
 		c.Request = c.Request.WithContext(ctx)
 		c.Request.Body = stages.ReadBody(c.Request.Body)
-		writer := &timingWriter{ResponseWriter: c.Writer, stages: stages}
+		writer := &timingWriter{ResponseWriter: c.Writer, stages: stages, ctx: ctx}
 		writer.frames.observe = writer.observe
 		c.Writer = writer
 		c.Set(requestTimingWriterKey, writer)
+		stopCancellation := context.AfterFunc(ctx, func() { writer.disconnected() })
+		defer stopCancellation()
 		defer func() {
 			stages.Finish()
-			// Publish directly to the request capture as well as the access log. This
-			// preserves diagnostics when access logging is sampled or disabled.
+			if ctx.Err() != nil {
+				writer.disconnected()
+			}
+			// No-usage failures keep admission diagnostics; successful performance
+			// remains owned by the immutable completion snapshot and usage storage.
 			telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
-				if record.Timings == nil {
-					record.Timings = make(map[string]int64)
+				if record.UsageWriteState == "" && (c.Writer.Status() >= 400 || record.State == "failed" || record.State == "canceled") {
+					record.FailureTimings = stages.FailureSnapshot()
 				}
-				maps.Copy(record.Timings, stages.Snapshot())
 			})
 		}()
 		c.Next()
@@ -133,11 +140,30 @@ func TextRequestTiming() gin.HandlerFunc {
 // other failures leave incomplete frames unobserved and preserve their error.
 func (r *timingResponseBody) Read(p []byte) (int, error) {
 	n, err := r.ReadCloser.Read(p)
-	r.frames.feed(p[:n])
+	r.arrivedAt = time.Now()
+	if r.frames != nil {
+		r.frames.feed(p[:n])
+	}
 	if err == io.EOF {
-		r.frames.finish()
+		if r.frames != nil {
+			r.frames.finish()
+		}
+	}
+	if err != nil && r.done != nil {
+		r.done()
 	}
 	return n, err
+}
+
+// Close releases the upstream body and records this exchange's observed endpoint.
+// The response observer owns only measurement; the underlying reader retains its
+// existing close errors and connection release behavior.
+func (r *timingResponseBody) Close() error {
+	err := r.ReadCloser.Close()
+	if r.done != nil {
+		r.done()
+	}
+	return err
 }
 
 // Write observes complete successful writes while leaving error handling unchanged.
@@ -153,6 +179,9 @@ func (r *timingResponseBody) Read(p []byte) (int, error) {
 // call records delivery of pending response data.
 func (w *timingWriter) Write(p []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(p)
+	if err != nil || n != len(p) {
+		w.disconnected()
+	}
 	if w.upstreamWrites.Load() > 0 && err == nil && n == len(p) && (w.stages.Streaming() || strings.Contains(w.Header().Get("Content-Type"), "text/event-stream")) {
 		w.frames.feed(p)
 	} else {
@@ -166,6 +195,9 @@ func (w *timingWriter) Write(p []byte) (int, error) {
 // original byte count and error return unchanged to the response adapter.
 func (w *timingWriter) WriteString(s string) (int, error) {
 	n, err := w.ResponseWriter.WriteString(s)
+	if err != nil || n != len(s) {
+		w.disconnected()
+	}
 	if w.upstreamWrites.Load() > 0 && err == nil && n == len(s) && (w.stages.Streaming() || strings.Contains(w.Header().Get("Content-Type"), "text/event-stream")) {
 		w.frames.feed([]byte(s))
 	} else {
@@ -271,6 +303,12 @@ func (f *timingFrames) dispatch() {
 	data := strings.TrimSpace(string(f.data))
 	if data == "[DONE]" || gjson.Valid(data) {
 		f.observe(data, f.event)
+	} else if documents, repaired := openai.SplitConcatenatedJSONDocuments([]byte(data)); repaired {
+		// Use the codec's bounded repair rule so observed content matches the valid
+		// documents it accepts, while truncated or otherwise invalid payloads remain unobserved.
+		for _, document := range documents {
+			f.observe(string(document), f.event)
+		}
 	}
 	f.data = f.data[:0]
 	f.event = ""
@@ -291,127 +329,15 @@ func (f *timingFrames) finish() {
 // reset discards partial delivery evidence after a failed downstream write.
 func (f *timingFrames) reset() { f.line = f.line[:0]; f.data = f.data[:0]; f.event = "" }
 
-// timingDataEvent excludes explicit protocol heartbeats from data event timing.
-// A payload type takes precedence over the optional SSE event name. Empty
-// Claude text and thinking deltas remain keepalives in either encoding.
-func timingDataEvent(data, event string) bool {
-	if strings.TrimSpace(data) == "" {
-		return false
-	}
-	kind := gjson.Get(data, "type").String()
-	// Payload type wins over an inconsistent event header, matching protocol
-	// normalization that retains real content inside a mislabeled ping frame.
-	if kind == "" {
-		kind = event
-	}
-	// Claude Code keepalive can be encoded as an empty content delta. It must
-	// not establish response delivery while the actual upstream is still idle.
-	if kind == "content_block_delta" {
-		delta := gjson.Get(data, "delta")
-		if delta.Get("type").String() == "text_delta" && delta.Get("text").String() == "" {
-			return false
-		}
-		if delta.Get("type").String() == "thinking_delta" && delta.Get("thinking").String() == "" {
-			return false
-		}
-	}
-	return kind != "ping" && kind != "heartbeat"
-}
+// timingDataEvent applies the shared protocol event classification for HTTP frames.
+func timingDataEvent(data, event string) bool { return timing.DataEvent(data, event) }
 
-// timingVisible recognizes text, plaintext reasoning and tool content across
-// client wire protocols. Signature, encrypted reasoning and lifecycle metadata
-// are excluded, independently of each platform's business-semantic observation.
-//
-// Messages, Responses, Chat and Google output retain different nesting and
-// delta shapes after conversion. This predicate follows their known content
-// positions rather than searching arbitrary JSON for strings. The caller runs
-// it only on complete successfully written events, and its result changes
-// diagnostic timestamps without changing retry eligibility or settlement.
-func timingVisible(data, event string) bool {
-	v := gjson.Parse(data)
-	kind := v.Get("type").String()
-	// SSE can carry the event type outside JSON. Preserve payload precedence
-	// when both exist, as the protocol adapters do when normalizing named events.
-	if kind == "" {
-		kind = event
-	}
-	switch kind {
-	case "content_block_delta":
-		d := v.Get("delta")
-		return d.Get("text").String() != "" || d.Get("thinking").String() != "" || d.Get("partial_json").String() != ""
-	case "content_block_start":
-		return timingContent(v.Get("content_block"))
-	case "message_start":
-		return timingContent(v.Get("message"))
-	}
-	if strings.HasPrefix(kind, "response.") {
-		if strings.HasSuffix(kind, ".delta") && !strings.Contains(kind, "encrypted") && !strings.Contains(kind, "signature") &&
-			(strings.Contains(kind, "text") || strings.Contains(kind, "reasoning") || strings.HasSuffix(kind, "_arguments.delta") || strings.HasSuffix(kind, "_input.delta")) {
-			return v.Get("delta").String() != ""
-		}
-		for _, key := range []string{"text", "arguments", "input", "item", "part", "response"} {
-			if timingContent(v.Get(key)) {
-				return true
-			}
-		}
-	}
-	for _, choice := range v.Get("choices").Array() {
-		if timingContent(choice.Get("delta")) || timingContent(choice.Get("message")) {
-			return true
-		}
-	}
-	for _, key := range []string{"candidates", "response.candidates"} {
-		for _, candidate := range v.Get(key).Array() {
-			if timingContent(candidate.Get("content")) {
-				return true
-			}
-		}
-	}
-	return false
-}
+// timingVisible applies the shared useful-content classification after successful writes.
+func timingVisible(data, event string) bool { return timing.UsefulOutput(data, event) }
 
-// timingContent inspects only known content-bearing fields and tool identities.
-// It never walks arbitrary metadata, so model names, response IDs and encrypted
-// payloads cannot become visible-output evidence through generic recursion.
-//
-// Arrays are traversed only after a recognized content field selects them.
-// Plaintext text and reasoning, explicit tool identities and argument fragments
-// establish output; absent values stop recursion. Tool starts can therefore
-// qualify before their arguments arrive, while an ordinary response ID or an
-// encrypted reasoning block cannot qualify simply because its string is nonempty.
-func timingContent(v gjson.Result) bool {
-	if !v.Exists() {
-		return false
-	}
-	if v.Type == gjson.String {
-		return v.String() != ""
-	}
-	if v.IsArray() {
-		return slices.ContainsFunc(v.Array(), timingContent)
-	}
-	for _, key := range []string{"text", "thinking", "reasoning_content", "reasoning", "arguments", "partial_json"} {
-		if value := v.Get(key); value.Type == gjson.String && value.String() != "" {
-			return true
-		}
-	}
-	kind := v.Get("type").String()
-	if kind == "tool_use" || kind == "server_tool_use" || kind == "function_call" || kind == "custom_tool_call" {
-		if v.Get("name").String() != "" || v.Get("id").String() != "" {
-			return true
-		}
-	}
-	if v.Get("functionCall.name").String() != "" || v.Get("function.name").String() != "" || v.Get("function.arguments").String() != "" {
-		return true
-	}
-	// Legacy Chat streams deliver a single function_call instead of tool_calls.
-	// Its name and argument fragments carry the same useful content as modern tools.
-	if v.Get("function_call.name").String() != "" || v.Get("function_call.arguments").String() != "" {
-		return true
-	}
-	for _, key := range []string{"content", "parts", "output", "summary", "tool_calls"} {
-		if timingContent(v.Get(key)) {
-			return true
-		}
-	}
-	return false
+// disconnected freezes the observed downstream end before any remaining usage drain.
+// Repeated failures retain the earliest timestamp and never erase an existing error;
+// request completion can still report the upstream and persistence outcomes later.
+func (w *timingWriter) disconnected() {
+	timing.ObserveClientDisconnect(w.ctx, time.Now())
 }

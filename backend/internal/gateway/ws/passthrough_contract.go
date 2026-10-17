@@ -5,6 +5,7 @@ import (
 	"time"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
 // passthrough_contract.go defines provider operations and session inputs for
@@ -51,6 +52,12 @@ type DialResult struct {
 // PassthroughHooks supplies inherited turn callbacks and initial session
 // observation values.
 type PassthroughHooks struct {
+	// ClientDisconnected freezes the active logical request before upstream usage drain.
+	ClientDisconnected func(int, time.Time)
+
+	// BeginPerformance records an exchange after this turn passes request preparation.
+	BeginPerformance func(int, time.Time) *timing.Performance
+
 	// IngressHooks is read through embedding when PassthroughHooks is present.
 	// Callers supplying a hooks wrapper also provide that embedded pointer so
 	// promoted turn callbacks can be accessed safely.

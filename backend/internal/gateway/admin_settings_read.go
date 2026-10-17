@@ -42,7 +42,7 @@ type AdminReadSettings struct {
 	OpenAIAllowClaudeCodeCodexPlugin bool
 	// outbound Codex User-Agent override
 	OpenAICodexUserAgent string
-	OpenAITTFTMode       string // semantic or visible TTFT
+	TTFTMode             string // global upstream TTFT selection
 	// message cache-control rewrite toggle
 	RewriteMessageCacheControl bool
 	// configured user-prompt replacement rules
@@ -74,7 +74,7 @@ func ReadAdminSettings(settings map[string]string, rules AdminSettingsRules) *Ad
 	result.GrokDefaultBaseURLMode = NormalizeGrokDefaultBaseURLMode(settings[SettingKeyGrokDefaultBaseURLMode])
 	result.MinClaudeCodeVersion = settings[SettingKeyMinClaudeCodeVersion]
 	result.MaxClaudeCodeVersion = settings[SettingKeyMaxClaudeCodeVersion]
-	result.OpenAITTFTMode = NormalizeOpenAITTFTMode(settings[SettingKeyOpenAITTFTMode])
+	result.TTFTMode = NormalizeTTFTMode(settings[SettingKeyTTFTMode])
 	if v, ok := settings[SettingKeyEnableFingerprintUnification]; ok && v != "" {
 		result.EnableFingerprintUnification = v == "true"
 	} else {

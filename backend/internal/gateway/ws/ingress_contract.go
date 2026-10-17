@@ -7,6 +7,7 @@ import (
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
@@ -87,18 +88,17 @@ type ForwardResult struct {
 	ResponseHeaders          map[string][]string // completion response header values
 	ResponseTurnState        string              // returned opaque turn state
 	Duration                 time.Duration       // elapsed turn execution duration
-	// FirstTokenMs is nil until the execution path observes its configured
-	// token-event predicate. Pooled RelayTurn uses event labels and does not check
-	// payload content.
-	FirstTokenMs       *int           // optional first-token elapsed milliseconds
-	ClientDisconnect   bool           // downstream client disconnected marker
-	ImageCount         int            // observed generated image count
-	ImageSize          string         // image billing size tier
-	ImageInputSize     string         // input image size label
-	ImageOutputSize    string         // selected output image size
-	ImageOutputSizes   []string       // observed output image sizes
-	ImageSizeSource    string         // image size observation source
-	ImageSizeBreakdown map[string]int // output counts by image size
+	// Timings records upstream content independently of downstream commitment.
+	// Completion clones the observations before a later turn can reuse mutable request state.
+	Timings            *timing.Performance // frozen exchange performance observations
+	ClientDisconnect   bool                // downstream client disconnected marker
+	ImageCount         int                 // observed generated image count
+	ImageSize          string              // image billing size tier
+	ImageInputSize     string              // input image size label
+	ImageOutputSize    string              // selected output image size
+	ImageOutputSizes   []string            // observed output image sizes
+	ImageSizeSource    string              // image size observation source
+	ImageSizeBreakdown map[string]int      // output counts by image size
 	// WSReplayInput and WSReplayInputExists retain normalized ordinary history,
 	// including explicit empty input. WSProviderFailoverReplayInput keeps the
 	// bridge's separate output history used to build a self-contained

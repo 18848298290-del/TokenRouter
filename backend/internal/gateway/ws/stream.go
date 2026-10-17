@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
@@ -25,9 +26,9 @@ import (
 // for ingress recovery. After output begins it keeps terminal handling inside
 // the current stream. A recognized client disconnect stops further writes but
 // continues collecting upstream usage and images until terminal, then marks the
-// lease broken. TTFT uses StreamPort.IsToken's event-label result rather than
-// validating nonempty token content; final results retain upstream model and
-// tier observations independently of client-visible metadata restoration.
+// lease broken. The shared performance observer classifies upstream payloads
+// before client rewriting. Final results retain those arrival observations,
+// upstream model and tier, and successful downstream delivery separately.
 
 // RelayTurn forwards one normalized pooled request and returns its terminal
 // observations or final classified error. The caller owns the lease and
@@ -39,9 +40,9 @@ import (
 // return before output; eligible missing-response recovery also returns before
 // exposing its error event. Later failures finish through the active output
 // path. A recognized downstream disconnect drains usage and image observations
-// until terminal and marks the lease broken. FirstTokenMs is recorded on the
-// first IsToken-selected label, while model and tier are observed before client
-// rewriting.
+// until terminal and marks the lease broken. Performance captures useful upstream
+// content independently of diagnostic event-label counts. Model and tier are
+// observed before client rewriting.
 func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input ClientPayload, turn int, o StreamOptions, hooks *StreamHooks) (*ForwardResult, error) {
 	payload, payloadBytes, originalModel, routingModel := input.PayloadRaw, input.PayloadBytes, input.OriginalModel, input.RoutingModel
 	imageBillingModel, imageSizeTier, imageInputSize := input.ImageBillingModel, input.ImageSizeTier, input.ImageInputSize
@@ -52,6 +53,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 		return nil, errors.New("upstream websocket lease is nil")
 	}
 	turnStart := time.Now()
+	performance := timing.BeginPerformance(ctx, o.ProviderID, turnStart)
 	wroteDownstream := false
 	// Send the normalized request before observing events; a write failure records
 	// the pre-output stage so ingress can consider its bounded connection retry.
@@ -75,7 +77,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 	responseID := ""
 	usage := wire.ForwardUsage{}
 	imageCounter := p.ImageCounter()
-	var firstTokenMs *int
+
 	reqStream := p.Streaming(payload)
 	turnPreviousResponseID := payloadString(payload, "previous_response_id")
 	turnPreviousResponseIDKind := p.ClassifyPrevious(turnPreviousResponseID)
@@ -245,10 +247,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 		// Record the first label selected by the gateway token predicate. That
 		// predicate can accept empty delta or structural output labels, so this
 		// timestamp is not a content-validity check.
-		if firstTokenMs == nil && isTokenEvent {
-			ms := int(time.Since(turnStart).Milliseconds())
-			firstTokenMs = &ms
-		}
+		performance.ObserveAt(string(upstreamMessage), eventType, time.Now())
 		imageCounter.AddSSEData(upstreamMessage)
 		terminalPolicy := TerminalPolicy{
 			TerminalEvent: p.NormalizeTerminal(eventType),
@@ -313,6 +312,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 				// counts before releasing this turn.
 				if p.IsDisconnect(err) {
 					clientDisconnected = true
+					timing.ObserveClientDisconnect(ctx, time.Now())
 					closeStatus, closeReason := p.SummarizeClose(err)
 					p.Log(fmt.Sprintf(
 						"ingress_ws_client_disconnected_drain provider_id=%d turn=%d conn_id=%s close_status=%s close_reason=%s",
@@ -331,6 +331,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 				}
 			} else {
 				wroteDownstream = true
+				performance.Delivered(string(upstreamMessage), time.Now())
 			}
 		}
 		if isTerminalEvent {
@@ -340,13 +341,9 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 			if clientDisconnected {
 				lease.MarkBroken()
 			}
-			firstTokenMsValue := -1
-			if firstTokenMs != nil {
-				firstTokenMsValue = *firstTokenMs
-			}
 			if o.Debug {
 				p.Debug(fmt.Sprintf(
-					"ingress_ws_turn_completed provider_id=%d turn=%d conn_id=%s response_id=%s duration_ms=%d events=%d token_events=%d terminal_events=%d first_event=%s last_event=%s first_token_ms=%d client_disconnected=%v",
+					"ingress_ws_turn_completed provider_id=%d turn=%d conn_id=%s response_id=%s duration_ms=%d events=%d token_events=%d terminal_events=%d first_event=%s last_event=%s client_disconnected=%v",
 					o.ProviderID,
 					turn,
 					p.Truncate(lease.ConnID(), 64),
@@ -357,11 +354,11 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 					terminalEventCount,
 					p.Truncate(firstEventType, 160),
 					p.Truncate(lastEventType, 160),
-					firstTokenMsValue,
 					clientDisconnected,
 				))
 			}
 			imageCount := imageCounter.Count()
+			performance.FinishAt(time.Now())
 			result := &ForwardResult{
 				RequestID:                   responseID,
 				Usage:                       usage,
@@ -377,7 +374,7 @@ func RelayTurn(ctx context.Context, p StreamPort, lease StreamLease, input Clien
 				UpstreamTerminalEvent:       terminalPolicy.TerminalEvent,
 				ResponseHeaders:             lease.Headers(),
 				Duration:                    time.Since(turnStart),
-				FirstTokenMs:                firstTokenMs,
+				Timings:                     performance.Clone(),
 			}
 			if replayInput := replayCollector.Items(); len(replayInput) > 0 {
 				result.WSReplayInput = replayInput

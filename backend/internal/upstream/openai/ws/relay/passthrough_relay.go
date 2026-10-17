@@ -14,6 +14,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/tidwall/gjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
@@ -88,10 +89,9 @@ type RelayResult struct {
 	// TerminalEventType is the latest observed terminal name, including a bare
 	// error whose pending settlement may retain earlier response identity.
 	TerminalEventType string
-	// FirstTokenMs records session elapsed milliseconds at the first qualifying
-	// event yielding a nonnegative converted value; nil is unobserved and pointer
-	// storage is shared.
-	FirstTokenMs *int
+	// Timings retains the latest settled response observation. Its cloned maps
+	// belong to this result, while aggregate session usage is reported separately.
+	Timings *timing.Performance
 	// Duration measures elapsed time from the relay clock start; a custom clock
 	// moving backward can produce a negative session duration.
 	Duration time.Duration
@@ -123,13 +123,13 @@ type RelayTurnResult struct {
 	// permitted to report an empty ID.
 	RequestID         string
 	TerminalEventType string // settled terminal event name
-	// StartedAt, Duration, and FirstTokenMs are captured from the retired response
-	// timing. Missing timing leaves zero start/duration and nil latency; Duration
-	// is nonnegative and FirstTokenMs uses milliseconds with separate callback
-	// storage.
-	StartedAt    time.Time     // captured turn start time
-	Duration     time.Duration // elapsed settled turn duration
-	FirstTokenMs *int          // observed turn token milliseconds
+	// StartedAt, Duration, and Timings are captured from the retired response
+	// timing. Missing timing leaves zero start/duration and no performance snapshot.
+	// Duration describes the accepted turn, while Timings derives the selected
+	// upstream exchange interval and owns separate callback storage.
+	StartedAt time.Time           // captured turn start time
+	Duration  time.Duration       // elapsed settled turn duration
+	Timings   *timing.Performance // exchange performance observations
 }
 
 // RelayExit identifies a relay interruption and its successful downstream write
@@ -150,6 +150,9 @@ type RelayExit struct {
 // workers, and BeforeRelayCancel can overlap upstream observation; callers
 // synchronize shared state used by those callbacks.
 type RelayOptions struct {
+	// BeginPerformance binds a dispatched request to its logical turn and provider attempt.
+	BeginPerformance func(int, time.Time) *timing.Performance
+
 	// WriteTimeout supplies each write's base deadline duration; Relay uses two
 	// minutes when this value is nonpositive.
 	WriteTimeout time.Duration
@@ -186,9 +189,9 @@ type RelayOptions struct {
 	// OnUpstreamEvent receives copied bytes for text frames with a nonblank
 	// extracted event type; callers may retain or modify that copy.
 	OnUpstreamEvent func(eventType string, payload []byte)
-	// OnTurnComplete receives immediately settled terminals before writing or
-	// dropping their frames; a deferred bare error can complete after its original
-	// forwarding decision.
+	// OnTurnComplete receives settled terminals after their delivery observation,
+	// while the paired write hook still holds admission. Dropped frames and deferred
+	// bare errors complete when accounting settles, independently of delivery.
 	OnTurnComplete func(turn RelayTurnResult)
 	// BeforeWriteClient, BeforeClientWrite, and AfterClientWrite run in upstream
 	// frame order. Rejection precedes observation, while the paired write callbacks
@@ -197,9 +200,9 @@ type RelayOptions struct {
 	// BeforeWriteClient may reject a frame before usage or timing observation; its
 	// boolean describes earlier successful downstream frames in this worker.
 	BeforeWriteClient func(msgType coderws.MessageType, payload []byte, wroteDownstream bool) error
-	// BeforeClientWrite follows event observation and any immediately settled
-	// terminal callback. Deferred bare errors can settle after this forwarding
-	// decision; dropped frames skip the hook.
+	// BeforeClientWrite follows event observation and precedes delivery. The
+	// terminal completion callback runs before AfterClientWrite releases admission;
+	// dropped frames skip the paired hooks.
 	BeforeClientWrite func(msgType coderws.MessageType, payload []byte)
 	// AfterClientWrite runs after each attempted downstream write with its error,
 	// even on failure; the gateway uses it to finish terminal admission.
@@ -244,6 +247,9 @@ type RelayTraceEvent struct {
 // reader. Relay joins that reader before final settlement; pendingTurnStart
 // separately transfers one client-side start through an atomic pointer.
 type relayState struct {
+	beginPerformance func(int, time.Time) *timing.Performance // accepted-turn observation factory
+	dispatchedTurns  int                                      // client-worker dispatch sequence
+
 	// usage and turnUsage keep session totals separate from the current snapshot.
 	// Terminal finalization adds turnUsage into usage and clears it before later
 	// progress observations can populate another turn.
@@ -256,7 +262,10 @@ type relayState struct {
 	requestModel string
 	// pendingTurnStart transfers one copied start from the client worker to the
 	// upstream observer; later stores replace an unconsumed value.
-	pendingTurnStart atomic.Pointer[time.Time]
+	pendingTurnStart atomic.Pointer[relayPerformanceStart]
+	consumedStart    *relayPerformanceStart // observer-owned accepted start evidence
+	modeReader       func() string          // runtime mode at turn dispatch
+	clock            func() time.Time       // relay monotonic observation clock
 	// lastResponseID changes on a nonblank settled terminal ID; an ID-less error
 	// can retain the previously completed response identity.
 	lastResponseID string
@@ -269,9 +278,7 @@ type relayState struct {
 	// terminalEventType changes on recognized terminal observation, before a bare
 	// error's final usage or timing settlement can occur.
 	terminalEventType string
-	// firstTokenMs is set once for a qualifying event yielding nonnegative
-	// converted session milliseconds and becomes the aggregate latency pointer.
-	firstTokenMs *int
+	performance       *timing.Performance
 	// turnTimingByID and activeTurn share timing pointers: new timing creation
 	// installs both, existing lookups leave activeTurn unchanged, and identified
 	// retirement clears activeTurn only when it references that same record.
@@ -312,23 +319,21 @@ type observedUpstreamEvent struct {
 	// usage holds parsed terminal counters before settlement and the selected
 	// finalized snapshot afterward; nonterminal parsing returns an empty value.
 	usage Usage
-	// startedAt, duration, and firstToken are populated from a successfully retired
-	// timing record. duration is clamped at zero, firstToken is copied, and missing
-	// timing leaves their zero or nil values.
-	startedAt  time.Time     // retired turn start time
-	duration   time.Duration // nonnegative turn elapsed duration
-	firstToken *int          // copied turn token milliseconds
+	// startedAt, duration, and performance come from the retired turn record.
+	// duration is clamped at zero; performance remains live until terminal delivery
+	// is observed, then completion receives a clone. Missing records leave zero or nil.
+	startedAt   time.Time           // retired turn start time
+	duration    time.Duration       // nonnegative turn elapsed duration
+	performance *timing.Performance // retired exchange performance observer
 }
 
-// relayTurnTiming retains start, token, model, and terminal tier evidence for
+// relayTurnTiming retains start, performance, model, and terminal tier evidence for
 // one response ID.
 type relayTurnTiming struct {
 	// startAt records a consumed client start, or the observation time when the
 	// pending start slot is empty.
-	startAt time.Time
-	// firstTokenMs records nonnegative elapsed milliseconds for a qualifying event
-	// name; nil marks a turn with no recorded token timing.
-	firstTokenMs *int
+	startAt     time.Time
+	performance *timing.Performance
 	// terminalResponseServiceTier retains a nonblank terminal tier; empty or
 	// nonterminal observations leave this record's retained tier unchanged.
 	terminalResponseServiceTier string
@@ -336,6 +341,17 @@ type relayTurnTiming struct {
 	// recognized Responses terminal declarations over the first usable nonterminal
 	// declaration.
 	modelObserver protocol.ResponseModelObserver
+}
+
+// relayPerformanceStart publishes accepted-turn identity and dispatch policy together.
+// The client worker writes one immutable value before forwarding response.create;
+// the upstream observer consumes it when binding the response identifier.
+type relayPerformanceStart struct {
+	performance *timing.Performance // dispatched turn observations
+
+	at       time.Time // accepted turn start
+	upstream time.Time // generation dispatch start
+	mode     string    // captured latency mode
 }
 
 // recordUsageParseFailure increments the shared diagnostic count for rejected
@@ -408,7 +424,7 @@ func Relay(
 		firstMessageType = coderws.MessageText
 	}
 	startAt := nowFn()
-	state := &relayState{requestModel: result.RequestModel}
+	state := &relayState{requestModel: result.RequestModel, clock: nowFn, beginPerformance: options.BeginPerformance, modeReader: func() string { return timing.ModeFromContext(ctx) }}
 	if isClientResponseCreateFrame(firstMessageType, firstClientMessage) {
 		firstTurnStartedAt := options.FirstTurnStartedAt
 		if firstTurnStartedAt.IsZero() {
@@ -773,8 +789,8 @@ func runClientToUpstream(
 // forwards permitted frames in read order. It owns relayState until Relay joins
 // it, and requires read, write, clock, activity, and exit-channel dependencies.
 // BeforeWriteClient can reject a frame before any usage or identity
-// observation; immediately settled terminals reach OnTurnComplete before their
-// write or drop decision.
+// observation. Settled terminals reach OnTurnComplete after delivery observation
+// and before AfterClientWrite releases the gateway's terminal admission lock.
 //
 // During client-disconnect drain, observation continues while writes are
 // dropped, and a settled terminal stops the worker. A bare error remains
@@ -877,14 +893,14 @@ func runUpstreamToClient(
 			// representation even when their bytes resemble JSON, so response identity and
 			// usage remain untouched.
 		}
-		// Immediately settled terminals give the gateway a request snapshot before
-		// delivery filters and paired hooks change admission; a pending bare error
-		// can reach its completion callback after this frame's forwarding decision.
-		emitTurnComplete(onTurnComplete, state, observedEvent)
 		// Keep drain accounting and terminal callbacks even when client delivery is
 		// suppressed; a settled terminal ends draining without waiting for another
 		// upstream read.
 		if dropDownstreamWrites != nil && dropDownstreamWrites.Load() {
+			if observedEvent.performance != nil {
+				observedEvent.performance.Disconnected(nowFn())
+			}
+			emitTurnComplete(onTurnComplete, state, observedEvent)
 			if droppedFrames != nil {
 				droppedFrames.Add(1)
 			}
@@ -915,9 +931,26 @@ func runUpstreamToClient(
 			beforeClientWrite(msgType, payload)
 		}
 		writeErr := writeClient(msgType, payload)
-		if afterClientWrite != nil {
-			afterClientWrite(msgType, payload, writeErr)
-		}
+		// Publish completion while terminal admission remains locked. The next turn
+		// cannot overtake its predecessor, and a panicking callback still releases the paired hook.
+		func() {
+			if afterClientWrite != nil {
+				defer afterClientWrite(msgType, payload, writeErr)
+			}
+			delivery := observedEvent.performance
+			if delivery == nil && state.activeTurn != nil {
+				delivery = state.activeTurn.performance
+			}
+			if writeErr == nil {
+				delivery.Delivered(string(payload), nowFn())
+			} else {
+				delivery.Disconnected(nowFn())
+			}
+			if observedEvent.terminal {
+				state.performance = observedEvent.performance.Clone()
+			}
+			emitTurnComplete(onTurnComplete, state, observedEvent)
+		}()
 		if writeErr != nil {
 			emitRelayTrace(onTrace, RelayTraceEvent{
 				Stage:           "write_client_failed",
@@ -1136,24 +1169,6 @@ func observeUpstreamMessage(
 	}
 	now := nowFn()
 
-	// An initial token event can lack a response ID; the session timing branch also
-	// fills the active turn while its first session latency remains unset.
-	if state.firstTokenMs == nil && isTokenEvent(eventType) {
-		// Milliseconds truncates submillisecond offsets before the nonnegative timing
-		// check.
-		ms := int(now.Sub(startAt).Milliseconds())
-		if ms >= 0 {
-			state.firstTokenMs = &ms
-		}
-		if state.activeTurn != nil && state.activeTurn.firstTokenMs == nil {
-			// Truncate elapsed offsets to milliseconds before recording active-turn
-			// latency.
-			tms := int(now.Sub(state.activeTurn.startAt).Milliseconds())
-			if tms >= 0 {
-				state.activeTurn.firstTokenMs = &tms
-			}
-		}
-	}
 	parsedUsage := parseUsageAndAccumulate(state, message, eventType, onUsageParseFailure)
 	observed := observedUpstreamEvent{
 		eventType:  eventType,
@@ -1166,20 +1181,16 @@ func observeUpstreamMessage(
 	// association.
 	if responseID != "" {
 		turnTiming = openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
-		if turnTiming != nil && turnTiming.firstTokenMs == nil && isTokenEvent(eventType) {
-			// Truncate elapsed offsets to milliseconds before recording response-specific
-			// latency.
-			ms := int(now.Sub(turnTiming.startAt).Milliseconds())
-			if ms >= 0 {
-				turnTiming.firstTokenMs = &ms
-			}
-		}
 	}
 	if turnTiming == nil {
 		turnTiming = state.activeTurn
+		if turnTiming == nil {
+			turnTiming = openAIWSRelayGetOrInitTurnTiming(state, "", now)
+		}
 	}
 	if turnTiming != nil {
 		turnTiming.modelObserver.ObserveOpenAI(message, eventType)
+		turnTiming.performance.ObserveAt(string(message), eventType, now)
 	}
 	if isTerminalEvent(eventType) {
 		observeRelayTurnResponseServiceTier(turnTiming, firstRelayResponseServiceTier(message))
@@ -1257,7 +1268,7 @@ func finalizePendingBareError(state *relayState, now time.Time) observedUpstream
 // timing metadata with the terminal response ID. Nil state or a blank event
 // type returns an empty observation. Identified terminals update the retained
 // response ID and retire its timing record, capturing that record's model,
-// tier, start, duration, and copied first-token value.
+// tier, start, duration, and performance observer for final delivery capture.
 //
 // A terminal with no response ID consumes the pending start and discards the
 // active timing while retaining previously stored aggregate identity metadata.
@@ -1285,7 +1296,11 @@ func finalizeObservedRelayTerminal(state *relayState, observed observedUpstreamE
 			// Clamp backward-clock turn duration to zero elapsed time.
 			duration := max(now.Sub(turnTiming.startAt), 0)
 			observed.duration = duration
-			observed.firstToken = openAIWSRelayCloneIntPtr(turnTiming.firstTokenMs)
+			if turnTiming.performance != nil {
+				turnTiming.performance.FinishAt(now)
+				observed.performance = turnTiming.performance
+				state.performance = observed.performance.Clone()
+			}
 		}
 	} else {
 		// Without a terminal ID, discard pending timing association and the active
@@ -1304,8 +1319,8 @@ func finalizeObservedRelayTerminal(state *relayState, observed observedUpstreamE
 //
 // The request model comes from the initial relay state, with an empty model
 // when state is nil; response model and tier come from the settled observation.
-// First-token storage is copied for the callback. Relay invokes callbacks for
-// immediately settled terminals before their write or drop decision. Deferred
+// Performance storage is copied for the callback after terminal delivery
+// observation, before the paired hook releases turn admission. Deferred
 // errors can complete before a later event, at read termination, or after
 // reader join, when the original error frame may already have been written,
 // dropped, or failed during a write attempt.
@@ -1337,7 +1352,7 @@ func emitTurnComplete(
 		TerminalEventType:     observed.eventType,
 		StartedAt:             observed.startedAt,
 		Duration:              observed.duration,
-		FirstTokenMs:          openAIWSRelayCloneIntPtr(observed.firstToken),
+		Timings:               observed.performance.Clone(),
 	})
 }
 
@@ -1368,21 +1383,39 @@ func openAIWSRelayGetOrInitTurnTiming(state *relayState, responseID string, now 
 		// Eight entries are initial capacity; observed response IDs can grow this map.
 		state.turnTimingByID = make(map[string]*relayTurnTiming, 8)
 	}
-	timing, ok := state.turnTimingByID[responseID]
+	if responseID != "" && state.turnTimingByID[responseID] == nil && state.turnTimingByID[""] != nil {
+		// An ID-less delta belongs to the pending turn. Bind its existing observations
+		// when the first response identifier arrives, rather than discarding that content.
+		state.turnTimingByID[responseID] = state.turnTimingByID[""]
+		delete(state.turnTimingByID, "")
+	}
+	entry, ok := state.turnTimingByID[responseID]
 	// Rebuild a missing or zero-start record before making it active; this can
 	// replace earlier incomplete record metadata with the newly selected client
 	// start.
-	if !ok || timing == nil || timing.startAt.IsZero() {
+	if !ok || entry == nil || entry.startAt.IsZero() {
 		startAt := state.consumePendingTurnStartedAt()
 		if startAt.IsZero() {
 			startAt = now
 		}
-		timing = &relayTurnTiming{startAt: startAt}
-		state.turnTimingByID[responseID] = timing
-		state.activeTurn = timing
-		return timing
+		entry = &relayTurnTiming{startAt: startAt}
+		mode, upstreamStart := "first_output", int64(0)
+		if state.consumedStart != nil {
+			mode = state.consumedStart.mode
+			upstreamStart = max(state.consumedStart.upstream.Sub(startAt).Milliseconds(), 0)
+		}
+		entry.performance = timing.NewPerformanceAt(mode, startAt, startAt.Add(time.Duration(upstreamStart)*time.Millisecond))
+		if state.consumedStart == nil {
+			delete(entry.performance.Values, "upstream_started_ms")
+		}
+		if state.consumedStart != nil && state.consumedStart.performance != nil {
+			entry.performance = state.consumedStart.performance
+		}
+		state.turnTimingByID[responseID] = entry
+		state.activeTurn = entry
+		return entry
 	}
-	return timing
+	return entry
 }
 
 // setPendingTurnStartedAt publishes a copied nonzero start time for the next
@@ -1396,8 +1429,21 @@ func (s *relayState) setPendingTurnStartedAt(startedAt time.Time) {
 	// Copy the supplied time before atomic publication, leaving readers stable
 	// value storage while later client requests can replace the single pending
 	// pointer.
-	startedAtCopy := startedAt
-	s.pendingTurnStart.Store(&startedAtCopy)
+	value := &relayPerformanceStart{at: startedAt, upstream: startedAt, mode: "first_output"}
+	if s.clock != nil {
+		value.upstream = s.clock()
+	}
+	if s.modeReader != nil {
+		value.mode = s.modeReader()
+	}
+	s.dispatchedTurns++
+	if s.beginPerformance != nil {
+		value.performance = s.beginPerformance(s.dispatchedTurns, value.upstream)
+	}
+	if value.performance == nil {
+		value.performance = timing.NewPerformanceAt(value.mode, value.at, value.upstream)
+	}
+	s.pendingTurnStart.Store(value)
 }
 
 // consumePendingTurnStartedAt atomically takes and clears the pending client
@@ -1413,14 +1459,14 @@ func (s *relayState) consumePendingTurnStartedAt() time.Time {
 	if startedAt == nil {
 		return time.Time{}
 	}
-	return *startedAt
+	s.consumedStart = startedAt
+	return startedAt.at
 }
 
 // openAIWSRelayDeleteTurnTiming removes responseID and returns its timing value
 // when a nonnil record exists. Missing state, map, or record returns false. The
 // upstream observer serializes this mutation, and the returned model observer
-// and optional first-token pointer retain the record's values for terminal
-// settlement.
+// and performance pointer retain the record's observations for terminal settlement.
 //
 // The active pointer is cleared only when it identifies the removed record.
 // Retiring an earlier interleaved response therefore leaves another active
@@ -1482,17 +1528,6 @@ func openAIWSRelayActiveTurnID(state *relayState) string {
 		}
 	}
 	return ""
-}
-
-// openAIWSRelayCloneIntPtr copies an observed integer into separate pointer
-// storage. Nil input returns nil, preserving an unobserved latency while
-// allowing turn callback consumers to retain their own observed value.
-func openAIWSRelayCloneIntPtr(v *int) *int {
-	if v == nil {
-		return nil
-	}
-	cloned := *v
-	return &cloned
 }
 
 // parseUsageAndAccumulate parses eligible usage snapshots into the held turn
@@ -1739,8 +1774,8 @@ func openAICacheCreationTokensFromUsage(value gjson.Result) int {
 
 // enrichResult fills aggregate duration and the state values retained after
 // settlement. Nil results are ignored; nil state still updates duration.
-// FirstTokenMs shares state pointer storage, which consumers treat as immutable
-// after Relay returns.
+// Timings receives a cloned performance snapshot, separating its maps from the
+// relay state before the caller retains the aggregate result.
 func enrichResult(result *RelayResult, state *relayState, duration time.Duration) {
 	if result == nil {
 		return
@@ -1755,10 +1790,9 @@ func enrichResult(result *RelayResult, state *relayState, duration time.Duration
 	result.Usage = state.usage
 	result.RequestID = state.lastResponseID
 	result.TerminalEventType = state.terminalEventType
-	// Share session latency storage here; turn callbacks use separate pointer
-	// copies, while aggregate result consumers retain this observed pointer as
-	// immutable.
-	result.FirstTokenMs = state.firstTokenMs
+	// Copy the latest settled exchange so aggregate consumers can retain its maps
+	// independently of relay state and previously delivered turn callbacks.
+	result.Timings = state.performance.Clone()
 }
 
 // isDisconnectError recognizes EOF, closed transports, cancellation, selected

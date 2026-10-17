@@ -858,7 +858,7 @@ func TestMessagesConversionTiming(t *testing.T) {
 				SetOpsRequestContext(c, "glm-5.3-flash", true)
 				MarkOpsProviderSlotAcquired(c)
 				resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(payload))}
-				timing.ObserveResponse(c.Request.Context(), resp)
+				timing.ObserveResponse(timing.BeginHTTPTrace(c.Request.Context()), resp)
 				output := NewMessageForwardBoundary(c, nil).ConversionOutput(responses, &messageforward.AttemptState{})
 				if responses {
 					result, err := forward.ResponsesStreaming(conversionResponseFixture(resp), output, "glm-5.3-flash", "glm-5.3-flash", nil, time.Now(), bridge.ResponsesClientToolMapping{})
@@ -904,7 +904,7 @@ func TestMessagesConversionTimingReadFailure(t *testing.T) {
 				SetOpsRequestContext(c, "model", true)
 				MarkOpsProviderSlotAcquired(c)
 				resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(conversionReadFailure{})}
-				timing.ObserveResponse(c.Request.Context(), resp)
+				timing.ObserveResponse(timing.BeginHTTPTrace(c.Request.Context()), resp)
 				output := NewMessageForwardBoundary(c, nil).ConversionOutput(responses, &messageforward.AttemptState{})
 				var err error
 				if responses {

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import RequestTimingDetails from '@/components/requests/RequestTimingDetails.vue'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import PlatformBadge from '@/components/common/PlatformBadge.vue'
 import RequestIdLink from '@/components/common/RequestIdLink.vue'
@@ -64,7 +65,7 @@ const errorText = computed(() => {
 // timings splits the record into inline durations and waterfall bars scaled to
 // the longest of the request duration and any recorded offset.
 const timings = computed(() => {
-  const breakdown = timingBreakdown(props.item.timings ?? {})
+  const breakdown = timingBreakdown(props.item.failure_timings ?? {})
   const events = breakdown.events.filter((row) => row.value != null).sort((a, b) => (a.value ?? 0) - (b.value ?? 0))
   const total = Math.max(props.item.duration_ms ?? 0, ...events.map((row) => row.value ?? 0), 1)
   return {
@@ -120,7 +121,7 @@ const aliasRows = computed(() => props.item.aliases ?? [])
     <!-- 概要：开始时间、耗时、状态码和模型 -->
     <dl class="grid grid-cols-2 gap-4 px-6 py-4 md:grid-cols-4">
       <div>
-        <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('requests.startedAt') }}</dt>
+        <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t(item.legacy ? 'requests.usageCreatedAt' : 'requests.startedAt') }}</dt>
         <dd class="mt-1 text-sm font-medium tabular-nums text-gray-900 dark:text-dark-50">{{ formatDateTime(item.started_at) }}</dd>
       </div>
       <div>
@@ -158,7 +159,7 @@ const aliasRows = computed(() => props.item.aliases ?? [])
 
       <!-- 耗时：阶段时长一行，事件时刻画成瀑布条 -->
       <section v-if="timings.rows.length || timings.durations.length" class="px-6 py-5">
-        <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-dark-50">{{ t('requests.timings') }}</h3>
+        <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-dark-50">{{ t('requests.failureTimings') }}</h3>
         <!-- 四段时长写成等式，合计就是下面瀑布里取得槽位的时刻。 -->
         <p v-if="timings.durations.length" class="mb-3 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-xs">
           <span class="font-medium text-gray-900 dark:text-dark-50">{{ timings.admitted === false ? t('requests.timing.untilEnd') : t('requests.timingNames.provider_slot_acquired_ms') }}</span>
@@ -213,8 +214,17 @@ const aliasRows = computed(() => props.item.aliases ?? [])
             <span v-if="attempt.provider_id" class="text-xs text-gray-500 dark:text-dark-300">{{ t('requests.provider') }} #{{ attempt.provider_id }}</span>
             <RequestIdLink v-if="attempt.upstream_request_id" :value="attempt.upstream_request_id" :link="false" />
             <span class="ml-auto font-mono text-xs tabular-nums text-gray-600 dark:text-dark-200">{{ formatDuration(attempt.duration_ms) }}</span>
+            <span v-if="attempt.reason" class="w-full break-words text-xs text-gray-500 dark:text-dark-300">{{ attempt.stage }} {{ attempt.reason }}</span>
+            <RequestTimingDetails v-if="attempt.failure_timings" class="w-full" :timing="attempt.failure_timings" />
           </li>
         </ul>
+      </section>
+
+      <section v-if="item.usage_write_error || (item.usage_write_state && item.usage_write_state !== 'persisted' && (item.usage_write_state !== 'pending' || !usageRows.length))" class="px-6 py-5">
+        <SettingsNotice tone="warning">
+          {{ t(`requests.usageWriteStates.${item.usage_write_state}`) }}
+          <span v-if="item.usage_write_error" class="ml-1">{{ item.usage_write_error }}</span>
+        </SettingsNotice>
       </section>
 
       <!-- 用量与费用 -->
@@ -230,6 +240,11 @@ const aliasRows = computed(() => props.item.aliases ?? [])
               {{ t('requests.tokens', { input: formatTokens(usage.input_tokens), output: formatTokens(usage.output_tokens) }) }}
             </span>
             <span class="ml-auto text-sm font-medium tabular-nums text-emerald-600 dark:text-emerald-400">{{ formatCost(usage.actual_cost) }}</span>
+            <span v-if="usage.duration_ms != null" class="text-xs tabular-nums">{{ t('requests.upstreamDuration') }} {{ formatDuration(usage.duration_ms) }}</span>
+            <span v-if="usage.timings?.values.attempt_number" class="font-mono text-xs">#{{ usage.timings.values.attempt_number }}</span>
+            <span v-if="usage.ttft_ms != null" class="text-xs tabular-nums">{{ usage.timings?.ttft_mode === 'first_event' ? t('usage.latencyFirstEvent') : t('usage.latencyFirstToken') }} {{ formatDuration(usage.ttft_ms) }}</span>
+            <span v-if="usage.tps != null" class="text-xs tabular-nums">TPS {{ usage.tps.toFixed(1) }}</span>
+            <RequestTimingDetails v-if="usage.timings" class="w-full" :timing="{ ...usage.timings.values, upstream_stream: usage.timings.upstream_stream }" />
           </li>
         </ul>
       </section>

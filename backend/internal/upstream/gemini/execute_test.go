@@ -133,8 +133,8 @@ func TestExecuteGeminiNonStreamObservedZero(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, result.HasUsage)
 			require.True(t, result.Served)
-			require.NotNil(t, result.FirstSemanticOutput)
-			require.Nil(t, result.FirstTokenMs)
+			require.True(t, result.Served)
+			require.Nil(t, result.Timings.TTFTMs())
 			require.Zero(t, result.Usage.InputTokens)
 			require.Equal(t, "gemini-request", result.RequestID)
 			require.Equal(t, "gemini-runtime", result.UpstreamResponseModel)
@@ -216,8 +216,8 @@ func TestExecuteGeminiStreamingProgressAndPartial(t *testing.T) {
 				}
 				require.True(t, result.HasUsage)
 				require.True(t, result.Served)
-				require.NotNil(t, result.FirstTokenMs)
-				require.NotNil(t, result.FirstSemanticOutput)
+				require.Nil(t, result.Timings.TTFTMs())
+				require.True(t, result.Served)
 				require.Contains(t, sink.body.String(), "visible")
 				require.EqualValues(t, 1, closes.Load())
 				semantic := false

@@ -24,6 +24,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -747,6 +748,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	}
 
 	turnStart := time.Now()
+	performance := timing.BeginPerformance(ctx, provider.Record.ID, turnStart)
 	rejectedFieldRetryState := upstreamopenai.NewOpenAIResponsesRejectedFieldRetryState(body)
 	var resp *http.Response
 	for {
@@ -849,7 +851,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	responseID := ""
 	usage := openai.ForwardUsage{}
 	imageCounter := openai.NewOpenAIImageOutputCounter()
-	var firstTokenMs *int
+
 	reqStream := openai.WSPayloadBoolFromRaw(body, "stream", true)
 	eventCount := 0
 	tokenEventCount := 0
@@ -870,6 +872,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	bareErrorMessage := ""
 	failureProviderSideEffectsApplied := false
 	resultWithUsage := func() *forward.OpenAIResult {
+		performance.FinishAt(time.Now())
 		imageCount := imageCounter.Count()
 		result := &forward.OpenAIResult{
 			RequestID:                   responseID,
@@ -888,7 +891,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			UpstreamTerminalEvent:       upstreamTerminalEvent,
 			ResponseHeaders:             upstream.CloneHeader(resp.Header),
 			Duration:                    time.Since(turnStart),
-			FirstTokenMs:                firstTokenMs,
+			Timings:                     performance.Clone(),
 		}
 		if replayInput := replayCollector.Items(); len(replayInput) > 0 {
 			result.SetWSReplayInput(replayInput, true)
@@ -943,6 +946,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			if err := writeClientMessage(message); err != nil {
 				if gatewayprovider.IsOpenAIWSClientDisconnectError(err) {
 					clientDisconnected = true
+					timing.ObserveClientDisconnect(ctx, time.Now())
 					return nil
 				}
 				return fmt.Errorf("write synthesized websocket response.failed: %w", err)
@@ -986,6 +990,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		eventType, eventResponseID, _ := openai.ParseWSEventEnvelope(upstreamMessage)
 		responseModelObserver.ObserveOpenAI(upstreamMessage, eventType)
+		performance.ObserveAt(string(upstreamMessage), eventType, time.Now())
 		if responseID == "" && eventResponseID != "" {
 			responseID = eventResponseID
 		}
@@ -996,14 +1001,10 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			}
 			lastEventType = eventType
 		}
-		// The bridge uses the gateway token-event label predicate, which inspects no
-		// content bytes; a recognized empty delta can still establish this TTFT value.
+		// Event-label counts describe the upstream frame mix for diagnostics. The
+		// performance observer independently checks payload content when recording arrival milestones.
 		if openai.IsWSTokenEvent(eventType) {
 			tokenEventCount++
-			if firstTokenMs == nil {
-				ms := int(time.Since(turnStart).Milliseconds())
-				firstTokenMs = &ms
-			}
 		}
 		if openai.WSMessageShouldParseUsage(eventType, upstreamMessage) {
 			openai.ParseWSResponseUsageFromCompletedEvent(upstreamMessage, &usage)
@@ -1211,6 +1212,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 							// Stop further writes after recognized disconnect, but keep scanning the
 							// response so final usage and output replay can settle this admitted turn.
 							clientDisconnected = true
+							timing.ObserveClientDisconnect(ctx, time.Now())
 							closeStatus, closeReason := gatewayprovider.SummarizeOpenAIWSReadCloseError(err)
 							gatewayprovider.LogOpenAIWSModeInfo(
 								"ingress_ws_http_bridge_client_disconnected_drain provider_id=%d turn=%d close_status=%s close_reason=%s",
@@ -1240,18 +1242,14 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 		if openai.IsWSTerminalEvent(eventType) && !bareErrorPending {
 			upstreamTerminalEvent = terminalPolicy.TerminalEvent
 			terminalEventCount++
-			firstTokenMsValue := -1
-			if firstTokenMs != nil {
-				firstTokenMsValue = *firstTokenMs
-			}
 			gatewayprovider.LogOpenAIWSModeInfo(
-				"ingress_ws_http_bridge_turn_completed provider_id=%d turn=%d response_id=%s payload_bytes=%d duration_ms=%d events=%d token_events=%d terminal_events=%d first_event=%s last_event=%s first_token_ms=%d client_disconnected=%v",
+				"ingress_ws_http_bridge_turn_completed provider_id=%d turn=%d response_id=%s payload_bytes=%d duration_ms=%d events=%d token_events=%d terminal_events=%d first_event=%s last_event=%s client_disconnected=%v",
 				provider.Record.ID,
 				turn, gatewayprovider.TruncateOpenAIWSLogValue(responseID, gatewayprovider.OpenAIWSIDValueMaxLen), payloadBytes,
 				time.Since(turnStart).Milliseconds(),
 				eventCount,
 				tokenEventCount,
-				terminalEventCount, gatewayprovider.TruncateOpenAIWSLogValue(firstEventType, gatewayprovider.OpenAIWSLogValueMaxLen), gatewayprovider.TruncateOpenAIWSLogValue(lastEventType, gatewayprovider.OpenAIWSLogValueMaxLen), firstTokenMsValue,
+				terminalEventCount, gatewayprovider.TruncateOpenAIWSLogValue(firstEventType, gatewayprovider.OpenAIWSLogValueMaxLen), gatewayprovider.TruncateOpenAIWSLogValue(lastEventType, gatewayprovider.OpenAIWSLogValueMaxLen),
 				clientDisconnected,
 			)
 			return resultWithUsage(), nil

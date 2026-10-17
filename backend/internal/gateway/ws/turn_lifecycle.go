@@ -102,3 +102,20 @@ func (l *TurnLifecycle) FinishTerminalWrite(succeeded bool, onSucceeded func()) 
 	}
 	l.mu.Unlock()
 }
+
+// ObserveActive serializes a disconnect observation with terminal delivery.
+// The callback runs only while a request remains in flight and must not reenter
+// this lifecycle. Waiting for an existing terminal-write critical section lets a
+// successful completion retire before a simultaneous client EOF is classified.
+// A request that is still generating remains observable immediately, so its
+// downstream end can be retained before the upstream usage drain finishes.
+func (l *TurnLifecycle) ObserveActive(observe func()) {
+	if l == nil || observe == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.inFlight {
+		observe()
+	}
+}

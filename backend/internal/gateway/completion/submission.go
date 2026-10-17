@@ -3,6 +3,9 @@ package completion
 import (
 	"context"
 	"time"
+
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
 // submission.go submits completion tasks and applies caller-selected inline
@@ -54,13 +57,45 @@ func SubmitTask(pool *UsageRecordWorkerPool, source context.Context, task UsageR
 	if task == nil {
 		return
 	}
-	task = WrapTaskContext(source, task)
+	original := task
+	observeUsageWrite(source, "pending", "", nil)
+	task = WrapTaskContext(source, func(ctx context.Context) {
+		defer func() {
+			if value := recover(); value != nil {
+				p := timing.PerformanceFromContext(ctx)
+				// A later task panic cannot invalidate a database acknowledgement.
+				// Preserve a known write result and attach the task failure as diagnostic context.
+				telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
+					if record.UsageWriteState == "pending" || record.UsageWriteState == "" {
+						record.UsageWriteState = "unknown"
+						record.FailureTimings = p.FailureTimings()
+					}
+					record.UsageWriteError = "completion task panicked"
+					record.UsageWriteUpdatedAt = time.Now().UTC()
+				})
+				panic(value)
+			}
+			p := timing.PerformanceFromContext(ctx)
+			telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
+				if record.UsageWriteState == "pending" {
+					record.UsageWriteState = "skipped"
+					record.UsageWriteError = "completion ended without a usage write"
+					record.UsageWriteUpdatedAt = time.Now().UTC()
+					record.FailureTimings = p.FailureTimings()
+				}
+			})
+		}()
+		original(ctx)
+	})
 	if pool != nil {
 		mode := pool.Submit(task)
 		// Distinguish shutdown from configured congestion loss: ordinary drop/sample
 		// rejections stay rejected unless mandatory completion requires an inline retry.
 		fallback := mandatory && mode.Dropped() || options.FallbackWhenStopped && mode == UsageRecordSubmitModeDroppedStopped
 		if !fallback {
+			if mode.Dropped() {
+				observeUsageWrite(source, "not_persisted", "completion queue rejected task: "+mode.String(), nil)
+			}
 			return
 		}
 		if options.Observe != nil {

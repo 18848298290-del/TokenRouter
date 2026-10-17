@@ -307,7 +307,7 @@ type UpdateSettingsRequest struct {
 
 	BackendModeEnabled bool `json:"backend_mode_enabled"` // administrator panel restriction switch
 
-	OpenAITTFTMode                         *string `json:"openai_ttft_mode"`                            // Responses first-token observation mode
+	TTFTMode                               *string `json:"ttft_mode"`                                   // global upstream latency selection
 	EnableFingerprintUnification           *bool   `json:"enable_fingerprint_unification"`              // OAuth fingerprint header normalization switch
 	EnableMetadataPassthrough              *bool   `json:"enable_metadata_passthrough"`                 // client metadata forwarding switch
 	EnableCCHSigning                       *bool   `json:"enable_cch_signing"`                          // deprecated CCH signing setting

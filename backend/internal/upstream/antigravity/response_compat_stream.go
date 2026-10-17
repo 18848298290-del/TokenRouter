@@ -26,8 +26,8 @@ import (
 // content or a completion observation qualifies as meaningful, so an empty
 // upstream can select failover before client headers and output are written.
 //
-// The session merges usage before staging output and records first timing when
-// its pending events are released. Stream termination, timeout and read
+// The session merges usage before staging output and releases pending events
+// when meaningful content arrives. Stream termination, timeout and read
 // failure select different finalization paths, including usage collection
 // after client disconnect. Headers are prepared by the first actual writer
 // call, and keepalive ticks emit only after meaningful data. Scanner stop
@@ -112,11 +112,6 @@ type antigravityCompatStreamSession struct {
 	// first qualifying observation releases the entire sequence in original
 	// order.
 	pendingEvents []protocolanthropic.AnthropicStreamEvent
-	// firstTokenMs records elapsed milliseconds when pending output first
-	// qualifies as meaningful; nil remains until that selection occurs, even if
-	// prelude usage exists.
-	firstTokenMs *int
-	startTime    time.Time // supplied first-output timing origin
 	// meaningfulData stays true after a qualifying content/completion observation
 	// and controls prelude release, keepalive eligibility, and empty-stream
 	// recovery.
@@ -300,7 +295,6 @@ func NewAntigravityCompatStreamSession(
 		adapter:   adapter,
 		writer:    writer,
 		usage:     &upstream.TokenUsage{},
-		startTime: startTime,
 	}
 }
 
@@ -357,7 +351,6 @@ func (s *antigravityCompatStreamSession) collectResult(clientDisconnect bool) *S
 func (s *antigravityCompatStreamSession) result(clientDisconnect bool) *StreamResult {
 	return &StreamResult{
 		Usage:            s.usage,
-		FirstTokenMs:     s.firstTokenMs,
 		ClientDisconnect: clientDisconnect,
 	}
 }
@@ -439,8 +432,7 @@ func (s *antigravityCompatStreamSession) emitOrBuffer(event protocolanthropic.An
 	}
 
 	s.meaningfulData = true
-	ms := int(time.Since(s.startTime).Milliseconds())
-	s.firstTokenMs = &ms
+
 	for i := range s.pendingEvents {
 		s.adapter.Emit(&s.pendingEvents[i], s.writer)
 	}

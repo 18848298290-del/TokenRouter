@@ -66,7 +66,7 @@ func TestTextRequestTimingWireMatrix(t *testing.T) {
 				SetOpsRequestContext(c, "model", true)
 				MarkOpsProviderSlotAcquired(c)
 				response := &http.Response{Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(": ping\n\nevent: ping\ndata: {\"type\":\"ping\"}\n\ndata: " + payload + "\n\n"))}
-				timing.ObserveResponse(c.Request.Context(), response)
+				timing.ObserveResponse(timing.BeginHTTPTrace(c.Request.Context()), response)
 				_, err := io.ReadAll(response.Body)
 				require.NoError(t, err)
 				require.NoError(t, response.Body.Close())
@@ -92,7 +92,7 @@ func TestTextRequestTimingWireMatrix(t *testing.T) {
 			out := httptest.NewRecorder()
 			router.ServeHTTP(out, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{}`)))
 			got := stages.Snapshot()
-			for _, key := range []string{"upstream_first_event_ms", "upstream_first_sse_data_ms", "first_visible_output_ms", "first_downstream_flush_ms"} {
+			for _, key := range []string{"upstream_first_event_ms", "first_visible_output_ms", "first_downstream_flush_ms"} {
 				require.Contains(t, got, key)
 			}
 			require.Equal(t, ": ping\n\ndata: {\"type\":\"message_start\"}\n\ndata: "+payload+"\n\n", out.Body.String())
@@ -294,7 +294,7 @@ func TestTextRequestTimingConvertedChat(t *testing.T) {
 					SetOpsRequestContext(c, "model", true)
 					MarkOpsProviderSlotAcquired(c)
 					response := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(payload))}
-					timing.ObserveResponse(ctx, response)
+					timing.ObserveResponse(timing.BeginHTTPTrace(ctx), response)
 					transport := &auxiliaryHTTPRecorder{resp: response}
 					svc := newResponsesFixture(responsesFixtureInputs{options: protocolHTTPOptions(), transport: transport})
 					var err error

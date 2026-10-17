@@ -68,11 +68,6 @@ type OpsRepository interface {
 	// and tolerates unusable optional metadata while total and page run as
 	// separate reads.
 	ListSystemLogs(ctx context.Context, filter *OpsSystemLogFilter) (*OpsSystemLogList, error)
-	// ListRequestTimings resolves stored access-log timing measurements for
-	// supplied correlation strings. PostgreSQL trims and deduplicates bounded IDs,
-	// selects its latest matching identity row, and omits rows with no usable
-	// timing evidence; callers join by returned keys.
-	ListRequestTimings(ctx context.Context, clientRequestIDs []string) (map[string]*OpsRequestTiming, error)
 	// DeleteSystemLogs removes observations matching every effective filter
 	// predicate and returns affected rows. PostgreSQL requires at least one
 	// predicate to reject unrestricted deletion; the owning service records audit
@@ -107,7 +102,7 @@ type OpsRepository interface {
 	// that path fails.
 	//
 	// Counts are additive while combined latency percentiles are approximations
-	// using success or measured first-token weights. Current and peak continue
+	// using success or measured TTFT weights. Current and peak continue
 	// reading raw sources. Recognized optional deadlines permit missing
 	// measurements or estimated nonpositive rates, while ordinary query errors
 	// reject the result. Callers supply normalized filter policy and treat
@@ -135,7 +130,7 @@ type OpsRepository interface {
 	GetErrorDistribution(ctx context.Context, filter *OpsDashboardFilter) (*OpsErrorDistributionResponse, error)
 	// GetTokenStats returns raw execution-model usage statistics in one supplied
 	// limiting mode. OpsService normalizes pagination or TopN; PostgreSQL
-	// preserves total for an empty page and keeps absent rate/first-token
+	// preserves total for an empty page and keeps absent rate/TTFT
 	// measurements as nil pointers.
 	GetTokenStats(ctx context.Context, filter *OpsTokenStatsFilter) (*OpsTokenStatsResponse, error)
 
@@ -345,14 +340,13 @@ type OpsInsertErrorLogInput struct {
 	UpstreamErrorsJSON *string // serialized upstream attempt observations
 
 	// AuthLatencyMs, RoutingLatencyMs, UpstreamLatencyMs, ResponseLatencyMs, and
-	// TimeToFirstTokenMs contain captured millisecond measurements. PostgreSQL's
+	// These fields contain captured millisecond measurements. PostgreSQL's
 	// general integer encoder maps nil and zero to NULL, while negative supplied
 	// values remain valid.
-	AuthLatencyMs      *int64 // authentication duration in milliseconds
-	RoutingLatencyMs   *int64 // routing duration in milliseconds
-	UpstreamLatencyMs  *int64 // upstream duration in milliseconds
-	ResponseLatencyMs  *int64 // response duration in milliseconds
-	TimeToFirstTokenMs *int64 // first-token delay in milliseconds
+	AuthLatencyMs     *int64 // authentication duration in milliseconds
+	RoutingLatencyMs  *int64 // routing duration in milliseconds
+	UpstreamLatencyMs *int64 // upstream duration in milliseconds
+	ResponseLatencyMs *int64 // response duration in milliseconds
 
 	// CreatedAt records capture time. prepareErrorLogInput supplies time.Now when
 	// it is zero; direct repository insertion stores the supplied timestamp and
@@ -417,14 +411,14 @@ type OpsInsertSystemMetricsInput struct {
 	DurationMaxMs *int     // request duration maximum milliseconds
 
 	// TTFTP50Ms, TTFTP90Ms, TTFTP95Ms, TTFTP99Ms, TTFTAvgMs, and TTFTMaxMs retain
-	// nullable first-token millisecond statistics. Their nil-versus-zero encoding
+	// nullable TTFT millisecond statistics. Their nil-versus-zero encoding
 	// is independent of success counts.
-	TTFTP50Ms *int     // first-token latency median milliseconds
-	TTFTP90Ms *int     // first-token latency 90th percentile milliseconds
-	TTFTP95Ms *int     // first-token latency 95th percentile milliseconds
-	TTFTP99Ms *int     // first-token latency 99th percentile milliseconds
-	TTFTAvgMs *float64 // first-token latency average milliseconds
-	TTFTMaxMs *int     // first-token latency maximum milliseconds
+	TTFTP50Ms *int     // TTFT latency median milliseconds
+	TTFTP90Ms *int     // TTFT latency 90th percentile milliseconds
+	TTFTP95Ms *int     // TTFT latency 95th percentile milliseconds
+	TTFTP99Ms *int     // TTFT latency 99th percentile milliseconds
+	TTFTAvgMs *float64 // TTFT latency average milliseconds
+	TTFTMaxMs *int     // TTFT latency maximum milliseconds
 
 	// CPUUsagePercent, MemoryUsedMB, MemoryTotalMB, MemoryUsagePercent, and
 	// DiskUsagePercent carry nullable host observations. Dedicated encoders retain

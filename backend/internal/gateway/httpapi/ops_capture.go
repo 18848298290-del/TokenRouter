@@ -1756,7 +1756,6 @@ func applyOpsLatencyFieldsFromContext(c *gin.Context, entry *opscore.OpsInsertEr
 	entry.RoutingLatencyMs = getContextLatencyMs(c, OpsRoutingLatencyMsKey)
 	entry.UpstreamLatencyMs = getContextLatencyMs(c, OpsUpstreamLatencyMsKey)
 	entry.ResponseLatencyMs = getContextLatencyMs(c, OpsResponseLatencyMsKey)
-	entry.TimeToFirstTokenMs = getContextLatencyMs(c, OpsTimeToFirstTokenMsKey)
 }
 
 // applyOpsUpstreamFieldsFromContext copies optional context status, message and

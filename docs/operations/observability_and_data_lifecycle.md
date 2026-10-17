@@ -46,11 +46,13 @@
 
 请求 ID 的生成、别名、计费关联和查询规则见[请求 ID 与请求查询](request_lookup.md)。入口生成的 ID 贯穿各类诊断记录。供应商和调用方的 ID 保存为外部别名，权限由认证主体和记录归属决定。使用记录的 `billing_key` 负责兼容历史资金去重值，用户界面展示 `request_id`。
 
-流式网关的 `http.access` 记录，还会尽力写入以下阶段字段：`request_content_length`、`provider_slot_acquired_ms`、`upstream_get_conn_ms`、`upstream_got_conn_ms`、`upstream_wrote_request_ms`、`upstream_first_response_byte_ms`、`upstream_first_sse_data_ms`、`first_visible_output_ms` 和 `first_downstream_flush_ms`。`upstream_attempt_count`、各阶段的计数、连接复用和写入错误字段，用来识别连接池等待、重试和传输异常。这些字段只有时间、计数和连接复用状态，不包含请求体和凭据。
+`usage_logs.timings` 是使用记录性能的唯一持久化来源。完成任务冻结对应尝试的观测，和 usage 一次写入；用量列表、导出、TTFT/TPS 和性能聚合都从它读取。Ops 关闭或访问日志被采样，不影响已经写入 usage 的指标。字段定义见 [HTTP 接口](../interfaces/http_api.md#response_errors)。
 
-HTTP 文本请求的计时在鉴权读取正文之前安装，原始 Body 的读取计入 `request_body_read_ms`，解压和内存重读归入前置处理。scheduler 在实际轮询等待期间报告用户和提供商队列时长；立即准入为零。首次准入冻结四段，后续等待单独累计。计时快照同时合并到 `request_records.timings`，请求摘要不依赖访问日志采样；用量列表仍通过访问日志关联，因此日志缺失时不能保证用量提示框完整。字段与适用性见 [HTTP 接口](../interfaces/http_api.md#response_errors)。
+`request_records` 保存整个请求的状态、起止时间、关系、上游尝试和完成写入结果。鉴权失败、准入拒绝、排队超时、连接失败等没有 usage 的请求，保留必要的失败阶段计时。A 失败后 B 产生 usage 时，A 的失败仍可查询，B 的性能通过 usage 关联。请求摘要不保存完整成功性能快照，失败诊断也不作为性能报表的替代来源。
 
-上游事件观察器跟随已解压的 HTTP 响应读取，按完整 SSE 帧或原生事件观察；Bedrock 在二进制解码之后报告。公共 HTTP writer 观察实际成功交付的事件和原有 Flush，透传与协议转换共用规则。观察器不改变字节、读取错误、关闭归属、流式提交或重试资格，也不保存报文到日志。
+`http.access` 保留状态、访问生命周期耗时、路由、请求大小、身份关联和错误上下文。它不再自动附加完整阶段性能快照；其他日志中的独立操作耗时和错误字段继续保留。`ops_system_logs.extra` 不参与使用记录计时查询。
+
+入队表示待处理，数据库回执才表示已确认写入。等待超时后仍在执行的批量写入记为结果未知，详情查询随后通过正常 usage 关联确认数据是否出现。队列拒绝、任务异常和最终写入失败保留诊断，不创建额外 usage，也不重做资金处理。完整性能快照由已有内存任务和写入队列持有；进程崩溃和数据库持续不可用仍可能丢失尚未持久化的观测。
 
 凭据、Authorization、Cookie、refresh token、支付密钥、对象存储 secret、完整的上游 body 和用户的提示词，都不会直接写进日志。上游错误只透传允许的安全字段；系统日志 sink 在写库之前再整理一次字段并限制长度。新增日志字段时，同时检查：结构化 logger、Ops sink 的字段白名单和脱敏、管理端 DTO、导出和测试夹具。
 

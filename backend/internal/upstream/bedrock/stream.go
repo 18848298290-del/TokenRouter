@@ -61,16 +61,16 @@ type StreamOptions struct {
 	OnTimeout func(context.Context, string)
 }
 
-// StreamResult retains normalized usage, legacy first-chunk timing, and
+// StreamResult retains normalized usage and
 // downstream disconnect state.
 type StreamResult struct {
-	Usage            *upstream.TokenUsage // collected normalized token counters
-	FirstTokenMs     *int                 // milliseconds to first decoded chunk
-	ClientDisconnect bool                 // observed downstream write failure
+	Usage *upstream.TokenUsage // collected normalized token counters
+
+	ClientDisconnect bool // observed downstream write failure
 }
 
 // StreamResponse converts Bedrock binary chunks into synchronous Claude SSE
-// and returns collected usage and timing. Callers supply a flusher-capable
+// and returns collected usage. Callers supply a flusher-capable
 // output context and close resp.Body after this adapter returns, releasing any
 // decoder blocked in a read.
 //
@@ -80,9 +80,9 @@ type StreamResult struct {
 // Other read errors propagate while output is connected; after a client write
 // failure, any read error ends usage draining with a nil error. A positive idle
 // interval checks the last complete chunk clock and can invoke OnTimeout.
-// Returning stops channel sends
-// without joining the worker, and first-token timing follows the first
-// extracted chunk rather than semantic content.
+// Returning stops channel sends without joining the worker. Decoded events
+// carry their receive time through the queue so synchronous downstream writes
+// cannot move upstream arrival observations to the time the event is consumed.
 func StreamResponse(
 	ctx context.Context,
 	resp *http.Response,
@@ -106,7 +106,7 @@ func StreamResponse(
 	}
 
 	usage := &upstream.TokenUsage{}
-	var firstTokenMs *int
+
 	clientDisconnected := false
 
 	// Decode binary framing before inspecting the bytes envelope so Claude event
@@ -115,8 +115,9 @@ func StreamResponse(
 
 	// decodeEvent carries a decoded chunk or failure to the output loop.
 	type decodeEvent struct {
-		payload []byte // decoded binary chunk payload
-		err     error  // binary decoding failure result
+		payload   []byte    // decoded binary chunk payload
+		err       error     // binary decoding failure result
+		arrivedAt time.Time // upstream decoded frame arrival
 	}
 	// Separate blocked decoding from output/timer selection. The bounded queue
 	// retains complete chunk results, and done lets a worker waiting to send
@@ -149,7 +150,7 @@ func StreamResponse(
 				return
 			}
 			lastReadAt.Store(time.Now().UnixNano())
-			if !sendEvent(decodeEvent{payload: payload}) {
+			if !sendEvent(decodeEvent{payload: payload, arrivedAt: time.Now()}) {
 				return
 			}
 		}
@@ -174,19 +175,19 @@ func StreamResponse(
 				if !clientDisconnected {
 					flusher.Flush()
 				}
-				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected}, nil
+				return &StreamResult{Usage: usage, ClientDisconnect: clientDisconnected}, nil
 			}
 			if ev.err != nil {
 				// After downstream failure, a decoder error ends the usage drain. Return
 				// collected counters and the disconnect flag without adding another
 				// platform failure.
 				if clientDisconnected {
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, nil
+					return &StreamResult{Usage: usage, ClientDisconnect: true}, nil
 				}
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, nil
+					return &StreamResult{Usage: usage, ClientDisconnect: true}, nil
 				}
-				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, fmt.Errorf("bedrock stream read error: %w", ev.err)
+				return &StreamResult{Usage: usage}, fmt.Errorf("bedrock stream read error: %w", ev.err)
 			}
 
 			// Extract base64 event bytes after frame decoding; an absent or invalid
@@ -197,18 +198,13 @@ func StreamResponse(
 				continue
 			}
 
-			if firstTokenMs == nil {
-				ms := int(time.Since(startTime).Milliseconds())
-				firstTokenMs = &ms
-			}
-
 			// Normalize invocation metrics before both observation and passthrough
 			// usage parsing so the accounting paths read the same Claude-shaped event
 			// sent to the client.
 			sseData = TransformBedrockInvocationMetrics(sseData)
 
 			if stages := timing.StagesFromContext(ctx); stages != nil {
-				stages.Mark("upstream_first_event_ms")
+				stages.ObserveEventAt(stages.Attempt(), string(sseData), "", ev.arrivedAt)
 			}
 			observation := anthropic.ObserveEvent(string(sseData))
 			if options.Observe != nil {
@@ -243,13 +239,13 @@ func StreamResponse(
 				continue
 			}
 			if clientDisconnected {
-				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, nil
+				return &StreamResult{Usage: usage, ClientDisconnect: true}, nil
 			}
 			logger.LegacyPrintf("service.gateway", "[Bedrock] Stream data interval timeout: provider=%d model=%s interval=%s", options.ProviderID, model, streamInterval)
 			if options.OnTimeout != nil {
 				options.OnTimeout(ctx, model)
 			}
-			return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
+			return &StreamResult{Usage: usage}, fmt.Errorf("stream data interval timeout")
 		}
 	}
 }

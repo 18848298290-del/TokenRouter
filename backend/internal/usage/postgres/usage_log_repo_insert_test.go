@@ -263,7 +263,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			true,
 			true,
 			sqlmock.AnyArg(), // duration_ms
-			sqlmock.AnyArg(), // first_token_ms
+			sqlmock.AnyArg(), // timings JSON
 			sqlmock.AnyArg(), // user_agent
 			sqlmock.AnyArg(), // ip_address
 			log.ImageCount,
@@ -797,5 +797,29 @@ func newSessionIDUsageLog(sessionID *string) *usage.UsageLog {
 		ActualCost:   1.0,
 		SessionID:    sessionID,
 		CreatedAt:    time.Now().UTC(),
+	}
+}
+
+// TestFlushCreateBatchUnresolvedDuplicatesStayUnknown supplies an executed batch with
+// missing row identity. Every waiter must receive uncertainty, including duplicates,
+// so completion cannot report a successful usage write from an absent acknowledgement.
+func TestFlushCreateBatchUnresolvedDuplicatesStayUnknown(t *testing.T) {
+	for _, payload := range []string{`[]`, `[{"request_id":"request","api_key_id":2,"id":null,"created_at":null}]`} {
+		t.Run(payload, func(t *testing.T) {
+			db, mock := newSQLMock(t)
+			mock.ExpectQuery(`(?s)WITH input`).WillReturnRows(sqlmock.NewRows([]string{"rows"}).AddRow(payload))
+			row := &usage.UsageLog{RequestID: "request", APIKeyID: 2}
+			first := usageLogCreateRequest{log: row, prepared: prepareUsageLogInsert(row), resultCh: make(chan usageLogCreateResult, 1)}
+			secondRow := *row
+			second := usageLogCreateRequest{log: &secondRow, prepared: prepareUsageLogInsert(&secondRow), resultCh: make(chan usageLogCreateResult, 1)}
+			(&Store{}).flushCreateBatch(db, []usageLogCreateRequest{first, second})
+			for _, request := range []usageLogCreateRequest{first, second} {
+				result := <-request.resultCh
+				require.Error(t, result.err)
+				require.False(t, result.inserted)
+				require.False(t, usage.IsUsageLogCreateNotPersisted(result.err))
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
 	}
 }

@@ -261,9 +261,9 @@ type Snapshot struct {
 
 	BackendModeEnabled bool // administrator panel restriction switch
 
-	// OpenAITTFTMode is normalized by the gateway reader for administrator display.
-	// Empty or unsupported text selects semantic first-token observation at that consumer.
-	OpenAITTFTMode string // Responses first-token observation mode
+	// TTFTMode is normalized by the gateway reader for administrator display.
+	// Empty or unsupported text selects the first useful upstream output at that consumer.
+	TTFTMode string // global upstream latency selection
 	// EnableFingerprintUnification, EnableClaudeOAuthSystemPromptInjection, and
 	// EnableClientDatelineNormalization use true after missing or empty stored values
 	// in the gateway reader. EnableMetadataPassthrough, EnableAnthropicCacheTTL1hInjection,

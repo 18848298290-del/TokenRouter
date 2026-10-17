@@ -48,9 +48,8 @@ type Target struct {
 	Mode       ResponseMode    // response exchange and adapter selection
 	Exchange   ExchangeOptions // provider-local exchange callback settings
 	Response   ResponseOptions // response read and output settings
-	// StartedAt selects the duration and first-output origin. A zero value starts
-	// timing after successful attempt registration rather than using request
-	// arrival.
+	// StartedAt selects the executor duration origin. A zero value uses the time
+	// after successful attempt registration, before request preparation and exchange.
 	StartedAt time.Time // caller request timing origin
 	// UpstreamStream describes server framing; OAuth selects unwrapping;
 	// IncludeUsage selects Chat usage chunks.
@@ -107,6 +106,7 @@ func (t *Target) GoString() string { return t.String() }
 // the attempt timing origin has been selected.
 // @project-doc docs/interfaces/gemini_upstream.md#gemini_native_execution
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
+	defer func() { result.CapturePerformance(ctx, failure) }()
 	target, ok := input.Target.(*Target)
 	if !ok || target == nil || target.Exchange.Build == nil || target.Exchange.Do == nil {
 		return result, errors.New("gemini execution target is not configured")
@@ -186,7 +186,7 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	response := target.Response
 	var modelObserver protocol.ResponseModelObserver
 	defer func() { result.UpstreamResponseModel = modelObserver.Model() }()
-	priorRaw, priorState := response.ObserveRaw, response.ObserveState
+	priorRaw := response.ObserveRaw
 	// Chain the caller observation before attempt accounting. Record presence
 	// independently of numerical counts so explicit zero usage and later semantic
 	// output remain distinguishable.
@@ -198,10 +198,7 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		observed := geminiwire.ObservePayload(payload)
 		result.HasUsage = result.HasUsage || observed.HasUsage
 		result.Served = result.Served || observed.Semantic
-		if observed.Semantic && result.FirstSemanticOutput == nil {
-			elapsed := time.Since(started)
-			result.FirstSemanticOutput = &elapsed
-		}
+
 		if observed.HasUsage {
 			if usage := ExtractGeminiUsage(payload); usage != nil {
 				result.Usage = *usage
@@ -212,35 +209,20 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		}
 	}
 	// Keep adapter state snapshots alongside raw observations because conversion
-	// paths can report final merged usage or their legacy first-token timing
-	// after payload processing.
-	response.ObserveState = func(usage *upstream.TokenUsage, first *int) {
-		if priorState != nil {
-			priorState(usage, first)
-		}
-		if usage != nil {
-			result.Usage = *usage
-		}
-		if first != nil {
-			result.FirstTokenMs = first
-		}
-	}
+	// paths can report final merged usage after payload processing.
+
 	adapter := ResponseAdapter{Options: response}
 	var usage *upstream.TokenUsage
-	var first *int
 	switch target.Mode {
 	case MessagesResponse:
-		usage, first, err = adapter.CompleteMessages(output, resp, started, input.ResponseModel, input.Stream, target.UpstreamStream)
+		usage, err = adapter.CompleteMessages(output, resp, started, input.ResponseModel, input.Stream, target.UpstreamStream)
 	case NativeResponse:
-		usage, first, err = adapter.CompleteNative(output, resp, started, input.Stream, target.UpstreamStream, target.OAuth)
+		usage, err = adapter.CompleteNative(output, resp, started, input.Stream, target.UpstreamStream, target.OAuth)
 	case OpenAIResponse:
-		usage, first, err = adapter.CompleteOpenAI(output, resp, started, input.ResponseModel, input.Stream, target.UpstreamStream, target.OAuth, target.IncludeUsage, target.OpenAIProtocol, target.ClientTools)
+		usage, err = adapter.CompleteOpenAI(output, resp, started, input.ResponseModel, input.Stream, target.UpstreamStream, target.OAuth, target.IncludeUsage, target.OpenAIProtocol, target.ClientTools)
 	}
 	if usage != nil {
 		result.Usage = *usage
-	}
-	if first != nil {
-		result.FirstTokenMs = first
 	}
 	result.ClientDisconnect = output.Err() != nil
 	return result, err

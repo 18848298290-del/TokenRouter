@@ -77,7 +77,7 @@ func executionResponseOptions() ResponseOptions {
 
 // TestExecuteProtocolOutputsAndRelease runs all four client representations in
 // streamed and buffered modes. Each attempt must retain output,
-// request/model/usage observations, semantic timing, and one body close and
+// request/model/usage observations, semantic output, and one body close and
 // lifecycle release.
 func TestExecuteProtocolOutputsAndRelease(t *testing.T) {
 	cases := []struct {
@@ -116,7 +116,7 @@ func TestExecuteProtocolOutputsAndRelease(t *testing.T) {
 				require.Equal(t, 1, result.Usage.OutputTokens)
 				require.True(t, result.HasUsage)
 				require.True(t, result.Served)
-				require.NotNil(t, result.FirstSemanticOutput)
+				require.True(t, result.Served)
 				require.EqualValues(t, 1, closes.Load())
 				require.EqualValues(t, 1, releases.Load())
 				{

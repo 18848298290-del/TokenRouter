@@ -131,36 +131,21 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 	action := "streamGenerateContent"
 
 	retry, params := s.antigravityRetryAdapter(antigravityRetryLoopParams{
-		ctx: ctx,
-
-		prefix: prefix,
-
-		provider: provider,
-
-		proxyURL: proxyURL,
-
-		accessToken: accessToken,
-
-		action: action,
-
-		body: geminiBody,
-
-		c: c,
-
-		httpUpstream: s.Transport,
-
-		providerRepo: s.Store,
-
-		handleError: s.handleUpstreamError,
-
-		requestedModel: originalModel,
-
+		ctx:             ctx,
+		prefix:          prefix,
+		provider:        provider,
+		proxyURL:        proxyURL,
+		accessToken:     accessToken,
+		action:          action,
+		body:            geminiBody,
+		c:               c,
+		httpUpstream:    s.Transport,
+		providerRepo:    s.Store,
+		handleError:     s.handleUpstreamError,
+		requestedModel:  originalModel,
 		isStickySession: isStickySession, // The caller determines whether this request is sticky.
-
-		groupID: 0, // The caller clears sticky state because this entry has no group ID.
-
-		sessionHash: "", // The caller owns the session binding.
-
+		groupID:         0,               // The caller clears sticky state because this entry has no group ID.
+		sessionHash:     "",              // The caller owns the session binding.
 	})
 	target := &antigravity.Target{
 		ProviderID: provider.Record.ID,
@@ -246,21 +231,14 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 					logging.LegacyPrintf("service.antigravity_gateway", "%s status=400 prompt_too_long=true upstream_message=%q request_id=%s body=%s", prefix, upstreamMsg, resp.Header.Get("x-request-id"), logredact.TruncateLine(respBody, maxBytes))
 				}
 				c.Observe(ops.OpsUpstreamErrorEvent{
-					Platform: provider.Record.Platform,
-
-					ProviderID: provider.Record.ID,
-
-					ProviderName: provider.Record.Name,
-
+					Platform:           provider.Record.Platform,
+					ProviderID:         provider.Record.ID,
+					ProviderName:       provider.Record.Name,
 					UpstreamStatusCode: resp.StatusCode,
-
-					UpstreamRequestID: resp.Header.Get("x-request-id"),
-
-					Kind: "prompt_too_long",
-
-					Message: upstreamMsg,
-
-					Detail: upstreamDetail,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "prompt_too_long",
+					Message:            upstreamMsg,
+					Detail:             upstreamDetail,
 				})
 				return true, &antigravity.PromptTooLongError{
 					StatusCode: resp.StatusCode,
@@ -284,21 +262,14 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 					upstreamDetail := s.getUpstreamErrorDetail(respBody)
 					log.Printf("%s status=400 google_config_error failover=true upstream_message=%q provider=%d", prefix, upstreamMsg, provider.Record.ID)
 					c.Observe(ops.OpsUpstreamErrorEvent{
-						Platform: provider.Record.Platform,
-
-						ProviderID: provider.Record.ID,
-
-						ProviderName: provider.Record.Name,
-
+						Platform:           provider.Record.Platform,
+						ProviderID:         provider.Record.ID,
+						ProviderName:       provider.Record.Name,
 						UpstreamStatusCode: resp.StatusCode,
-
-						UpstreamRequestID: resp.Header.Get("x-request-id"),
-
-						Kind: "failover",
-
-						Message: upstreamMsg,
-
-						Detail: upstreamDetail,
+						UpstreamRequestID:  resp.Header.Get("x-request-id"),
+						Kind:               "failover",
+						Message:            upstreamMsg,
+						Detail:             upstreamDetail,
 					})
 					return true, &forwardcore.UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameProvider: true}
 				}
@@ -309,21 +280,14 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 				upstreamMsg = logredact.SanitizeUpstreamQueries(upstreamMsg)
 				upstreamDetail := s.getUpstreamErrorDetail(respBody)
 				c.Observe(ops.OpsUpstreamErrorEvent{
-					Platform: provider.Record.Platform,
-
-					ProviderID: provider.Record.ID,
-
-					ProviderName: provider.Record.Name,
-
+					Platform:           provider.Record.Platform,
+					ProviderID:         provider.Record.ID,
+					ProviderName:       provider.Record.Name,
 					UpstreamStatusCode: resp.StatusCode,
-
-					UpstreamRequestID: resp.Header.Get("x-request-id"),
-
-					Kind: "failover",
-
-					Message: upstreamMsg,
-
-					Detail: upstreamDetail,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "failover",
+					Message:            upstreamMsg,
+					Detail:             upstreamDetail,
 				})
 				return true, &forwardcore.UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody}
 			}
@@ -358,7 +322,7 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 		UpstreamModel:         billingModel,
 		Stream:                claudeReq.Stream,
 		Duration:              result.Duration,
-		FirstTokenMs:          result.FirstTokenMs,
+		Timings:               result.Timings,
 		ClientDisconnect:      result.ClientDisconnect,
 	}, nil
 }

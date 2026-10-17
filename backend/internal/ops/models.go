@@ -1,13 +1,11 @@
 package ops
 
 import (
-	"encoding/json"
 	"strings"
 	"time"
 )
 
-// models.go defines error and system-log query models and extracts typed
-// request timings from access-log metadata.
+// models.go defines error and system-log query models and applies display filters.
 // An error query combines captured request facts with current user, provider,
 // group, and API-key display metadata. Display status prefers a nonnull
 // upstream value, while client-status guards and query-time SLA policy decide
@@ -15,14 +13,11 @@ import (
 // classifications, and user conversion reads this query view rather than the
 // original wire response.
 //
-// Access-log timing has different units and presence rules: body length is
-// bytes, event offsets are milliseconds, and transport counts are integers.
-// Numeric zero remains present; parsing or converted-integer rejection leaves
-// the numeric pointer absent.
-// Bool false cannot retain a separate absence marker. Extraction reads a fixed
-// key allowlist across decoded numeric representations, and error-list
-// selectors preserve their distinct wildcard, model, status, and identity rules
-// for the repository.
+// Structured system-log fields remain available as decoded business and error
+// context. Request identifiers correlate those logs with request records and
+// usage, while complete usage performance is read from the usage row. Error-list
+// selectors retain their distinct wildcard, model, status, and identity rules;
+// repository queries apply those selectors before assembling display metadata.
 
 // OpsSystemLog carries a persisted structured observation and optional request
 // correlation metadata.
@@ -41,61 +36,9 @@ type OpsSystemLog struct {
 	Platform        string    `json:"platform"`          // recorded execution platform snapshot
 	Model           string    `json:"model"`             // recorded request model label
 	// Extra contains decoded structured fields returned by PostgreSQL queries.
-	// Consumers own that map result; nested values follow its decoded JSON types,
-	// and timing extraction reads an allowlist of keys.
+	// Consumers own the map result and its decoded nested values. These fields
+	// provide log context; usage performance is obtained through usage queries.
 	Extra map[string]any `json:"extra,omitempty"` // decoded structured event fields
-}
-
-// OpsRequestTiming carries request metadata, admission durations, event offsets,
-// transport counts and connection observations extracted from access-log metadata.
-type OpsRequestTiming struct {
-	// RequestContentLength records the observed body length in bytes. Missing,
-	// unsupported, or rejected numeric observations remain nil, while zero is retained.
-	RequestContentLength *int64 `json:"request_content_length,omitempty"` // bytes
-	// TimingStream and TimingAdmitted use zero or one for known streaming and
-	// initial admission state. Their nil values preserve unknown historical metadata.
-	TimingStream   *int64 `json:"timing_stream,omitempty"`   // client streaming flag
-	TimingAdmitted *int64 `json:"timing_admitted,omitempty"` // initial admission outcome
-
-	// RequestBodyReadMs, PreprocessMs, UserSlotWaitMs and ProviderSlotWaitMs
-	// partition initial admission time. Their values freeze at provider admission
-	// or request termination; nil means the interval was not recorded.
-	RequestBodyReadMs  *int64 `json:"request_body_read_ms,omitempty"`  // milliseconds
-	PreprocessMs       *int64 `json:"preprocess_ms,omitempty"`         // milliseconds
-	UserSlotWaitMs     *int64 `json:"user_slot_wait_ms,omitempty"`     // milliseconds
-	ProviderSlotWaitMs *int64 `json:"provider_slot_wait_ms,omitempty"` // milliseconds
-	// RetryProviderSlotWaitMs counts later provider waits separately, leaving the
-	// four initial admission durations unchanged when another attempt queues.
-	RetryProviderSlotWaitMs *int64 `json:"retry_provider_slot_wait_ms,omitempty"` // milliseconds
-
-	// ProviderSlotAcquiredMs, UpstreamGetConnMs, UpstreamGotConnMs,
-	// UpstreamWroteRequestMs, UpstreamFirstResponseByteMs, UpstreamFirstEventMs,
-	// UpstreamFirstSSEDataMs, FirstVisibleOutputMs and FirstDownstreamFlushMs
-	// are first-event offsets from ingress in milliseconds, not additive durations.
-	// Nil leaves an unrecorded event absent; measured zero remains present.
-	ProviderSlotAcquiredMs      *int64 `json:"provider_slot_acquired_ms,omitempty"`       // milliseconds
-	UpstreamGetConnMs           *int64 `json:"upstream_get_conn_ms,omitempty"`            // milliseconds
-	UpstreamGotConnMs           *int64 `json:"upstream_got_conn_ms,omitempty"`            // milliseconds
-	UpstreamWroteRequestMs      *int64 `json:"upstream_wrote_request_ms,omitempty"`       // milliseconds
-	UpstreamFirstResponseByteMs *int64 `json:"upstream_first_response_byte_ms,omitempty"` // milliseconds
-	UpstreamFirstEventMs        *int64 `json:"upstream_first_event_ms,omitempty"`         // milliseconds
-	UpstreamFirstSSEDataMs      *int64 `json:"upstream_first_sse_data_ms,omitempty"`      // milliseconds
-	FirstVisibleOutputMs        *int64 `json:"first_visible_output_ms,omitempty"`         // milliseconds
-	FirstDownstreamFlushMs      *int64 `json:"first_downstream_flush_ms,omitempty"`       // milliseconds
-
-	// UpstreamGetConnCount, UpstreamGotConnCount, UpstreamAttemptCount and
-	// UpstreamFirstResponseByteCount count retained transport events across attempts.
-	// Nil means no observation, while a nonnil zero preserves a measured count.
-	UpstreamGetConnCount           *int64 `json:"upstream_get_conn_count,omitempty"`            // occurrences
-	UpstreamGotConnCount           *int64 `json:"upstream_got_conn_count,omitempty"`            // occurrences
-	UpstreamAttemptCount           *int64 `json:"upstream_attempt_count,omitempty"`             // occurrences
-	UpstreamFirstResponseByteCount *int64 `json:"upstream_first_response_byte_count,omitempty"` // occurrences
-
-	// UpstreamConnectionReused and UpstreamWroteRequestError retain observed
-	// connection reuse and write failure. Missing or non-bool source values become
-	// false; false alone does not establish a present timing result.
-	UpstreamConnectionReused  bool `json:"upstream_connection_reused,omitempty"`   // observed connection reuse flag
-	UpstreamWroteRequestError bool `json:"upstream_wrote_request_error,omitempty"` // observed request write-error flag
 }
 
 // OpsErrorLog carries query display metadata for one saved error observation.
@@ -189,14 +132,13 @@ type OpsErrorLogDetail struct {
 	UpstreamErrors string `json:"upstream_errors,omitempty"` // serialized attempt JSON array
 
 	// AuthLatencyMs, RoutingLatencyMs, UpstreamLatencyMs, ResponseLatencyMs, and
-	// TimeToFirstTokenMs contain captured phase durations or first-token latency
+	// These fields contain captured phase durations
 	// in milliseconds. Nil means absent evidence; these phase measurements differ
 	// from the access-log event offsets in OpsRequestTiming.
-	AuthLatencyMs      *int64 `json:"auth_latency_ms"`        // milliseconds
-	RoutingLatencyMs   *int64 `json:"routing_latency_ms"`     // milliseconds
-	UpstreamLatencyMs  *int64 `json:"upstream_latency_ms"`    // milliseconds
-	ResponseLatencyMs  *int64 `json:"response_latency_ms"`    // milliseconds
-	TimeToFirstTokenMs *int64 `json:"time_to_first_token_ms"` // milliseconds
+	AuthLatencyMs     *int64 `json:"auth_latency_ms"`     // milliseconds
+	RoutingLatencyMs  *int64 `json:"routing_latency_ms"`  // milliseconds
+	UpstreamLatencyMs *int64 `json:"upstream_latency_ms"` // milliseconds
+	ResponseLatencyMs *int64 `json:"response_latency_ms"` // milliseconds
 
 	// IsBusinessLimited is the stored capture decision. Query-time ignored-status
 	// policy can exclude additional client-side failures, so false alone does not
@@ -318,123 +260,6 @@ type OpsErrorLogList struct {
 	Total    int            `json:"total"`     // matching stored observation count
 	Page     int            `json:"page"`      // one-based returned observation page
 	PageSize int            `json:"page_size"` // returned observations per page
-}
-
-// OpsRequestTimingFromExtra returns allowlisted access-log timing and transport
-// observations, or nil when none is accepted. Numeric extraction retains zero
-// through a nonnil pointer while absent, unsupported, or rejected values remain
-// nil.
-//
-// Bool fields accept bool values and keep false otherwise. A false bool alone
-// cannot distinguish a logged false value from missing data, so all-nil
-// numerics with both flags false returns nil. Each recognized numeric value is
-// converted into a new integer pointer, and unrelated structured fields remain
-// outside the result.
-func OpsRequestTimingFromExtra(extra map[string]any) *OpsRequestTiming {
-	if len(extra) == 0 {
-		return nil
-	}
-	timing := &OpsRequestTiming{
-		RequestContentLength: timingInt64Ptr(extra["request_content_length"]),
-		TimingStream:         timingInt64Ptr(extra["timing_stream"]),
-		TimingAdmitted:       timingInt64Ptr(extra["timing_admitted"]),
-
-		RequestBodyReadMs:       timingInt64Ptr(extra["request_body_read_ms"]),
-		PreprocessMs:            timingInt64Ptr(extra["preprocess_ms"]),
-		UserSlotWaitMs:          timingInt64Ptr(extra["user_slot_wait_ms"]),
-		ProviderSlotWaitMs:      timingInt64Ptr(extra["provider_slot_wait_ms"]),
-		RetryProviderSlotWaitMs: timingInt64Ptr(extra["retry_provider_slot_wait_ms"]),
-
-		ProviderSlotAcquiredMs:      timingInt64Ptr(extra["provider_slot_acquired_ms"]),
-		UpstreamGetConnMs:           timingInt64Ptr(extra["upstream_get_conn_ms"]),
-		UpstreamGotConnMs:           timingInt64Ptr(extra["upstream_got_conn_ms"]),
-		UpstreamWroteRequestMs:      timingInt64Ptr(extra["upstream_wrote_request_ms"]),
-		UpstreamFirstResponseByteMs: timingInt64Ptr(extra["upstream_first_response_byte_ms"]),
-		UpstreamFirstEventMs:        timingInt64Ptr(extra["upstream_first_event_ms"]),
-		UpstreamFirstSSEDataMs:      timingInt64Ptr(extra["upstream_first_sse_data_ms"]),
-		FirstVisibleOutputMs:        timingInt64Ptr(extra["first_visible_output_ms"]),
-		FirstDownstreamFlushMs:      timingInt64Ptr(extra["first_downstream_flush_ms"]),
-
-		UpstreamGetConnCount:           timingInt64Ptr(extra["upstream_get_conn_count"]),
-		UpstreamGotConnCount:           timingInt64Ptr(extra["upstream_got_conn_count"]),
-		UpstreamAttemptCount:           timingInt64Ptr(extra["upstream_attempt_count"]),
-		UpstreamFirstResponseByteCount: timingInt64Ptr(extra["upstream_first_response_byte_count"]),
-	}
-	if value, ok := extra["upstream_connection_reused"].(bool); ok {
-		timing.UpstreamConnectionReused = value
-	}
-	if value, ok := extra["upstream_wrote_request_error"].(bool); ok {
-		timing.UpstreamWroteRequestError = value
-	}
-	// Presence depends on accepted numerics or a true flag. Keep measured zero
-	// pointers so a zero-time event remains distinguishable from an entirely
-	// absent timing observation.
-	if timing.RequestContentLength == nil && timing.TimingStream == nil &&
-		timing.TimingAdmitted == nil &&
-		timing.RequestBodyReadMs == nil && timing.PreprocessMs == nil &&
-		timing.UserSlotWaitMs == nil && timing.ProviderSlotWaitMs == nil &&
-		timing.RetryProviderSlotWaitMs == nil &&
-		timing.ProviderSlotAcquiredMs == nil && timing.UpstreamGetConnMs == nil &&
-		timing.UpstreamGotConnMs == nil && timing.UpstreamWroteRequestMs == nil &&
-		timing.UpstreamFirstResponseByteMs == nil && timing.UpstreamFirstEventMs == nil &&
-		timing.UpstreamFirstSSEDataMs == nil && timing.FirstVisibleOutputMs == nil &&
-		timing.FirstDownstreamFlushMs == nil &&
-		timing.UpstreamGetConnCount == nil && timing.UpstreamGotConnCount == nil &&
-		timing.UpstreamAttemptCount == nil && timing.UpstreamFirstResponseByteCount == nil &&
-		!timing.UpstreamConnectionReused && !timing.UpstreamWroteRequestError {
-		return nil
-	}
-	return timing
-}
-
-// timingInt64Ptr returns a new pointer to an accepted numeric observation,
-// retaining integer zero and rejecting a negative converted integer. It accepts
-// int, int64, float64, json.Number, and trimmed string values; unsupported
-// types return nil.
-//
-// Float64 uses Go integer conversion before the negative check, truncating
-// representable fractional values toward zero. json.Number and string use
-// integer parsing, so fractional or exponent text fails. No finite/range
-// validation precedes float conversion; callers using nonrepresentable floats
-// follow the conversion behavior of the Go implementation.
-func timingInt64Ptr(value any) *int64 {
-	var parsed int64
-	switch v := value.(type) {
-	case int:
-		parsed = int64(v)
-	case int64:
-		parsed = v
-	// JSON-decoded numbers commonly arrive as float64. Convert before testing
-	// negativity, so a representable negative fraction between minus one and zero
-	// becomes retained zero.
-	case float64:
-		parsed = int64(v)
-	case json.Number:
-		// Integer-form json.Number parsing distinguishes accepted measurements from
-		// malformed, fractional, or overflowing text; rejected metadata leaves that
-		// observation absent.
-		if n, err := v.Int64(); err == nil {
-			parsed = n
-		} else {
-			return nil
-		}
-	case string:
-		// String metadata uses trimmed integer text. A parse error produces absence
-		// for that field rather than manufacturing a zero measurement.
-		if n, err := json.Number(strings.TrimSpace(v)).Int64(); err == nil {
-			parsed = n
-		} else {
-			return nil
-		}
-	default:
-		return nil
-	}
-	// Apply negativity to the converted integer, leaving accepted zero as a
-	// present observation.
-	if parsed < 0 {
-		return nil
-	}
-	return &parsed
 }
 
 // SetSort trims and stores requested sort text in a nonnil filter, retaining

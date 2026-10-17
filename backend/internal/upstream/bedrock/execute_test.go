@@ -138,6 +138,7 @@ func TestExecuteBedrockWireAndRelease(t *testing.T) {
 			}}, Retry: RetryPolicy{MaxAttempts: 1, MaxElapsed: time.Second}}
 			sink := &executionSink{}
 			ctx, stages := timing.WithStages(context.Background(), time.Now(), nil)
+			stages.BeginAttempt()
 			result, err := (Executor{}).Execute(ctx, upstream.AttemptInput{Target: target, Protocol: protocol.ProtocolAnthropicMessages, Body: []byte(`{"messages":[]}`), ResponseModel: "fixture", Stream: stream}, sink)
 			if stream {
 				require.Contains(t, stages.Snapshot(), "upstream_first_event_ms")
@@ -146,7 +147,7 @@ func TestExecuteBedrockWireAndRelease(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, result.HasUsage)
 			require.True(t, result.Served)
-			require.NotNil(t, result.FirstSemanticOutput)
+			require.True(t, result.Served)
 			require.Equal(t, "bedrock-fixture", result.RequestID)
 			require.Equal(t, "claude-runtime", result.UpstreamResponseModel)
 			require.EqualValues(t, 1, closed.Load())
@@ -155,10 +156,10 @@ func TestExecuteBedrockWireAndRelease(t *testing.T) {
 			require.NotContains(t, sink.body.String(), "amazon-bedrock-invocationMetrics")
 			if stream {
 				require.Equal(t, 2, result.Usage.OutputTokens)
-				require.NotNil(t, result.FirstTokenMs)
+				require.NotNil(t, result.Timings.TTFTMs())
 			} else {
 				require.Zero(t, result.Usage.OutputTokens)
-				require.Nil(t, result.FirstTokenMs)
+				require.Nil(t, result.Timings.TTFTMs())
 				require.Contains(t, sink.body.String(), "future")
 			}
 		})

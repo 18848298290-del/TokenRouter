@@ -270,7 +270,7 @@ func (p *generationRequestAdapter) logSchedule() {
 //
 // Response processing time subtracts separately recorded upstream latency
 // only when it is positive and smaller than the measured total; otherwise the
-// total remains. Non-Grok results can also supply first-token timing. Those
+// total remains. Non-Grok results can also supply captured performance observations. Those
 // observations are written in milliseconds before stage-specific logging,
 // keeping response handling and upstream latency represented separately in
 // Ops.
@@ -308,9 +308,7 @@ func (p *generationRequestAdapter) ObserveGeneration(e gatewaymedia.GenerationEv
 			elapsed -= upstream
 		}
 		gatewayhttp.SetOpsLatencyMs(p.c, gatewayhttp.OpsResponseLatencyMsKey, elapsed)
-		if !p.usesGrok() && e.Outcome.Result != nil && e.Outcome.Result.FirstTokenMs != nil {
-			gatewayhttp.SetOpsLatencyMs(p.c, gatewayhttp.OpsTimeToFirstTokenMsKey, int64(*e.Outcome.Result.FirstTokenMs))
-		}
+
 	case "partial":
 		p.reqLog.Warn(name+".forward_partial_error_with_image_result", zap.Int64("provider_id", e.Selection.Provider.ID), zap.Int("image_count", e.Outcome.Result.ImageCount), zap.Error(e.Outcome.Err))
 	case "image_error":
@@ -376,7 +374,7 @@ func (p *generationRequestAdapter) completeImages(value *gatewaymedia.Generation
 		if provider.Record.Type == capability.ProviderTypeOAuth && !provider.View().IsShadow() {
 			h.bindings.Common.Selection.UpdateCodexUsageSnapshotFromHeaders(c.Request.Context(), provider.Record.ID, result.ResponseHeaders)
 		}
-		h.bindings.Common.Selection.ReportOpenAIProviderScheduleResult(provider, openaiattempt.OpenAIProviderScheduleModel(c, provider, requestModel, false, result), true, result.FirstTokenMs)
+		h.bindings.Common.Selection.ReportOpenAIProviderScheduleResult(provider, openaiattempt.OpenAIProviderScheduleModel(c, provider, requestModel, false, result), true, result.Timings.TTFTMs())
 	} else {
 		h.bindings.Common.Selection.ReportOpenAIProviderScheduleResult(provider, openaiattempt.OpenAIProviderScheduleModel(c, provider, requestModel, false, result), true, nil)
 	}
@@ -484,7 +482,7 @@ func (p *generationRequestAdapter) completeGrok(requestCtx context.Context, valu
 // billing and upstream model identities retain their separate values along
 // with scalar token, image, video and timing observations.
 //
-// The generation clone copies the timing pointer, image-size slice and map,
+// The generation clone copies the performance maps, image-size slice and map,
 // and both header maps with their value slices, retaining nil and empty
 // collection shapes. This media schema is the result consumed by the attempt
 // loop; other OpenAI text and WebSocket fields are outside that schema.
@@ -503,7 +501,7 @@ func generationResultView(r *forwardcore.OpenAIResult) *gatewaymedia.GenerationR
 		Usage:                r.Usage,
 		Stream:               r.Stream,
 		Duration:             r.Duration,
-		FirstTokenMs:         r.FirstTokenMs,
+		Timings:              r.Timings,
 		ImageCount:           r.ImageCount,
 		VideoCount:           r.VideoCount,
 		VideoState:           r.VideoState,
@@ -547,7 +545,7 @@ func legacyGenerationResult(r *gatewaymedia.GenerationResult) *forwardcore.OpenA
 		Usage:                r.Usage,
 		Stream:               r.Stream,
 		Duration:             r.Duration,
-		FirstTokenMs:         r.FirstTokenMs,
+		Timings:              r.Timings,
 		ImageCount:           r.ImageCount,
 		VideoCount:           r.VideoCount,
 		VideoState:           r.VideoState,

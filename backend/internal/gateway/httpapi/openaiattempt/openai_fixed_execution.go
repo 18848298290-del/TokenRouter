@@ -89,7 +89,7 @@ func (r *Runtime) Open(ctx context.Context, in execution.Request, sink upstream.
 //
 // Served is true after error-free execution or any observed usage, allowing the
 // loop to retain billable partial work. Header maps, image-size slices,
-// first-token latency, and the audio struct are copied at their respective
+// performance maps, and the audio struct are copied at their respective
 // levels. Service tier and reasoning effort are passed by value, and
 // cancellation is classified from the error chain independently of usage
 // presence.
@@ -125,10 +125,7 @@ func openAIObservedAttempt(result *forwardcore.OpenAIResult, err error) upstream
 	// error. Keep that served observation separate from error-free
 	// completion and client HTTP commitment.
 	out.Served = err == nil || out.HasUsage
-	if result.FirstTokenMs != nil {
-		v := *result.FirstTokenMs
-		out.FirstTokenMs = &v
-	}
+	out.Timings = result.Timings.Clone()
 	if result.ServiceTier != nil {
 		out.ServiceTier = *result.ServiceTier
 	}

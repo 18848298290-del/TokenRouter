@@ -26,8 +26,7 @@ import (
 // the last successful downstream write. The timed path separates reading from
 // consumption through a bounded channel. Returning signals queued sends to
 // stop; the executor still owns closing the response body to release a blocked
-// read. FirstTokenMs measures the first nonempty read line, including
-// protocol-only lines.
+// read. Generated image counts and usage remain available after disconnection.
 
 // ReadImagesNonStreaming reads an API-key image body, captures upstream usage
 // and image dimensions, and writes the backfilled representation with the
@@ -63,7 +62,7 @@ func ReadImagesNonStreaming(resp *http.Response, sink upstream.OutputSink, optio
 }
 
 // ReadImagesStreaming forwards API-key image lines while accumulating usage,
-// image counts, sizes, and first-line latency. The writer needs http.Flusher;
+// image counts and sizes. The writer needs http.Flusher;
 // ReadLimit, ResponseHeaders, StreamInterval, KeepaliveInterval, and Logf
 // support the selected paths. The executor closes resp.Body after return,
 // including when a timed reader remains blocked.
@@ -71,9 +70,8 @@ func ReadImagesNonStreaming(resp *http.Response, sink upstream.OutputSink, optio
 // SSE data supersedes the bounded plain-body buffer. EOF flushes a pending SSE
 // event and examines a retained plain JSON body, while read errors flush SSE
 // alone. A failed downstream write disables further writes but keeps reading
-// for accounting until EOF, an error, or idle timeout. FirstTokenMs starts on
-// any nonempty read line, so it is not an image-content timestamp.
-func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options ImageResponseOptions, startTime time.Time) (wire.ForwardUsage, int, []string, *int, error) {
+// for accounting until EOF, an error, or idle timeout.
+func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options ImageResponseOptions, startTime time.Time) (wire.ForwardUsage, int, []string, error) {
 	options.ResponseHeaders(c.Writer.Header(), resp.Header)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if contentType == "" {
@@ -84,12 +82,12 @@ func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		return wire.ForwardUsage{}, 0, nil, nil, fmt.Errorf("streaming is not supported by response writer")
+		return wire.ForwardUsage{}, 0, nil, fmt.Errorf("streaming is not supported by response writer")
 	}
 
 	usage := wire.ForwardUsage{}
 	imageCounter := wire.NewOpenAIImageOutputCounter()
-	var firstTokenMs *int
+
 	clientDisconnected := false
 	lastDownstreamWriteAt := time.Now()
 	var fallbackBody bytes.Buffer
@@ -119,10 +117,7 @@ func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options
 		}
 		// A read line can be an SSE comment or separator; this timestamp records
 		// arrival latency before interpreting its payload.
-		if firstTokenMs == nil {
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
-		}
+
 		// Latch a failed sink write while continuing payload observation, so usage
 		// can still be collected from later upstream events.
 		if !clientDisconnected {
@@ -180,12 +175,12 @@ func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options
 			}
 			if err != nil {
 				flushSSEEvent()
-				return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, err
+				return usage, imageCounter.Count(), imageCounter.Sizes(), err
 			}
 		}
 		flushSSEEvent()
 		finalizeFallbackBody()
-		return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, nil
+		return usage, imageCounter.Count(), imageCounter.Sizes(), nil
 	}
 
 	// readEvent carries one owned read line or failure to the timed consumer.
@@ -259,11 +254,11 @@ func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options
 			if !ok {
 				flushSSEEvent()
 				finalizeFallbackBody()
-				return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, nil
+				return usage, imageCounter.Count(), imageCounter.Sizes(), nil
 			}
 			if ev.err != nil {
 				flushSSEEvent()
-				return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, ev.err
+				return usage, imageCounter.Count(), imageCounter.Sizes(), ev.err
 			}
 			processLine(ev.line)
 		case <-intervalCh:
@@ -274,13 +269,13 @@ func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options
 				continue
 			}
 			if clientDisconnected {
-				return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, fmt.Errorf("image stream incomplete after timeout")
+				return usage, imageCounter.Count(), imageCounter.Sizes(), fmt.Errorf("image stream incomplete after timeout")
 			}
 			options.Logf("[OpenAI] Images stream data interval timeout: interval=%s", streamInterval)
 			// Report idle failure even if its diagnostic write fails; this return
 			// carries the observed usage and the timeout outcome.
 			_ = WriteImagesStreamEvent(c, options, flusher, "error", BuildOpenAIImagesStreamErrorBody(fmt.Sprintf("upstream image stream idle for %s", streamInterval)))
-			return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, fmt.Errorf("image stream data interval timeout")
+			return usage, imageCounter.Count(), imageCounter.Sizes(), fmt.Errorf("image stream data interval timeout")
 		case <-keepaliveCh:
 			// Heartbeats depend on successful client writes; a heartbeat failure latches
 			// disconnection and leaves upstream accounting active.

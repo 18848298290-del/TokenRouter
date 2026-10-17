@@ -3,8 +3,9 @@ package gateway
 import (
 	"context"
 	"log/slog"
-	"strings"
 	"time"
+
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
 // forwarding_settings.go reads and publishes forwarding-policy snapshots and
@@ -36,10 +37,10 @@ const (
 	SettingKeyEnableMetadataPassthrough              = "enable_metadata_passthrough"
 	SettingKeyMaxClaudeCodeVersion                   = "max_claude_code_version"
 	SettingKeyMinClaudeCodeVersion                   = "min_claude_code_version"
-	SettingKeyOpenAITTFTMode                         = "openai_ttft_mode"
+	SettingKeyTTFTMode                               = "ttft_mode"
 	SettingKeyRewriteMessageCacheControl             = "rewrite_message_cache_control"
-	OpenAITTFTModeSemantic                           = "semantic" // semantic event classification mode
-	OpenAITTFTModeVisible                            = "visible"  // visible content classification mode
+	TTFTModeFirstEvent                               = timing.FirstEvent  // first upstream event selection
+	TTFTModeFirstOutput                              = timing.FirstOutput // first useful content selection
 
 	// versionBoundsCacheTTL retains successfully loaded version bounds until a
 	// later gateway read needs to refresh their paired values.
@@ -74,7 +75,7 @@ type cachedVersionBounds struct {
 
 // cachedGatewayForwardingSettings holds interpreted forwarding values with their cache deadline.
 type cachedGatewayForwardingSettings struct {
-	openAITTFTMode string // stored TTFT mode string
+	ttftMode string // stored TTFT mode string
 	// provider fingerprint unification toggle
 	fingerprintUnification bool
 	// client metadata passthrough toggle
@@ -97,7 +98,7 @@ type cachedGatewayForwardingSettings struct {
 
 // gatewayForwardingSettingsResult is the forwarding value tuple returned from cache reads.
 type gatewayForwardingSettingsResult struct {
-	openAITTFTMode string // stored TTFT mode string
+	ttftMode string // stored TTFT mode string
 	// fp selects provider fingerprint unification, mp client metadata passthrough,
 	// cch billing attribution signing, claudeOAuthSystemPromptInjection Anthropic
 	// system injection, cacheTTL1h one-hour cache injection, and
@@ -111,9 +112,9 @@ type gatewayForwardingSettingsResult struct {
 
 // ForwardingSnapshot holds persisted settings to publish to the local cache.
 type ForwardingSnapshot struct {
-	// OpenAITTFTMode is stored as supplied by PublishForwarding. The TTFT getter
-	// normalizes this string when choosing semantic or visible event classification.
-	OpenAITTFTMode string
+	// TTFTMode is stored as supplied by PublishForwarding. The TTFT getter
+	// normalizes this string when choosing the shared upstream event classification.
+	TTFTMode string
 	// provider fingerprint unification toggle
 	FingerprintUnification bool
 	// client metadata passthrough toggle
@@ -153,15 +154,10 @@ func (s *RuntimeSettings) GetGrokDefaultBaseURLMode(ctx context.Context) string 
 	return NormalizeGrokDefaultBaseURLMode(raw)
 }
 
-// NormalizeOpenAITTFTMode returns visible for its trimmed, case-insensitive
-// spelling and semantic for all other inputs. This reader default is permissive;
-// administration preparation separately rejects unknown nonblank mode values.
-func NormalizeOpenAITTFTMode(mode string) string {
-	if strings.EqualFold(strings.TrimSpace(mode), OpenAITTFTModeVisible) {
-		return OpenAITTFTModeVisible
-	}
-	return OpenAITTFTModeSemantic
-}
+// NormalizeTTFTMode applies the shared upstream event selection to stored settings.
+// First-event spelling is case insensitive; an absent or unsupported value selects
+// first useful output, matching new installations and request collector defaults.
+func NormalizeTTFTMode(mode string) string { return timing.NormalizeMode(mode) }
 
 // getGatewayForwardingSettingsCached returns interpreted forwarding values from
 // the current unexpired cache or a shared refresh. Supply a nonnil runtime,
@@ -170,7 +166,7 @@ func NormalizeOpenAITTFTMode(mode string) string {
 //
 // A successful batch read interprets absent and empty switches using their
 // individual defaults, then publishes one snapshot for sixty seconds. A failed
-// read publishes semantic TTFT, enabled fingerprint/prompt/dateline switches,
+// read publishes first-output mode, enabled fingerprint/prompt/dateline switches,
 // and otherwise zero values for five seconds. This distinguishes an unavailable
 // settings store from a successfully read explicit false toggle; future callers
 // recheck the store after the shorter error deadline.
@@ -178,7 +174,7 @@ func (s *RuntimeSettings) getGatewayForwardingSettingsCached(ctx context.Context
 	if cached, ok := s.gatewayForwardingCache.Load().(*cachedGatewayForwardingSettings); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
 			return gatewayForwardingSettingsResult{
-				openAITTFTMode:                   cached.openAITTFTMode,
+				ttftMode:                         cached.ttftMode,
 				fp:                               cached.fingerprintUnification,
 				mp:                               cached.metadataPassthrough,
 				cch:                              cached.cchSigning,
@@ -195,7 +191,7 @@ func (s *RuntimeSettings) getGatewayForwardingSettingsCached(ctx context.Context
 		if cached, ok := s.gatewayForwardingCache.Load().(*cachedGatewayForwardingSettings); ok && cached != nil {
 			if time.Now().UnixNano() < cached.expiresAt {
 				return gatewayForwardingSettingsResult{
-					openAITTFTMode:                   cached.openAITTFTMode,
+					ttftMode:                         cached.ttftMode,
 					fp:                               cached.fingerprintUnification,
 					mp:                               cached.metadataPassthrough,
 					cch:                              cached.cchSigning,
@@ -214,7 +210,7 @@ func (s *RuntimeSettings) getGatewayForwardingSettingsCached(ctx context.Context
 		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), gatewayForwardingDBTimeout)
 		defer cancel()
 		values, err := s.settingRepo.GetMultiple(dbCtx, []string{
-			SettingKeyOpenAITTFTMode,
+			SettingKeyTTFTMode,
 			SettingKeyEnableFingerprintUnification,
 			SettingKeyEnableMetadataPassthrough,
 			SettingKeyEnableCCHSigning,
@@ -231,7 +227,7 @@ func (s *RuntimeSettings) getGatewayForwardingSettingsCached(ctx context.Context
 			// recovers instead of retaining these defaults for the normal lifetime.
 			slog.Warn("failed to get gateway forwarding settings", "error", err)
 			s.gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
-				openAITTFTMode:                   OpenAITTFTModeSemantic,
+				ttftMode:                         TTFTModeFirstOutput,
 				fingerprintUnification:           true,
 				metadataPassthrough:              false,
 				cchSigning:                       false,
@@ -242,14 +238,14 @@ func (s *RuntimeSettings) getGatewayForwardingSettingsCached(ctx context.Context
 				expiresAt:                        time.Now().Add(gatewayForwardingErrorTTL).UnixNano(),
 			})
 			return gatewayForwardingSettingsResult{
-				openAITTFTMode:                   OpenAITTFTModeSemantic,
+				ttftMode:                         TTFTModeFirstOutput,
 				fp:                               true,
 				claudeOAuthSystemPromptInjection: true,
 				rewriteMessageCacheControl:       false,
 				clientDatelineNormalization:      true,
 			}, nil
 		}
-		ttftMode := NormalizeOpenAITTFTMode(values[SettingKeyOpenAITTFTMode])
+		ttftMode := NormalizeTTFTMode(values[SettingKeyTTFTMode])
 		fp := true
 		if v, ok := values[SettingKeyEnableFingerprintUnification]; ok && v != "" {
 			fp = v == "true"
@@ -274,7 +270,7 @@ func (s *RuntimeSettings) getGatewayForwardingSettingsCached(ctx context.Context
 		// Interpret every field before replacing the cache with this batch's tuple
 		// and deadline, so one accessor call cannot combine different refresh results.
 		s.gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
-			openAITTFTMode:                   ttftMode,
+			ttftMode:                         ttftMode,
 			fingerprintUnification:           fp,
 			metadataPassthrough:              mp,
 			cchSigning:                       cch,
@@ -287,7 +283,7 @@ func (s *RuntimeSettings) getGatewayForwardingSettingsCached(ctx context.Context
 			expiresAt:                        time.Now().Add(gatewayForwardingCacheTTL).UnixNano(),
 		})
 		return gatewayForwardingSettingsResult{
-			openAITTFTMode:                   ttftMode,
+			ttftMode:                         ttftMode,
 			fp:                               fp,
 			mp:                               mp,
 			cch:                              cch,
@@ -305,15 +301,15 @@ func (s *RuntimeSettings) getGatewayForwardingSettingsCached(ctx context.Context
 	// An unexpected shared value uses the same interpreted defaults as storage
 	// failure, so forwarding accessors receive a defined tuple rather than
 	// unresolved switch values.
-	return gatewayForwardingSettingsResult{openAITTFTMode: OpenAITTFTModeSemantic, fp: true, claudeOAuthSystemPromptInjection: true, clientDatelineNormalization: true}
+	return gatewayForwardingSettingsResult{ttftMode: TTFTModeFirstOutput, fp: true, claudeOAuthSystemPromptInjection: true, clientDatelineNormalization: true}
 }
 
-// GetOpenAITTFTMode returns the normalized time-to-first-token interpretation
-// from the forwarding cache. Missing or failed reads use semantic mode, and
+// GetTTFTMode returns the normalized time-to-first-token interpretation
+// from the forwarding cache. Missing or failed reads select first useful output, and
 // expired entries use the shared refresh rules documented by
 // getGatewayForwardingSettingsCached.
-func (s *RuntimeSettings) GetOpenAITTFTMode(ctx context.Context) string {
-	return NormalizeOpenAITTFTMode(s.getGatewayForwardingSettingsCached(ctx).openAITTFTMode)
+func (s *RuntimeSettings) GetTTFTMode(ctx context.Context) string {
+	return NormalizeTTFTMode(s.getGatewayForwardingSettingsCached(ctx).ttftMode)
 }
 
 // GetGatewayForwardingSettings returns fingerprint, metadata passthrough, and CCH signing switches.
@@ -452,7 +448,7 @@ func (s *RuntimeSettings) PublishForwarding(minVersion, maxVersion string, value
 	s.versionBoundsCache.Store(&cachedVersionBounds{min: minVersion, max: maxVersion, expiresAt: time.Now().Add(versionBoundsCacheTTL).UnixNano()})
 	s.gatewayForwardingSF.Forget("gateway_forwarding")
 	s.gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
-		openAITTFTMode:                   value.OpenAITTFTMode,
+		ttftMode:                         value.TTFTMode,
 		fingerprintUnification:           value.FingerprintUnification,
 		metadataPassthrough:              value.MetadataPassthrough,
 		cchSigning:                       value.CCHSigning,

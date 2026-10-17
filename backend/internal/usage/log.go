@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
 // log.go defines completed-request usage records and reconciles their request
@@ -24,6 +25,10 @@ import (
 // UsageLog is the completed-request analysis row with attribution, measured
 // usage, cost and loaded display relations.
 type UsageLog struct {
+	// Timings owns the frozen observations of the exchange producing this usage.
+	// Completion clones it before asynchronous processing and never mutates its values.
+	Timings *timing.Performance
+
 	ID int64 // usage row identifier
 	// UserID records the acting member, BillingUserID the payer and TeamID
 	// team-key attribution. User visibility selects acting records, while
@@ -135,12 +140,9 @@ type UsageLog struct {
 	// DurationMs records the upstream elapsed duration in whole milliseconds.
 	// Nil leaves the duration unobserved for latency statistics and HTTP
 	// display.
-	DurationMs *int // upstream duration milliseconds
-	// FirstTokenMs records the measured first-token delay in milliseconds. Nil
-	// keeps that observation absent for display and throughput calculations.
-	FirstTokenMs *int    // first token delay milliseconds
-	UserAgent    *string // client user agent
-	IPAddress    *string // client request address
+	DurationMs *int    // upstream duration milliseconds
+	UserAgent  *string // client user agent
+	IPAddress  *string // client request address
 	// SessionID retains a validated client session_id or X-Session-Id value.
 	// Absent or invalid input leaves nil for the user-visible correlation field.
 	SessionID *string // client session correlation identifier

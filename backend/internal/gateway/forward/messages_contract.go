@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
@@ -20,7 +21,7 @@ import (
 // PartialUsage joins usage observed by the reader with HTTP metadata, the
 // logical and mapped models, and a requested speed hint. Positive observations
 // survive ordinary stream errors, while a failover result suppresses the partial
-// billing result. Header maps and first-token pointers remain shared, so the
+// billing result. Header maps and captured performance remain shared, so the
 // holder expresses which observations belong together without cloning them.
 
 // MessageInput captures provider eligibility and static options for one Messages attempt.
@@ -92,9 +93,9 @@ type StreamOutcome struct {
 	// Usage points to reader observations, including partial usage on error.
 	// A nil pointer or no positive token observation cannot form PartialUsage.
 	Usage *upstream.TokenUsage
-	// FirstTokenMs retains the reader's timing pointer; a missing observation
-	// stays nil, and PartialUsage carries this pointer without cloning its value.
-	FirstTokenMs     *int
+	// Timings retains the captured performance snapshot for this exchange. A missing
+	// observation stays nil, and PartialUsage carries the snapshot without cloning it.
+	Timings          *timing.Performance
 	ClientDisconnect bool // observed client disconnection
 }
 
@@ -381,7 +382,7 @@ func RetryDelay(attempt int) time.Duration {
 //
 // Usage values are copied before a blank speed is filled from a case-insensitive
 // fast request hint. Logical/mapped model identity and elapsed forwarding time
-// accompany those counts, while headers and first-token timing retain shared
+// accompany those counts, while headers and performance observations retain shared
 // references. The caller may attach the separately observed response model.
 func PartialUsage(resp *ExchangeResponse, stream *StreamOutcome, model, upstreamModel string, start time.Time, speed string, failover bool) *Result {
 	if stream == nil || !stream.Usage.HasObservedTokens() || failover {
@@ -405,7 +406,7 @@ func PartialUsage(resp *ExchangeResponse, stream *StreamOutcome, model, upstream
 		UpstreamModel:    upstreamModel,
 		Stream:           true,
 		Duration:         time.Since(start),
-		FirstTokenMs:     stream.FirstTokenMs,
+		Timings:          stream.Timings,
 		ClientDisconnect: stream.ClientDisconnect,
 	}
 }

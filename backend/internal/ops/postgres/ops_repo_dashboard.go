@@ -23,7 +23,7 @@ import (
 //
 // Automatic selection reads covered stable UTC hours with raw fragments around
 // them, then combines counts additively and latency summaries approximately.
-// Duration low percentiles and means use success counts, first-token summaries
+// Duration low percentiles and means use success counts, TTFT summaries
 // use measured sample counts, and high percentiles use maxima. Global-hour
 // coverage relies on aligned rows produced by aggregation; dimension absence
 // can mean no matching traffic. Any automatic-path error retries the complete
@@ -44,9 +44,9 @@ type opsDashboardPartial struct {
 	// successCount counts all usage observations and errorCountTotal counts final
 	// client failures; businessLimitedCount and errorCountSLA divide failures
 	// under the supplied SLA policy. ttftSampleCount independently counts nonnull
-	// first-token measurements.
+	// TTFT measurements.
 	successCount         int64 // saved usage observation count
-	ttftSampleCount      int64 // nonnull first-token sample count
+	ttftSampleCount      int64 // nonnull TTFT sample count
 	errorCountTotal      int64 // final client failure count
 	businessLimitedCount int64 // SLA-excluded client failure count
 	errorCountSLA        int64 // SLA-countable client failure count
@@ -65,7 +65,7 @@ type opsDashboardPartial struct {
 	// partial value shares those pointers, so segment readers treat the pointed-to
 	// statistics as immutable.
 	duration ops.OpsPercentiles // request duration percentile values
-	ttft     ops.OpsPercentiles // first-token latency percentile values
+	ttft     ops.OpsPercentiles // TTFT latency percentile values
 }
 
 // opsHourlyMetricsRow preserves SQL measurement presence and counts while
@@ -74,11 +74,11 @@ type opsHourlyMetricsRow struct {
 	bucketStart time.Time // saved UTC hour start
 
 	// successCount counts usage observations, ttftSampleCount counts measured
-	// first-token values, and errorCountTotal, businessLimitedCount, and
+	// TTFT values, and errorCountTotal, businessLimitedCount, and
 	// errorCountSLA retain the saved final-client classification. Their counters
 	// add across selected rows.
 	successCount         int64 // saved usage observation count
-	ttftSampleCount      int64 // nonnull first-token sample count
+	ttftSampleCount      int64 // nonnull TTFT sample count
 	errorCountTotal      int64 // final client failure count
 	businessLimitedCount int64 // SLA-excluded client failure count
 	errorCountSLA        int64 // SLA-countable client failure count
@@ -105,12 +105,12 @@ type opsHourlyMetricsRow struct {
 	// ttftP50, ttftP90, and ttftAvg use positive ttftSampleCount for valid
 	// measured values. ttftP95, ttftP99, and ttftMax retain valid maxima even when
 	// sample weight is nonpositive.
-	ttftP50 sql.NullInt64   // first-token median in milliseconds
-	ttftP90 sql.NullInt64   // first-token 90th percentile milliseconds
-	ttftP95 sql.NullInt64   // first-token 95th percentile milliseconds
-	ttftP99 sql.NullInt64   // first-token 99th percentile milliseconds
-	ttftAvg sql.NullFloat64 // mean first-token latency milliseconds
-	ttftMax sql.NullInt64   // maximum first-token latency milliseconds
+	ttftP50 sql.NullInt64   // TTFT median in milliseconds
+	ttftP90 sql.NullInt64   // TTFT 90th percentile milliseconds
+	ttftP95 sql.NullInt64   // TTFT 95th percentile milliseconds
+	ttftP99 sql.NullInt64   // TTFT 99th percentile milliseconds
+	ttftAvg sql.NullFloat64 // mean TTFT latency milliseconds
+	ttftMax sql.NullInt64   // maximum TTFT latency milliseconds
 }
 
 // opsPercentileSegment pairs a caller-selected sample weight with one
@@ -307,7 +307,7 @@ func (r *Store) getDashboardOverviewRaw(ctx context.Context, filter *ops.OpsDash
 // Filtered hourly absence is checked against raw sources; positive existence
 // triggers raw retry, while existence-check errors are ignored and empty
 // aggregate counts remain possible. Counts from nonoverlapping fragments add,
-// duration summaries use success weights, and first-token summaries use
+// duration summaries use success weights, and TTFT summaries use
 // measured weights. Weighted medians/90th percentiles are approximations and
 // high percentiles use maxima. Current and peak still query raw; recognized
 // rate timeouts substitute nonpositive values from averages. Saved aggregate
@@ -398,7 +398,7 @@ func (r *Store) getDashboardOverviewPreaggregated(ctx context.Context, filter *o
 		{weight: head.successCount, p: head.duration},
 		{weight: tail.successCount, p: tail.duration},
 	})
-	// Use nonnull first-token sample counts separately from successes, so segments
+	// Use nonnull TTFT sample counts separately from successes, so segments
 	// containing unmeasured requests do not inflate this latency summary's
 	// denominator.
 	ttft := combineApproxPercentiles([]opsPercentileSegment{
@@ -668,7 +668,7 @@ ORDER BY bucket_start ASC`
 // summaries into one partial result. Empty input yields zero counts and absent
 // measurements. Median, 90th percentile, and mean require both valid SQL values
 // and positive weight; duration uses all successes of each contributing row
-// while first-token values use measured samples.
+// while TTFT values use measured samples.
 //
 // Each component has its own denominator so missing values do not contribute to
 // that component. High percentiles and maxima select available largest values
@@ -741,9 +741,9 @@ func aggregateHourlyRows(rows []opsHourlyMetricsRow) opsDashboardPartial {
 			}
 		}
 
-		// First-token weight counts measured values rather than every usage success.
+		// TTFT weight counts measured values rather than every usage success.
 		// A missing component is excluded from its own denominator even when other
-		// first-token values are present.
+		// TTFT values are present.
 		if row.ttftSampleCount > 0 {
 			if row.ttftP50.Valid {
 				ttftP50Sum += float64(row.ttftP50.Int64) * float64(row.ttftSampleCount)
@@ -820,7 +820,7 @@ func aggregateHourlyRows(rows []opsHourlyMetricsRow) opsDashboardPartial {
 	}
 	out.duration.Max = maxMax
 
-	// Round weighted first-token estimates using measured-sample denominators.
+	// Round weighted TTFT estimates using measured-sample denominators.
 	// High percentile and maximum pointers already represent the greatest
 	// available values, independently of weights.
 	if ttftP50W > 0 {
@@ -845,13 +845,13 @@ func aggregateHourlyRows(rows []opsHourlyMetricsRow) opsDashboardPartial {
 // queryRawPartial combines raw usage counts, latency measurements, and error
 // categories for one segment using separate statements. A usable Store and
 // nonnil filter are required. Recognized latency deadline errors leave counts
-// available while returning absent duration/first-token measurements and zero
-// first-token sample weight.
+// available while returning absent duration/TTFT measurements and zero
+// TTFT sample weight.
 //
 // Other latency errors and either count failure reject the segment. The child
 // latency budget inherits caller cancellation, while counts use the supplied
-// context. Zero first-token weight prevents an unavailable latency segment from
-// diluting combined first-token averages; duration still retains its success
+// context. Zero TTFT weight prevents an unavailable latency segment from
+// diluting combined TTFT averages; duration still retains its success
 // count but absent component values are excluded by the combination helper.
 func (r *Store) queryRawPartial(ctx context.Context, filter *ops.OpsDashboardFilter, start, end time.Time) (*opsDashboardPartial, error) {
 	successCount, tokenConsumed, err := r.queryUsageCounts(ctx, filter, start, end)
@@ -868,7 +868,7 @@ func (r *Store) queryRawPartial(ctx context.Context, filter *ops.OpsDashboardFil
 	if err != nil {
 		if isQueryTimeoutErr(err) {
 			// A recognized latency deadline discards unavailable measurement values and
-			// their first-token weight. Counts already read remain usable for this
+			// their TTFT weight. Counts already read remain usable for this
 			// segment's additive totals.
 			duration = ops.OpsPercentiles{}
 			ttft = ops.OpsPercentiles{}
@@ -1062,15 +1062,15 @@ FROM usage_logs ul
 	return successCount, tokenConsumed, nil
 }
 
-// queryUsageLatency returns duration and first-token percentile measurements
-// from raw usage rows plus the count of nonnull first-token samples. Shared
+// queryUsageLatency returns duration and TTFT percentile measurements
+// from raw usage rows plus the count of nonnull TTFT samples. Shared
 // filtering uses the supplied half-open range and saved dimensions. SQL
 // excludes missing measurement values from each statistic, while recorded zero
 // still contributes.
 //
 // Percentiles and means are rounded into newly allocated native-int pointers,
 // preserving absence as nil. Maximum SQL integers narrow unchecked to native
-// int. The returned sample count weights first-token summaries when combining
+// int. The returned sample count weights TTFT summaries when combining
 // raw fragments with saved hours; query failure rejects all measurements. The
 // caller owns its cancellation and any optional latency child budget.
 func (r *Store) queryUsageLatency(ctx context.Context, filter *ops.OpsDashboardFilter, start, end time.Time) (duration ops.OpsPercentiles, ttft ops.OpsPercentiles, ttftSampleCount int64, err error) {
@@ -1083,13 +1083,13 @@ SELECT
   percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL) AS duration_p99,
   AVG(duration_ms) FILTER (WHERE duration_ms IS NOT NULL) AS duration_avg,
   MAX(duration_ms) AS duration_max,
-  percentile_cont(0.50) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_p50,
-  percentile_cont(0.90) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_p90,
-  percentile_cont(0.95) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_p95,
-  percentile_cont(0.99) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_p99,
-  AVG(first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_avg,
-  MAX(first_token_ms) AS ttft_max,
-  COUNT(first_token_ms) AS ttft_sample_count
+  percentile_cont(0.50) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) FILTER (WHERE ` + usageTTFTSQL("") + ` IS NOT NULL) AS ttft_p50,
+  percentile_cont(0.90) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) FILTER (WHERE ` + usageTTFTSQL("") + ` IS NOT NULL) AS ttft_p90,
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) FILTER (WHERE ` + usageTTFTSQL("") + ` IS NOT NULL) AS ttft_p95,
+  percentile_cont(0.99) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) FILTER (WHERE ` + usageTTFTSQL("") + ` IS NOT NULL) AS ttft_p99,
+  AVG(` + usageTTFTSQL("") + `) FILTER (WHERE ` + usageTTFTSQL("") + ` IS NOT NULL) AS ttft_avg,
+  MAX(` + usageTTFTSQL("") + `) AS ttft_max,
+  COUNT(` + usageTTFTSQL("") + `) AS ttft_sample_count
 FROM usage_logs ul
 ` + join + `
 ` + where

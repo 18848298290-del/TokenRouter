@@ -2917,7 +2917,7 @@ func newOpenAIExecutionAndSelectionFixture(
 	}}
 	connections := openaiws.NewOpenAIWSConnections(openAIWSPoolOptions(cfg), nil)
 	identity := gatewayprovider.NewExecutionAgentIdentity(&providercore.OpenAITaskCoordinator{}, providerRepo, nil, connections.InvalidateProvider)
-	output := provideOpenAIResponseOutput(cfg, provideOpenAIResponseHealth(healthObserver, blocks, modelTransient, deferredService), grokHealth, healthObserver, headerFilter, turnHeaders, proxyCircuit, settingService, stateStore, choices, provideReasoningHistory(cache), identity)
+	output := provideOpenAIResponseOutput(cfg, provideOpenAIResponseHealth(healthObserver, blocks, modelTransient, deferredService), grokHealth, healthObserver, headerFilter, turnHeaders, proxyCircuit, stateStore, choices, provideReasoningHistory(cache), identity)
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("GatewayRequestsAndAttempts")}
 	grokExecutor := provideGrokExecutor(cfg, credentials, httpUpstream, output, grokHealth, tlsFPProfileService, settingService, blocks, deferredService, providerRepo, activity, resolver, connections)
 	var routers *egress.TLSFingerprintRouterService
@@ -3576,7 +3576,7 @@ func legacyRouteMiddleware(auth keyhttp.APIKeyAuthMiddleware, keys *apikey.APIKe
 	if keys != nil {
 		native = keys
 	}
-	value := provideGatewayRouteMiddleware(auth, native, subscriptions, ops, cfg, nil, nil, nil)
+	value := provideGatewayRouteMiddleware(auth, native, subscriptions, ops, cfg, nil, nil, nil, nil)
 	options := gatewayhttp.GroupAssignmentOptions{Access: func(c *gin.Context) gatewayhttp.GroupAssignmentAccess {
 		key, ok := keyhttp.GetAPIKeyFromContext(c)
 		if !ok || key == nil {

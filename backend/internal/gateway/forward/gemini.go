@@ -70,12 +70,12 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 		// or selected-model eligibility beyond the required URL/body checks.
 		p.ZeroCount()
 		return &Result{
-			RequestID:    "",
-			Usage:        upstream.TokenUsage{},
-			Model:        originalModel,
-			Stream:       false,
-			Duration:     time.Since(startTime),
-			FirstTokenMs: nil,
+			RequestID: "",
+			Usage:     upstream.TokenUsage{},
+			Model:     originalModel,
+			Stream:    false,
+			Duration:  time.Since(startTime),
+			Timings:   nil,
 		}, nil
 	default:
 		return nil, p.GoogleError(404, "Unsupported action: "+action)
@@ -291,7 +291,7 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 		UpstreamModel:         billingModel,
 		Stream:                stream,
 		Duration:              result.Duration,
-		FirstTokenMs:          result.FirstTokenMs,
+		Timings:               result.Timings,
 		ClientDisconnect:      result.ClientDisconnect,
 		ImageCount:            imageCount,
 		ImageSize:             imageSize,

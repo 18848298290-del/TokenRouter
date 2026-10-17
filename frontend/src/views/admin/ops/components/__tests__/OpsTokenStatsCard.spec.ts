@@ -62,7 +62,7 @@ const sampleResponse = {
       model: 'claude-sonnet-4',
       request_count: 12,
       avg_tokens_per_sec: 22.5,
-      avg_first_token_ms: 123.45,
+      avg_ttft_ms: 123.45,
       total_output_tokens: 1234,
       avg_duration_ms: 321,
       requests_with_first_token: 10,

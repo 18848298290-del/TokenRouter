@@ -6,6 +6,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/modeltrace"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
 // context.go captures completion correlation values and model traces for
@@ -58,6 +59,7 @@ func copyCompletionContext(destination, source context.Context) context.Context 
 			destination = context.WithValue(destination, telemetry.ClientModel, snapshot.ClientModel)
 		}
 	}
+	destination = timing.CopyPerformance(destination, source)
 	return telemetry.CopyRequestCapture(destination, source)
 }
 

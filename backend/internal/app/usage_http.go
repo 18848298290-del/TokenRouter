@@ -74,7 +74,7 @@ func provideUsageHTTP(s *usage.UsageService, keys ports.KeyReader, ops *opscore.
 // provideAdminUsageHTTP combines administrator usage, identity reads, cleanup,
 // observations, and dates.
 func provideAdminUsageHTTP(s *usage.UsageService, keys ports.KeyReader, users ports.UserReader, cleanup *usage.UsageCleanupService, ops *opscore.OpsService, calendar timezone.Calendar) *usageadmin.UsageHandler {
-	return usageadmin.NewUsageHandler(s, keys, users, cleanup, ops, calendar)
+	return usageadmin.NewUsageHandler(s, keys, users, cleanup, calendar)
 }
 
 // provideDashboardHTTP exposes assembled dashboard queries with the shared

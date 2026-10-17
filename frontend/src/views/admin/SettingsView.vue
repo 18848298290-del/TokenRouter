@@ -2656,6 +2656,21 @@
             :description="t('admin.settings.scheduling.description')"
           >
             <div class="settings-section space-y-6" data-testid="gateway-scheduling-general">
+              <!-- The global choice controls upstream TTFT for every text platform and protocol. -->
+              <SettingRow
+                id="ttft-mode"
+                field
+                :label="t('admin.settings.gatewayForwarding.ttftMode')"
+                :hint="t('admin.settings.gatewayForwarding.ttftModeHint')"
+              >
+                <Select
+                  v-model="form.ttft_mode"
+                  :options="ttftModeOptions"
+                  :aria-label="t('admin.settings.gatewayForwarding.ttftMode')"
+                  data-testid="ttft-mode"
+                />
+              </SettingRow>
+
               <SettingsSection
                 :title="t('admin.settings.scheduling.providerSchedulingThresholdsTitle')"
                 :hint="t('admin.settings.scheduling.providerSchedulingThresholdsDescription')"
@@ -3094,20 +3109,6 @@
             :description="t('admin.settings.gatewayForwarding.openaiDescription')"
           >
             <SettingsSection>
-              <!-- OpenAI Responses 首 token 的计时方式。 -->
-              <SettingRow
-                id="openai-ttft-mode"
-                field
-                :label="t('admin.settings.gatewayForwarding.openaiTTFTMode')"
-                :hint="t('admin.settings.gatewayForwarding.openaiTTFTModeHint')"
-              >
-                <Select
-                  v-model="form.openai_ttft_mode"
-                  :options="openAITTFTModeOptions"
-                  :aria-label="t('admin.settings.gatewayForwarding.openaiTTFTMode')"
-                  data-testid="openai-ttft-mode"
-                />
-              </SettingRow>
               <!-- 全局开关：是否允许在 Claude Code 中使用 Codex 插件。 -->
               <SettingToggleRow
                 id="openai-allow-claude-code-codex-plugin"
@@ -5479,14 +5480,14 @@ const gatewaySections = [
 const activeGatewaySection = ref<GatewaySection>("general");
 const gatewaySectionsScrollRef = ref<HTMLElement | null>(null);
 const gatewayContentStartRef = ref<HTMLElement | null>(null);
-const openAITTFTModeOptions = computed(() => [
+const ttftModeOptions = computed(() => [
   {
-    value: "semantic",
-    label: t("admin.settings.gatewayForwarding.openaiTTFTModeSemantic"),
+    value: "first_event",
+    label: t("admin.settings.gatewayForwarding.ttftModeFirstEvent"),
   },
   {
-    value: "visible",
-    label: t("admin.settings.gatewayForwarding.openaiTTFTModeVisible"),
+    value: "first_output",
+    label: t("admin.settings.gatewayForwarding.ttftModeFirstOutput"),
   },
 ]);
 
@@ -6234,7 +6235,7 @@ const form = reactive<SettingsForm>({
     default_threshold_7d: 0,
   },
   // Gateway forwarding behavior
-  openai_ttft_mode: "semantic",
+  ttft_mode: "first_output",
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
   enable_cch_signing: false,
@@ -8428,8 +8429,8 @@ async function saveSettings(): Promise<boolean> {
       identity_patch_prompt: form.identity_patch_prompt,
       min_claude_code_version: form.min_claude_code_version,
       max_claude_code_version: form.max_claude_code_version,
-      openai_ttft_mode:
-        form.openai_ttft_mode === "visible" ? "visible" : "semantic",
+      ttft_mode:
+        form.ttft_mode === "first_output" ? "first_output" : "first_event",
       enable_fingerprint_unification: form.enable_fingerprint_unification,
       enable_metadata_passthrough: form.enable_metadata_passthrough,
       enable_claude_oauth_system_prompt_injection:

@@ -18,6 +18,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/searchtools"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -450,7 +451,7 @@ func (a *attempt) Execute(ctx context.Context, in forwardcore.MessageExecution) 
 		OnWireBody: in.Hooks.Wire, Accepted: in.Hooks.Accepted, BeforeStream: in.Hooks.BeforeStream,
 		OnStream: func(r *claude.StreamResult, _ error) {
 			if r != nil {
-				in.Hooks.Stream(&forwardcore.StreamOutcome{Usage: r.Usage, FirstTokenMs: r.FirstTokenMs, ClientDisconnect: r.ClientDisconnect})
+				in.Hooks.Stream(&forwardcore.StreamOutcome{Usage: r.Usage, Timings: timing.PerformanceFromContext(ctx), ClientDisconnect: r.ClientDisconnect})
 			}
 		},
 	}

@@ -8,6 +8,7 @@ package app
 
 import (
 	"context"
+
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	postgres8 "github.com/TokenFlux/TokenRouter/internal/apikey/postgres"
 	"github.com/TokenFlux/TokenRouter/internal/apikey/rediscache"
@@ -248,7 +249,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	compatible := provideCompatibleSelection(generic, gemini, reads, shared, cfg, openAIWSStateStore, quotaSettingsCache, runtimeBlockState, modelTransientState, proxyStreamCircuit, appSchedulerSharedState, appSelectionFreeQuotaGates)
 	codexTurnStateHeaders := provideCodexTurnStateHeaders(compatible)
 	reasoningHistory := provideReasoningHistory(gatewayCache)
-	openAIResponseOutput := provideOpenAIResponseOutput(cfg, openAIResponseHealth, grokHealth, upstreamHealth, compiledHeaderFilter, codexTurnStateHeaders, proxyStreamCircuit, runtimeReaders, openAIWSStateStore, compatible, reasoningHistory, executionAgentIdentity)
+	openAIResponseOutput := provideOpenAIResponseOutput(cfg, openAIResponseHealth, grokHealth, upstreamHealth, compiledHeaderFilter, codexTurnStateHeaders, proxyStreamCircuit, openAIWSStateStore, compatible, reasoningHistory, executionAgentIdentity)
 	appGatewayRequestActivity := provideGatewayRequestActivity(manager)
 	grokExecutor := provideGrokExecutor(cfg, requestCredentials, transportClient, openAIResponseOutput, grokHealth, tlsProfiles, runtimeReaders, runtimeBlockState, deferredService, providerExecutionProviderStore, appGatewayRequestActivity, priceResolver, openAIWSConnections)
 	anthropicPromptCache := provideAnthropicPromptCache()
@@ -516,7 +517,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	cleanup := provideBatchCleanup(batchImageRepository, providerStore, cfg, batchimageRegistry)
 	batchImageHandler := provideBatchHTTP(batchimagePublic, download, cleanup, appTaskRequestActivity)
 	apiKeyAuthMiddleware := provideAPIKeyAuth(apiKeyService, subscriptionService, cfg)
-	routeMiddleware := provideGatewayRouteMiddleware(apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, cfg, errorLogQueue, appMessageHTTPBindings, modelAttributeService)
+	routeMiddleware := provideGatewayRouteMiddleware(apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, cfg, errorLogQueue, appMessageHTTPBindings, modelAttributeService, gatewayRuntimeSettings)
 	appGatewayRouteMount := provideGatewayRouteMount(countTokensHandler, qoderCompatibleHandler, compatibleTextHandler, geminiNativeHandler, openAITextHandler, openAITokensHandler, responsesWSHandler, modelsHandler, messagesHandler, mediaHandler, auxiliaryHandler, liveHandler, searchHandler, publicUsageHandler, qoderChatHandler, batchImageHandler, routeMiddleware)
 	paymentHandler := providePaymentHTTP(paymentRuntime, paymentConfigService, plans)
 	paymentWebhookHandler := providePaymentWebhookHTTP(paymentRuntime, paymentRegistry)

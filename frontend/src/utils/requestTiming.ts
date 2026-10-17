@@ -6,9 +6,9 @@ import type { UsageLogTiming } from '@/types'
 // may be summed; offsets all start at gateway ingress and must never be added.
 // Keeping the two groups apart lets each surface label them without guessing.
 //
-// Historical records carry only offsets, so the duration group stays empty
-// instead of showing a column of missing values. Stream-only stages are dropped
-// for synchronous requests because they can never occur there. A measured zero
+// Failure diagnostics can contain only transport offsets, so their admission
+// duration group stays empty. Upstream stream flags govern arrival milestones,
+// while the client stream flag governs downstream delivery milestones. A measured zero
 // remains a value, while an absent observation becomes null for the caller to
 // render as a placeholder.
 
@@ -19,14 +19,14 @@ export const admissionTimingKeys = [
 
 // Event fields keep their ingress-relative meaning in historical and new records.
 export const eventTimingKeys = [
-  'provider_slot_acquired_ms', 'upstream_get_conn_ms', 'upstream_got_conn_ms',
+  'provider_slot_acquired_ms', 'upstream_started_ms', 'upstream_get_conn_ms', 'upstream_got_conn_ms',
   'upstream_wrote_request_ms', 'upstream_first_response_byte_ms', 'upstream_first_event_ms',
-  'first_visible_output_ms', 'first_downstream_flush_ms',
+  'upstream_first_output_ms', 'upstream_last_output_ms', 'upstream_completed_ms', 'upstream_finished_ms', 'first_visible_output_ms', 'first_downstream_flush_ms',
 ] as const
 
 // Stream-only events exist only when the client asked for a streaming response.
 const streamOnlyTimingKeys: ReadonlySet<TimingKey> = new Set([
-  'upstream_first_event_ms', 'first_visible_output_ms', 'first_downstream_flush_ms',
+  'first_visible_output_ms', 'first_downstream_flush_ms',
 ])
 
 // TimingKey names one recognized displayable duration or event offset.
@@ -56,10 +56,9 @@ export interface TimingBreakdown {
 }
 
 // timingValue reads one observation without deriving it from other fields.
-// The protocol-independent first event wins, including a measured zero; only
-// an absent value falls back to the SSE offset kept by historical records.
+// Measured zero remains visible, and absent observations stay null across every
+// consumer. Historical data supplies no substitute for an unrecorded field.
 export function timingValue(timing: UsageLogTiming, key: TimingKey): number | null {
-  if (key === 'upstream_first_event_ms') return timing.upstream_first_event_ms ?? timing.upstream_first_sse_data_ms ?? null
   return timing[key] ?? null
 }
 
@@ -77,7 +76,7 @@ export function timingBreakdown(timing: UsageLogTiming, stream?: boolean): Timin
   const row = (key: TimingKey): TimingRow => ({ key, value: timingValue(timing, key) })
   const durations = admissionTimingKeys.some((key) => timing[key] != null) ? admissionTimingKeys.map(row) : []
   const complete = durations.length > 0 && durations.every((item) => item.value != null)
-  const events = eventTimingKeys.filter((key) => streaming !== false || !streamOnlyTimingKeys.has(key)).map(row)
+  const events = eventTimingKeys.filter((key) => (streaming !== false || !streamOnlyTimingKeys.has(key)) && (timing.upstream_stream !== false || !['upstream_first_event_ms', 'upstream_first_output_ms', 'upstream_last_output_ms', 'upstream_completed_ms'].includes(key))).map(row)
   return {
     durations,
     admissionTotal: complete ? durations.reduce((sum, item) => sum + (item.value ?? 0), 0) : null,

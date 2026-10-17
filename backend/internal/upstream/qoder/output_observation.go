@@ -1,31 +1,25 @@
 package qoder
 
 import (
-	"time"
-
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// output_observation.go records Qoder semantic-output timing and downstream
-// write failures around the execution sink.
-// Output observation measures the first semantic event before the downstream
-// write is attempted. Failed Begin or Emit calls mark a client disconnect while
-// the stream converter can continue reading upstream usage, so completion
-// receives both timing and delivery evidence for the same attempt.
+// output_observation.go classifies Qoder output frames and records downstream
+// write failures around the execution sink. Frame inspection supplements the
+// converter's semantic and terminal flags before forwarding. Failed Begin or
+// Emit calls retain disconnect evidence while the converter can continue
+// collecting upstream usage for completion.
 
-// executionOutput observes timing and disconnect evidence around one serialized
-// output sink.
+// executionOutput supplements frame classification and disconnect evidence around
+// one serialized output sink.
 type executionOutput struct {
-	sink    upstream.OutputSink // downstream output sink
-	started time.Time           // attempt start time
+	sink upstream.OutputSink // downstream output sink
+
 	// disconnected records a failed Begin or Emit even when upstream collection
 	// continues. Execute copies this observation into completion's
 	// client-disconnect evidence.
 	disconnected bool // failed downstream write
-	// firstSemantic is recorded before the first semantic Emit reaches the sink.
-	// Nil means no semantic output has been observed for this attempt.
-	firstSemantic *time.Duration // first semantic elapsed time
 }
 
 // Begin forwards output headers and records whether the downstream sink rejects
@@ -39,19 +33,15 @@ func (o *executionOutput) Begin(h upstream.OutputHead) error {
 	return err
 }
 
-// Emit enriches frame meaning, records first semantic timing, and forwards the
-// event. Existing Semantic and Terminal flags remain set when frame inspection
-// adds evidence. Timing is recorded before sink emission so failed writes still
-// report when upstream content became available.
+// Emit supplements frame classification before forwarding the event to the sink.
+// Existing Semantic and Terminal flags remain set when inspection adds evidence.
+// A failed write retains disconnect state for the execution result and returns
+// the sink error to the stream converter.
 func (o *executionOutput) Emit(event upstream.OutputEvent) error {
 	if len(event.Data) > 0 {
 		semantic, terminal := qoderOutputMeaning(event.Data)
 		event.Semantic = event.Semantic || semantic
 		event.Terminal = event.Terminal || terminal
-	}
-	if event.Semantic && o.firstSemantic == nil {
-		elapsed := time.Since(o.started)
-		o.firstSemantic = &elapsed
 	}
 	err := o.sink.Emit(event)
 	if err != nil {

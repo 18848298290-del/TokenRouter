@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
@@ -203,16 +204,16 @@ func TestGrokLoopEligibilityAndCancellationBudgets(t *testing.T) {
 // snapshot.
 func TestGenerationSnapshotIsolatesMutableObservedFields(t *testing.T) {
 	first := 7
-	original := &GenerationResult{FirstTokenMs: &first, ImageOutputSizes: []string{"1024x1024"}, ImageSizeBreakdown: map[string]int{"1K": 1}, Headers: map[string][]string{"X-Request-Id": {"old"}}, ResponseHeaders: map[string][]string{"Empty": {}}}
+	original := &GenerationResult{Timings: &timing.Performance{Stream: true, Values: map[string]int64{"upstream_started_ms": 0, "upstream_first_output_ms": int64(first)}}, ImageOutputSizes: []string{"1024x1024"}, ImageSizeBreakdown: map[string]int{"1K": 1}, Headers: map[string][]string{"X-Request-Id": {"old"}}, ResponseHeaders: map[string][]string{"Empty": {}}}
 	snapshot := CloneGenerationResult(original)
 	// Mutate timing, size and upstream-header sources after cloning so value
 	// assertions expose retained aliases; the response-header assertion
 	// separately protects its present-empty shape.
-	first = 99
+	original.Timings.Values["upstream_first_output_ms"] = 99
 	original.ImageOutputSizes[0] = "changed"
 	original.ImageSizeBreakdown["1K"] = 4
 	original.Headers["X-Request-Id"][0] = "changed"
-	require.Equal(t, 7, *snapshot.FirstTokenMs)
+	require.Equal(t, 7, *snapshot.Timings.TTFTMs())
 	require.Equal(t, "1024x1024", snapshot.ImageOutputSizes[0])
 	require.Equal(t, 1, snapshot.ImageSizeBreakdown["1K"])
 	require.Equal(t, "old", snapshot.Headers["X-Request-Id"][0])

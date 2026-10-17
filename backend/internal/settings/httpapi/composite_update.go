@@ -1732,11 +1732,11 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		MinClaudeCodeVersion: req.MinClaudeCodeVersion,
 		MaxClaudeCodeVersion: req.MaxClaudeCodeVersion,
 		BackendModeEnabled:   req.BackendModeEnabled,
-		OpenAITTFTMode: func() string {
-			if req.OpenAITTFTMode != nil {
-				return *req.OpenAITTFTMode
+		TTFTMode: func() string {
+			if req.TTFTMode != nil {
+				return *req.TTFTMode
 			}
-			return previousSettings.OpenAITTFTMode
+			return previousSettings.TTFTMode
 		}(),
 		AllowUserViewErrorRequests: func() bool {
 			if req.AllowUserViewErrorRequests != nil {

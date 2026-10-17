@@ -16,8 +16,8 @@ import (
 // health, session state, and header policy.
 // OpenAI output shares provider health, reasoning history, response lineage,
 // and the proxy stream circuit. Its startup options retain platform stream
-// budgets and a default response-read limit, while request-time callbacks
-// supply TTFT policy and continuation lifetime.
+// budgets and a default response-read limit. The compatible provider selector
+// supplies the continuation lifetime used when recording response lineage.
 
 // provideOpenAIResponseHealth combines shared containment, transient models,
 // and deferred writes.
@@ -27,17 +27,14 @@ func provideOpenAIResponseHealth(observer *provideradapter.UpstreamHealth, block
 
 // provideOpenAIResponseOutput constructs response handling around the shared
 // health and session services. Nil cfg uses the default read bytes; positive
-// configured bytes replace them, readers enables dynamic TTFT policy, and
-// identity and choices supply method callbacks.
-func provideOpenAIResponseOutput(cfg *config.Config, health *provideradapter.OpenAIResponseHealth, grok *provideradapter.GrokHealth, observer *provideradapter.UpstreamHealth, headers *egress.CompiledHeaderFilter, turns *gatewayhttp.CodexTurnStateHeaders, circuit *egress.ProxyStreamCircuit, readers *gatewayadapter.RuntimeReaders, responses session.OpenAIWSStateStore, choices *selection.Compatible, history *session.ReasoningHistory, identity *gatewayadapter.ExecutionAgentIdentity) *gatewayhttp.OpenAIResponseOutput {
+// configured bytes replace them. Identity supplies redaction, and choices
+// supplies the response-lineage lifetime callback used during completion.
+func provideOpenAIResponseOutput(cfg *config.Config, health *provideradapter.OpenAIResponseHealth, grok *provideradapter.GrokHealth, observer *provideradapter.UpstreamHealth, headers *egress.CompiledHeaderFilter, turns *gatewayhttp.CodexTurnStateHeaders, circuit *egress.ProxyStreamCircuit, responses session.OpenAIWSStateStore, choices *selection.Compatible, history *session.ReasoningHistory, identity *gatewayadapter.ExecutionAgentIdentity) *gatewayhttp.OpenAIResponseOutput {
 	output := &gatewayhttp.OpenAIResponseOutput{
 		Reasoning: history, Redact: identity.Redact, Health: health, GrokHealth: grok, Observer: observer, Headers: headers, Turns: turns,
 		Corrector: openai.NewCodexToolCorrector(), ProxyCircuit: circuit, Responses: responses,
 		ResponseTTL: choices.OpenAIHTTPResponseStickyTTL,
 		Options:     gatewayhttp.OpenAIResponseOptions{ReadLimit: config.DefaultUpstreamResponseReadMaxBytes},
-	}
-	if readers != nil {
-		output.TTFT = readers.Gateway.GetOpenAITTFTMode
 	}
 	if cfg != nil {
 		v := cfg.Gateway

@@ -271,8 +271,8 @@ function onNextPage() {
                   <span class="text-gray-700 dark:text-gray-200">{{ formatRate(row.avg_tokens_per_sec) }}</span>
                 </div>
                 <div class="flex items-baseline justify-between gap-2">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('admin.ops.tokenStats.table.avgFirstTokenMs') }}</span>
-                  <span class="text-gray-700 dark:text-gray-200">{{ formatRate(row.avg_first_token_ms) }}</span>
+                  <span class="text-gray-500 dark:text-gray-400">{{ t('admin.ops.tokenStats.table.avgTTFTMs') }}</span>
+                  <span class="text-gray-700 dark:text-gray-200">{{ formatRate(row.avg_ttft_ms) }}</span>
                 </div>
                 <div class="flex items-baseline justify-between gap-2">
                   <span class="text-gray-500 dark:text-gray-400">{{ t('admin.ops.tokenStats.table.totalOutputTokens') }}</span>
@@ -295,7 +295,7 @@ function onNextPage() {
                 <th class="px-2 py-2 font-semibold">{{ t('admin.ops.tokenStats.table.model') }}</th>
                 <th class="px-2 py-2 font-semibold">{{ t('admin.ops.tokenStats.table.requestCount') }}</th>
                 <th class="px-2 py-2 font-semibold">{{ t('admin.ops.tokenStats.table.avgTokensPerSec') }}</th>
-                <th class="px-2 py-2 font-semibold">{{ t('admin.ops.tokenStats.table.avgFirstTokenMs') }}</th>
+                <th class="px-2 py-2 font-semibold">{{ t('admin.ops.tokenStats.table.avgTTFTMs') }}</th>
                 <th class="px-2 py-2 font-semibold">{{ t('admin.ops.tokenStats.table.totalOutputTokens') }}</th>
                 <th class="px-2 py-2 font-semibold">{{ t('admin.ops.tokenStats.table.avgDurationMs') }}</th>
                 <th class="px-2 py-2 font-semibold">{{ t('admin.ops.tokenStats.table.requestsWithFirstToken') }}</th>
@@ -310,7 +310,7 @@ function onNextPage() {
                 <td class="px-2 py-2 font-medium">{{ row.model }}</td>
                 <td class="px-2 py-2">{{ formatInt(row.request_count) }}</td>
                 <td class="px-2 py-2">{{ formatRate(row.avg_tokens_per_sec) }}</td>
-                <td class="px-2 py-2">{{ formatRate(row.avg_first_token_ms) }}</td>
+                <td class="px-2 py-2">{{ formatRate(row.avg_ttft_ms) }}</td>
                 <td class="px-2 py-2">{{ formatInt(row.total_output_tokens) }}</td>
                 <td class="px-2 py-2">{{ formatInt(row.avg_duration_ms) }}</td>
                 <td class="px-2 py-2">{{ formatInt(row.requests_with_first_token) }}</td>

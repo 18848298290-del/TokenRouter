@@ -9,7 +9,7 @@ import (
 // gemini_messages_stream.go converts native Gemini payloads into Messages
 // events and delivery signals.
 // Native Messages clients receive indexed content blocks and separate HTTP
-// flush or first-token signals from each Gemini payload. All nonempty text
+// flush signals from each Gemini payload. All nonempty text
 // parts use the visible text channel here, including thought-marked parts,
 // while adjacent same-name function calls share one argument history until
 // text or another name ends that tool.
@@ -18,8 +18,8 @@ import (
 // prefixes and emit incremental fragments. Each yield can stop consumption
 // after state has already advanced; finish metadata is recorded before output,
 // but usage is replaced only after every part and control signal has been
-// consumed. The HTTP adapter handles first-token markers once and flushes on
-// request. Callers consume one response sequentially and finish once.
+// consumed. The HTTP adapter emits each named event and honors flush requests
+// in order. Callers consume one response sequentially and finish once.
 
 // NativeMessageEvent carries one Messages SSE payload or a separate control
 // signal consumed by the upstream Gemini HTTP adapter.
@@ -31,9 +31,6 @@ type NativeMessageEvent struct {
 	// Flush requests the HTTP flusher after any named payload in this yield;
 	// the iterator emits standalone flush requests after starts and data updates.
 	Flush bool
-	// FirstToken marks a nonempty text delta about to be emitted; the adapter
-	// records elapsed time for the first marker and ignores subsequent markers.
-	FirstToken bool
 }
 
 // NativeGeminiMessagesStream retains one native response's active content
@@ -137,7 +134,7 @@ func (s *NativeGeminiMessagesStream) Process(geminiResp map[string]any, raw []by
 	return func(yield func(NativeMessageEvent) bool) {
 		emit := func(name string, data any) bool { return yield(NativeMessageEvent{Name: name, Data: data}) }
 		flush := func() bool { return yield(NativeMessageEvent{Flush: true}) }
-		token := func() bool { return yield(NativeMessageEvent{FirstToken: true}) }
+
 		if fr := NativeExtractGeminiFinishReason(geminiResp); fr != "" {
 			s.finishReason = fr
 		}
@@ -197,9 +194,6 @@ func (s *NativeGeminiMessagesStream) Process(geminiResp map[string]any, raw []by
 
 				// Yield the timing marker before the text delta; the HTTP adapter records
 				// only its first occurrence even though each nonempty delta requests it.
-				if !token() {
-					return
-				}
 				if !emit("content_block_delta", map[string]any{
 					"type":  "content_block_delta",
 					"index": s.openBlockIndex,

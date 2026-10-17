@@ -42,10 +42,6 @@ type opsRepoMock struct {
 	// an empty log slice with fixed page metadata.
 	ListSystemLogsFn func(ctx context.Context, filter *OpsSystemLogFilter) (*OpsSystemLogList, error)
 	// request timing lookup hook
-	// ListRequestTimingsFn overrides timing lookup when present. The callback
-	// receives the supplied identifier slice directly and controls result
-	// ownership.
-	ListRequestTimingsFn func(ctx context.Context, clientRequestIDs []string) (map[string]*OpsRequestTiming, error)
 	// system-log deletion hook
 	// DeleteSystemLogsFn overrides deletion when present. An absent callback
 	// returns zero affected rows and retains no deletion state.
@@ -149,16 +145,6 @@ func (m *opsRepoMock) ListSystemLogs(ctx context.Context, filter *OpsSystemLogFi
 		return m.ListSystemLogsFn(ctx, filter)
 	}
 	return &OpsSystemLogList{Logs: []*OpsSystemLog{}, Total: 0, Page: 1, PageSize: 50}, nil
-}
-
-// ListRequestTimings passes request identifiers to its hook or returns a new
-// empty timing map. Hook results are returned directly, allowing individual
-// tests to choose missing data and pointer sharing.
-func (m *opsRepoMock) ListRequestTimings(ctx context.Context, clientRequestIDs []string) (map[string]*OpsRequestTiming, error) {
-	if m.ListRequestTimingsFn != nil {
-		return m.ListRequestTimingsFn(ctx, clientRequestIDs)
-	}
-	return map[string]*OpsRequestTiming{}, nil
 }
 
 // DeleteSystemLogs delegates deletion to its hook when configured. The default

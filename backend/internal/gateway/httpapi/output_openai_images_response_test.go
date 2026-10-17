@@ -229,7 +229,7 @@ func TestImagesOAuthStreaming_TextFallbackReturnsCapabilityError(t *testing.T) {
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(upstreamSSE))}
 
 	svc := newImagesFixture(imagesFixtureInputs{})
-	_, _, _, _, err := upstreamopenai.ReadImagesOAuthStreaming(resp, upstreamcore.NewOutputContext(ResponseSink{Writer: c.Writer}), svc.Output.ImageOptions(c), time.Now(), "b64_json", "image_generation", "gpt-image-2")
+	_, _, _, err := upstreamopenai.ReadImagesOAuthStreaming(resp, upstreamcore.NewOutputContext(ResponseSink{Writer: c.Writer}), svc.Output.ImageOptions(c), time.Now(), "b64_json", "image_generation", "gpt-image-2")
 
 	var imgErr *upstreamopenai.OpenAIImagesUpstreamError
 	if !errors.As(err, &imgErr) {
@@ -264,7 +264,7 @@ func TestImagesOAuthStreaming_SplitSafetyRefusalReturns400(t *testing.T) {
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(upstreamSSE))}
 
 	svc := newImagesFixture(imagesFixtureInputs{})
-	_, _, _, _, err := upstreamopenai.ReadImagesOAuthStreaming(resp, upstreamcore.NewOutputContext(ResponseSink{Writer: c.Writer}), svc.Output.ImageOptions(c), time.Now(), "b64_json", "image_generation", "gpt-image-2")
+	_, _, _, err := upstreamopenai.ReadImagesOAuthStreaming(resp, upstreamcore.NewOutputContext(ResponseSink{Writer: c.Writer}), svc.Output.ImageOptions(c), time.Now(), "b64_json", "image_generation", "gpt-image-2")
 
 	var imgErr *upstreamopenai.OpenAIImagesUpstreamError
 	if !errors.As(err, &imgErr) {

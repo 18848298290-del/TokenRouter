@@ -15,7 +15,7 @@ import (
 // User usage responses display client model names and charged amounts
 // alongside measured token and image details. AdminUsageLog embeds that
 // response and adds outbound model observations, provider cost inputs and
-// request timings collected from persisted access logs.
+// performance observations read from the same persisted usage row.
 
 type (
 	// User names the account response used for loaded usage display relations.
@@ -84,12 +84,14 @@ type UsageLog struct {
 	// RequestType, Stream and OpenAIWSMode are resolved together by the mapper
 	// from the effective category. Special execution categories retain their
 	// source flags to keep recorded transport information available.
-	RequestType        string `json:"request_type"`         // effective request category label
-	Stream             bool   `json:"stream"`               // resolved stream transport flag
-	OpenAIWSMode       bool   `json:"openai_ws_mode"`       // resolved WebSocket transport flag
-	NativeCompactionV2 bool   `json:"native_compaction_v2"` // remote compaction v2 flag
-	DurationMs         *int   `json:"duration_ms"`          // optional upstream duration milliseconds
-	FirstTokenMs       *int   `json:"first_token_ms"`       // optional first token delay milliseconds
+	RequestType        string   `json:"request_type"`         // effective request category label
+	Stream             bool     `json:"stream"`               // resolved stream transport flag
+	OpenAIWSMode       bool     `json:"openai_ws_mode"`       // resolved WebSocket transport flag
+	NativeCompactionV2 bool     `json:"native_compaction_v2"` // remote compaction v2 flag
+	DurationMs         *int     `json:"duration_ms"`          // optional upstream duration milliseconds
+	TTFTMs             *int     `json:"ttft_ms"`              // selected upstream delay milliseconds
+	TPS                *float64 `json:"tps"`                  // estimated output tokens per second
+	TTFTMode           string   `json:"ttft_mode,omitempty"`  // captured request timing mode
 
 	ImageCount        int     `json:"image_count"`         // recorded generated image count
 	ImageSize         *string `json:"image_size"`          // optional image billing size tier
@@ -162,6 +164,17 @@ type AdminUsageLog struct {
 // UsageLogTiming exposes request metadata, admission durations, event offsets,
 // transport counts and connection observations in the usage response.
 type UsageLogTiming struct {
+	UpstreamStream   bool `json:"upstream_stream"`   // actual upstream streaming applicability
+	UpstreamComplete bool `json:"upstream_complete"` // successful upstream terminal observation
+	UsageComplete    bool `json:"usage_complete"`    // final output usage observation
+
+	UpstreamStartedMs     *int64 `json:"upstream_started_ms,omitempty"`      // milliseconds from request ingress
+	UpstreamFirstOutputMs *int64 `json:"upstream_first_output_ms,omitempty"` // milliseconds from request ingress
+	UpstreamLastOutputMs  *int64 `json:"upstream_last_output_ms,omitempty"`  // milliseconds from request ingress
+	UpstreamCompletedMs   *int64 `json:"upstream_completed_ms,omitempty"`    // milliseconds from request ingress
+	UpstreamFinishedMs    *int64 `json:"upstream_finished_ms,omitempty"`     // milliseconds from request ingress
+	AttemptNumber         *int64 `json:"attempt_number,omitempty"`           // usage-producing exchange ordinal
+
 	// RequestContentLength records the observed body length in bytes. Missing,
 	// unsupported, or rejected numeric observations remain nil, while zero is retained.
 	RequestContentLength *int64 `json:"request_content_length,omitempty"` // bytes
@@ -183,7 +196,6 @@ type UsageLogTiming struct {
 
 	// ProviderSlotAcquiredMs, UpstreamGetConnMs, UpstreamGotConnMs,
 	// UpstreamWroteRequestMs, UpstreamFirstResponseByteMs, UpstreamFirstEventMs,
-	// UpstreamFirstSSEDataMs, FirstVisibleOutputMs and FirstDownstreamFlushMs
 	// are first-event offsets from ingress in milliseconds, not additive durations.
 	// Nil leaves an unrecorded event absent; measured zero remains present.
 	ProviderSlotAcquiredMs      *int64 `json:"provider_slot_acquired_ms,omitempty"`       // milliseconds
@@ -192,7 +204,6 @@ type UsageLogTiming struct {
 	UpstreamWroteRequestMs      *int64 `json:"upstream_wrote_request_ms,omitempty"`       // milliseconds
 	UpstreamFirstResponseByteMs *int64 `json:"upstream_first_response_byte_ms,omitempty"` // milliseconds
 	UpstreamFirstEventMs        *int64 `json:"upstream_first_event_ms,omitempty"`         // milliseconds
-	UpstreamFirstSSEDataMs      *int64 `json:"upstream_first_sse_data_ms,omitempty"`      // milliseconds
 	FirstVisibleOutputMs        *int64 `json:"first_visible_output_ms,omitempty"`         // milliseconds
 	FirstDownstreamFlushMs      *int64 `json:"first_downstream_flush_ms,omitempty"`       // milliseconds
 
@@ -205,10 +216,10 @@ type UsageLogTiming struct {
 	UpstreamFirstResponseByteCount *int64 `json:"upstream_first_response_byte_count,omitempty"` // occurrences
 
 	// UpstreamConnectionReused and UpstreamWroteRequestError retain observed
-	// connection reuse and write failure. Missing or non-bool source values become
-	// false; false alone does not establish a present timing result.
-	UpstreamConnectionReused  bool `json:"upstream_connection_reused,omitempty"`   // observed connection reuse flag
-	UpstreamWroteRequestError bool `json:"upstream_wrote_request_error,omitempty"` // observed request write-error flag
+	// connection reuse and write failure. A missing observation remains absent,
+	// while a measured false survives JSON encoding as an observed boolean.
+	UpstreamConnectionReused  *bool `json:"upstream_connection_reused,omitempty"`   // observed connection reuse flag
+	UpstreamWroteRequestError *bool `json:"upstream_wrote_request_error,omitempty"` // observed request write-error flag
 }
 
 // UsageCleanupFilters carries the filter fields exposed in cleanup-task HTTP

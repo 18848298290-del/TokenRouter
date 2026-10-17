@@ -481,7 +481,7 @@ func Messages(ctx context.Context, p MessagePorts, in MessageInput, parsed *requ
 		return nil, err
 	}
 	usage := &attempt.Usage
-	firstTokenMs := attempt.FirstTokenMs
+
 	clientDisconnect := attempt.ClientDisconnect
 	if resp == nil {
 		return nil, err
@@ -496,7 +496,7 @@ func Messages(ctx context.Context, p MessagePorts, in MessageInput, parsed *requ
 		UpstreamResponseModel:       attempt.UpstreamResponseModel,
 		Stream:                      reqStream,
 		Duration:                    time.Since(startTime),
-		FirstTokenMs:                firstTokenMs,
+		Timings:                     nil,
 		ClientDisconnect:            clientDisconnect,
 	}, nil
 }

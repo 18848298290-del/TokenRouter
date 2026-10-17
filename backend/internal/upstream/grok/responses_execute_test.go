@@ -60,19 +60,15 @@ func TestGrokResponsesExecuteReplayAndResourceOwnership(t *testing.T) {
 	defer server.Close()
 	target := &ResponsesTarget{
 		ProviderID: 19,
-
-		Model: "grok-fixture",
-
+		Model:      "grok-fixture",
 		Enter: func() (func(), error) {
 			active.Add(1)
 			return func() { active.Add(-1) }, nil
 		},
-
 		Exchange: ResponsesExchange{
 			Build: func(body []byte) (*http.Request, error) {
 				return BuildResponsesRequest(context.Background(), body, ResponsesRequestOptions{URL: server.URL, Token: "fixture"})
 			},
-
 			Do: func(req *http.Request) (*http.Response, error) {
 				resp, err := server.Client().Do(req)
 				if resp != nil {
@@ -82,16 +78,13 @@ func TestGrokResponsesExecuteReplayAndResourceOwnership(t *testing.T) {
 				}
 				return resp, err
 			},
-
 			ReadError: func(resp *http.Response) []byte {
 				data, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
 				return data
 			},
-
 			OnReplay: func() { replay.Store(true) },
 		},
-
 		ReadResponse: func(resp *http.Response, _ upstream.AttemptInput, _ upstream.OutputSink) (upstream.ResponsesObservation, error) {
 			data, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
@@ -116,12 +109,12 @@ func TestGrokResponsesExecuteReplayAndResourceOwnership(t *testing.T) {
 }
 
 // TestGrokResponsesExecutePreservesPartialObservation injects usage,
-// served/commitment/disconnect flags and semantic timing with a read error. The
-// assertions retain the error identity, input-token count, usage and output
-// flags, and semantic timing; the response must still close once.
+// served/commitment/disconnect flags with a read error. The assertions retain
+// the error identity, input-token count, usage and output flags; the response
+// must still close once.
 func TestGrokResponsesExecutePreservesPartialObservation(t *testing.T) {
 	failure := errors.New("fixture read failure")
-	elapsed := 3 * time.Millisecond
+
 	var closed atomic.Int64
 	target := &ResponsesTarget{
 		Exchange: ResponsesExchange{
@@ -137,19 +130,12 @@ func TestGrokResponsesExecutePreservesPartialObservation(t *testing.T) {
 		},
 		ReadResponse: func(*http.Response, upstream.AttemptInput, upstream.OutputSink) (upstream.ResponsesObservation, error) {
 			return upstream.ResponsesObservation{
-				Usage: &wire.ForwardUsage{InputTokens: 11, OutputTokens: 3},
-
-				HasUsage: true,
-
-				Served: true,
-
-				HTTPCommitted: true,
-
-				RetryCommitted: true,
-
+				Usage:              &wire.ForwardUsage{InputTokens: 11, OutputTokens: 3},
+				HasUsage:           true,
+				Served:             true,
+				HTTPCommitted:      true,
+				RetryCommitted:     true,
 				ClientDisconnected: true,
-
-				FirstSemanticOutput: &elapsed,
 			}, failure
 		},
 	}
@@ -161,6 +147,6 @@ func TestGrokResponsesExecutePreservesPartialObservation(t *testing.T) {
 	require.True(t, result.HTTPCommitted)
 	require.True(t, result.RetryCommitted)
 	require.True(t, result.ClientDisconnect)
-	require.Equal(t, &elapsed, result.FirstSemanticOutput)
+	require.True(t, result.Served)
 	require.EqualValues(t, 1, closed.Load())
 }

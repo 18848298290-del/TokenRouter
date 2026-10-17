@@ -45,7 +45,7 @@ func ChatForwardResult(result *openai.CompatResponseResult, billingModel string)
 	if result == nil {
 		return nil
 	}
-	return &forwardcore.OpenAIResult{RequestID: result.RequestID, ReasoningEffort: result.ReasoningEffort, ServiceTier: result.ResolvedTier, ResponseID: result.ResponseID, ClientDisconnect: result.ClientDisconnect, UpstreamHeaders: result.UpstreamHeaders, Usage: result.Usage, Model: result.Model, BillingModel: billingModel, UpstreamModel: result.UpstreamModel, UpstreamResponseServiceTier: result.ServiceTier, Stream: result.Stream, Duration: result.Duration, FirstTokenMs: result.FirstTokenMs, SearchCount: result.SearchCount}
+	return &forwardcore.OpenAIResult{RequestID: result.RequestID, ReasoningEffort: result.ReasoningEffort, ServiceTier: result.ResolvedTier, ResponseID: result.ResponseID, ClientDisconnect: result.ClientDisconnect, UpstreamHeaders: result.UpstreamHeaders, Usage: result.Usage, Model: result.Model, BillingModel: billingModel, UpstreamModel: result.UpstreamModel, UpstreamResponseServiceTier: result.ServiceTier, Stream: result.Stream, Duration: result.Duration, SearchCount: result.SearchCount}
 }
 
 // Candidates delegates model and alternate identities to the shared
@@ -153,7 +153,7 @@ func ProjectMessagesCompletionResult(v *forwardcore.MessagesResult, a *provider.
 		RequestedReasoningEffort:    v.RequestedReasoningEffort,
 		Stream:                      v.Stream,
 		Duration:                    v.Duration,
-		FirstTokenMs:                v.FirstTokenMs,
+		Timings:                     v.Timings,
 		ImageCount:                  v.ImageCount,
 		ImageSize:                   v.ImageSize,
 		ImageInputSize:              v.ImageInputSize,
@@ -208,7 +208,7 @@ func ProjectOpenAICompletionResult(v *forwardcore.OpenAIResult, a *provider.Reco
 		Stream:                      v.Stream,
 		OpenAIWSMode:                v.OpenAIWSMode,
 		Duration:                    v.Duration,
-		FirstTokenMs:                v.FirstTokenMs,
+		Timings:                     v.Timings,
 		ImageCount:                  v.ImageCount,
 		ImageSize:                   v.ImageSize,
 		ImageInputSize:              v.ImageInputSize,
@@ -303,7 +303,7 @@ func ImagesForwardResult(result upstream.AttemptResult, parsed *media.ImageReque
 		Stream:           result.Stream,
 		ResponseHeaders:  result.UpstreamHeaders.Clone(),
 		Duration:         result.Duration,
-		FirstTokenMs:     result.FirstTokenMs,
+		Timings:          result.Timings,
 		ImageCount:       imageCount,
 		ImageSize:        parsed.SizeTier,
 		ImageInputSize:   parsed.Size,

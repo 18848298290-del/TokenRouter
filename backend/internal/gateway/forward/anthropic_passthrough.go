@@ -188,7 +188,7 @@ func APIKeyPassthrough(ctx context.Context, p PassthroughPorts, in MessageInput,
 		return nil, err
 	}
 	usage := &attempt.Usage
-	firstTokenMs := attempt.FirstTokenMs
+
 	clientDisconnect := attempt.ClientDisconnect
 	return &Result{
 		RequestID:                   resp.RequestID,
@@ -200,7 +200,7 @@ func APIKeyPassthrough(ctx context.Context, p PassthroughPorts, in MessageInput,
 		UpstreamResponseModel:       attempt.UpstreamResponseModel,
 		Stream:                      input.RequestStream,
 		Duration:                    time.Since(input.StartTime),
-		FirstTokenMs:                firstTokenMs,
+		Timings:                     nil,
 		ClientDisconnect:            clientDisconnect,
 	}, nil
 }

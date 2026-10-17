@@ -152,25 +152,17 @@ func (s *GrokExecutor) ChatResponses(
 	var result *protocolforward.OpenAIResult
 	var handleErr error
 	target := &grok.ResponsesTarget{
-		ProviderID: provider.Record.ID,
-
-		Model: upstreamModel,
-
-		Enter: s.Enter,
-
+		ProviderID:    provider.Record.ID,
+		Model:         upstreamModel,
+		Enter:         s.Enter,
 		PassRawStream: true,
-
 		Exchange: grok.ResponsesExchange{
 			SingleExchange: true,
-
-			Build: func([]byte) (*http.Request, error) { return upstreamReq, nil },
-
+			Build:          func([]byte) (*http.Request, error) { return upstreamReq, nil },
 			Do: func(req *http.Request) (*http.Response, error) {
 				return s.Transport.DoWithTLS(req, proxyURL, provider.Record.ID, provider.Record.Concurrency, s.TLSProfile(provider, tlsRouterMatch...))
 			},
-
 			ReadError: s.Output.ReadErrorBody,
-
 			AfterExchange: func(err error) error {
 				if err != nil {
 					return s.Failure.Handle(ctx, c, provider, err, false)
@@ -178,7 +170,6 @@ func (s *GrokExecutor) ChatResponses(
 				return nil
 			},
 		},
-
 		BeforeResponse: func(resp *http.Response, _ []byte) (bool, error) {
 			if resp.StatusCode >= http.StatusBadRequest {
 				respBody, upstreamMsg := s.Output.ReadReplayableError(resp)
@@ -193,19 +184,13 @@ func (s *GrokExecutor) ChatResponses(
 					kind = "failover"
 				}
 				AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
-					Platform: provider.Record.Platform,
-
-					ProviderID: provider.Record.ID,
-
-					ProviderName: provider.Record.Name,
-
+					Platform:           provider.Record.Platform,
+					ProviderID:         provider.Record.ID,
+					ProviderName:       provider.Record.Name,
 					UpstreamStatusCode: resp.StatusCode,
-
-					UpstreamRequestID: requeststate.FirstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
-
-					Kind: kind,
-
-					Message: upstreamMsg,
+					UpstreamRequestID:  requeststate.FirstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
+					Kind:               kind,
+					Message:            upstreamMsg,
 				})
 				if decision.ShouldReturnGenericError() {
 					result, handleErr = s.Output.CompatError(resp, c, provider, WriteForwardChatError, WriteForwardChatErrorBody, billingModel)
@@ -214,21 +199,14 @@ func (s *GrokExecutor) ChatResponses(
 				if kind == "failover" {
 					retryable, retryDelay, retryDeadline, retryMax := gatewayprovider.GrokSameProviderRetryMetadata(provider, resp.StatusCode, respBody)
 					return true, &protocolforward.UpstreamFailoverError{
-						StatusCode: resp.StatusCode,
-
-						ResponseBody: respBody,
-
-						ResponseHeaders: resp.Header.Clone(),
-
-						RetryableOnSameProvider: retryable || decision.RetryableOnSameProvider(gatewayprovider.ExecutionErrorPolicy(provider), resp.StatusCode),
-
-						RequestScopedTransient: retryable && resp.StatusCode == http.StatusTooManyRequests,
-
-						SameProviderRetryDelay: retryDelay,
-
+						StatusCode:                resp.StatusCode,
+						ResponseBody:              respBody,
+						ResponseHeaders:           resp.Header.Clone(),
+						RetryableOnSameProvider:   retryable || decision.RetryableOnSameProvider(gatewayprovider.ExecutionErrorPolicy(provider), resp.StatusCode),
+						RequestScopedTransient:    retryable && resp.StatusCode == http.StatusTooManyRequests,
+						SameProviderRetryDelay:    retryDelay,
 						SameProviderRetryDeadline: retryDeadline,
-
-						SameProviderRetryMax: retryMax,
+						SameProviderRetryMax:      retryMax,
 					}
 				}
 				result, handleErr = s.Output.CompatError(resp, c, provider, WriteForwardChatError, WriteForwardChatErrorBody, billingModel)
@@ -238,7 +216,6 @@ func (s *GrokExecutor) ChatResponses(
 			s.Health.ObserveResponse(ctx, provider.View(), resp.Header, resp.StatusCode, upstreamModel)
 			return false, nil
 		},
-
 		ReadResponse: func(resp *http.Response, _ upstream.AttemptInput, _ upstream.OutputSink) (upstream.ResponsesObservation, error) {
 			// The upstream is SSE in both modes; select the downstream converter from
 			// client intent so a JSON caller receives one complete Chat response.
@@ -251,23 +228,14 @@ func (s *GrokExecutor) ChatResponses(
 				return upstream.ResponsesObservation{}, err
 			}
 			return upstream.ResponsesObservation{
-				Usage: &result.Usage,
-
-				HasUsage: protocolopenai.OpenAIUsageHasTokens(&result.Usage),
-
-				FirstTokenMs: result.FirstTokenMs,
-
-				ResponseID: result.ResponseID,
-
-				SearchCount: result.SearchCount,
-
-				ImageCount: result.ImageCount,
-
+				Usage:            &result.Usage,
+				HasUsage:         protocolopenai.OpenAIUsageHasTokens(&result.Usage),
+				ResponseID:       result.ResponseID,
+				SearchCount:      result.SearchCount,
+				ImageCount:       result.ImageCount,
 				ImageOutputSizes: result.ImageOutputSizes,
-
-				HTTPCommitted: c.Writer.Written(),
-
-				RetryCommitted: IsResponseCommitted(c),
+				HTTPCommitted:    c.Writer.Written(),
+				RetryCommitted:   IsResponseCommitted(c),
 			}, err
 		},
 	}
@@ -276,15 +244,11 @@ func (s *GrokExecutor) ChatResponses(
 		sink = NewResponseSink(c)
 	}
 	nativeResult, err := (grok.ResponsesExecutor{}).Execute(upstreamCtx, upstream.AttemptInput{
-		Protocol: protocol.ProtocolOpenAIResponses,
-
-		Body: responsesBody,
-
+		Protocol:      protocol.ProtocolOpenAIResponses,
+		Body:          responsesBody,
 		ResponseModel: originalModel,
-
-		Stream: clientStream,
-
-		Target: target,
+		Stream:        clientStream,
+		Target:        target,
 	}, sink)
 
 	if result != nil {

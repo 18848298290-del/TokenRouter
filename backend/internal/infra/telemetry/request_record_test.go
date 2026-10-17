@@ -88,13 +88,13 @@ func TestRecordRelatedRequestFinishesTerminalStates(t *testing.T) {
 // and measured zero remains available after sparse completion enrichment.
 func TestMergeRequestRecordRetainsSparseTimingStages(t *testing.T) {
 	now := time.Now()
-	before := RequestRecord{UpdatedAt: now, Timings: map[string]int64{"request_body_read_ms": 120, "provider_slot_wait_ms": 0}}
-	after := RequestRecord{UpdatedAt: now.Add(time.Second), Timings: map[string]int64{"upstream_first_event_ms": 500}}
+	before := RequestRecord{UpdatedAt: now, FailureTimings: map[string]int64{"request_body_read_ms": 120, "provider_slot_wait_ms": 0}}
+	after := RequestRecord{UpdatedAt: now.Add(time.Second), FailureTimings: map[string]int64{"failed_at_ms": 500}}
 	got := MergeRequestRecord(before, after)
-	require.Equal(t, int64(120), got.Timings["request_body_read_ms"])
-	require.Contains(t, got.Timings, "provider_slot_wait_ms")
-	require.Equal(t, int64(500), got.Timings["upstream_first_event_ms"])
-	got.Timings["provider_slot_wait_ms"] = 99
-	require.Zero(t, before.Timings["provider_slot_wait_ms"])
-	require.Len(t, after.Timings, 1)
+	require.Equal(t, int64(120), got.FailureTimings["request_body_read_ms"])
+	require.Contains(t, got.FailureTimings, "provider_slot_wait_ms")
+	require.Equal(t, int64(500), got.FailureTimings["failed_at_ms"])
+	got.FailureTimings["provider_slot_wait_ms"] = 99
+	require.Zero(t, before.FailureTimings["provider_slot_wait_ms"])
+	require.Len(t, after.FailureTimings, 1)
 }

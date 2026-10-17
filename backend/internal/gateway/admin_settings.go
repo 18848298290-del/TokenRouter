@@ -75,8 +75,8 @@ type AdminSettings struct {
 	OpenAIAllowClaudeCodeCodexPlugin bool `json:"openai_allow_claude_code_codex_plugin"`
 	// outbound Codex User-Agent override
 	OpenAICodexUserAgent string `json:"openai_codex_user_agent"`
-	// semantic or visible TTFT
-	OpenAITTFTMode string `json:"openai_ttft_mode"`
+	// global upstream TTFT selection
+	TTFTMode string `json:"ttft_mode"`
 	// message cache-control rewrite toggle
 	RewriteMessageCacheControl bool `json:"rewrite_message_cache_control"`
 	// configured user-prompt replacement rules
@@ -117,11 +117,11 @@ func PrepareAdminSettings(settings *AdminSettings, rules AdminSettingsRules) (ma
 	updates[SettingKeyMinClaudeCodeVersion] = settings.MinClaudeCodeVersion
 	updates[SettingKeyMaxClaudeCodeVersion] = settings.MaxClaudeCodeVersion
 	updates[SettingKeyBackendModeEnabled] = strconv.FormatBool(settings.BackendModeEnabled)
-	mode := NormalizeOpenAITTFTMode(settings.OpenAITTFTMode)
-	if raw := strings.TrimSpace(settings.OpenAITTFTMode); raw != "" && !strings.EqualFold(raw, OpenAITTFTModeSemantic) && !strings.EqualFold(raw, OpenAITTFTModeVisible) {
-		return nil, fmt.Errorf("%s must be one of: %s/%s", SettingKeyOpenAITTFTMode, OpenAITTFTModeSemantic, OpenAITTFTModeVisible)
+	mode := NormalizeTTFTMode(settings.TTFTMode)
+	if raw := strings.TrimSpace(settings.TTFTMode); raw != "" && !strings.EqualFold(raw, TTFTModeFirstEvent) && !strings.EqualFold(raw, TTFTModeFirstOutput) {
+		return nil, fmt.Errorf("%s must be one of: %s/%s", SettingKeyTTFTMode, TTFTModeFirstEvent, TTFTModeFirstOutput)
 	}
-	updates[SettingKeyOpenAITTFTMode] = mode
+	updates[SettingKeyTTFTMode] = mode
 	updates[SettingKeyEnableFingerprintUnification] = strconv.FormatBool(settings.EnableFingerprintUnification)
 	updates[SettingKeyEnableMetadataPassthrough] = strconv.FormatBool(settings.EnableMetadataPassthrough)
 	updates[SettingKeyEnableCCHSigning] = strconv.FormatBool(settings.EnableCCHSigning)
@@ -176,7 +176,7 @@ func NormalizeGrokDefaultBaseURLMode(mode string) string {
 // string-valued storage update. For example, a supplied backend-mode false
 // persists as "false" while another omitted toggle produces no update.
 func AdminSettingsParticipant(rules AdminSettingsRules) settings.Participant {
-	keys := []string{SettingKeyAntigravityUserAgentVersion, SettingKeyBackendModeEnabled, SettingKeyClaudeOAuthSystemPrompt, SettingKeyClaudeOAuthSystemPromptBlocks, SettingKeyEnableAnthropicCacheTTL1hInjection, SettingKeyEnableCCHSigning, SettingKeyEnableClaudeOAuthSystemPromptInjection, SettingKeyEnableClientDatelineNormalization, SettingKeyEnableFingerprintUnification, SettingKeyEnableIdentityPatch, SettingKeyEnableMetadataPassthrough, SettingKeyGrokDefaultBaseURLMode, SettingKeyGrokDefaultTextModel, SettingKeyIdentityPatchPrompt, SettingKeyMaxClaudeCodeVersion, SettingKeyMinClaudeCodeVersion, SettingKeyOpenAIAllowClaudeCodeCodexPlugin, SettingKeyOpenAICodexUserAgent, SettingKeyOpenAITTFTMode, SettingKeyRewriteMessageCacheControl, SettingKeyUserPromptReplacementConfig}
+	keys := []string{SettingKeyAntigravityUserAgentVersion, SettingKeyBackendModeEnabled, SettingKeyClaudeOAuthSystemPrompt, SettingKeyClaudeOAuthSystemPromptBlocks, SettingKeyEnableAnthropicCacheTTL1hInjection, SettingKeyEnableCCHSigning, SettingKeyEnableClaudeOAuthSystemPromptInjection, SettingKeyEnableClientDatelineNormalization, SettingKeyEnableFingerprintUnification, SettingKeyEnableIdentityPatch, SettingKeyEnableMetadataPassthrough, SettingKeyGrokDefaultBaseURLMode, SettingKeyGrokDefaultTextModel, SettingKeyIdentityPatchPrompt, SettingKeyMaxClaudeCodeVersion, SettingKeyMinClaudeCodeVersion, SettingKeyOpenAIAllowClaudeCodeCodexPlugin, SettingKeyOpenAICodexUserAgent, SettingKeyTTFTMode, SettingKeyRewriteMessageCacheControl, SettingKeyUserPromptReplacementConfig}
 	return settings.Participant{Module: "gateway-forwarding", Fields: keys, Keys: keys, Prepare: func(_ context.Context, input settings.Fields, _ map[string]string) (settings.PreparedChange, error) {
 		if len(input) == 0 {
 			return settings.PreparedChange{}, nil

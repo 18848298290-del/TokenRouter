@@ -14,6 +14,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
@@ -288,4 +289,47 @@ func TestUsageLogBillingKeyUpgradeReplay(t *testing.T) {
 		require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_logs WHERE COALESCE(billing_key, request_id)=$1 AND api_key_id=$2", billingKey, key.ID).Scan(&count))
 		require.Equal(t, 1, count)
 	}
+}
+
+// TestUsagePerformanceLateWriteKeepsSnapshotAndExistingRows expires an acknowledgement
+// after queue admission, then executes the retained SQL payload. It verifies immutable
+// timing ownership, late persistence, and conflict handling that leaves historical JSON absent.
+func TestUsagePerformanceLateWriteKeepsSnapshotAndExistingRows(t *testing.T) {
+	client := testEntClient(t)
+	repo := NewUsageLogRepositoryWithSQL(client, integrationDB, timezone.NewCalendar(time.Local))
+	user := mustCreateUser(t, client, &identity.User{Email: "usage-timing-" + uuid.NewString() + "@example.com"})
+	key := mustCreateApiKey(t, client, &apikey.APIKey{UserID: user.ID, Key: "sk-timing-" + uuid.NewString(), Name: "timing"})
+	provider := mustCreateProvider(t, client, &providercore.Record{Name: "timing-" + uuid.NewString()})
+	p := timing.NewPerformance(timing.FirstOutput, 10)
+	p.Values["upstream_first_output_ms"] = 20
+	row := &usage.UsageLog{RequestID: uuid.NewString(), UserID: user.ID, APIKeyID: key.ID, ProviderID: provider.ID, Model: "model", Timings: p, CreatedAt: time.Now().UTC()}
+	// Hold accepted work outside the worker until the caller abandons acknowledgement;
+	// the SQL arguments already own their serialized performance and remain executable.
+	repo.bestEffortBatchCh = make(chan usageLogBestEffortRequest, 1)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- repo.CreateBestEffort(ctx, row) }()
+	queued := <-repo.bestEffortBatchCh
+	err := <-result
+	require.True(t, usage.IsUsageLogCreateDropped(err))
+	require.False(t, usage.IsUsageLogCreateNotPersisted(err))
+	p.Values["upstream_first_output_ms"] = 999
+	repo.flushBestEffortBatch(integrationDB, []usageLogBestEffortRequest{queued})
+	require.NoError(t, <-queued.resultCh)
+	var observed int64
+	require.NoError(t, integrationDB.QueryRowContext(t.Context(), `SELECT (timings->'values'->>'upstream_first_output_ms')::bigint FROM usage_logs WHERE request_id=$1 AND api_key_id=$2`, row.RequestID, key.ID).Scan(&observed))
+	require.Equal(t, int64(20), observed)
+	row.RequestID = uuid.NewString()
+	row.Timings = nil
+	inserted, err := repo.createSingle(t.Context(), integrationDB, row)
+	require.NoError(t, err)
+	require.True(t, inserted)
+	row.Timings = p
+	inserted, err = repo.createSingle(t.Context(), integrationDB, row)
+	require.NoError(t, err)
+	require.False(t, inserted)
+	var missing bool
+	require.NoError(t, integrationDB.QueryRowContext(t.Context(), `SELECT timings IS NULL FROM usage_logs WHERE request_id=$1 AND api_key_id=$2`, row.RequestID, key.ID).Scan(&missing))
+	require.True(t, missing)
 }

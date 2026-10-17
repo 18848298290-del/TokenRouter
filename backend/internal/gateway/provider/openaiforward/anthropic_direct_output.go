@@ -126,8 +126,7 @@ func NativeAnthropicBuffered(ctx context.Context, resp *http.Response, c *upstre
 // NativeAnthropicStreaming forwards native SSE lines while collecting vendor
 // model, token usage, and terminal evidence. It requires an output writer with
 // Flush; the execution caller closes the response body on every return so an
-// abandoned scanner can finish and release pooled storage. FirstTokenMs records
-// the first nonblank data value other than [DONE], including protocol metadata.
+// abandoned scanner can finish and release pooled storage.
 //
 // The scanner publishes lines independently and atomically records the latest
 // read time. Consumer idle checks use that read time, while keepalives use
@@ -169,7 +168,7 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 	}
 
 	usage := &upstream.TokenUsage{}
-	var firstTokenMs *int
+
 	clientDisconnected := false
 	sawTerminalEvent := false
 
@@ -265,31 +264,31 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 					flusher.Flush()
 				}
 				if !sawTerminalEvent {
-					return NativeAnthropicStreamResult(resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
+					return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
 						fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
-				return NativeAnthropicStreamResult(resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
+				return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
 			}
 			if ev.err != nil {
 				// Terminal evidence makes a later scanner failure a completed stream;
 				// return the collected observation before incomplete-usage handling can
 				// replace that conclusion.
 				if sawTerminalEvent {
-					return NativeAnthropicStreamResult(resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
+					return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
 				}
 				if clientDisconnected {
-					return NativeAnthropicStreamResult(resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
+					return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
 						fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
 				}
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return NativeAnthropicStreamResult(resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
+					return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
 						fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					o.Log("[CN Anthropic 直通] SSE line too long: provider=%d max_size=%d error=%v", o.ProviderID, maxLineSize, ev.err)
-					return NativeAnthropicStreamResult(resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), ev.err
+					return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), ev.err
 				}
-				return NativeAnthropicStreamResult(resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
+				return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
 					fmt.Errorf("stream read error: %w", ev.err)
 			}
 
@@ -300,10 +299,7 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 				if o.IsTerminal("", trimmed) {
 					sawTerminalEvent = true
 				}
-				if firstTokenMs == nil && trimmed != "" && trimmed != "[DONE]" {
-					ms := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &ms
-				}
+
 				protocolanthropic.ParseSSEUsagePassthrough(data, usage)
 			} else {
 				trimmed := strings.TrimSpace(line)
@@ -344,12 +340,12 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 				continue
 			}
 			if clientDisconnected {
-				return NativeAnthropicStreamResult(resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
+				return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
 					fmt.Errorf("stream usage incomplete after timeout")
 			}
 			o.Log("[CN Anthropic 直通] Stream data interval timeout: provider=%d model=%s interval=%s", o.ProviderID, upstreamModel, streamInterval)
 			o.HandleTimeout(ctx, upstreamModel)
-			return NativeAnthropicStreamResult(resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
+			return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
 				fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
@@ -382,7 +378,7 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 // for success or failure. Nil usage selects empty token buckets; headers and
 // pointer fields retain supplied storage, while duration is measured from the
 // supplied start time.
-func NativeAnthropicStreamResult(resp *http.Response, usage *upstream.TokenUsage, firstTokenMs *int, clientDisconnect bool, originalModel, billingModel, upstreamModel string, reasoningEffort *string, startTime time.Time) *Result {
+func NativeAnthropicStreamResult(resp *http.Response, usage *upstream.TokenUsage, clientDisconnect bool, originalModel, billingModel, upstreamModel string, reasoningEffort *string, startTime time.Time) *Result {
 	if usage == nil {
 		usage = &upstream.TokenUsage{}
 	}
@@ -397,7 +393,7 @@ func NativeAnthropicStreamResult(resp *http.Response, usage *upstream.TokenUsage
 		Stream:           true,
 		ReasoningEffort:  reasoningEffort,
 		Duration:         time.Since(startTime),
-		FirstTokenMs:     firstTokenMs,
+		Timings:          nil,
 		ClientDisconnect: clientDisconnect,
 	}
 }

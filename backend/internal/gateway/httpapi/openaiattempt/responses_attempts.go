@@ -328,9 +328,7 @@ func (b *responsesAttemptBridge) Forward() textflow.ResponseOutcome {
 		responseLatencyMs = forwardDurationMs - upstreamLatencyMs
 	}
 	gatewayhttp.SetOpsLatencyMs(b.c, gatewayhttp.OpsResponseLatencyMsKey, responseLatencyMs)
-	if err == nil && b.result != nil && b.result.FirstTokenMs != nil {
-		gatewayhttp.SetOpsLatencyMs(b.c, gatewayhttp.OpsTimeToFirstTokenMsKey, int64(*b.result.FirstTokenMs))
-	}
+
 	out := textflow.ResponseOutcome{Outcome: textflow.Outcome{Attempt: openAIObservedAttempt(b.result, err), Err: err, HasResult: b.result != nil}, Images: b.result != nil && b.result.ImageCount > 0}
 	out.NativePartial = err != nil && b.result != nil && b.result.NativeUsage != nil && (b.result.NativeUsage.HasObservedTokens() || b.result.ImageCount > 0)
 	out.Attempt.HTTPCommitted = b.c.Writer.Written()
@@ -528,7 +526,7 @@ func (b *responsesAttemptBridge) Failed() {
 // Success reports the observed scheduling outcome and eligible OAuth quota
 // headers. Nonshadow OpenAI OAuth results update the Codex snapshot; shadow
 // providers skip that header path. The result's SucceededForScheduling decision
-// and optional first-token latency drive feedback independently of completion
+// and optional TTFT latency drive feedback independently of completion
 // recording.
 func (b *responsesAttemptBridge) Success() {
 	if b.result != nil {
@@ -538,7 +536,7 @@ func (b *responsesAttemptBridge) Success() {
 		if b.provider.View().IsOpenAI() && b.provider.Record.Type == capability.ProviderTypeOAuth && !b.provider.View().IsShadow() {
 			b.binding().updateCodexUsageSnapshotFromHeaders(b.c.Request.Context(), b.provider.Record.ID, b.result.ResponseHeaders)
 		}
-		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.forwardModel, b.requireCompact, b.result), b.result.SucceededForScheduling(), b.result.FirstTokenMs)
+		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.forwardModel, b.requireCompact, b.result), b.result.SucceededForScheduling(), b.result.Timings.TTFTMs())
 	} else {
 		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.forwardModel, b.requireCompact, b.result), b.result.SucceededForScheduling(), nil)
 	}

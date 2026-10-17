@@ -2,16 +2,29 @@ package completion
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
+	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
 // usageWriterSpy accepts usage while request observers expose the updated summary.
 type usageWriterSpy struct{}
+
+// performanceWriteFixture reports controlled write results without performing billing.
+type performanceWriteFixture struct {
+	bestError   error         // acknowledged or uncertain first result
+	createError error         // synchronous fallback result
+	entered     chan struct{} // optional write admission signal
+	release     chan struct{} // optional acknowledgement barrier
+	panicWrite  bool          // simulate interrupted writer execution
+}
 
 // Create accepts the supplied usage row for lifecycle-observation tests and
 // returns successful creation without retaining or persisting any fixture data.
@@ -31,7 +44,7 @@ func TestWriteUsagePreservesRequestLifecycle(t *testing.T) {
 				finished := time.Now().Add(-time.Second)
 				initial := telemetry.RequestRecord{
 					RequestID: "request", StartedAt: finished.Add(-62 * time.Second), State: state,
-					Method: "POST", Path: "/v1/responses", Timings: map[string]int64{"provider_slot_acquired_ms": 60000},
+					Method: "POST", Path: "/v1/responses", FailureTimings: map[string]int64{"provider_slot_acquired_ms": 60000},
 				}
 				if state != "running" {
 					initial.FinishedAt = &finished
@@ -57,7 +70,7 @@ func TestWriteUsagePreservesRequestLifecycle(t *testing.T) {
 				require.Equal(t, initial.DurationMs, latest.DurationMs)
 				require.Equal(t, initial.State, latest.State)
 				require.Equal(t, initial.Status, latest.Status)
-				require.Equal(t, initial.Timings, latest.Timings)
+				require.Equal(t, initial.FailureTimings, latest.FailureTimings)
 				require.Equal(t, "client-model", latest.Model)
 				require.Equal(t, int64(7), latest.ProviderID)
 				require.Contains(t, latest.Aliases, telemetry.RequestAlias{Kind: "billing", Value: "billing"})
@@ -80,4 +93,119 @@ func TestWriteUsageKeepsTaskSeparateFromPollingRequest(t *testing.T) {
 	require.Equal(t, "task", task.RequestID)
 	require.Equal(t, "completed", task.State)
 	require.NotNil(t, task.FinishedAt)
+}
+
+// Create returns the configured fallback outcome without changing the supplied row.
+func (f *performanceWriteFixture) Create(context.Context, *UsageLog) (bool, error) {
+	return f.createError == nil, f.createError
+}
+
+// CreateBestEffort holds its acknowledgement until the test releases the writer.
+// The caller's row remains immutable while the simulated database owns the write.
+func (f *performanceWriteFixture) CreateBestEffort(context.Context, *UsageLog) error {
+	if f.panicWrite {
+		panic("writer interrupted")
+	}
+	if f.entered != nil {
+		close(f.entered)
+		<-f.release
+	}
+	return f.bestError
+}
+
+// TestUsagePerformancePersistenceEvidence separates SQL acknowledgement from task
+// submission. Unknown first writes remain unknown when a confirmed-unwritten retry
+// fails, and successful fallback never copies performance into request diagnostics.
+func TestUsagePerformancePersistenceEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name     string // fixture scenario name
+		best     error  // first writer result
+		fallback error  // fallback writer result
+		state    string // expected diagnostic outcome
+	}{
+		{"acknowledged", nil, nil, "persisted"},
+		{"fallback_success", errors.New("initial write failed"), nil, "persisted"},
+		{"confirmed_unwritten", usage.MarkUsageLogCreateNotPersisted(errors.New("rejected")), usage.MarkUsageLogCreateNotPersisted(errors.New("stopped")), "not_persisted"},
+		{"late_write_possible", usage.MarkUsageLogCreateDropped(context.DeadlineExceeded), usage.MarkUsageLogCreateNotPersisted(errors.New("stopped")), "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var saved telemetry.RequestRecord
+			ctx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "request", State: "completed"}, func(record telemetry.RequestRecord) { saved = record })
+			p := timing.NewPerformance(timing.FirstOutput, 10)
+			p.Values["attempt_number"] = 2
+			p.Values["upstream_first_output_ms"] = 20
+			p.Values["upstream_last_output_ms"] = 120
+			row := &UsageLog{RequestID: "request", OutputTokens: 10, Timings: p}
+			recorder := NewRecorder(Dependencies{Logs: &performanceWriteFixture{bestError: tc.best, createError: tc.fallback}}, RecorderOptions{})
+			recorder.WriteUsage(ctx, row, "test")
+			require.Equal(t, tc.state, saved.UsageWriteState)
+			require.Equal(t, int64(2), saved.UsageAttempt)
+			require.Equal(t, "completed", saved.State)
+			if tc.state == "persisted" {
+				require.Nil(t, saved.FailureTimings)
+			} else {
+				require.Equal(t, int64(10), saved.FailureTimings["upstream_started_ms"])
+				require.NotContains(t, saved.FailureTimings, "upstream_first_output_ms")
+				require.NotContains(t, saved.FailureTimings, "upstream_last_output_ms")
+			}
+			require.NotNil(t, saved.UsageWriteDurationMs)
+			require.Equal(t, int64(120), row.Timings.Values["upstream_last_output_ms"])
+		})
+	}
+}
+
+// TestUsagePerformanceWaitsForAcknowledgement pauses an admitted usage write while
+// the request is already complete. Pending evidence must survive until SQL acknowledgement,
+// and the request summary must never become a temporary performance backup.
+func TestUsagePerformanceWaitsForAcknowledgement(t *testing.T) {
+	var mu sync.Mutex
+	var saved telemetry.RequestRecord
+	ctx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "request", State: "completed"}, func(record telemetry.RequestRecord) {
+		mu.Lock()
+		saved = record
+		mu.Unlock()
+	})
+	writer := &performanceWriteFixture{entered: make(chan struct{}), release: make(chan struct{})}
+	recorder := NewRecorder(Dependencies{Logs: writer}, RecorderOptions{})
+	row := &UsageLog{RequestID: "request", Timings: timing.NewPerformance(timing.FirstOutput, 0)}
+	observeUsageWrite(ctx, "pending", "", row.Timings)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		recorder.WriteUsage(ctx, row, "test")
+	}()
+	select {
+	case <-writer.entered:
+	case <-time.After(time.Second):
+		t.Fatal("write did not start")
+	}
+	mu.Lock()
+	state, copied := saved.UsageWriteState, saved.FailureTimings
+	mu.Unlock()
+	require.Equal(t, "pending", state)
+	require.Nil(t, copied)
+	close(writer.release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("write did not finish")
+	}
+	mu.Lock()
+	state, copied = saved.UsageWriteState, saved.FailureTimings
+	mu.Unlock()
+	require.Equal(t, "persisted", state)
+	require.Nil(t, copied)
+}
+
+// TestWriteUsagePanicCannotAcknowledgePersistence interrupts the writer before any result.
+// The summary remains unknown and retains transport diagnostics while the panic follows
+// the caller's existing recovery policy, never manufacturing a confirmed database write.
+func TestWriteUsagePanicCannotAcknowledgePersistence(t *testing.T) {
+	var saved telemetry.RequestRecord
+	ctx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "request"}, func(record telemetry.RequestRecord) { saved = record })
+	p := timing.NewPerformance(timing.FirstOutput, 10)
+	recorder := NewRecorder(Dependencies{Logs: &performanceWriteFixture{panicWrite: true}}, RecorderOptions{})
+	require.Panics(t, func() { recorder.WriteUsage(ctx, &UsageLog{RequestID: "request", Timings: p}, "test") })
+	require.Equal(t, "unknown", saved.UsageWriteState)
+	require.Equal(t, int64(10), saved.FailureTimings["upstream_started_ms"])
 }

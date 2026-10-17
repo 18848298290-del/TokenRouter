@@ -51,6 +51,9 @@ type RouteAccess struct {
 
 // RouteMiddleware contains authentication, settings, and observation callbacks assembled by app.
 type RouteMiddleware struct {
+	// TTFTMode snapshots the global upstream event selection before request execution.
+	TTFTMode func(context.Context) string
+
 	// ModelAttributes optionally installs request-local attribute loading before
 	// route middleware runs. Nil leaves this optional step unregistered while the
 	// remaining route callbacks retain their order.

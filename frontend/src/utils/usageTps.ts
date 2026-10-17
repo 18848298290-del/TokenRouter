@@ -1,26 +1,17 @@
 import type { UsageLog } from '@/types'
 
-type UsageTpsInput = Partial<Pick<UsageLog, 'output_tokens' | 'duration_ms' | 'first_token_ms'>>
+// usageTps.ts formats the throughput derived from persisted upstream observations.
+// The server owns the content interval and completeness checks. Pages and exports
+// read the same value at one decimal place, independent of the TTFT mode.
 
-/** calculateUsageTps 用首字返回后的耗时计算每秒输出 Token 数，返回一位小数或 null。 */
-export function calculateUsageTps(row: UsageTpsInput): number | null {
-  const { output_tokens: outputTokens, duration_ms: durationMs, first_token_ms: firstTokenMs } = row
-  if (
-    typeof outputTokens !== 'number' || !Number.isFinite(outputTokens) || outputTokens <= 0 ||
-    typeof durationMs !== 'number' || !Number.isFinite(durationMs) ||
-    typeof firstTokenMs !== 'number' || !Number.isFinite(firstTokenMs) || firstTokenMs < 0 ||
-    durationMs <= firstTokenMs
-  ) {
-    return null
-  }
-
-  const tps = outputTokens * 1000 / (durationMs - firstTokenMs)
-  // 页面、CSV 和 Excel 共用舍入后的数值，Excel 的单元格格式负责补齐末尾的零。
-  return Number.isFinite(tps) ? Number(tps.toFixed(1)) : null
+// calculateUsageTps returns the server estimate when it is finite and nonnegative.
+// Missing or invalid values remain absent rather than using another latency metric.
+export function calculateUsageTps(row: Partial<Pick<UsageLog, 'tps'>>): number | null {
+  return typeof row.tps === 'number' && Number.isFinite(row.tps) && row.tps >= 0 ? row.tps : null
 }
 
-/** formatUsageTps 为表格生成带单位的 TPS，数据不足时显示占位符。 */
-export function formatUsageTps(row: UsageTpsInput): string {
-  const tps = calculateUsageTps(row)
-  return tps === null ? '-' : `${tps.toFixed(1)} tok/s`
+// formatUsageTps renders the shared estimate with its token-per-second unit.
+export function formatUsageTps(row: Partial<Pick<UsageLog, 'tps'>>): string {
+  const value = calculateUsageTps(row)
+  return value === null ? '-' : `${value.toFixed(1)} tok/s`
 }

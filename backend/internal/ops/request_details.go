@@ -2,7 +2,6 @@ package ops
 
 import (
 	"context"
-	"strings"
 )
 
 // request_details.go normalizes request-detail filters and delegates drilldown
@@ -64,22 +63,4 @@ func (s *OpsService) ListRequestDetails(ctx context.Context, filter *OpsRequestD
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
-}
-
-// LookupRequestTimings returns access-log timing metadata for exact supplied
-// identifiers and trims the slice elements in place before storage lookup. Nil
-// service, absent storage, an empty input slice, or disabled monitoring returns
-// an allocated empty map without trimming. The PostgreSQL reader matches both
-// stored ID columns and keys rows by the preferred client ID when present.
-func (s *OpsService) LookupRequestTimings(ctx context.Context, clientRequestIDs []string) (map[string]*OpsRequestTiming, error) {
-	result := make(map[string]*OpsRequestTiming)
-	if s == nil || s.opsRepo == nil || len(clientRequestIDs) == 0 || !s.IsMonitoringEnabled(ctx) {
-		return result, nil
-	}
-	// Timing storage compares supplied identifiers with its saved ID columns.
-	// Normalize whitespace in the caller slice before those exact SQL comparisons.
-	for i := range clientRequestIDs {
-		clientRequestIDs[i] = strings.TrimSpace(clientRequestIDs[i])
-	}
-	return s.opsRepo.ListRequestTimings(ctx, clientRequestIDs)
 }

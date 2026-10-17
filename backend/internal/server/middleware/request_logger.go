@@ -208,8 +208,12 @@ func RequestLogger(observers ...func(telemetry.RequestRecord)) gin.HandlerFunc {
 			recovered := recover()
 			writer.protect()
 			telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
-				finished := time.Now().UTC()
-				record.FinishedAt = &finished
+				finished := time.Now()
+				if record.ClientDisconnectedAt != nil && record.ClientDisconnectedAt.Before(finished) {
+					finished = *record.ClientDisconnectedAt
+				}
+				utcFinished := finished.UTC()
+				record.FinishedAt = &utcFinished
 				// Lifecycle duration uses whole milliseconds, truncating submillisecond
 				// elapsed time.
 				record.DurationMs = finished.Sub(started).Milliseconds()

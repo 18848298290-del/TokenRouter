@@ -1282,7 +1282,7 @@ func newAnthropicOAuthProviderForPartialUsageTest() *gatewayprovider.ExecutionPr
 // TestGatewayService_Forward_StreamMissingTerminalPreservesPartialUsage
 // disconnects an ordinary Fast stream after usage and content before stop. The
 // partial result retains input/cache/output usage, speed, request ID, stream
-// mode, and first-token observation beside the error.
+// mode beside the error. The uninstrumented fixture supplies no TTFT value.
 func TestGatewayService_Forward_StreamMissingTerminalPreservesPartialUsage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1328,7 +1328,7 @@ func TestGatewayService_Forward_StreamMissingTerminalPreservesPartialUsage(t *te
 	require.Equal(t, 5, result.Usage.OutputTokens)
 	require.Equal(t, "fast", result.Usage.Speed, "部分结果必须保留 fork 的 Fast 计费语义")
 	require.Equal(t, "rid-partial", result.RequestID)
-	require.NotNil(t, result.FirstTokenMs)
+	require.Nil(t, result.Timings.TTFTMs())
 }
 
 // TestGatewayService_Forward_StreamReadErrorAfterOutputPreservesPartialUsage

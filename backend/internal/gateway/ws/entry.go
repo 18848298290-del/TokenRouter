@@ -11,10 +11,10 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/completion"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/modeltrace"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -684,7 +684,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				if scheduleModel == "" {
 					scheduleModel = selection.Target.MappedModel(turnGroupMapping.MappedModel)
 				}
-				selection.Target.Report(scheduleModel, entrySucceeded(result), result.FirstTokenMs)
+				selection.Target.Report(scheduleModel, entrySucceeded(result), result.Timings.TTFTMs())
 
 				turnRequestBody := capture.RequestBody
 				// When capture omits its body, completion uses the retained first-request
@@ -697,11 +697,11 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				// identity and accounting inputs.
 				completionInput := selection.Target.PrepareCompletion(turnCtx, result, capture, turnModel, turnGroupMapping, turnRequestBody, cyberPolicyHandled)
 				recorder, report := p.CompletionRecorder(), p.CompletionObserver()
-				p.SubmitCompletion(result, completion.WrapTaskContext(turnCtx, func(taskCtx context.Context) {
+				p.SubmitCompletion(timing.WithPerformance(turnCtx, result.Timings), result, func(taskCtx context.Context) {
 					if err := recorder.Record(taskCtx, completionInput, true); err != nil {
 						report(completionInput.Provider.ID, completionInput.Result.RequestID, err)
 					}
-				}))
+				})
 			},
 		}
 

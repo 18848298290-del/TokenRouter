@@ -28,7 +28,7 @@ import (
 // Observed forwarding results remain available even with errors: positive
 // token buckets, images, audio presence or searches establish usage and
 // preserve served partial work. Cancellation is reported separately, and
-// mutable headers, output-size slices, first-token timing and audio data are
+// mutable headers, output-size slices, performance observations and audio data are
 // copied before the text loop interprets completion. A nil result retains
 // cancellation alone, preventing absent output from becoming invented usage.
 
@@ -129,10 +129,7 @@ func messageObservedAttempt(result *forwardcore.MessagesResult, err error) upstr
 	// the text loop separately interprets this usage evidence and cancellation state.
 	out.HasUsage = result.Usage.HasObservedTokens() || result.ImageCount > 0 || result.AudioUsage != nil || result.SearchCount > 0
 	out.Served = err == nil || out.HasUsage
-	if result.FirstTokenMs != nil {
-		v := *result.FirstTokenMs
-		out.FirstTokenMs = &v
-	}
+	out.Timings = result.Timings.Clone()
 	if result.ServiceTier != nil {
 		out.ServiceTier = *result.ServiceTier
 	}

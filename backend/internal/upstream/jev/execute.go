@@ -142,6 +142,7 @@ func RetryAfterResetTime(headers http.Header, now time.Time) *time.Time {
 // is set before Begin, HTTPCommitted follows a successful Begin, and either
 // sink failure sets ClientDisconnect while retaining the observed answer data.
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
+	defer func() { result.CapturePerformance(ctx, failure) }()
 	target, ok := input.Target.(*Target)
 	if !ok || target == nil || target.Do == nil || input.Protocol != protocol.ProtocolSystemOne {
 		return result, errors.New("SystemOne target is not configured")

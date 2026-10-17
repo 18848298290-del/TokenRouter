@@ -105,6 +105,7 @@ func (t *ImagesTarget) GoString() string { return t.String() }
 // image. OAuth errors in buffered mode or before a completed streaming image
 // invoke ResponseError after those observations are captured.
 func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
+	defer func() { result.CapturePerformance(ctx, failure) }()
 	t, ok := input.Target.(*ImagesTarget)
 	if !ok || t == nil || t.Request == nil {
 		return result, errors.New("openai images target is not configured")
@@ -173,9 +174,9 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	if input.Stream && (t.OAuth || IsEventStreamResponse(resp.Header)) {
 		output = upstream.NewOutputContext(sink)
 		if t.OAuth {
-			usage, result.ObservedImages, result.ImageOutputSizes, result.FirstTokenMs, err = ReadImagesOAuthStreaming(resp, output, t.Options, started, t.ResponseFormat, t.StreamPrefix, input.ResponseModel)
+			usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesOAuthStreaming(resp, output, t.Options, started, t.ResponseFormat, t.StreamPrefix, input.ResponseModel)
 		} else {
-			usage, result.ObservedImages, result.ImageOutputSizes, result.FirstTokenMs, err = ReadImagesStreaming(resp, output, t.Options, started)
+			usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesStreaming(resp, output, t.Options, started)
 		}
 	} else if t.OAuth {
 		usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesOAuthNonStreaming(resp, sink, t.Options, t.ResponseFormat, input.ResponseModel)

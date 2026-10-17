@@ -750,7 +750,7 @@ const exportToCSV = async () => {
       t('usage.rate'),
       t('usage.userBilled'),
       t('usage.original'),
-      t('usage.firstToken'),
+      t('usage.firstToken'), t('usage.ttftMode'),
       t('usage.duration'),
       t('usage.tpsExport'),
     ]
@@ -770,7 +770,7 @@ const exportToCSV = async () => {
       log.rate_multiplier,
       log.actual_cost.toFixed(8),
       log.total_cost.toFixed(8),
-      log.first_token_ms ?? '',
+      log.ttft_ms ?? '', log.ttft_mode === 'first_event' ? t('usage.latencyFirstEvent') : log.ttft_mode === 'first_output' ? t('usage.latencyFirstToken') : '',
       log.duration_ms ?? '',
       calculateUsageTps(log)?.toFixed(1) ?? '',
     ].map(escapeCSVValue))

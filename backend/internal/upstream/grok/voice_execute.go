@@ -73,6 +73,7 @@ func (t *VoiceTarget) GoString() string { return t.String() }
 // operations return no audio meter. Returned UpstreamHeaders shares the
 // response map; copy it before changing retained header values.
 func (VoiceExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
+	defer func() { result.CapturePerformance(ctx, failure) }()
 	target, ok := input.Target.(*VoiceTarget)
 	if !ok || target == nil || target.Do == nil || target.Request == nil || target.ReadBody == nil {
 		return result, errors.New("grok voice target is not configured")

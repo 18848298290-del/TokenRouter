@@ -48,10 +48,6 @@ type UsageHandler struct {
 	// a service-unavailable response from cleanup routes while ordinary usage
 	// reads can remain configured.
 	cleanupService *usage.UsageCleanupService // optional cleanup task service
-	// opsService supplies persisted request timings for administrator
-	// enrichment. Nil skips enrichment, and lookup failures leave optional
-	// timing fields absent in the returned usage page.
-	opsService ports.Timings // optional request stage timing reader
 }
 
 // CreateUsageCleanupTaskRequest carries administrator deletion dates,
@@ -84,7 +80,7 @@ func NewUsageHandler(
 	apiKeyService ports.KeyReader,
 	adminService ports.UserReader,
 	cleanupService *usage.UsageCleanupService,
-	opsService ports.Timings,
+
 	calendar timezone.Calendar,
 ) *UsageHandler {
 	return &UsageHandler{
@@ -93,7 +89,6 @@ func NewUsageHandler(
 		apiKeyService:  apiKeyService,
 		adminService:   adminService,
 		cleanupService: cleanupService,
-		opsService:     opsService,
 	}
 }
 
@@ -261,56 +256,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 	for i := range records {
 		out = append(out, *dto.FromUsageAdmin(&records[i]))
 	}
-	h.enrichDetailedTimings(c.Request.Context(), records, out)
 	response.Paginated(c, out, result.Total, page, pageSize)
-}
-
-// enrichDetailedTimings attaches persisted stage observations to response
-// rows aligned with records. A missing reader, empty input or unequal slice
-// lengths leaves responses as supplied.
-//
-// The helper converts each local request identity with
-// usageLogClientRequestID, reads observations in a batch, then attaches them
-// at the same row position. A historical client: prefix is removed for this
-// join. Lookup failures are logged and leave enrichment absent, allowing the
-// usage page to remain available even when optional observation data cannot
-// be read.
-func (h *UsageHandler) enrichDetailedTimings(ctx context.Context, records []usage.UsageLog, out []dto.AdminUsageLog) {
-	if h == nil || h.opsService == nil || len(records) == 0 || len(records) != len(out) {
-		return
-	}
-	clientRequestIDs := make([]string, 0, len(records))
-	for i := range records {
-		if clientRequestID := usageLogClientRequestID(records[i].RequestID); clientRequestID != "" {
-			clientRequestIDs = append(clientRequestIDs, clientRequestID)
-		}
-	}
-	if len(clientRequestIDs) == 0 {
-		return
-	}
-	timings, err := h.opsService.LookupRequestTimings(ctx, clientRequestIDs)
-	// Stage observations enrich an already loaded usage page. Log a failed optional
-	// lookup and return that page's existing fields so observation failure does not reject it.
-	if err != nil {
-		logger.LegacyPrintf("handler.admin.usage", "[UsageTiming] 查询请求阶段耗时失败: err=%v", err)
-		return
-	}
-	for i := range records {
-		if clientRequestID := usageLogClientRequestID(records[i].RequestID); clientRequestID != "" {
-			out[i].DetailedTiming = dto.TimingFromOps(timings[clientRequestID])
-		}
-	}
-}
-
-// usageLogClientRequestID trims request text and removes a leading historical
-// client: prefix. Other prefixes remain part of the identifier; the returned
-// text is used as the exact key for timing enrichment.
-func usageLogClientRequestID(requestID string) string {
-	id := strings.TrimSpace(requestID)
-	if !strings.HasPrefix(id, "client:") {
-		return id
-	}
-	return strings.TrimSpace(strings.TrimPrefix(id, "client:"))
 }
 
 // Stats returns filtered administrator totals and endpoint charts, optionally

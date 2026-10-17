@@ -44,17 +44,34 @@ type RequestAlias struct {
 
 // RequestAttempt holds bounded diagnostics describing one observed upstream attempt.
 type RequestAttempt struct {
+	Stage  string `json:"stage,omitempty"`  // observed failure phase
+	Reason string `json:"reason,omitempty"` // bounded failure explanation
+
+	StartedAt *time.Time `json:"started_at,omitempty"` // observed exchange dispatch time
+
+	// FailureTimings retains bounded connection and failure-stage observations for an
+	// unsuccessful exchange. A usage-producing attempt stores its performance on usage.
+	FailureTimings map[string]int64 `json:"failure_timings,omitempty"`
+
 	Number     int    `json:"number"`                        // upstream attempt ordinal
 	ProviderID int64  `json:"provider_id,omitempty"`         // attempted provider database ID
 	RequestID  string `json:"upstream_request_id,omitempty"` // external upstream request ID
 	Status     int    `json:"status_code,omitempty"`         // observed HTTP status code
-	DurationMs int64  `json:"duration_ms,omitempty"`         // attempt duration in milliseconds
+	DurationMs *int64 `json:"duration_ms,omitempty"`         // attempt duration in milliseconds
 	Outcome    string `json:"outcome,omitempty"`             // observed attempt outcome text
 }
 
 // RequestRecord summarizes a request independently of monitoring sampling.
 // Keep request bodies and credentials out of its fields.
 type RequestRecord struct {
+	UsageWriteUpdatedAt  time.Time `json:"usage_write_updated_at,omitzero"`   // last persistence evidence time
+	UsageWriteDurationMs *int64    `json:"usage_write_duration_ms,omitempty"` // analytical write operation duration
+
+	UsageWriteState      string     `json:"usage_write_state,omitempty"`      // observed persistence outcome
+	UsageWriteError      string     `json:"usage_write_error,omitempty"`      // bounded persistence diagnostic
+	UsageAttempt         int64      `json:"usage_attempt,omitempty"`          // usage-producing exchange ordinal
+	ClientDisconnectedAt *time.Time `json:"client_disconnected_at,omitempty"` // observed downstream cancellation
+
 	ErrorCode       string `json:"error_code,omitempty"`        // diagnostic error category text
 	RequestID       string `json:"request_id"`                  // internal logical request ID
 	ParentRequestID string `json:"parent_request_id,omitempty"` // parent logical request ID
@@ -82,13 +99,13 @@ type RequestRecord struct {
 	ProviderID int64  `json:"provider_id,omitempty"` // observed provider database ID
 	Platform   string `json:"platform,omitempty"`    // observed upstream platform text
 	Model      string `json:"model,omitempty"`       // requested display model text
-	// Aliases, Attempts, and Timings are copied by CloneRequestRecord and
+	// Aliases, Attempts, and FailureTimings are copied by CloneRequestRecord and
 	// NormalizeRequestRecord. WithRequestCapture retains the supplied
 	// collections, and MergeRequestRecord can reuse absent collections from the
 	// saved record.
-	Aliases  []RequestAlias   `json:"aliases,omitempty"`  // labeled correlated identifier values
-	Attempts []RequestAttempt `json:"attempts,omitempty"` // retained upstream attempt diagnostics
-	Timings  map[string]int64 `json:"timings,omitempty"`  // stage elapsed milliseconds by name
+	Aliases        []RequestAlias   `json:"aliases,omitempty"`         // labeled correlated identifier values
+	Attempts       []RequestAttempt `json:"attempts,omitempty"`        // retained upstream attempt diagnostics
+	FailureTimings map[string]int64 `json:"failure_timings,omitempty"` // stage elapsed milliseconds by name
 }
 
 // RequestCapture serializes record updates and their observer notifications.
@@ -298,20 +315,23 @@ func RecordRelatedRequest(ctx context.Context, record RequestRecord) {
 	AddRequestAlias(ctx, "related", record.RequestID)
 }
 
-// cloneRequestRecord copies alias and attempt slices and clones the timing
-// map for separate collection mutation. FinishedAt remains the same pointer;
-// callers treat that timestamp as immutable when records are shared.
+// cloneRequestRecord copies alias and attempt slices and clones request and
+// attempt failure-timing maps. Optional timestamp and duration pointers remain
+// shared; callers treat their values as immutable when retaining these records.
 func cloneRequestRecord(record RequestRecord) RequestRecord {
 	record.Aliases = append([]RequestAlias(nil), record.Aliases...)
 	record.Attempts = append([]RequestAttempt(nil), record.Attempts...)
-	record.Timings = maps.Clone(record.Timings)
+	for i := range record.Attempts {
+		record.Attempts[i].FailureTimings = maps.Clone(record.Attempts[i].FailureTimings)
+	}
+	record.FailureTimings = maps.Clone(record.FailureTimings)
 	return record
 }
 
 // MergeRequestRecord combines snapshots for the same logical ID, which
 // callers verify before invoking it. Older or equal UpdatedAt returns
 // previous directly. A newer snapshot keeps the saved start and nonempty
-// parent identity, and fills missing metadata, terminal time, timings, or
+// parent identity, and fills missing metadata, terminal time, failure diagnostics, or
 // attempts from previous. Timing maps are merged into independent storage,
 // retaining earlier keys when a newer snapshot only adds transport stages.
 //
@@ -367,12 +387,12 @@ func MergeRequestRecord(previous, next RequestRecord) RequestRecord {
 	// Sparse completion snapshots can add transport observations after admission
 	// was published. Merge into a fresh map so neither caller-owned snapshot is
 	// mutated and earlier stage durations survive those later additions.
-	mergedTimings := maps.Clone(previous.Timings)
-	if mergedTimings == nil && next.Timings != nil {
-		mergedTimings = make(map[string]int64)
+	mergedFailureTimings := maps.Clone(previous.FailureTimings)
+	if mergedFailureTimings == nil && next.FailureTimings != nil {
+		mergedFailureTimings = make(map[string]int64)
 	}
-	maps.Copy(mergedTimings, next.Timings)
-	next.Timings = mergedTimings
+	maps.Copy(mergedFailureTimings, next.FailureTimings)
+	next.FailureTimings = mergedFailureTimings
 	if len(next.Attempts) == 0 {
 		next.Attempts = previous.Attempts
 	}
@@ -395,9 +415,9 @@ func MergeRequestRecord(previous, next RequestRecord) RequestRecord {
 	return next
 }
 
-// CloneRequestRecord copies aliases, attempts, and the timings map for
-// independent collection mutation. FinishedAt remains shared and must be
-// treated as immutable; scalar values are copied with the record.
+// CloneRequestRecord copies aliases, attempts, and failure-timing maps for
+// independent collection mutation. Optional timestamp and duration pointers
+// remain shared and must be treated as immutable; scalar values are copied.
 func CloneRequestRecord(record RequestRecord) RequestRecord { return cloneRequestRecord(record) }
 
 // WithChildRequest creates a separate logical capture on non-nil ctx and sets
@@ -467,6 +487,8 @@ func NormalizeRequestRecord(record RequestRecord) RequestRecord {
 	record.Path = requestText(record.Path, 2048)
 	record.Method = requestText(record.Method, 32)
 	record.ErrorCode = requestText(record.ErrorCode, 64)
+	record.UsageWriteState = requestText(record.UsageWriteState, 32)
+	record.UsageWriteError = requestText(record.UsageWriteError, 512)
 	record.Platform = requestText(record.Platform, 64)
 	aliases := record.Aliases
 	record.Aliases = nil
@@ -487,12 +509,14 @@ func NormalizeRequestRecord(record RequestRecord) RequestRecord {
 		}
 	}
 	// Retain the earliest attempt diagnostics within the storage cap; metadata
-	// and timings still describe the request even when later attempt details are omitted.
+	// and failure diagnostics still describe the request when later attempt details are omitted.
 	if len(record.Attempts) > 256 {
 		record.Attempts = record.Attempts[:256]
 	}
 	for i := range record.Attempts {
 		record.Attempts[i].Outcome = requestText(record.Attempts[i].Outcome, 32)
+		record.Attempts[i].Stage = requestText(record.Attempts[i].Stage, 64)
+		record.Attempts[i].Reason = requestText(record.Attempts[i].Reason, 512)
 		if len(record.Attempts[i].RequestID) > 255 || strings.ContainsAny(record.Attempts[i].RequestID, "\r\n\x00") {
 			record.Attempts[i].RequestID = ""
 		}

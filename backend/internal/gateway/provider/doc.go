@@ -12,7 +12,7 @@
 //   - execution_*.go, credential_target.go, request_credentials.go,
 //     runtime_readers.go, and selection.go: targets, credentials, and selection results.
 //   - model_*.go, compact_models.go, and compatible_eligibility.go: mapping, catalog display, and request eligibility.
-//   - completion_*.go, ws_result.go, and stream_ttft.go: snapshots, usage capture, and response timing.
+//   - completion_*.go and ws_result.go: completion snapshots and usage capture.
 //   - grok_*.go, qoder_*.go, ollama_wire_policy.go, and anthropic_settings.go: platform settings, encoding, and error policy.
 //   - openai_*.go, responses_*.go, codex_request.go, and compat_continuation.go: request normalization, continuation, and failures.
 //   - health_observation.go, proxy_response_feedback.go, failure_scope.go, and

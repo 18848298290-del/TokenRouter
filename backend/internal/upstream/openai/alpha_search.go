@@ -89,6 +89,7 @@ func (t *AlphaSearchTarget) GoString() string { return t.String() }
 // Served false and SearchCount zero, so outer completion logic can distinguish
 // delivery from a successful search.
 func (AlphaSearchExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
+	defer func() { result.CapturePerformance(ctx, failure) }()
 	t, ok := input.Target.(*AlphaSearchTarget)
 	if !ok || t == nil || t.Request == nil {
 		return result, errors.New("openai alpha search target is not configured")

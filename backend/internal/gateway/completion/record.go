@@ -198,8 +198,12 @@ func (s *Recorder) BuildRecordUsageLog(
 ) *UsageLog {
 	// Persist elapsed duration in whole milliseconds, discarding finer-resolution remainder.
 	durationMs := int(result.Duration.Milliseconds())
+	if observed := result.Timings.DurationMs(); observed != nil {
+		durationMs = *observed
+	}
 	requestID := input.RequestID
 	usageLog := &UsageLog{
+		Timings:               result.Timings.Clone(),
 		UserID:                actorID(apiKey, user),
 		BillingUserID:         user.ID,
 		TeamID:                apiKey.TeamID,
@@ -235,22 +239,22 @@ func (s *Recorder) BuildRecordUsageLog(
 		BillingMode:            ResolveBillingMode(result, cost),
 		Stream:                 result.Stream,
 		DurationMs:             &durationMs,
-		FirstTokenMs:           result.FirstTokenMs,
-		ImageCount:             result.ImageCount,
-		ImageSize:              OptionalTrimmedStringPtr(result.ImageSize),
-		ImageInputSize:         OptionalTrimmedStringPtr(result.ImageInputSize),
-		ImageOutputSize:        OptionalTrimmedStringPtr(result.ImageOutputSize),
-		ImageSizeSource:        OptionalTrimmedStringPtr(result.ImageSizeSource),
-		ImageSizeBreakdown:     result.ImageSizeBreakdown,
-		CacheTTLOverridden:     cacheTTLOverridden,
-		PricingConfigID:        OptionalInt64Ptr(input.PricingConfigID),
-		ModelMappingChain:      OptionalTrimmedStringPtr(input.ModelMappingChain),
-		UserAgent:              OptionalTrimmedStringPtr(input.UserAgent),
-		IPAddress:              OptionalTrimmedStringPtr(input.IPAddress),
-		SessionID:              OptionalTrimmedStringPtr(input.ClientSessionID),
-		GroupID:                apiKey.GroupID,
-		SubscriptionID:         optionalSubscriptionID(subscription),
-		CreatedAt:              time.Now(),
+
+		ImageCount:         result.ImageCount,
+		ImageSize:          OptionalTrimmedStringPtr(result.ImageSize),
+		ImageInputSize:     OptionalTrimmedStringPtr(result.ImageInputSize),
+		ImageOutputSize:    OptionalTrimmedStringPtr(result.ImageOutputSize),
+		ImageSizeSource:    OptionalTrimmedStringPtr(result.ImageSizeSource),
+		ImageSizeBreakdown: result.ImageSizeBreakdown,
+		CacheTTLOverridden: cacheTTLOverridden,
+		PricingConfigID:    OptionalInt64Ptr(input.PricingConfigID),
+		ModelMappingChain:  OptionalTrimmedStringPtr(input.ModelMappingChain),
+		UserAgent:          OptionalTrimmedStringPtr(input.UserAgent),
+		IPAddress:          OptionalTrimmedStringPtr(input.IPAddress),
+		SessionID:          OptionalTrimmedStringPtr(input.ClientSessionID),
+		GroupID:            apiKey.GroupID,
+		SubscriptionID:     optionalSubscriptionID(subscription),
+		CreatedAt:          time.Now(),
 	}
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
@@ -426,6 +430,9 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 
 	// Persist elapsed duration in whole milliseconds, discarding finer-resolution remainder.
 	durationMs := int(result.Duration.Milliseconds())
+	if observed := result.Timings.DurationMs(); observed != nil {
+		durationMs = *observed
+	}
 	providerRateMultiplier := provider.RateMultiplier
 	requestID := input.RequestID
 
@@ -437,6 +444,7 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	}
 
 	usageLog := &UsageLog{
+		Timings:               result.Timings.Clone(),
 		UserID:                actorID(apiKey, user),
 		BillingUserID:         user.ID,
 		TeamID:                apiKey.TeamID,
@@ -508,7 +516,6 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	}
 	usageLog.OpenAIWSMode = result.OpenAIWSMode
 	usageLog.DurationMs = &durationMs
-	usageLog.FirstTokenMs = result.FirstTokenMs
 	usageLog.CreatedAt = time.Now()
 
 	usageLog.PricingConfigID = OptionalInt64Ptr(input.PricingConfigID)

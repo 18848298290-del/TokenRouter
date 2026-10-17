@@ -29,6 +29,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	identitytestkit "github.com/TokenFlux/TokenRouter/internal/identity/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/notification"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/payment"
@@ -1014,7 +1015,7 @@ func TestAPIContracts(t *testing.T) {
 						BillingType:            usagecore.BillingTypeBalance,
 						Stream:                 true,
 						DurationMs:             ptr(100),
-						FirstTokenMs:           ptr(50),
+						Timings:                &timing.Performance{Mode: timing.FirstOutput, Stream: true, Values: map[string]int64{"upstream_started_ms": 0, "upstream_first_output_ms": 50}},
 						CreatedAt:              deps.now,
 					},
 				})
@@ -1059,7 +1060,9 @@ func TestAPIContracts(t *testing.T) {
 						"billing_type": 0,
 							"stream": true,
 							"duration_ms": 100,
-							"first_token_ms": 50,
+							"ttft_ms": 50,
+							"tps": null,
+							"ttft_mode": "first_output",
 							"image_count": 0,
 							"image_size": null,
 							"image_input_size": null,
@@ -1398,7 +1401,7 @@ func TestAPIContracts(t *testing.T) {
 								"openai_fast_policy_settings": {
 									"rules": []
 								},
-								"openai_ttft_mode": "semantic",
+								"ttft_mode": "first_output",
 								"responses_ws": {},
 								"responses_ws_effective": {
 									"max_conns_per_provider": 128,
@@ -1767,7 +1770,7 @@ func TestAPIContracts(t *testing.T) {
 								"openai_fast_policy_settings": {
 									"rules": []
 								},
-								"openai_ttft_mode": "semantic",
+								"ttft_mode": "first_output",
 								"responses_ws": {},
 								"responses_ws_effective": {
 									"max_conns_per_provider": 128,

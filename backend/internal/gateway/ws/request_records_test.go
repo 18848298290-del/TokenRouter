@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
 // TestEntryRequestRecordsTracksRetryAndRejectedTurns retries the first logical
@@ -38,4 +39,57 @@ func TestEntryRequestRecordsTracksRetryAndRejectedTurns(t *testing.T) {
 	require.Equal(t, int64(7), latest[firstID].UserID)
 	require.Equal(t, "failed", latest[secondID].State)
 	require.Equal(t, "websocket_turn_incomplete", latest[secondID].ErrorCode)
+}
+
+// TestEntryPerformanceKeepsUsageAttemptOwnership switches providers within one logical
+// turn. The successful performance belongs to the second dispatch, while failure
+// diagnostics and the original mode survive the retry without a duplicate attempt.
+func TestEntryPerformanceKeepsUsageAttemptOwnership(t *testing.T) {
+	mode := timing.FirstEvent
+	saved := make(map[string]telemetry.RequestRecord)
+	root := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "connection", StartedAt: time.Now()}, func(record telemetry.RequestRecord) { saved[record.RequestID] = record })
+	root = timing.WithModeReader(root, func(context.Context) string { return mode })
+	session := newEntryRequestRecords(root)
+	first := session.attempt()
+	firstContext := first.context(root, 1)
+	requestID := telemetry.RequestIDValue(firstContext)
+	failed := timing.BeginPerformance(firstContext, 10, time.Now())
+	require.Equal(t, int64(1), failed.Values["attempt_number"])
+	first.finish(root, TurnCapture{Turn: 1, Err: errors.New("connection failed")}, 10, "openai", true)
+	mode = timing.FirstOutput
+	second := session.attempt()
+	secondContext := second.context(root, 1)
+	require.Equal(t, requestID, telemetry.RequestIDValue(secondContext))
+	performance := timing.BeginPerformance(secondContext, 20, time.Now())
+	require.Equal(t, int64(2), performance.Values["attempt_number"])
+	require.Equal(t, timing.FirstEvent, performance.Mode)
+	second.finish(root, TurnCapture{Turn: 1, Result: &ForwardResult{OpenAIWSMode: true, UpstreamTerminalEvent: "response.completed", Timings: performance}}, 20, "openai", false)
+	require.Len(t, saved[requestID].Attempts, 2)
+	require.Equal(t, "failed", saved[requestID].Attempts[0].Outcome)
+	require.Contains(t, saved[requestID].Attempts[0].Reason, "connection failed")
+	require.NotNil(t, saved[requestID].Attempts[0].DurationMs)
+	require.Nil(t, saved[requestID].Attempts[1].DurationMs)
+	require.Nil(t, saved[requestID].FailureTimings)
+	nextContext := second.context(root, 2)
+	next := timing.BeginPerformance(nextContext, 20, time.Now())
+	require.Equal(t, timing.FirstOutput, next.Mode)
+}
+
+// TestEntryCloseKeepsDisconnectBeforeIncompleteDrain closes a turn that never received
+// a terminal response. The request ends at its observed downstream disconnect even
+// though session cleanup happens later, while its incomplete upstream state remains diagnosable.
+func TestEntryCloseKeepsDisconnectBeforeIncompleteDrain(t *testing.T) {
+	saved := make(map[string]telemetry.RequestRecord)
+	root := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "connection"}, func(record telemetry.RequestRecord) { saved[record.RequestID] = record })
+	session := newEntryRequestRecords(root)
+	ctx := session.attempt().context(root, 1)
+	started, ok := ctx.Value(telemetry.RequestStartedAt).(time.Time)
+	require.True(t, ok)
+	timing.ObserveClientDisconnect(ctx, started)
+	session.close()
+	record := saved[telemetry.RequestIDValue(ctx)]
+	require.Equal(t, "canceled", record.State)
+	require.Equal(t, started, *record.FinishedAt)
+	require.Zero(t, record.DurationMs)
+	require.Equal(t, "websocket_turn_incomplete", record.ErrorCode)
 }

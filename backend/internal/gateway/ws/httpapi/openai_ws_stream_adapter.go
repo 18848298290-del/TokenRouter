@@ -224,7 +224,7 @@ func (p *wsStreamAdapter) Failure(status int, headers map[string][]string, body 
 	return gatewayprovider.NewOpenAIUpstreamFailure(status, headers, body, message, retry)
 }
 
-// IsToken selects the pooled relay's token-event label for first-token timing.
+// IsToken selects content-event labels for pooled relay diagnostic event counts.
 // The protocol predicate inspects no payload content and accepts some
 // structural output or empty-delta labels; dedicated relay timing uses a
 // different label set.

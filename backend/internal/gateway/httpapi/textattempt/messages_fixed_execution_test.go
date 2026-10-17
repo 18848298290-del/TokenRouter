@@ -14,6 +14,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/execution"
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
@@ -58,16 +59,16 @@ func TestFixedMessagesOpenUsesBoundDependenciesAndExplicitState(t *testing.T) {
 // metadata values.
 func TestMessageObservedAttemptRetainsPartialUsageAndCopiesMetadata(t *testing.T) {
 	first := 12
-	result := &forwardcore.MessagesResult{Model: "model", Usage: upstream.TokenUsage{OutputTokens: 2}, UpstreamHeaders: http.Header{"X-Request-Id": []string{"upstream"}}, FirstTokenMs: &first, ImageOutputSizes: []string{"1K"}}
+	result := &forwardcore.MessagesResult{Model: "model", Usage: upstream.TokenUsage{OutputTokens: 2}, UpstreamHeaders: http.Header{"X-Request-Id": []string{"upstream"}}, Timings: &timing.Performance{Stream: true, Values: map[string]int64{"upstream_started_ms": 0, "upstream_first_output_ms": int64(first)}}, ImageOutputSizes: []string{"1K"}}
 	observed := messageObservedAttempt(result, context.Canceled)
-	first = 99
+	result.Timings.Values["upstream_first_output_ms"] = 99
 	http.Header(result.UpstreamHeaders).Set("X-Request-Id", "changed")
 	result.ImageOutputSizes[0] = "4K"
 	require.True(t, observed.Cancelled)
 	require.True(t, observed.HasUsage)
 	require.True(t, observed.Served)
 	require.Equal(t, 2, observed.Usage.OutputTokens)
-	require.Equal(t, 12, *observed.FirstTokenMs)
+	require.Equal(t, 12, *observed.Timings.TTFTMs())
 	require.Equal(t, "upstream", observed.UpstreamHeaders.Get("X-Request-Id"))
 	require.Equal(t, []string{"1K"}, observed.ImageOutputSizes)
 }

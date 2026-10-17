@@ -79,16 +79,6 @@ type UserErrors interface {
 	GetUserErrorRequestDetail(context.Context, int64, int64) (*ops.UserErrorRequestDetail, error)
 }
 
-// Timings supplies persisted gateway-stage observations indexed by local
-// request identity.
-type Timings interface {
-	// LookupRequestTimings returns persisted stage observations indexed by the
-	// supplied request identifiers. Administrator enrichment treats a failed
-	// lookup or missing identifier as an absent optional timing object for that
-	// usage row.
-	LookupRequestTimings(context.Context, []string) (map[string]*ops.OpsRequestTiming, error)
-}
-
 // Settings supplies ranking configuration and the user failed-request
 // visibility decision.
 type Settings interface {

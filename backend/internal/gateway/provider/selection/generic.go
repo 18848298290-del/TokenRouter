@@ -92,7 +92,7 @@ func (s *Generic) SelectProviderWithLoadAwareness(ctx context.Context, groupID *
 	return scope.restore(result), err
 }
 
-// ReportAdvancedProviderScheduleResult records success and optional first-token
+// ReportAdvancedProviderScheduleResult records success and optional TTFT
 // latency for an advanced result with a positive provider ID. Captured alpha
 // settings take precedence so feedback follows the policy used during that
 // request's selection.
@@ -100,15 +100,15 @@ func (s *Generic) ReportAdvancedProviderScheduleResult(selection *gatewayprovide
 	if s == nil || selection == nil || !selection.AdvancedScheduler || providerID <= 0 {
 		return
 	}
-	var firstTokenMs *int
+	var ttftMs *int
 	if result != nil {
-		firstTokenMs = result.FirstTokenMs
+		ttftMs = result.Timings.TTFTMs()
 	}
 	if selection.AdvancedSchedulerFeedback != nil {
-		s.advancedSchedulerStats().Report(providerID, success, firstTokenMs, *selection.AdvancedSchedulerFeedback)
+		s.advancedSchedulerStats().Report(providerID, success, ttftMs, *selection.AdvancedSchedulerFeedback)
 		return
 	}
-	s.advancedSchedulerStats().Report(providerID, success, firstTokenMs)
+	s.advancedSchedulerStats().Report(providerID, success, ttftMs)
 }
 
 // RecordAdvancedProviderSwitch increments switch feedback for an advanced

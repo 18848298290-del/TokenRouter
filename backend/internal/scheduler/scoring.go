@@ -37,7 +37,7 @@ const (
 	// DefaultErrorRateAlpha supplies the ordinary error-sample blending
 	// coefficient.
 	DefaultErrorRateAlpha = 0.2
-	// DefaultTTFTAlpha supplies the ordinary positive-TTFT sample blending
+	// DefaultTTFTAlpha supplies the ordinary nonnegative-TTFT sample blending
 	// coefficient.
 	DefaultTTFTAlpha = 0.2
 )
@@ -67,13 +67,13 @@ type FeedbackConfig = policy.FeedbackConfig
 // independent observation metadata.
 type advancedProviderRuntimeStat struct {
 	// errorRateEWMABits starts at zero and ttftEWMABits starts with NaN until
-	// a positive latency arrives. errorSamples, ttftSamples,
+	// a nonnegative latency arrives. errorSamples, ttftSamples,
 	// lastObservedUnixNano, and lastTTFTObservedNanos are updated independently
 	// after their corresponding value updates.
 	errorRateEWMABits     atomic.Uint64 // float64 error fraction encoding
 	ttftEWMABits          atomic.Uint64 // float64 TTFT millisecond encoding
 	errorSamples          atomic.Int64  // recorded outcome sample count
-	ttftSamples           atomic.Int64  // positive TTFT sample count
+	ttftSamples           atomic.Int64  // nonnegative TTFT sample count
 	lastObservedUnixNano  atomic.Int64  // Unix nanoseconds
 	lastTTFTObservedNanos atomic.Int64  // Unix nanoseconds
 }
@@ -87,12 +87,12 @@ type FeedbackSnapshot struct {
 	HasFeedback  bool    // stored feedback record presence
 	ErrorRate    float64 // sampled error fraction value
 	ErrorSamples int64   // sampled outcome observation count
-	// TTFT, HasTTFT, and TTFTSamples distinguish a positive latency value from
+	// TTFT, HasTTFT, and TTFTSamples distinguish a recorded latency value from
 	// missing latency. LastObservedAt and LastTTFTAt are separate UTC copies
 	// when their recorded Unix-nanosecond values are positive.
 	TTFT           float64    // milliseconds
 	HasTTFT        bool       // populated TTFT observation flag
-	TTFTSamples    int64      // sampled positive latency count
+	TTFTSamples    int64      // sampled nonnegative latency count
 	LastObservedAt *time.Time // optional sampled outcome timestamp
 	LastTTFTAt     *time.Time // optional sampled latency timestamp
 }
@@ -329,18 +329,18 @@ func updateAdvancedSchedulerEWMA(target *atomic.Uint64, sample float64, alpha fl
 	}
 }
 
-// Report records one provider outcome and an optional positive first-token
+// Report records one provider outcome and an optional nonnegative TTFT
 // latency. Nil receiver or nonpositive provider ID skips the report, and the
 // first optional feedback configuration supplies independently normalized
 // blending factors; absent configuration uses the defaults.
 //
 // Error updates blend from the zero baseline and count every reported outcome.
-// Latency uses a NaN sentinel so its first positive sample is installed
+// Latency uses a NaN sentinel so its first recorded sample is installed
 // directly before later samples are blended. Each successful value update
 // precedes its count and timestamp writes, allowing concurrent snapshots to
 // observe intermediate combinations. Report applies the request's chosen
 // coefficients to shared provider state at this observation point.
-func (s *RuntimeStats) Report(providerID int64, success bool, firstTokenMs *int, feedback ...FeedbackConfig) {
+func (s *RuntimeStats) Report(providerID int64, success bool, ttftMs *int, feedback ...FeedbackConfig) {
 	if s == nil || providerID <= 0 {
 		return
 	}
@@ -364,10 +364,10 @@ func (s *RuntimeStats) Report(providerID int64, success bool, firstTokenMs *int,
 	stat.errorSamples.Add(1)
 	stat.lastObservedUnixNano.Store(s.nowTime().UnixNano())
 
-	if firstTokenMs != nil && *firstTokenMs > 0 {
-		ttft := float64(*firstTokenMs)
+	if ttftMs != nil && *ttftMs >= 0 {
+		ttft := float64(*ttftMs)
 		ttftBits := math.Float64bits(ttft)
-		// Install the first positive latency directly because averaging from
+		// Install the first recorded latency directly because averaging from
 		// NaN would retain an unusable value. Later competing samples blend
 		// from the successful current value.
 		for {
@@ -393,7 +393,7 @@ func (s *RuntimeStats) Report(providerID int64, success bool, firstTokenMs *int,
 
 // FeedbackSnapshot samples a provider's shared EWMA values, counts, and UTC
 // observation times. Missing receiver, invalid ID, or absent statistic returns
-// an empty value; time pointers are new copies and positive latency is
+// an empty value; time pointers are new copies and recorded latency is
 // distinguished from its uninitialized NaN sentinel. Individual fields are
 // read independently during concurrent reports.
 func (s *RuntimeStats) FeedbackSnapshot(providerID int64) FeedbackSnapshot {

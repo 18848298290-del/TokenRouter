@@ -74,7 +74,7 @@ type PassthroughOptions struct {
 }
 
 // ReadPassthroughStreaming normalizes and forwards Responses SSE while
-// observing usage, timing, and completed images. Supply a nonnil ctx, response,
+// observing usage and completed images. Supply a nonnil ctx, response,
 // output context, and callbacks used by this reader; the executor owns body
 // closure. NativeOpenAI selects bare-error terminal handling, and configured
 // standard-reader timeout/staging fields are not executed here.
@@ -82,7 +82,7 @@ type PassthroughOptions struct {
 // Raw model observation precedes lifecycle normalization and client
 // restoration. Preamble remains buffered until output policy permits delivery,
 // and ordinary content takeover stops the heartbeat callback before writes. The
-// result populates usage, FirstTokenMs, ResponseID, and image fields, leaving
+// result populates usage, ResponseID, and image fields, leaving
 // other StreamingResult flags zero. Synthetic EOF writes and the final deferred
 // flush occur before deferred heartbeat cleanup; callers use the request
 // writer's own observations for commitment and output state.
@@ -105,8 +105,7 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 
 	usage := &wire.ForwardUsage{}
 	imageCounter := wire.NewOpenAIImageOutputCounter()
-	var firstTokenMs *int
-	ttftMode := options.TTFTMode()
+
 	responseID := ""
 	clientDisconnected := false
 	sawDone := false
@@ -149,7 +148,6 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 			return
 		}
 		flusher.Flush()
-		options.MarkTime(StreamTimeFlush)
 		flushPending = false
 	}
 	defer flushPendingOutput()
@@ -204,7 +202,6 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 	resultWithUsage := func() *StreamingResult {
 		return &StreamingResult{
 			Usage:            usage,
-			FirstTokenMs:     firstTokenMs,
 			ResponseID:       responseID,
 			ImageCount:       imageCounter.Count(),
 			ImageOutputSizes: imageCounter.Sizes(),
@@ -230,7 +227,6 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 		lineStartsClientOutput := false
 		forceFlushFailedEvent := false
 		if data, ok := wire.ExtractSSEDataLine(line); ok {
-			options.MarkTime(StreamTimeData)
 			dataBytes := []byte(data)
 			trimmedData := strings.TrimSpace(data)
 			rawEventType := wire.EffectiveOpenAISSEEventType(dataBytes, pendingSSEEventType)
@@ -412,14 +408,6 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 				!sawFailedEvent && !semanticOutputSeen && !clientOutputStarted &&
 				wire.OpenAIResponsesCompletedEventIsEmpty(dataBytes, usage) {
 				return resultWithUsage(), options.EmptyCompleted(upstreamRequestID)
-			}
-			startsVisibleOutput := wire.StreamDataStartsVisibleOutput(trimmedData, eventType)
-			if startsVisibleOutput {
-				options.MarkTime(StreamTimeVisible)
-			}
-			if firstTokenMs == nil && options.OpenAIStreamDataStartsTTFT(trimmedData, eventType, forceFlushFailedEvent, ttftMode) {
-				ms := int(time.Since(startTime).Milliseconds())
-				firstTokenMs = &ms
 			}
 			wire.ParseSSEUsageBytesWithType(dataBytes, eventType, usage)
 			if pendingLifecycleHeader != "" {

@@ -13,6 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	openaiwire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
@@ -79,7 +80,8 @@ func (e *UnifiedTextExecutor) EnforceClient(ctx context.Context, c *gin.Context,
 // preparation. It installs the supplied context in Gin, then uses any
 // preparation-updated context for compatible or native dispatch; provider
 // selection, switching and completion remain with its caller.
-func (e *UnifiedTextExecutor) Responses(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte) (*forward.OpenAIResult, error) {
+func (e *UnifiedTextExecutor) Responses(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte) (result *forward.OpenAIResult, failure error) {
+	defer func() { captureTextPerformance(c.Request.Context(), result, failure) }()
 	c.Request = c.Request.WithContext(ctx)
 	var err error
 	body, err = e.prepare(c, target, body, protocol.ProtocolOpenAIResponses)
@@ -97,7 +99,8 @@ func (e *UnifiedTextExecutor) Responses(ctx context.Context, c *gin.Context, tar
 // exchange after common preparation. Compatible targets receive cache/model and
 // optional TLS inputs; native targets use native preparation and return nil
 // result for handled local probes.
-func (e *UnifiedTextExecutor) Messages(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, cacheKey, model string, tls ...egress.TLSFingerprintRouterMatchResult) (*forward.OpenAIResult, error) {
+func (e *UnifiedTextExecutor) Messages(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, cacheKey, model string, tls ...egress.TLSFingerprintRouterMatchResult) (result *forward.OpenAIResult, failure error) {
+	defer func() { captureTextPerformance(c.Request.Context(), result, failure) }()
 	c.Request = c.Request.WithContext(ctx)
 	c.Set(nativeMessageInterceptedKey, false)
 	var err error
@@ -116,7 +119,8 @@ func (e *UnifiedTextExecutor) Messages(ctx context.Context, c *gin.Context, targ
 // in the supplied context. Compatible targets receive cache/model and optional
 // TLS inputs, while native targets use their platform bindings; callers own
 // selection and completion.
-func (e *UnifiedTextExecutor) Chat(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, cacheKey, model string, tls ...egress.TLSFingerprintRouterMatchResult) (*forward.OpenAIResult, error) {
+func (e *UnifiedTextExecutor) Chat(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, cacheKey, model string, tls ...egress.TLSFingerprintRouterMatchResult) (result *forward.OpenAIResult, failure error) {
+	defer func() { captureTextPerformance(c.Request.Context(), result, failure) }()
 	c.Request = c.Request.WithContext(ctx)
 	var err error
 	body, err = e.prepare(c, target, body, protocol.ProtocolOpenAIChatCompletions)
@@ -270,7 +274,7 @@ func nativeTextResult(value *forward.MessagesResult, endpoint string) *forward.O
 		Model: value.Model, UpstreamModel: value.UpstreamModel, UpstreamEndpoint: endpoint,
 		NativeUsage: &usage,
 		Usage:       openaiwire.ForwardUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens, CacheReadInputTokens: usage.CacheReadInputTokens, ImageOutputTokens: usage.ImageOutputTokens},
-		Stream:      value.Stream, Duration: value.Duration, FirstTokenMs: value.FirstTokenMs, ClientDisconnect: value.ClientDisconnect,
+		Stream:      value.Stream, Duration: value.Duration, Timings: value.Timings, ClientDisconnect: value.ClientDisconnect,
 		ReasoningEffort: value.ReasoningEffort, RequestedReasoningEffort: value.RequestedReasoningEffort,
 		ServiceTier:                 value.ServiceTier,
 		UpstreamResponseServiceTier: value.UpstreamResponseServiceTier,
@@ -279,4 +283,31 @@ func nativeTextResult(value *forward.MessagesResult, endpoint string) *forward.O
 		ImageOutputSizes: value.ImageOutputSizes, ImageSizeSource: value.ImageSizeSource, ImageSizeBreakdown: value.ImageSizeBreakdown,
 		SearchCount: value.SearchCount, AudioUsage: value.AudioUsage,
 	}
+}
+
+// captureTextPerformance freezes transport and downstream observations after forwarding.
+// Platform executors can additionally confirm buffered usage; that evidence survives
+// the final snapshot refresh. A conversion failure invalidates throughput eligibility
+// while retaining the upstream observations available for diagnostics.
+//
+// The refresh runs after the adapter's final writes so delivery observations are
+// present before asynchronous capture. A completed disconnect drain keeps its
+// upstream completeness evidence; ordinary execution errors can retain partial
+// usage for accounting while leaving throughput unavailable.
+func captureTextPerformance(ctx context.Context, result *forward.OpenAIResult, failure error) {
+	if result == nil {
+		return
+	}
+	p := timing.PerformanceFromContext(ctx)
+	if p == nil {
+		return
+	}
+	if !p.Stream {
+		p.Complete = failure == nil
+		p.UsageComplete = result.Timings != nil && result.Timings.UsageComplete
+	}
+	if failure != nil && !result.ClientDisconnect {
+		p.UsageComplete = false
+	}
+	result.Timings = p
 }

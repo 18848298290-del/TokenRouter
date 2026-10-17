@@ -273,15 +273,15 @@ describe('admin UsageView 路由筛选', () => {
     wrapper.unmount()
   })
 
-  it('TPS 分页导出为数值并设置一位小数，缺少首字耗时时留空', async () => {
-    const row = { model: 'test', output_tokens: 100, duration_ms: 5000, first_token_ms: 1000 }
+  it('TPS 分页导出为数值并设置一位小数，服务端未返回估算时留空', async () => {
+    const row = { model: 'test', output_tokens: 100, duration_ms: 5000, ttft_ms: 1000, tps: 25 }
     exportMocks.list.mockReset()
       .mockResolvedValueOnce({ total: 104, items: Array.from({ length: 100 }, () => row) })
       .mockResolvedValueOnce({ total: 104, items: [
-        { ...row, output_tokens: 101, duration_ms: 4000 },
-        { ...row, output_tokens: 23, duration_ms: 21000 },
-        { ...row, output_tokens: 469, duration_ms: 21000 },
-        { ...row, first_token_ms: null },
+        { ...row, output_tokens: 101, duration_ms: 4000, tps: 33.7 },
+        { ...row, output_tokens: 23, duration_ms: 21000, tps: 1.2 },
+        { ...row, output_tokens: 469, duration_ms: 21000, tps: 23.5 },
+        { ...row, ttft_ms: null, tps: null },
       ] })
     exportMocks.headers.mockClear()
     exportMocks.rows.mockClear()
@@ -304,8 +304,8 @@ describe('admin UsageView 路由筛选', () => {
     const restored = read(write(workbook, { type: 'array', bookType: 'xlsx' }), { type: 'array', cellNF: true }).Sheets.Usage
     expect(restored[utils.encode_cell({ r: 1, c: column })]).toMatchObject({ t: 'n', v: 25, z: '0.0', w: '25.0' })
     expect(restored[utils.encode_cell({ r: 101, c: column })]).toMatchObject({ t: 'n', v: 33.7, z: '0.0', w: '33.7' })
-    expect(restored[utils.encode_cell({ r: 102, c: column })]).toMatchObject({ t: 'n', v: 1.1, z: '0.0', w: '1.1' })
-    expect(restored[utils.encode_cell({ r: 103, c: column })]).toMatchObject({ t: 'n', v: 23.4, z: '0.0', w: '23.4' })
+    expect(restored[utils.encode_cell({ r: 102, c: column })]).toMatchObject({ t: 'n', v: 1.2, z: '0.0', w: '1.2' })
+    expect(restored[utils.encode_cell({ r: 103, c: column })]).toMatchObject({ t: 'n', v: 23.5, z: '0.0', w: '23.5' })
     expect(restored[utils.encode_cell({ r: 104, c: column })]?.v ?? '').toBe('')
     expect(exportMocks.save).toHaveBeenCalledOnce()
     wrapper.unmount()

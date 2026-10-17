@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/TokenFlux/TokenRouter/internal/egress"
-	"github.com/TokenFlux/TokenRouter/internal/gateway"
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
@@ -98,9 +97,6 @@ type OpenAIResponseOutput struct {
 	Corrector *openai.CodexToolCorrector // Codex tool payload corrector
 	// shared proxy disconnect circuit
 	ProxyCircuit *egress.ProxyStreamCircuit
-	// TTFT reads the current first-token timing mode for each request. A nil
-	// callback selects semantic timing through TTFTMode's normalization.
-	TTFT func(context.Context) string
 	// Redact supplies optional provider-identity cleanup for captured errors.
 	// Without this callback, redact returns the supplied body bytes as received.
 	Redact    func(context.Context, *gatewayadapter.ExecutionProvider, []byte) []byte
@@ -108,17 +104,6 @@ type OpenAIResponseOutput struct {
 	// ResponseTTL supplies response-provider and owner binding lifetimes.
 	// BindResponseProvider requires this callback when Responses storage is configured.
 	ResponseTTL func() time.Duration
-}
-
-// TTFTMode reads and normalizes the current first-token timing mode for the
-// request. Nil output or callback starts from semantic mode; gateway
-// normalization determines the result for a configured callback value.
-func (p *OpenAIResponseOutput) TTFTMode(ctx context.Context) string {
-	mode := gateway.OpenAITTFTModeSemantic
-	if p != nil && p.TTFT != nil {
-		mode = p.TTFT(ctx)
-	}
-	return gateway.NormalizeOpenAITTFTMode(mode)
 }
 
 // redact delegates captured error-body cleanup to the configured callback. Nil

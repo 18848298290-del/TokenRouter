@@ -231,7 +231,7 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 		CacheReadInputTokens:     nativeResult.Usage.CacheReadInputTokens,
 		ImageOutputTokens:        nativeResult.Usage.ImageOutputTokens,
 	}
-	firstTokenMs := nativeResult.FirstTokenMs
+
 	responseID := nativeResult.ResponseID
 	searchCount := nativeResult.SearchCount
 	imageCount := nativeResult.ObservedImages
@@ -251,7 +251,7 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 		OpenAIWSMode:          false,
 		ResponseHeaders:       nativeResult.UpstreamHeaders.Clone(),
 		Duration:              time.Since(startTime),
-		FirstTokenMs:          firstTokenMs,
+		Timings:               nativeResult.Timings,
 	}
 	// Carry search and image counts into the result so settlement can apply
 	// per-search and per-image prices.

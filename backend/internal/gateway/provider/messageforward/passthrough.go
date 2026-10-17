@@ -6,6 +6,7 @@ import (
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
@@ -60,7 +61,7 @@ func (a *anthropicPassthroughAdapter) ExecutePassthrough(ctx context.Context, in
 		OnWireBody: h.Wire,
 		OnStream: func(result *claude.StreamResult, _ error) {
 			if result != nil {
-				h.Stream(&forwardcore.StreamOutcome{Usage: result.Usage, FirstTokenMs: result.FirstTokenMs, ClientDisconnect: result.ClientDisconnect})
+				h.Stream(&forwardcore.StreamOutcome{Usage: result.Usage, Timings: timing.PerformanceFromContext(ctx), ClientDisconnect: result.ClientDisconnect})
 			}
 		},
 	}

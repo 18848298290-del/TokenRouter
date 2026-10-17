@@ -82,27 +82,15 @@ func TestStagesFailureAndFirstObservation(t *testing.T) {
 // collection. Transport milestones must retain the request ingress reference,
 // rather than silently subtracting time spent before trace installation.
 func TestStagesAndHTTPTraceShareIngress(t *testing.T) {
-	for _, traceFirst := range []bool{false, true} {
-		synctest.Test(t, func(t *testing.T) {
-			start := time.Now()
-			ctx := t.Context()
-			time.Sleep(time.Second)
-			if traceFirst {
-				ctx = WithHTTPTrace(ctx)
-			}
-			ctx, stages := WithStages(ctx, start, nil)
-			if !traceFirst {
-				ctx = WithHTTPTrace(ctx)
-			}
-			time.Sleep(time.Second)
-			httptrace.ContextClientTrace(ctx).GetConn("upstream.test")
-			stages.Mark("upstream_first_event_ms")
-			snapshot, ok := HTTPTraceSnapshotFromContext(ctx)
-			require.True(t, ok)
-			elapsed, valid := HTTPTraceElapsedMs(snapshot, snapshot.GetConnAt)
-			require.True(t, valid)
-			require.Equal(t, int64(2000), elapsed)
-			require.Equal(t, elapsed, stages.Snapshot()["upstream_first_event_ms"])
-		})
-	}
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		time.Sleep(time.Second)
+		ctx, stages := WithStages(t.Context(), start, nil)
+		ctx = BeginHTTPTrace(ctx)
+		time.Sleep(time.Second)
+		httptrace.ContextClientTrace(ctx).GetConn("upstream.test")
+		snapshot := stages.Snapshot()
+		require.Equal(t, int64(2000), snapshot["upstream_get_conn_ms"])
+		require.Equal(t, int64(1000), snapshot["upstream_started_ms"])
+	})
 }

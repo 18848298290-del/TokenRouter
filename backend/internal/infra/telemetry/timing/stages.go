@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
 // stages.go collects HTTP text admission intervals and stream milestones for
@@ -30,16 +32,20 @@ type Stages struct {
 	// mu protects end, admitted, body, user, provider, retry and events. start
 	// remains immutable; end freezes initial durations, while admitted decides
 	// whether later provider waits belong to retries or a completed failure.
-	mu       sync.Mutex       // protects counters and milestones
-	start    time.Time        // monotonic ingress reference
-	end      time.Time        // frozen admission endpoint
-	admitted bool             // successful admission observed
-	body     time.Duration    // original reader duration
-	user     time.Duration    // initial user queue duration
-	provider time.Duration    // initial provider queue duration
-	retry    time.Duration    // subsequent provider queue duration
-	stream   bool             // client streaming applicability
-	events   map[string]int64 // first observed offsets
+	mu          sync.Mutex       // protects counters and milestones
+	start       time.Time        // monotonic ingress reference
+	end         time.Time        // frozen admission endpoint
+	admitted    bool             // successful admission observed
+	body        time.Duration    // original reader duration
+	user        time.Duration    // initial user queue duration
+	provider    time.Duration    // initial provider queue duration
+	retry       time.Duration    // subsequent provider queue duration
+	stream      bool             // client streaming applicability
+	events      map[string]int64 // first observed offsets
+	mode        string           // captured request metric mode
+	attempt     int64            // actual upstream exchange ordinal
+	performance *Performance     // current exchange observations under mu
+
 	// response observes each opened upstream response without consuming it. Set
 	// before sharing the context; readers invoke it synchronously on their exchange.
 	response func(*http.Response)
@@ -56,25 +62,14 @@ type stageBody struct {
 // the context and retain the original request start for all subsequent offsets.
 // A nonnil context and nonzero start are required before upstream execution.
 //
-// Gateway correlation can install HTTP tracing before this collector, while
-// direct execution can install it afterward. Both orders use the supplied
-// ingress time. An existing trace adopts that reference only before its first
-// upstream exchange, so installing observation late cannot move timestamps
-// belonging to an exchange already in progress.
+// Install before the first generation dispatch. BeginHTTPTrace binds transport
+// callbacks to this collector's ingress reference and a distinct exchange ordinal,
+// so late callbacks from discarded attempts cannot replace current observations.
 func WithStages(ctx context.Context, start time.Time, response func(*http.Response)) (context.Context, *Stages) {
 	if s := StagesFromContext(ctx); s != nil {
 		return ctx, s
 	}
 	s := &Stages{start: start, events: make(map[string]int64), response: response}
-	// Correlation installs tracing before authentication. Share its reference
-	// with admission before any exchange, retaining existing upstream observations.
-	if trace, ok := ctx.Value(httpTraceContextKey{}).(*httpTraceState); ok && trace != nil {
-		trace.mu.Lock()
-		if !trace.upstreamStarted {
-			trace.startedAt = start
-		}
-		trace.mu.Unlock()
-	}
 	return context.WithValue(ctx, stageKey{}, s), s
 }
 
@@ -91,8 +86,25 @@ func StagesFromContext(ctx context.Context) *Stages {
 // It performs no reads itself; absent collectors and failed exchanges require
 // no observation and leave response ownership with the original caller.
 func ObserveResponse(ctx context.Context, response *http.Response) {
-	if s := StagesFromContext(ctx); s != nil && s.response != nil && response != nil {
-		s.response(response)
+	if s := StagesFromContext(ctx); s != nil && response != nil {
+		number := s.Attempt()
+		telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
+			for i := range record.Attempts {
+				if int64(record.Attempts[i].Number) == number {
+					record.Attempts[i].Status = response.StatusCode
+					id := response.Header.Get("x-request-id")
+					if id == "" {
+						id = response.Header.Get("x-amzn-requestid")
+					}
+					if id != "" {
+						record.Attempts[i].RequestID = id
+					}
+				}
+			}
+		})
+		if s.response != nil {
+			s.response(response)
+		}
 	}
 }
 
@@ -104,6 +116,99 @@ func (s *Stages) Streaming() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.stream
+}
+
+// SetMode fixes the request's event selection before any upstream exchange starts.
+// Repeated calls after execution begins are ignored so an in-flight setting
+// update cannot change the meaning of a retained usage observation.
+func (s *Stages) SetMode(mode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.attempt == 0 {
+		s.mode = NormalizeMode(mode)
+	}
+}
+
+// BeginAttempt creates an isolated observation set for one actual upstream exchange.
+// Call before requesting a transport connection. Later callbacks carry its ordinal
+// so closing an abandoned response cannot update a subsequent provider's metrics.
+//
+// Initial admission stays frozen at its own endpoint, and request-level downstream
+// milestones retain their first observation across retries. Only upstream exchange
+// observations are replaced. All mutations use the collector mutex; callers finish
+// one dispatch before beginning another, while old transport callbacks may still return.
+func (s *Stages) BeginAttempt() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.attempt++
+	s.performance = &Performance{Mode: NormalizeMode(s.mode), Values: map[string]int64{
+		"attempt_number":      s.attempt,
+		"upstream_started_ms": time.Since(s.start).Milliseconds(),
+	}}
+	return s.attempt
+}
+
+// Attempt returns the current exchange ordinal for a response observer binding.
+func (s *Stages) Attempt() int64 { s.mu.Lock(); defer s.mu.Unlock(); return s.attempt }
+
+// ObserveEvent records a decoded upstream event before downstream conversion begins.
+// Metadata establishes first-event timing; useful deltas advance the content interval.
+// Terminal snapshots cannot extend an interval already established by streamed content,
+// and final usage evidence remains independent of successful stream termination.
+func (s *Stages) ObserveEvent(attempt int64, data, event string) {
+	s.ObserveEventAt(attempt, data, event, time.Now())
+}
+
+// ObserveEventAt records a decoded event using its underlying read completion time.
+// Events coalesced in one read share an arrival time, preventing parser CPU time
+// from manufacturing a positive output interval for an otherwise single delivery.
+func (s *Stages) ObserveEventAt(attempt int64, data, event string, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.performance
+	if p == nil || s.attempt != attempt {
+		return
+	}
+	p.Observe(data, event, at.Sub(s.start).Milliseconds())
+}
+
+// FinishAttempt records when this exchange's reader ends or closes after failure.
+// Late callbacks from earlier exchanges are ignored. Successful protocol termination
+// is observed separately, so EOF alone never invents complete stream usage.
+func (s *Stages) FinishAttempt(attempt int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.performance == nil || s.attempt != attempt {
+		return
+	}
+	if _, ok := s.performance.Values["upstream_finished_ms"]; !ok {
+		s.performance.Values["upstream_finished_ms"] = time.Since(s.start).Milliseconds()
+	}
+}
+
+// PerformanceFromContext freezes observed request and exchange data for a usage row.
+// Capture only after the upstream reader has returned. The returned map is independent
+// of subsequent attempts, request completion, and asynchronous persistence work.
+func PerformanceFromContext(ctx context.Context) *Performance {
+	if ctx == nil {
+		return nil
+	}
+	if p, ok := ctx.Value(performanceKey{}).(*Performance); ok {
+		return p.Clone()
+	}
+	s := StagesFromContext(ctx)
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	values := s.snapshotLocked()
+	if s.performance == nil {
+		return nil
+	}
+	p := s.performance.Clone()
+	maps.Copy(p.Values, values)
+	return p
 }
 
 // ReadBody wraps the original request reader while preserving its Close ownership.
@@ -212,6 +317,12 @@ func (s *Stages) Finish() {
 func (s *Stages) Snapshot() map[string]int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.snapshotLocked()
+}
+
+// snapshotLocked copies request and current-exchange observations while mu is held.
+// A single lock interval prevents a retry from combining two providers' timestamps.
+func (s *Stages) snapshotLocked() map[string]int64 {
 	end := s.end
 	if end.IsZero() {
 		end = time.Now()
@@ -237,5 +348,89 @@ func (s *Stages) Snapshot() map[string]int64 {
 		out["timing_admitted"] = 1
 	}
 	maps.Copy(out, s.events)
+	if s.performance != nil {
+		maps.Copy(out, s.performance.Values)
+	}
 	return out
+}
+
+// FailureSnapshot returns admission and failure-location diagnostics without a
+// successful stream's content interval. It never supplies usage performance or
+// becomes a source for TTFT/TPS queries when analysis persistence fails.
+func (s *Stages) FailureSnapshot() map[string]int64 {
+	return failureTimings(s.Snapshot())
+}
+
+// AttemptFailureSnapshot preserves transport and failure location for one exchange.
+// Content arrival times and usage performance never enter request-record diagnostics;
+// a subsequent successful exchange therefore has one persisted performance owner.
+func (s *Stages) AttemptFailureSnapshot() map[string]int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.performance == nil {
+		return nil
+	}
+	failedAt := time.Since(s.start).Milliseconds()
+	if end, ok := s.performance.Values["upstream_finished_ms"]; ok {
+		failedAt = end
+	}
+	values := map[string]int64{"failed_at_ms": failedAt}
+	for _, key := range []string{"upstream_started_ms", "upstream_finished_ms", "upstream_get_conn_ms", "upstream_got_conn_ms", "upstream_wrote_request_ms", "upstream_first_response_byte_ms", "upstream_connection_reused", "upstream_wrote_request_error"} {
+		if value, ok := s.performance.Values[key]; ok {
+			values[key] = value
+		}
+	}
+	return values
+}
+
+// Transport records an event only for the exchange that installed its callback.
+// A fresh connection sequence clears earlier connection timestamps inside the same
+// round trip, while counters retain retry evidence. Failed writes retain their
+// diagnostic flag but cannot establish a successful request-write milestone.
+//
+// net/http can abandon a reused connection and retry inside one round trip.
+// Connection milestones follow the replacement sequence while diagnostic counts
+// retain that recovery. An exchange ordinal rejects callbacks arriving from a
+// previous provider, and the mutex lets completion capture a consistent map while
+// the transport reports its final events.
+func (s *Stages) Transport(attempt int64, key string, at time.Time, flag bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.performance == nil || s.attempt != attempt {
+		return
+	}
+	values := s.performance.Values
+	counter := map[string]string{"upstream_get_conn_ms": "upstream_get_conn_count", "upstream_got_conn_ms": "upstream_got_conn_count", "upstream_first_response_byte_ms": "upstream_first_response_byte_count"}[key]
+	if counter != "" {
+		s.events[counter]++
+	}
+	s.events["upstream_attempt_count"] = attempt
+	if key == "upstream_get_conn_ms" {
+		for _, name := range []string{"upstream_get_conn_ms", "upstream_got_conn_ms", "upstream_wrote_request_ms", "upstream_first_response_byte_ms", "upstream_connection_reused"} {
+			delete(values, name)
+		}
+	}
+	if key == "upstream_got_conn_ms" {
+		values["upstream_connection_reused"] = 0
+		if flag {
+			values["upstream_connection_reused"] = 1
+		}
+	}
+	if key == "upstream_wrote_request_ms" && flag {
+		values["upstream_wrote_request_error"] = 1
+		return
+	}
+	if _, exists := values[key]; !exists {
+		values[key] = at.Sub(s.start).Milliseconds()
+	}
+}
+
+// SetContentLength records known ingress body size without reading or buffering it.
+func (s *Stages) SetContentLength(length int64) {
+	if length < 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events["request_content_length"] = length
 }

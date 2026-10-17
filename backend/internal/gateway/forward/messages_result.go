@@ -3,6 +3,7 @@ package forward
 import (
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -30,11 +31,11 @@ type MessagesResult struct {
 	// retains its initial selection after provider-local model recovery. Empty
 	// leaves completion to its configured model-source and logical-model rules.
 	UpstreamModel    string
-	Stream           bool          // client streaming output mode
-	Duration         time.Duration // forwarding elapsed duration
-	FirstTokenMs     *int          // milliseconds; nil when unobserved
-	ClientDisconnect bool          // observed client disconnect flag
-	ReasoningEffort  *string       // executed reasoning effort
+	Stream           bool                // client streaming output mode
+	Duration         time.Duration       // forwarding elapsed duration
+	Timings          *timing.Performance // frozen exchange performance observations
+	ClientDisconnect bool                // observed client disconnect flag
+	ReasoningEffort  *string             // executed reasoning effort
 	// RequestedReasoningEffort captures client effort before compatibility mapping.
 	// It remains separate from ReasoningEffort so completion can record requested
 	// and executed policies independently when a rewrite changes the effort.
@@ -70,7 +71,7 @@ type MessagesResult struct {
 
 // MessagesFromAttempt creates a MessagesResult from a platform attempt's model,
 // token usage, timing, and disconnect observations. Callers add headers, media,
-// and policy metadata separately; FirstTokenMs retains the attempt's pointer
+// and policy metadata separately; Timings retains the attempt's pointer
 // rather than allocating an independent measurement.
 func MessagesFromAttempt(result upstream.AttemptResult) *MessagesResult {
 	return &MessagesResult{
@@ -82,6 +83,6 @@ func MessagesFromAttempt(result upstream.AttemptResult) *MessagesResult {
 		Stream:                result.Stream,
 		Duration:              result.Duration,
 		ClientDisconnect:      result.ClientDisconnect,
-		FirstTokenMs:          result.FirstTokenMs,
+		Timings:               result.Timings,
 	}
 }

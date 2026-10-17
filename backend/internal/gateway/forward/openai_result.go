@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
@@ -79,9 +80,9 @@ type OpenAIResult struct {
 	// assignment shares the map and value slices, so consumers clone both levels
 	// before independently mutating the captured headers.
 	ResponseHeaders  map[string][]string
-	Duration         time.Duration // forwarding elapsed duration
-	FirstTokenMs     *int          // milliseconds; nil when unobserved
-	ClientDisconnect bool          // observed client disconnect flag
+	Duration         time.Duration       // forwarding elapsed duration
+	Timings          *timing.Performance // frozen exchange performance observations
+	ClientDisconnect bool                // observed client disconnect flag
 	// ImageCount carries the producer's image quantity for completion billing.
 	// Native protocol conversion can pass a model-derived estimate, while image
 	// response readers can supply counted output objects.

@@ -29,8 +29,7 @@ import (
 // A read failure can follow a usable terminal observation, so partial usage and
 // the original error can accompany output that has already been formed. On read
 // failure, absent stop/produced-terminal evidence selects a protocol error;
-// frame overflow remains an error even after a stop. FirstTokenMs here measures
-// the first parsed streaming event, which need not contain generated text.
+// frame overflow remains an error even after a stop.
 // Converter-generated failure frames use the local output operation so HTTP
 // adapters can report the error without assigning it an upstream delivery time.
 
@@ -187,8 +186,7 @@ func ResponsesBuffered(in Response, out Output, originalModel, mappedModel strin
 // identity across events while raw model observations remain separate from the
 // logical model assigned to emitted output.
 //
-// The first parsed event sets timing before conversion, even when it contains
-// no text. Event write failure stops ordinary frame consumption with current
+// Event write failure stops ordinary frame consumption with current
 // observations and nil error, recording a disconnect diagnostic. Finalization
 // retains an already recorded reader error if its terminal write fails. An
 // unfinished bridge emits response.failed before returning a read error unless
@@ -208,7 +206,7 @@ func ResponsesStreaming(in Response, out Output, originalModel, mappedModel stri
 	state.Model = originalModel
 	clientToolRestorer := bridge.NewResponsesClientToolStreamRestorer(clientToolMapping)
 	var usage upstream.TokenUsage
-	var firstTokenMs *int
+
 	firstChunk := true
 
 	scanner := newConversionSSEScanner(in)
@@ -224,7 +222,7 @@ func ResponsesStreaming(in Response, out Output, originalModel, mappedModel stri
 			ReasoningEffort:       reasoningEffort,
 			Stream:                true,
 			Duration:              time.Since(startTime),
-			FirstTokenMs:          firstTokenMs,
+			Timings:               nil,
 		}
 	}
 
@@ -265,8 +263,6 @@ func ResponsesStreaming(in Response, out Output, originalModel, mappedModel stri
 		// can establish this timing; it is not a text-only observation.
 		if firstChunk {
 			firstChunk = false
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
 		}
 
 		if event.Type == "message_delta" && event.Usage != nil {
@@ -489,7 +485,6 @@ func ChatBuffered(in Response, out Output, originalModel, mappedModel string, re
 // supplied logical model while the observer records the raw declaration; includeUsage
 // controls the Chat usage chunk produced by the bridge.
 //
-// Timing starts on the first parsed event rather than the first text delta.
 // Ordinary event write failure stops with observations and nil error. Read
 // failure before a stop or produced terminal event emits a Chat error event;
 // a stop allows finalization with the retained error, except on frame overflow.
@@ -512,7 +507,7 @@ func ChatStreaming(in Response, out Output, originalModel, mappedModel string, r
 	ccState.IncludeUsage = includeUsage
 
 	var usage upstream.TokenUsage
-	var firstTokenMs *int
+
 	firstChunk := true
 
 	scanner := newConversionSSEScanner(in)
@@ -528,7 +523,7 @@ func ChatStreaming(in Response, out Output, originalModel, mappedModel string, r
 			ReasoningEffort:       reasoningEffort,
 			Stream:                true,
 			Duration:              time.Since(startTime),
-			FirstTokenMs:          firstTokenMs,
+			Timings:               nil,
 		}
 	}
 
@@ -556,8 +551,6 @@ func ChatStreaming(in Response, out Output, originalModel, mappedModel string, r
 		// can establish this timing; it is not a text-only observation.
 		if firstChunk {
 			firstChunk = false
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
 		}
 
 		if event.Type == "message_delta" && event.Usage != nil {

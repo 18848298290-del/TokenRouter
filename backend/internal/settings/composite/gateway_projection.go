@@ -34,7 +34,7 @@ func (s *Snapshot) GatewayAdminSettings() gateway.AdminSettings {
 		MinClaudeCodeVersion:                   s.MinClaudeCodeVersion,
 		OpenAIAllowClaudeCodeCodexPlugin:       s.OpenAIAllowClaudeCodeCodexPlugin,
 		OpenAICodexUserAgent:                   s.OpenAICodexUserAgent,
-		OpenAITTFTMode:                         s.OpenAITTFTMode,
+		TTFTMode:                               s.TTFTMode,
 		RewriteMessageCacheControl:             s.RewriteMessageCacheControl,
 		UserPromptReplacementConfig:            s.UserPromptReplacementConfig,
 	}
@@ -63,7 +63,7 @@ func (s *Snapshot) ApplyGatewayAdminReadSettings(value *gateway.AdminReadSetting
 	s.MinClaudeCodeVersion = value.MinClaudeCodeVersion
 	s.OpenAIAllowClaudeCodeCodexPlugin = value.OpenAIAllowClaudeCodeCodexPlugin
 	s.OpenAICodexUserAgent = value.OpenAICodexUserAgent
-	s.OpenAITTFTMode = value.OpenAITTFTMode
+	s.TTFTMode = value.TTFTMode
 	s.RewriteMessageCacheControl = value.RewriteMessageCacheControl
 	s.UserPromptReplacementConfig = value.UserPromptReplacementConfig
 }

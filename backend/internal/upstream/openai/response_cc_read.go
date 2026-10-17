@@ -17,11 +17,11 @@ import (
 )
 
 // response_cc_read.go reads Chat Completions JSON and stream chunks while
-// recording usage, processing tier, and first output.
+// recording usage, processing tier, and output content.
 // Chat response scanning observes raw payloads before typed chunk conversion,
 // retaining the latest usage and processing tier for attempt finalization.
-// Text, reasoning, or tool output starts first-token timing, while a usage-only
-// chunk cannot become that timing observation.
+// The shared upstream body observer captures content arrival before these
+// chunks undergo compatibility conversion and downstream buffering.
 //
 // Malformed chunks are logged and skipped so later output remains readable.
 // Scanner errors remain in returned state, letting conversion callers skip
@@ -53,11 +53,9 @@ type CCStreamScanState struct {
 	// Usage retains the latest parsed Chat usage; no observation leaves its
 	// counters zero, and conversion callers can apply their terminal usage precedence.
 	Usage wire.ForwardUsage
-	// FirstTokenMs measures whole milliseconds from start to the first typed
-	// output-start chunk. Nil means unobserved; usage-only chunks leave it unset.
-	FirstTokenMs *int
-	ServiceTier  string // observed upstream processing tier
-	SawDone      bool   // observed Chat DONE marker
+
+	ServiceTier string // observed upstream processing tier
+	SawDone     bool   // observed Chat DONE marker
 	// Err is the scanner error, including context cancellation.
 	// Callers skip finalization on error so truncated streams cannot synthesize a successful ending.
 	Err error
@@ -111,11 +109,7 @@ func ScanCCStream(resp *http.Response, options CCResponseOptions, logPrefix, req
 			// can still complete the response; conversion finalization separately validates assembled tool arguments.
 			continue
 		}
-		if st.FirstTokenMs == nil && !wire.IsOpenAIChatUsageOnlyStreamChunk(payload) && wire.ChatChunkStartsResponsesOutput(&chunk) {
-			// Measure from the supplied start in whole elapsed milliseconds.
-			ms := int(time.Since(startTime).Milliseconds())
-			st.FirstTokenMs = &ms
-		}
+
 		emit(&chunk)
 	}
 	st.ServiceTier = options.ServiceTier()

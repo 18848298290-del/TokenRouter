@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 	wireprotocol "github.com/TokenFlux/TokenRouter/internal/protocol"
 )
@@ -63,6 +64,7 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 	// credential and handler failures use the gateway's fixed English response language.
 	r := engine.Group("", func(c *gin.Context) {
 		ctx := locale.WithLanguage(c.Request.Context(), "en")
+		ctx = timing.WithModeReader(ctx, options.TTFTMode)
 		c.Request = c.Request.WithContext(ctx)
 		c.Header("Content-Language", "en")
 		c.Next()

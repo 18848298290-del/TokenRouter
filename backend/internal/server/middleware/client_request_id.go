@@ -10,7 +10,6 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
-	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
 // client_request_id.go binds gateway request identities to logging context and
@@ -62,7 +61,6 @@ func ClientRequestID() gin.HandlerFunc {
 		if _, ok := ctx.Value(telemetry.RequestStartedAt).(time.Time); !ok {
 			ctx = context.WithValue(ctx, telemetry.RequestStartedAt, time.Now())
 		}
-		ctx = timing.WithHTTPTrace(ctx)
 
 		// RequestLogger and gateway middleware share the same telemetry key. Reuse
 		// that internal value so retries and downstream diagnostics keep one identity.

@@ -17,7 +17,7 @@ import (
 // counts expand stored attempt arrays, so several switch events can contribute
 // to one final request record.
 //
-// Latency sampling reads duration and first-token values in separate statements
+// Latency sampling reads duration and TTFT values in separate statements
 // and retains SQL absence as nil pointers. Those observations can describe
 // different database snapshots from each other and from the count queries.
 // Continuous percentiles are rounded to integer milliseconds, averages to one
@@ -128,9 +128,10 @@ FROM ops_error_logs
 	return errorTotal, businessLimited, errorCountSLA, upstreamExcl429529, upstream429, upstream529, nil
 }
 
-// QueryUsageLatency returns duration and first-token percentiles from nonnull
-// usage values in the supplied half-open range. The two reads are independent
-// statements, and neither requires a streaming flag or positive latency.
+// QueryUsageLatency returns duration and TTFT percentiles from nonnull
+// usage observations in the supplied half-open range. The independent duration
+// query includes recorded elapsed values; TTFT requires a streaming snapshot
+// with ordered offsets for its captured mode. Both retain measured zero.
 //
 // Continuous quantiles are rounded to native integer milliseconds, averages to
 // one decimal place, and available maxima narrowed to native int. Missing SQL
@@ -139,7 +140,7 @@ FROM ops_error_logs
 // partial pair. The method performs no time validation or finite/range check
 // before those conversions.
 func (c *MetricsQueries) QueryUsageLatency(ctx context.Context, start, end time.Time) (duration ops.CollectedPercentiles, ttft ops.CollectedPercentiles, err error) {
-	// Read duration and first-token aggregates sequentially with the same supplied
+	// Read duration and TTFT aggregates sequentially with the same supplied
 	// window; separate statements can observe different committed database states.
 	{
 		q := `
@@ -179,15 +180,15 @@ WHERE created_at >= $1 AND created_at < $2
 	{
 		q := `
 SELECT
-  percentile_cont(0.50) WITHIN GROUP (ORDER BY first_token_ms) AS p50,
-  percentile_cont(0.90) WITHIN GROUP (ORDER BY first_token_ms) AS p90,
-  percentile_cont(0.95) WITHIN GROUP (ORDER BY first_token_ms) AS p95,
-  percentile_cont(0.99) WITHIN GROUP (ORDER BY first_token_ms) AS p99,
-  AVG(first_token_ms) AS avg_ms,
-  MAX(first_token_ms) AS max_ms
+  percentile_cont(0.50) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) AS p50,
+  percentile_cont(0.90) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) AS p90,
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) AS p95,
+  percentile_cont(0.99) WITHIN GROUP (ORDER BY ` + usageTTFTSQL("") + `) AS p99,
+  AVG(` + usageTTFTSQL("") + `) AS avg_ms,
+  MAX(` + usageTTFTSQL("") + `) AS max_ms
 FROM usage_logs
 WHERE created_at >= $1 AND created_at < $2
-  AND first_token_ms IS NOT NULL`
+  AND ` + usageTTFTSQL("") + ` IS NOT NULL`
 
 		var p50, p90, p95, p99 sql.NullFloat64
 		var avg sql.NullFloat64
@@ -195,7 +196,7 @@ WHERE created_at >= $1 AND created_at < $2
 		if err := c.db.QueryRowContext(ctx, q, start, end).Scan(&p50, &p90, &p95, &p99, &avg, &max); err != nil {
 			return ops.CollectedPercentiles{}, ops.CollectedPercentiles{}, err
 		}
-		// Apply the same nullable conversions to first-token observations, whose
+		// Apply the same nullable conversions to TTFT observations, whose
 		// nonnull rows can differ from the duration sample population.
 		ttft.P50 = floatToIntPtr(p50)
 		ttft.P90 = floatToIntPtr(p90)
@@ -244,4 +245,30 @@ func NewMetricsQueries(db *sql.DB) ops.MetricsSource {
 		return nil
 	}
 	return &MetricsQueries{&Advisory{db}, db}
+}
+
+// usageTTFTSQL derives the same nullable delay as timing.Performance.TTFTMs.
+// Alias is an internal table alias, never user input. Both ordered offsets must
+// belong to the persisted exchange; absent historical JSON contributes no sample.
+func usageTTFTSQL(alias string) string {
+	column := "timings"
+	if alias != "" {
+		column = alias + ".timings"
+	}
+	start := "(" + column + "->'values'->>'upstream_started_ms')::bigint"
+	end := "(" + column + "->'values'->>(CASE WHEN " + column + "->>'ttft_mode'='first_event' THEN 'upstream_first_event_ms' ELSE 'upstream_first_output_ms' END))::bigint"
+	return "(CASE WHEN " + column + "->>'upstream_stream'='true' AND " + end + ">=" + start + " THEN " + end + "-" + start + " END)"
+}
+
+// usageTPSSQL estimates throughput from the same complete content interval as usage DTOs.
+// A lone chunk, incomplete usage, or invalid interval produces SQL NULL and therefore
+// cannot silently enter averages as a zero-speed observation.
+func usageTPSSQL(alias string) string {
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	column := prefix + "timings"
+	elapsed := "((" + column + "->'values'->>'upstream_last_output_ms')::bigint-(" + column + "->'values'->>'upstream_first_output_ms')::bigint)"
+	return "(CASE WHEN " + column + "->>'upstream_stream'='true' AND " + column + "->>'upstream_complete'='true' AND " + column + "->>'usage_complete'='true' AND (" + column + "->'values'->>'upstream_output_event_count')::bigint>=2 AND " + prefix + "output_tokens>0 AND " + elapsed + ">0 THEN ROUND(" + prefix + "output_tokens*1000.0/" + elapsed + ",1) END)"
 }

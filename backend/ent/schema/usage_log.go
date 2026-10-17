@@ -206,10 +206,8 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int("duration_ms").
 			Optional().
 			Nillable(),
-		// Latency to first token, milliseconds.
-		field.Int("first_token_ms").
-			Optional().
-			Nillable(),
+		// Timings stores the immutable performance observations owned by this usage row.
+		field.JSON("timings", map[string]any{}).Optional(),
 		// Recorded client user agent.
 		field.String("user_agent").
 			MaxLen(512).

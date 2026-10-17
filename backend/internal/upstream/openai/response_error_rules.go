@@ -170,7 +170,7 @@ func OpenAIStreamDataStartsClientOutput(data, eventType string) bool {
 	return !OpenAIStreamEventIsPreamble(eventType)
 }
 
-// OpenAIStreamDataStartsSemanticTTFT applies the HTTP reader's first-output
+// OpenAIStreamDataStartsFirstFlush applies the HTTP reader's first-output
 // timing predicate to data and event type. Blank data, DONE, and failed
 // terminals return false; missing event types can be inferred from valid JSON.
 //
@@ -180,7 +180,7 @@ func OpenAIStreamDataStartsClientOutput(data, eventType string) bool {
 // events can count; this predicate is broader than a nonempty text-delta check.
 // The caller decides when to record a timestamp and keeps that observation
 // separate from physical HTTP commitment.
-func OpenAIStreamDataStartsSemanticTTFT(data, eventType string) bool {
+func OpenAIStreamDataStartsFirstFlush(data, eventType string) bool {
 	trimmed := strings.TrimSpace(data)
 	if trimmed == "" || trimmed == "[DONE]" {
 		return false
@@ -194,7 +194,7 @@ func OpenAIStreamDataStartsSemanticTTFT(data, eventType string) bool {
 		return false
 	case "response.completed", "response.done":
 		// Terminal usage alone supplies billing evidence but no visible output;
-		// use the wire content predicate before recording first-output timing for that event.
+		// require visible payload content before selecting this terminal for the initial flush.
 		return wire.StreamDataStartsVisibleOutput(trimmed, eventType)
 	case "error":
 		payload := []byte(trimmed)

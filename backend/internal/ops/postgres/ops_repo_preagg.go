@@ -65,7 +65,7 @@ WITH usage_base AS (
     ul.platform AS platform,
     ul.group_id AS group_id,
     ul.duration_ms AS duration_ms,
-    ul.first_token_ms AS first_token_ms,
+    ` + usageTTFTSQL("ul") + ` AS ttft_ms,
     (ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens) AS tokens
   FROM usage_logs ul
   WHERE ul.created_at >= $1 AND ul.created_at < $2
@@ -76,7 +76,7 @@ usage_agg AS (
     CASE WHEN GROUPING(platform) = 1 THEN NULL ELSE platform END AS platform,
     CASE WHEN GROUPING(group_id) = 1 THEN NULL ELSE group_id END AS group_id,
     COUNT(*) AS success_count,
-    COUNT(*) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_sample_count,
+    COUNT(*) FILTER (WHERE ttft_ms IS NOT NULL) AS ttft_sample_count,
     COALESCE(SUM(tokens), 0) AS token_consumed,
 
     percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL) AS duration_p50_ms,
@@ -86,12 +86,12 @@ usage_agg AS (
     AVG(duration_ms) FILTER (WHERE duration_ms IS NOT NULL) AS duration_avg_ms,
     MAX(duration_ms) AS duration_max_ms,
 
-    percentile_cont(0.50) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_p50_ms,
-    percentile_cont(0.90) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_p90_ms,
-    percentile_cont(0.95) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_p95_ms,
-    percentile_cont(0.99) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_p99_ms,
-    AVG(first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_avg_ms,
-    MAX(first_token_ms) AS ttft_max_ms
+    percentile_cont(0.50) WITHIN GROUP (ORDER BY ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL) AS ttft_p50_ms,
+    percentile_cont(0.90) WITHIN GROUP (ORDER BY ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL) AS ttft_p90_ms,
+    percentile_cont(0.95) WITHIN GROUP (ORDER BY ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL) AS ttft_p95_ms,
+    percentile_cont(0.99) WITHIN GROUP (ORDER BY ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL) AS ttft_p99_ms,
+    AVG(ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL) AS ttft_avg_ms,
+    MAX(ttft_ms) AS ttft_max_ms
   FROM usage_base
   GROUP BY GROUPING SETS (
     (bucket_start),
@@ -281,7 +281,7 @@ ON CONFLICT (bucket_start, COALESCE(platform, ''), COALESCE(group_id, 0)) DO UPD
 // when a direct caller supplies a partial day.
 //
 // Counts and tokens are summed, duration low percentiles and averages use
-// success counts, and first-token measurements use nonnull sample counts.
+// success counts, and TTFT measurements use nonnull sample counts.
 // Missing component statistics are excluded from their own denominators.
 // Duration weights include every success in a contributing hour despite missing
 // request durations, and maxima are selected independently of weights. High

@@ -277,7 +277,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 	rejectedFieldRetryState := p.RetryState(body)
 	var resp *http.Response
 	var usage *wire.ForwardUsage
-	var firstTokenMs *int
+
 	responseID := ""
 	imageCount := 0
 	var imageOutputSizes []string
@@ -388,7 +388,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 				return nil, handleErr
 			}
 			usage = result.Usage
-			firstTokenMs = result.FirstTokenMs
+
 			responseID = strings.TrimSpace(result.ResponseID)
 			imageCount = result.ImageCount
 			imageOutputSizes = result.ImageOutputSizes
@@ -453,7 +453,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		Stream:                      reqStream,
 		OpenAIWSMode:                false,
 		Duration:                    time.Since(startTime),
-		FirstTokenMs:                firstTokenMs,
+		Timings:                     nil,
 	}
 	// Observed image output supplies the image billing identity and size evidence,
 	// allowing completion to use media pricing for the returned generated-image

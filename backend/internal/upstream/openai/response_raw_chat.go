@@ -117,9 +117,7 @@ type RawResponseOptions struct {
 // header, tier, and selected failure callbacks; the executor owns body closure.
 // Reasoning/tier pointers and headers remain shared in the returned result.
 //
-// FirstTokenMs uses the first data payload that is neither DONE nor a
-// usage-only chunk, without a nonempty-content predicate. Held refusal
-// candidates settle before final delivery. Non-aborted truncation fails over
+// Held refusal candidates settle before final delivery. Non-aborted truncation fails over
 // before output and returns typed failure with usage afterward. Client write
 // failure or scanner cancellation suppresses that truncation classification;
 // those exits can return observed usage with nil error, and ClientDisconnect
@@ -130,7 +128,7 @@ func ReadRawChatStreaming(c *upstream.OutputContext, resp *http.Response, option
 	scanner := options.Scanner(resp.Body)
 
 	var usage wire.ForwardUsage
-	var firstTokenMs *int
+
 	clientDisconnected := false
 	clientOutputStarted := false
 	pendingLines := make([]string, 0, 8)
@@ -179,15 +177,8 @@ func ReadRawChatStreaming(c *upstream.OutputContext, resp *http.Response, option
 			terminal.ObserveDataLine(trimmedPayload)
 			if trimmedPayload != "[DONE]" {
 				options.Observe([]byte(trimmedPayload), wire.OpenAIChatCompletionServiceTierEventType([]byte(trimmedPayload)))
-				usageOnlyChunk := wire.IsOpenAIChatUsageOnlyStreamChunk(payload)
 				if u := wire.ExtractCCStreamUsage(payload); u != nil {
 					usage = *u
-				}
-				// Exclude known usage-only chunks from latency while accepting other
-				// data shapes, including empty or malformed payloads that lack that classification.
-				if firstTokenMs == nil && !usageOnlyChunk {
-					elapsed := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &elapsed
 				}
 			}
 		}
@@ -220,7 +211,6 @@ func ReadRawChatStreaming(c *upstream.OutputContext, resp *http.Response, option
 			ResolvedTier:    options.ResolvedServiceTier(),
 			Stream:          true,
 			Duration:        time.Since(startTime),
-			FirstTokenMs:    firstTokenMs,
 		}
 	}
 
@@ -476,7 +466,6 @@ func ReadCCAsResponsesStreaming(c *upstream.OutputContext, resp *http.Response, 
 			ResolvedTier:    options.ResolvedServiceTier(),
 			Stream:          true,
 			Duration:        time.Since(startTime),
-			FirstTokenMs:    scan.FirstTokenMs,
 		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
 	}
 	// Validate assembled arguments before final Responses events, preventing
@@ -493,7 +482,6 @@ func ReadCCAsResponsesStreaming(c *upstream.OutputContext, resp *http.Response, 
 			ResolvedTier:    options.ResolvedServiceTier(),
 			Stream:          true,
 			Duration:        time.Since(startTime),
-			FirstTokenMs:    scan.FirstTokenMs,
 		}, fmt.Errorf("invalid tool call arguments from upstream: %w", err)
 	}
 
@@ -524,7 +512,6 @@ func ReadCCAsResponsesStreaming(c *upstream.OutputContext, resp *http.Response, 
 		ResolvedTier:    options.ResolvedServiceTier(),
 		Stream:          true,
 		Duration:        time.Since(startTime),
-		FirstTokenMs:    scan.FirstTokenMs,
 	}, nil
 }
 
@@ -563,8 +550,8 @@ func ReadCCAsMessagesBuffered(c *upstream.OutputContext, resp *http.Response, op
 }
 
 // ReadCCAsMessagesStreaming converts Chat chunks to Messages events while
-// retaining native usage and first-chunk timing. CC supplies
-// scanner/observation policy, and the executor owns response-body closure.
+// retaining native usage. CC supplies scanner and observation policy, and
+// the executor owns response-body closure.
 // Conversion continues after client disconnect even though later delivery is
 // suppressed.
 //
@@ -623,17 +610,17 @@ func ReadCCAsMessagesStreaming(c *upstream.OutputContext, resp *http.Response, o
 		// imply successful completion despite missing upstream bytes; return observed
 		// usage with the error.
 		return &CompatResponseResult{
-			RequestID:        requestID,
-			UpstreamHeaders:  resp.Header,
-			Usage:            usage,
-			Model:            originalModel,
-			UpstreamModel:    upstreamModel,
-			ServiceTier:      options.NormalizeServiceTier(scan.ServiceTier),
-			ReasoningEffort:  reasoningEffort,
-			ResolvedTier:     options.ResolvedServiceTier(),
-			Stream:           true,
-			Duration:         time.Since(startTime),
-			FirstTokenMs:     scan.FirstTokenMs,
+			RequestID:       requestID,
+			UpstreamHeaders: resp.Header,
+			Usage:           usage,
+			Model:           originalModel,
+			UpstreamModel:   upstreamModel,
+			ServiceTier:     options.NormalizeServiceTier(scan.ServiceTier),
+			ReasoningEffort: reasoningEffort,
+			ResolvedTier:    options.ResolvedServiceTier(),
+			Stream:          true,
+			Duration:        time.Since(startTime),
+
 			ClientDisconnect: clientDisconnected,
 		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
 	}
@@ -662,17 +649,17 @@ func ReadCCAsMessagesStreaming(c *upstream.OutputContext, resp *http.Response, o
 	}
 
 	return &CompatResponseResult{
-		RequestID:        requestID,
-		UpstreamHeaders:  resp.Header,
-		Usage:            usage,
-		Model:            originalModel,
-		UpstreamModel:    upstreamModel,
-		ServiceTier:      options.NormalizeServiceTier(scan.ServiceTier),
-		ReasoningEffort:  reasoningEffort,
-		ResolvedTier:     options.ResolvedServiceTier(),
-		Stream:           true,
-		Duration:         time.Since(startTime),
-		FirstTokenMs:     scan.FirstTokenMs,
+		RequestID:       requestID,
+		UpstreamHeaders: resp.Header,
+		Usage:           usage,
+		Model:           originalModel,
+		UpstreamModel:   upstreamModel,
+		ServiceTier:     options.NormalizeServiceTier(scan.ServiceTier),
+		ReasoningEffort: reasoningEffort,
+		ResolvedTier:    options.ResolvedServiceTier(),
+		Stream:          true,
+		Duration:        time.Since(startTime),
+
 		ClientDisconnect: clientDisconnected,
 	}, nil
 }

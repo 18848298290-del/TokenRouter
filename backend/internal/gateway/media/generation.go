@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
@@ -42,10 +43,9 @@ type GenerationResult struct {
 	Usage                    protocolopenai.ForwardUsage // observed scalar token usage
 	Stream                   bool                        // observed streaming response indicator
 	Duration                 time.Duration               // observed media attempt elapsed time
-	// FirstTokenMs is nil when timing was not observed and otherwise retains a
-	// mutable integer pointer. CloneGenerationResult copies the pointed value
-	// for independent completion observations.
-	FirstTokenMs *int // optional first-content latency in milliseconds
+	// Timings is nil when performance was not observed. CloneGenerationResult
+	// copies the snapshot and its maps before completion retains or modifies them.
+	Timings *timing.Performance // frozen exchange performance observations
 	// ImageCount and VideoCount represent different billable media units,
 	// while VideoDurationSeconds supplies video duration evidence. RunImages
 	// uses positive ImageCount to retain partial success even when forwarding
@@ -504,7 +504,7 @@ func RunGrokMedia(ctx context.Context, request GenerationRequest, p GenerationPo
 }
 
 // CloneGenerationResult returns an independent snapshot of every current
-// mutable result field, or nil for nil input. It copies FirstTokenMs,
+// mutable result field, or nil for nil input. It copies Timings,
 // image-output strings, size-count map, both header maps and each header
 // slice; the current ForwardUsage contains scalar counts.
 //
@@ -518,10 +518,7 @@ func CloneGenerationResult(input *GenerationResult) *GenerationResult {
 		return nil
 	}
 	output := *input
-	if input.FirstTokenMs != nil {
-		value := *input.FirstTokenMs
-		output.FirstTokenMs = &value
-	}
+	output.Timings = input.Timings.Clone()
 	// Copy image-output storage and then restore a present empty slice, since
 	// append to nil otherwise collapses nonnil empty evidence into nil.
 	output.ImageOutputSizes = append([]string(nil), input.ImageOutputSizes...)

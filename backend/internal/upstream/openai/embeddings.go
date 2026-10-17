@@ -95,6 +95,7 @@ func (t *EmbeddingsTarget) GoString() string { return t.String() }
 // usage object, keeping billing observations separate from downstream write
 // state.
 func (EmbeddingsExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
+	defer func() { result.CapturePerformance(ctx, failure) }()
 	t, ok := input.Target.(*EmbeddingsTarget)
 	if !ok || t == nil {
 		return result, errors.New("openai embeddings target is not configured")

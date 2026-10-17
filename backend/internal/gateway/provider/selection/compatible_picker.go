@@ -70,7 +70,7 @@ type pickerEngine interface {
 	// acquired result transfers its release callback to the execution caller; a
 	// wait plan requires capacity handling before forwarding.
 	Select(context.Context, schedulercore.PlatformSelectionInput) (*gatewayprovider.SelectionResult, schedulercore.PlatformDecision, error)
-	// ReportResult records provider success and optional first-token latency in
+	// ReportResult records provider success and optional TTFT latency in
 	// milliseconds. Supplied feedback alphas apply to this observation; callers
 	// pass the settings captured with the selection when available.
 	ReportResult(int64, bool, *int, ...policy.FeedbackConfig)
@@ -243,13 +243,13 @@ func (s *compatiblePicker) isProviderRequestCompatibleReason(ctx context.Context
 }
 
 // ReportResult delegates provider feedback using optional captured alphas and
-// first-token milliseconds. A nil picker or absent feedback store is ignored,
+// TTFT milliseconds. A nil picker or absent feedback store is ignored,
 // allowing metric callers to report an optional observation safely.
-func (s *compatiblePicker) ReportResult(providerID int64, success bool, firstTokenMs *int, feedback ...policy.FeedbackConfig) {
+func (s *compatiblePicker) ReportResult(providerID int64, success bool, ttftMs *int, feedback ...policy.FeedbackConfig) {
 	if s == nil || s.stats == nil {
 		return
 	}
-	s.stats.Report(providerID, success, firstTokenMs, feedback...)
+	s.stats.Report(providerID, success, ttftMs, feedback...)
 }
 
 // ReportSwitch increments compatible provider-switch metrics for this picker
@@ -833,7 +833,7 @@ func (s *Compatible) isOpenAIProviderTransportCompatible(provider *gatewayprovid
 // observer from the first supplied error, then report picker feedback when a
 // health observer exists. Integer-only reporting uses the basic feedback path,
 // which clears successful model state but does not publish advanced statistics.
-func (s *Compatible) ReportOpenAIProviderScheduleResult(providerOrID any, model string, success bool, firstTokenMs *int, observedErr ...error) bool {
+func (s *Compatible) ReportOpenAIProviderScheduleResult(providerOrID any, model string, success bool, ttftMs *int, observedErr ...error) bool {
 	var provider *gatewayprovider.ExecutionProvider
 	var providerID int64
 	switch value := providerOrID.(type) {
@@ -864,7 +864,7 @@ func (s *Compatible) ReportOpenAIProviderScheduleResult(providerOrID any, model 
 		s.clearOpenAIProviderModelTransientState(providerID, providercore.NormalizeTransientModel(model))
 	}
 	if provider == nil {
-		s.reportOpenAIProviderScheduleResult(false, providerID, model, success, firstTokenMs)
+		s.reportOpenAIProviderScheduleResult(false, providerID, model, success, ttftMs)
 		return healthTripped
 	}
 	if s == nil || s.healthObserver == nil {
@@ -874,7 +874,7 @@ func (s *Compatible) ReportOpenAIProviderScheduleResult(providerOrID any, model 
 	if scheduler == nil {
 		return healthTripped
 	}
-	scheduler.ReportResult(providerID, success, firstTokenMs)
+	scheduler.ReportResult(providerID, success, ttftMs)
 	return healthTripped
 }
 
@@ -898,20 +898,20 @@ func (s *Compatible) ObserveOpenAIProviderHealthFailure(ctx context.Context, pro
 // when the result is advanced and carries them. Successful basic observations
 // still clear transient model state, while only advanced observations update
 // the picker statistics.
-func (s *Compatible) ReportOpenAIProviderScheduleResultForSelection(selection *gatewayprovider.SelectionResult, providerID int64, model string, success bool, firstTokenMs *int) {
+func (s *Compatible) ReportOpenAIProviderScheduleResultForSelection(selection *gatewayprovider.SelectionResult, providerID int64, model string, success bool, ttftMs *int) {
 	if selection != nil && selection.AdvancedScheduler && selection.AdvancedSchedulerFeedback != nil {
-		s.reportOpenAIProviderScheduleResult(true, providerID, model, success, firstTokenMs, *selection.AdvancedSchedulerFeedback)
+		s.reportOpenAIProviderScheduleResult(true, providerID, model, success, ttftMs, *selection.AdvancedSchedulerFeedback)
 		return
 	}
-	s.reportOpenAIProviderScheduleResult(selection != nil && selection.AdvancedScheduler, providerID, model, success, firstTokenMs)
+	s.reportOpenAIProviderScheduleResult(selection != nil && selection.AdvancedScheduler, providerID, model, success, ttftMs)
 }
 
 // reportOpenAIProviderScheduleResult clears successful model cooldown state
 // before optional advanced feedback. Basic observations finish after cleanup;
 // advanced observations use the shared picker when available. Supplied feedback
 // coefficients apply to this observation, while absent coefficients use the
-// scheduler defaults and nil first-token latency skips the TTFT sample.
-func (s *Compatible) reportOpenAIProviderScheduleResult(advanced bool, providerID int64, model string, success bool, firstTokenMs *int, feedback ...policy.FeedbackConfig) {
+// scheduler defaults and nil TTFT latency skips the TTFT sample.
+func (s *Compatible) reportOpenAIProviderScheduleResult(advanced bool, providerID int64, model string, success bool, ttftMs *int, feedback ...policy.FeedbackConfig) {
 	// Successful basic requests also recover provider-model eligibility, so clear
 	// the cooldown before deciding whether advanced performance statistics apply.
 	if success {
@@ -924,7 +924,7 @@ func (s *Compatible) reportOpenAIProviderScheduleResult(advanced bool, providerI
 	if scheduler == nil {
 		return
 	}
-	scheduler.ReportResult(providerID, success, firstTokenMs, feedback...)
+	scheduler.ReportResult(providerID, success, ttftMs, feedback...)
 }
 
 // RecordOpenAIProviderSwitch records a picker switch when the compatible health

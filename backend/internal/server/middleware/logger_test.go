@@ -11,6 +11,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
 // Access events combine final response metadata with the request logger and
@@ -125,10 +126,10 @@ func TestLogger_AccessLogSeparatesParentAndInternalRequestIDs(t *testing.T) {
 	t.Fatalf("access log event not found")
 }
 
-// TestLogger_AccessLogIncludesRequestStageFields supplies context timestamps
+// TestLogger_AccessLogExcludesUsagePerformance supplies context timestamps
 // relative to a known ingress time. The access event includes provider
 // admission, upstream SSE, visible output, and downstream flush milestones.
-func TestLogger_AccessLogIncludesRequestStageFields(t *testing.T) {
+func TestLogger_AccessLogExcludesUsagePerformance(t *testing.T) {
 	sink := initMiddlewareTestLogger(t)
 
 	r := gin.New()
@@ -139,10 +140,10 @@ func TestLogger_AccessLogIncludesRequestStageFields(t *testing.T) {
 		// upstream timing.
 		startedAt := time.Now().Add(-2 * time.Second)
 		ctx := context.WithValue(c.Request.Context(), telemetry.RequestStartedAt, startedAt)
-		ctx = context.WithValue(ctx, telemetry.ProviderSlotAcquiredAt, startedAt.Add(100*time.Millisecond))
-		ctx = context.WithValue(ctx, telemetry.FirstSSEDataAt, startedAt.Add(500*time.Millisecond))
-		ctx = context.WithValue(ctx, telemetry.FirstVisibleOutputAt, startedAt.Add(700*time.Millisecond))
-		ctx = context.WithValue(ctx, telemetry.FirstDownstreamFlushAt, startedAt.Add(800*time.Millisecond))
+		ctx, stages := timing.WithStages(ctx, startedAt, nil)
+		stages.Admit()
+		stages.Mark("first_visible_output_ms")
+		stages.Mark("first_downstream_flush_ms")
 		c.Request = c.Request.WithContext(ctx)
 		c.Status(http.StatusOK)
 	})
@@ -159,8 +160,8 @@ func TestLogger_AccessLogIncludesRequestStageFields(t *testing.T) {
 			continue
 		}
 		for _, field := range []string{"provider_slot_acquired_ms", "upstream_first_sse_data_ms", "first_visible_output_ms", "first_downstream_flush_ms"} {
-			if _, ok := event.Fields[field]; !ok {
-				t.Fatalf("stage field %q missing: %+v", field, event.Fields)
+			if _, ok := event.Fields[field]; ok {
+				t.Fatalf("usage performance %q duplicated in access log: %+v", field, event.Fields)
 			}
 		}
 		return

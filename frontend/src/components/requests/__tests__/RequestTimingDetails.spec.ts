@@ -23,11 +23,11 @@ describe('request timing grid', () => {
   })
 
   // Historical rows predate the admission split, so the duration group stays hidden.
-  it('shows only offsets for historical SSE records', () => {
+  it('does not recover retired SSE timing from historical records', () => {
     const wrapper = mount(RequestTimingDetails, {
       props: { timing: { upstream_first_sse_data_ms: 1500 }, stream: true },
     })
-    expect(wrapper.text()).toContain('1.50s')
+    expect(wrapper.text()).not.toContain('1.50s')
     expect(wrapper.text()).not.toContain('requests.timing.beforeSlot')
     expect(wrapper.text()).not.toContain('requests.timing.notAdmitted')
     expect(wrapper.text()).toContain('requests.timingNames.first_visible_output_ms')

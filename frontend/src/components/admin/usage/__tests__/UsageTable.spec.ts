@@ -192,13 +192,13 @@ describe('admin UsageTable request ID column', () => {
 })
 
 describe('使用记录 TPS 列', () => {
-  it('展示 TPS 和公式提示，历史记录缺少耗时时显示占位符', () => {
+  it('展示 TPS 和公式提示，没有服务端估算时显示占位符', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [
-          { ...baseImageRow, request_id: 'valid', output_tokens: 100, duration_ms: 5000, first_token_ms: 1000 },
-          { ...baseImageRow, request_id: 'missing', output_tokens: 100, duration_ms: 5000, first_token_ms: null },
-          { ...baseImageRow, request_id: 'rounding', output_tokens: 23, duration_ms: 21000, first_token_ms: 1000 },
+          { ...baseImageRow, request_id: 'valid', output_tokens: 100, duration_ms: 5000, ttft_ms: 1000, tps: 25 },
+          { ...baseImageRow, request_id: 'missing', output_tokens: 100, duration_ms: 5000, ttft_ms: null },
+          { ...baseImageRow, request_id: 'rounding', output_tokens: 23, duration_ms: 21000, ttft_ms: 1000, tps: 1.2 },
         ],
         columns: [{ key: 'tps', label: 'TPS' }],
       },
@@ -206,7 +206,7 @@ describe('使用记录 TPS 列', () => {
         stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
       },
     })
-    expect(wrapper.findAll('.tps-cell').map(cell => cell.text())).toEqual(['25.0 tok/s', '-', '1.1 tok/s'])
+    expect(wrapper.findAll('.tps-cell').map(cell => cell.text())).toEqual(['25.0 tok/s', '-', '1.2 tok/s'])
     expect(wrapper.get('.tps-cell span').attributes('title')).toBe('usage.tpsHint')
     wrapper.unmount()
   })
@@ -225,7 +225,7 @@ describe('admin UsageTable detailed timing tooltip', () => {
             upstream_get_conn_ms: 180,
             upstream_wrote_request_ms: 420,
             upstream_first_response_byte_ms: 980,
-            upstream_first_sse_data_ms: 1020,
+            upstream_first_event_ms: 1020,
             first_visible_output_ms: 1060,
             first_downstream_flush_ms: 1080,
             upstream_attempt_count: 2,

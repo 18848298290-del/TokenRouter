@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
@@ -84,12 +85,10 @@ type AttemptResult struct {
 	FailureClass string        // platform failure classification label
 	Cancelled    bool          // execution reported request cancellation
 	Duration     time.Duration // elapsed attempt execution time
-	// FirstSemanticOutput records elapsed time to content, excluding leading
-	// progress events. Nil means no semantic-output duration was retained.
-	FirstSemanticOutput *time.Duration // elapsed semantic output latency
-	// FirstTokenMs retains the platform reader's first-token timing in milliseconds.
-	// Nil means that reader supplied no first-token timing for this exchange.
-	FirstTokenMs *int // milliseconds
+
+	// Timings carries the shared collector's observations for this exchange.
+	// Nil means no collector was installed; completion clones recorded maps before asynchronous use.
+	Timings *timing.Performance // frozen exchange performance observations
 	// ServiceTier: recorded service tier. ReasoningEffort: recorded reasoning effort.
 	ServiceTier, ReasoningEffort string
 }
@@ -105,3 +104,24 @@ type Executor interface {
 
 // TokenUsage aliases the protocol token counts consumed by attempt completion.
 type TokenUsage = protocol.TokenUsage
+
+// CapturePerformance freezes the current exchange after platform reading has finished.
+// A conversion error makes final usage ineligible for throughput. A client
+// disconnect can still retain complete upstream usage collected by bounded drain. Missing
+// collectors remain absent, and no lifecycle or billing state is changed here.
+func (r *AttemptResult) CapturePerformance(ctx context.Context, failure error) {
+	if r == nil {
+		return
+	}
+	r.Timings = timing.PerformanceFromContext(ctx)
+	if r.Timings == nil {
+		return
+	}
+	if failure != nil && !r.ClientDisconnect {
+		r.Timings.UsageComplete = false
+	}
+	if !r.Timings.Stream {
+		r.Timings.Complete = failure == nil
+		r.Timings.UsageComplete = failure == nil && r.HasUsage
+	}
+}

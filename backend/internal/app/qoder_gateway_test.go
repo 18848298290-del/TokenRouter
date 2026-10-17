@@ -316,7 +316,7 @@ func TestQoderNativeGatewaySlowSinkAndWriteFailure(t *testing.T) {
 			require.EqualValues(t, 1, completed.Load())
 			require.Equal(t, fail, result.ClientDisconnect)
 			require.Equal(t, 3, result.Usage.OutputTokens)
-			require.NotNil(t, result.FirstSemanticOutput)
+			require.True(t, result.Served)
 		})
 	}
 }

@@ -174,9 +174,7 @@ func (b *openAIChatAttemptBridge) Forward() textflow.ResponseOutcome {
 		responseLatencyMs = forwardDurationMs - upstreamLatencyMs
 	}
 	gatewayhttp.SetOpsLatencyMs(b.c, gatewayhttp.OpsResponseLatencyMsKey, responseLatencyMs)
-	if err == nil && b.result != nil && b.result.FirstTokenMs != nil {
-		gatewayhttp.SetOpsLatencyMs(b.c, gatewayhttp.OpsTimeToFirstTokenMsKey, int64(*b.result.FirstTokenMs))
-	}
+
 	out := textflow.ResponseOutcome{Outcome: textflow.Outcome{Attempt: openAIObservedAttempt(b.result, err), Err: err, HasResult: b.result != nil}, Images: b.result != nil && b.result.ImageCount > 0}
 	out.NativePartial = err != nil && b.result != nil && b.result.NativeUsage != nil && (b.result.NativeUsage.HasObservedTokens() || b.result.ImageCount > 0)
 	out.Attempt.HTTPCommitted = b.c.Writer.Written()
@@ -337,12 +335,12 @@ func (b *openAIChatAttemptBridge) OtherFailure(err error) {
 }
 
 // Success reports Chat scheduling success with the final model and optional
-// first-token latency. A nil result still reports success with absent latency.
+// TTFT latency. A nil result still reports success with absent latency.
 // Completion recording and funding effects are handled separately by the text
 // loop.
 func (b *openAIChatAttemptBridge) Success() {
 	if b.result != nil {
-		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.reqModel, false, b.result), true, b.result.FirstTokenMs)
+		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.reqModel, false, b.result), true, b.result.Timings.TTFTMs())
 	} else {
 		b.binding().reportOpenAIProviderScheduleResult(b.provider, OpenAIProviderScheduleModel(b.c, b.provider, b.reqModel, false, b.result), true, nil)
 	}

@@ -42,17 +42,14 @@ import (
 // framed event.
 var sseDataPattern = regexp.MustCompile(`^data:\s*`)
 
-// StreamResult contains accumulated Messages usage, legacy first-data timing,
+// StreamResult contains accumulated Messages usage
 // and the reader's downstream-disconnect observation.
 type StreamResult struct {
 	// Usage points to the counters accumulated by the selected reader.
 	// ObserveState receives the same mutable value during processing, and the
 	// returned result can retain partial counts after failure.
 	Usage *upstream.TokenUsage
-	// FirstTokenMs stores elapsed milliseconds for the first nonempty,
-	// non-DONE data payload under the selected reader's processing rule. Nil
-	// means that rule has not assigned timing, even when headers were sent.
-	FirstTokenMs *int
+
 	// ClientDisconnect records ordinary stream or keepalive write failure, or
 	// a context-cancelled read before terminal completion. Synthesized error
 	// writes do not update it, so callers also inspect the returned error and
@@ -68,11 +65,11 @@ type StreamOptions struct {
 	// or delivered. Passthrough event-name lines can already be written;
 	// Semantic describes observed content independently of successful delivery.
 	Observe func(wire.Observation)
-	// ObserveState receives accumulated mutable usage and first-data timing
+	// ObserveState receives accumulated mutable usage
 	// after a payload follows the selected reader's usage-processing path.
 	// Standard named error frames return before this callback. Consumers copy
 	// retained counters while later events can still update the shared usage.
-	ObserveState func(*upstream.TokenUsage, *int)
+	ObserveState func(*upstream.TokenUsage)
 	ProviderID   int64 // selected provider record ID
 	// MaxLineSize selects Scanner's buffer-growth limit in bytes; nonpositive
 	// values use upstream.DefaultSSELineLimit. The initial pooled buffer is
@@ -158,12 +155,8 @@ func (e *StreamReadFailure) Error() string { return "upstream error: 502 (failov
 // An event:error frame returns StreamErrorEventError with no StreamResult
 // before a recorded client write failure. After that disconnection it ends
 // draining with accumulated state and nil error. Previous callback observations
-// remain available on either path, and FirstTokenMs can precede semantic
-// content.
-//
-// FirstTokenMs is assigned after the first selected output block's write
-// attempt and can include synchronous sink delay. Its timing therefore differs
-// from semantic observation made before that write.
+// remain available on either path. The shared request collector observes
+// performance separately from this reader's usage and delivery policy.
 func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options StreamOptions, startTime time.Time, originalModel, mappedModel string, mimicClaudeCode bool) (*StreamResult, error) {
 	if options.UpdateWindow != nil {
 		options.UpdateWindow(ctx, resp.Header)
@@ -189,7 +182,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 	}
 
 	usage := &upstream.TokenUsage{}
-	var firstTokenMs *int
+
 	scanner := bufio.NewScanner(resp.Body)
 	// Scanner grows only after its pooled 64 KiB storage fills; a smaller
 	// MaxLineSize does not shrink that initial capacity for accepted lines.
@@ -522,9 +515,9 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 				// do not supply that evidence, so return partial usage on
 				// incomplete closure.
 				if !sawTerminalEvent {
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
+					return &StreamResult{Usage: usage, ClientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
-				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected}, nil
+				return &StreamResult{Usage: usage, ClientDisconnect: clientDisconnected}, nil
 			}
 			if ev.err != nil {
 				// Completion evidence was already processed before this scanner
@@ -532,21 +525,21 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 				// later transport error does not erase that terminal
 				// observation.
 				if sawTerminalEvent {
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected}, nil
+					return &StreamResult{Usage: usage, ClientDisconnect: clientDisconnected}, nil
 				}
 				// A cancelled or expired read can interrupt the stream before
 				// terminal usage. Return observed counters with the wrapped
 				// context error and disconnect marker so completion can assess
 				// that partial attempt.
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete: %w", ev.err)
+					return &StreamResult{Usage: usage, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}
 				// After a downstream failure, upstream parsing continues for
 				// usage. If that read also fails before completion, return
 				// those accumulated counters and mark the disconnected partial
 				// result.
 				if clientDisconnected {
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
+					return &StreamResult{Usage: usage, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
 				}
 				// An oversized Scanner token cannot be processed as a complete
 				// event. Attempt the selected client error and return the
@@ -554,7 +547,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.gateway", "SSE line too long: provider=%d max_size=%d error=%v", options.ProviderID, maxLineSize, ev.err)
 					sendErrorEvent("response_too_large", fmt.Sprintf("upstream SSE line exceeded %d bytes", maxLineSize))
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, ev.err
+					return &StreamResult{Usage: usage}, ev.err
 				}
 				// Writer commitment can originate from headers or a heartbeat
 				// before semantic content. An uncommitted writer permits
@@ -573,7 +566,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 					return nil, options.failover(body)
 				}
 				sendErrorEvent("stream_read_error", disconnectMsg)
-				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
+				return &StreamResult{Usage: usage}, fmt.Errorf("stream read error: %w", ev.err)
 			}
 			line := ev.line
 			trimmed := strings.TrimSpace(line)
@@ -591,7 +584,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 					// processed frames because further delivery cannot provide
 					// that client another event.
 					if clientDisconnected {
-						return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, nil
+						return &StreamResult{Usage: usage, ClientDisconnect: true}, nil
 					}
 					return nil, err
 				}
@@ -613,19 +606,11 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 						}
 					}
 					if data != "" {
-						// Legacy timing begins with any non-DONE data payload,
-						// including metadata. Semantic-output observation is
-						// recorded separately before delivery is attempted, so
-						// the two timing fields answer different questions.
-						if firstTokenMs == nil && data != "[DONE]" {
-							ms := int(time.Since(startTime).Milliseconds())
-							firstTokenMs = &ms
-						}
 						if usagePatch != nil {
 							wire.MergeSSEUsagePatch(usage, usagePatch)
 						}
 						if options.ObserveState != nil {
-							options.ObserveState(usage, firstTokenMs)
+							options.ObserveState(usage)
 						}
 					}
 				}
@@ -640,7 +625,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 				continue
 			}
 			if clientDisconnected {
-				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
+				return &StreamResult{Usage: usage, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
 			}
 			logger.LegacyPrintf("service.gateway", "Stream data interval timeout: provider=%d model=%s interval=%s", options.ProviderID, originalModel, streamInterval)
 			// This connected-client idle failure is reported through OnTimeout
@@ -650,7 +635,7 @@ func StreamResponse(ctx context.Context, resp *http.Response, c *upstream.Output
 				options.OnTimeout(ctx, originalModel)
 			}
 			sendErrorEvent("stream_timeout", fmt.Sprintf("upstream stream idle for %s", streamInterval))
-			return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
+			return &StreamResult{Usage: usage}, fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
 			if clientDisconnected {

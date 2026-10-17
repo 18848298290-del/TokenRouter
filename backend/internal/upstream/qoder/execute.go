@@ -161,6 +161,7 @@ func (e *Executor) PrepareConversation(target *Target, wireProtocol protocol.Pro
 // stream reading, while the request owner releases provider and user leases.
 // @project-doc docs/interfaces/qoder_upstream.md#qoder_execution_boundary
 func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, executionErr error) {
+	defer func() { result.CapturePerformance(ctx, executionErr) }()
 	if e.enter != nil {
 		done, err := e.enter()
 		if err != nil {
@@ -169,11 +170,11 @@ func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sin
 		defer done()
 	}
 	start := time.Now()
-	observed := &executionOutput{sink: sink, started: start}
+	observed := &executionOutput{sink: sink}
 	sink = observed
 	defer func() {
 		result.ClientDisconnect = result.ClientDisconnect || observed.disconnected
-		result.FirstSemanticOutput = observed.firstSemantic
+
 		if ctx != nil && ctx.Err() != nil {
 			result.Cancelled = true
 			result.ClientDisconnect = result.ClientDisconnect || result.Stream

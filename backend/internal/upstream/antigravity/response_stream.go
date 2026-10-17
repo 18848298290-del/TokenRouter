@@ -81,16 +81,14 @@ type (
 	// ResponseAdapter uses Options to adapt one upstream stream and leaves final
 	// response-body closing to the exchange owner.
 	ResponseAdapter struct{ Options ResponseOptions } // stream adaptation and failure callbacks
-	// StreamResult carries adapter usage, first-token timing, and client-write
+	// StreamResult carries normalized adapter usage and observed client-write
 	// observations for attempt completion.
 	StreamResult struct {
 		// Usage references collected adapter observations; streaming paths can
 		// return this shared state after disconnect, while Executor separately
 		// observes raw usage.
 		Usage *upstream.TokenUsage
-		// FirstTokenMs is elapsed milliseconds from the supplied start time to the
-		// path-selected first payload or event; nil means unobserved.
-		FirstTokenMs *int
+
 		// ClientDisconnect reports a failed client write or a handled
 		// cancelled/read-failure path according to the selected response adapter.
 		ClientDisconnect bool
@@ -206,9 +204,7 @@ func HandleStreamReadError(err error, clientDisconnected bool, prefix string) (d
 // flushing output writer, then close the body after return to release any
 // blocked scanner.
 //
-// FirstTokenMs records the first nonempty non-DONE data payload regardless of
-// semantic content. Latest projected usage replaces earlier adapter usage,
-// while Executor separately accumulates raw fields. Write failures suppress
+// Latest projected usage replaces earlier adapter usage, while Executor separately accumulates raw fields. Write failures suppress
 // later output but scanning continues. Read cancellation, or read failure
 // after client disconnect, returns collected usage with disconnect=true;
 // other read errors or idle timeout can fail. Scanned lines reset idle
@@ -242,7 +238,6 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 	// cap.
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 	usage := &upstream.TokenUsage{}
-	var firstTokenMs *int
 
 	// scanEvent transports a scanned line or terminal read error from the worker
 	// to its owning response handler.
@@ -336,16 +331,16 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: cw.Disconnected()}, nil
+				return &StreamResult{Usage: usage, ClientDisconnect: cw.Disconnected()}, nil
 			}
 			if ev.err != nil {
 				if disconnect, handled := HandleStreamReadError(ev.err, cw.Disconnected(), "antigravity gemini"); handled {
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: disconnect}, nil
+					return &StreamResult{Usage: usage, ClientDisconnect: disconnect}, nil
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (antigravity): max_size=%d error=%v", maxLineSize, ev.err)
 					sendErrorEvent("response_too_large")
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, ev.err
+					return &StreamResult{Usage: usage}, ev.err
 				}
 				sendErrorEvent("stream_read_error")
 				return nil, ev.err
@@ -393,11 +388,6 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 					}
 				}
 
-				if firstTokenMs == nil {
-					ms := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &ms
-				}
-
 				cw.Fprintf("data: %s\n\n", payload)
 				continue
 			}
@@ -411,11 +401,11 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 			}
 			if cw.Disconnected() {
 				logger.LegacyPrintf("service.antigravity_gateway", "Upstream timeout after client disconnect (antigravity gemini), returning collected usage")
-				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, nil
+				return &StreamResult{Usage: usage, ClientDisconnect: true}, nil
 			}
 			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (antigravity)")
 			sendErrorEvent("stream_timeout")
-			return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
+			return &StreamResult{Usage: usage}, fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
 			if cw.Disconnected() {
@@ -438,9 +428,9 @@ func (s *ResponseAdapter) HandleGeminiStreamingResponse(c *upstream.OutputContex
 // valid until completion and close the body afterward; read/idle errors return
 // before buffered output.
 //
-// First timing begins at successful JSON decoding into the map target,
-// including metadata-only objects and null. Null leaves the retained map nil
-// and can still select empty-response failover.
+// Successfully decoded metadata-only objects remain available as the latest
+// response. JSON null leaves the retained map nil and can still select
+// empty-response failover.
 //
 // The final map prefers the latest content-bearing candidate; all
 // first-candidate text, including thought text, is collected separately from
@@ -464,7 +454,7 @@ func (s *ResponseAdapter) HandleGeminiStreamToNonStreaming(c *upstream.OutputCon
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 
 	usage := &upstream.TokenUsage{}
-	var firstTokenMs *int
+
 	var last map[string]any
 	var lastWithParts map[string]any
 	var collectedImageParts []map[string]any // image parts across chunks
@@ -558,19 +548,11 @@ func (s *ResponseAdapter) HandleGeminiStreamToNonStreaming(c *upstream.OutputCon
 				continue
 			}
 
-			// Reject incomplete decoded input before retaining content or timing;
+			// Reject incomplete decoded input before retaining the selected response;
 			// raw observers have already received this line for independent accounting.
 			var parsed map[string]any
 			if err := json.Unmarshal(inner, &parsed); err != nil {
 				continue
-			}
-
-			// Successful decoding into this map target supplies first timing before
-			// semantic selection; null also reaches here even though it leaves parsed
-			// nil for the eventual empty-response decision.
-			if firstTokenMs == nil {
-				ms := int(time.Since(startTime).Milliseconds())
-				firstTokenMs = &ms
 			}
 
 			last = parsed
@@ -647,7 +629,7 @@ returnResponse:
 	}
 	c.Data(http.StatusOK, "application/json", respBody)
 
-	return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, nil
+	return &StreamResult{Usage: usage}, nil
 }
 
 // GetOrCreateGeminiParts returns a shallow top-level response copy,
@@ -864,7 +846,6 @@ func (s *ResponseAdapter) CollectClaudeStreamResponse(resp *http.Response, start
 	// cap.
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 
-	var firstTokenMs *int
 	var last map[string]any
 	var lastWithParts map[string]any
 	var collectedParts []map[string]any // all part types in arrival order
@@ -958,7 +939,7 @@ func (s *ResponseAdapter) CollectClaudeStreamResponse(resp *http.Response, start
 				continue
 			}
 
-			// Reject incomplete decoded input before retaining content or timing;
+			// Reject incomplete decoded input before retaining the selected response;
 			// raw observers have already received this line for independent accounting.
 			var parsed map[string]any
 			if err := json.Unmarshal(inner, &parsed); err != nil {
@@ -978,10 +959,6 @@ func (s *ResponseAdapter) CollectClaudeStreamResponse(resp *http.Response, start
 			}
 			if len(parts) > 0 || strings.TrimSpace(bridge.NativeExtractGeminiFinishReason(parsed)) != "" {
 				meaningfulResponse = true
-				if firstTokenMs == nil {
-					ms := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &ms
-				}
 			}
 
 		case <-intervalCh:
@@ -1028,7 +1005,7 @@ returnResponse:
 		ImageOutputTokens:        agUsage.ImageOutputTokens,
 	}
 
-	return claudeResp, &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, nil
+	return claudeResp, &StreamResult{Usage: usage}, nil
 }
 
 // HandleClaudeStreamToNonStreaming delegates collection and writes successful
@@ -1068,11 +1045,9 @@ func (s *ResponseAdapter) HandleClaudeStreamToNonStreaming(c *upstream.OutputCon
 // and close the response body after return; raw input is observed before
 // per-stream conversion.
 //
-// First timing records the first nonempty ProcessLine byte batch before its
-// client write; EOF final events do not set that timing. A write failure
-// suppresses later writes while upstream collection continues; handled
-// cancellation or
-// read failure returns finalized usage. Too-long and live idle-timeout paths
+// A write failure suppresses later writes while upstream collection continues.
+// Handled cancellation or read failure returns finalized usage. Too-long and
+// live idle-timeout paths
 // return zero adapter usage alongside error, while Executor can retain raw
 // partial usage. EOF finalizes events, and an unstarted stream with no final
 // events selects Failover, even though keepalive output may already have
@@ -1090,7 +1065,7 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 	}
 
 	processor := NewStreamingProcessor(originalModel)
-	var firstTokenMs *int
+
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := upstream.DefaultSSELineLimit
 	if s.Options.MaxLineSize > 0 {
@@ -1222,16 +1197,16 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 					logger.LegacyPrintf("service.antigravity_gateway", "[antigravity-Claude-Stream] empty stream response (no valid events parsed), triggering failover")
 					return nil, s.Options.Failover([]byte(`{"error":"empty stream response from upstream"}`))
 				}
-				return &StreamResult{Usage: convertUsage(agUsage), FirstTokenMs: firstTokenMs, ClientDisconnect: cw.Disconnected()}, nil
+				return &StreamResult{Usage: convertUsage(agUsage), ClientDisconnect: cw.Disconnected()}, nil
 			}
 			if ev.err != nil {
 				if disconnect, handled := HandleStreamReadError(ev.err, cw.Disconnected(), "antigravity claude"); handled {
-					return &StreamResult{Usage: finishUsage(), FirstTokenMs: firstTokenMs, ClientDisconnect: disconnect}, nil
+					return &StreamResult{Usage: finishUsage(), ClientDisconnect: disconnect}, nil
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (antigravity): max_size=%d error=%v", maxLineSize, ev.err)
 					sendErrorEvent("response_too_large")
-					return &StreamResult{Usage: convertUsage(nil), FirstTokenMs: firstTokenMs}, ev.err
+					return &StreamResult{Usage: convertUsage(nil)}, ev.err
 				}
 				sendErrorEvent("stream_read_error")
 				return nil, fmt.Errorf("stream read error: %w", ev.err)
@@ -1242,10 +1217,6 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 			s.observeRaw([]byte(ev.line))
 			claudeEvents := processor.ProcessLine(strings.TrimRight(ev.line, "\r\n"))
 			if len(claudeEvents) > 0 {
-				if firstTokenMs == nil {
-					ms := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &ms
-				}
 				cw.Write(claudeEvents)
 			}
 
@@ -1256,11 +1227,11 @@ func (s *ResponseAdapter) HandleClaudeStreamingResponse(c *upstream.OutputContex
 			}
 			if cw.Disconnected() {
 				logger.LegacyPrintf("service.antigravity_gateway", "Upstream timeout after client disconnect (antigravity claude), returning collected usage")
-				return &StreamResult{Usage: finishUsage(), FirstTokenMs: firstTokenMs, ClientDisconnect: true}, nil
+				return &StreamResult{Usage: finishUsage(), ClientDisconnect: true}, nil
 			}
 			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (antigravity)")
 			sendErrorEvent("stream_timeout")
-			return &StreamResult{Usage: convertUsage(nil), FirstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
+			return &StreamResult{Usage: convertUsage(nil)}, fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
 			if cw.Disconnected() {

@@ -146,7 +146,7 @@ func (h *Runtime) submitOpenAIUsageRecordTask(c *gin.Context, result *forward.Op
 	if result != nil {
 		images = result.ImageCount
 	}
-	h.bindings.Common.Support.Submission.SubmitImages(c, images, task)
+	h.bindings.Common.Support.Submission.SubmitImages(c.Request.Context(), images, task)
 }
 
 // checkContentModeration runs the shared media content check with a copied

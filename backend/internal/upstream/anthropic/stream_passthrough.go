@@ -35,7 +35,7 @@ import (
 // body to unblock any remaining transport read.
 
 // StreamResponsePassthrough forwards API-key SSE lines and returns parsed
-// usage, legacy arrival timing, and client-disconnect state. Callers provide a
+// usage and client-disconnect state. Callers provide a
 // serialized output context with flushing support and close resp.Body after
 // use. Nonpositive MaxLineSize uses the shared default; nonpositive timer
 // settings disable those timer paths.
@@ -44,13 +44,9 @@ import (
 // A write failure leaves upstream reads active, while idle timeout or
 // incomplete terminal evidence returns partial usage. Keepalives wait for
 // complete forwarded frames, preserving line framing during upstream pauses.
-// The first nonempty non-DONE data line sets FirstTokenMs independently of
-// semantic output, and a terminal observation allows later EOF or read error to
-// complete successfully.
-//
-// FirstTokenMs is assigned before writing its selected data line. Earlier
-// event-name lines may already have been written, so their synchronous sink
-// delay can precede that legacy timing observation.
+// A terminal observation allows later EOF or read error to complete successfully.
+// The shared body observer records upstream arrivals independently of line forwarding,
+// so converter output and downstream buffering cannot establish upstream latency.
 func StreamResponsePassthrough(
 	ctx context.Context,
 	resp *http.Response,
@@ -90,7 +86,7 @@ func StreamResponsePassthrough(
 	}
 
 	usage := &upstream.TokenUsage{}
-	var firstTokenMs *int
+
 	clientDisconnected := false
 	sawTerminalEvent := false
 
@@ -216,33 +212,33 @@ func StreamResponsePassthrough(
 					if clientDisconnected && streamInterval > 0 {
 						lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
 						if time.Since(lastRead) >= streamInterval {
-							return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
+							return &StreamResult{Usage: usage, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
 						}
 					}
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
+					return &StreamResult{Usage: usage, ClientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
-				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected}, nil
+				return &StreamResult{Usage: usage, ClientDisconnect: clientDisconnected}, nil
 			}
 			if ev.err != nil {
 				// A terminal marker was observed before this read error. Retain
 				// the collected completed result, because that later scanner
 				// failure does not remove the earlier completion evidence.
 				if sawTerminalEvent {
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected}, nil
+					return &StreamResult{Usage: usage, ClientDisconnect: clientDisconnected}, nil
 				}
 				// A client write failure left upstream reads active for
 				// accounting. When the scanner also fails, return accumulated
 				// usage with that disconnected error so the partial result
 				// stays available.
 				if clientDisconnected {
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
+					return &StreamResult{Usage: usage, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
 				}
 				// Context interruption before terminal evidence can leave final
 				// usage absent. Retain earlier counters and wrap the
 				// cancellation error with a disconnect marker for attempt
 				// completion handling.
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete: %w", ev.err)
+					return &StreamResult{Usage: usage, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}
 				// An oversized Scanner token cannot provide another complete
 				// usage line. Keep previously accumulated observations and
@@ -250,9 +246,9 @@ func StreamResponsePassthrough(
 				// incomplete response.
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] SSE line too long: provider=%d max_size=%d error=%v", options.ProviderID, maxLineSize, ev.err)
-					return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, ev.err
+					return &StreamResult{Usage: usage}, ev.err
 				}
-				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
+				return &StreamResult{Usage: usage}, fmt.Errorf("stream read error: %w", ev.err)
 			}
 			resetIntervalTimer()
 
@@ -271,17 +267,14 @@ func StreamResponsePassthrough(
 				// content. Record it for the first nonempty non-DONE data line
 				// while semantic observation continues using its separate
 				// evidence flag.
-				if firstTokenMs == nil && trimmed != "" && trimmed != "[DONE]" {
-					ms := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &ms
-				}
+
 				// Compatible usage parsing can reconcile prompt totals and
 				// cache aliases while passthrough forwards the original line.
 				// Keep that local accounting normalization independent of
 				// client JSON presentation.
 				wire.ParseSSEUsagePassthrough(data, usage)
 				if options.ObserveState != nil {
-					options.ObserveState(usage, firstTokenMs)
+					options.ObserveState(usage)
 				}
 			} else {
 				trimmed := strings.TrimSpace(line)
@@ -322,13 +315,13 @@ func StreamResponsePassthrough(
 				continue
 			}
 			if clientDisconnected {
-				return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
+				return &StreamResult{Usage: usage, ClientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
 			}
 			logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Stream data interval timeout: provider=%d model=%s interval=%s", options.ProviderID, model, streamInterval)
 			if options.OnTimeout != nil {
 				options.OnTimeout(ctx, model)
 			}
-			return &StreamResult{Usage: usage, FirstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
+			return &StreamResult{Usage: usage}, fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
 			if clientDisconnected {

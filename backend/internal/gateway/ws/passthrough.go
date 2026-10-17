@@ -14,6 +14,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
@@ -295,7 +296,7 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 
 	completedTurns := atomic.Int32{}
 	var acceptedTurnStartedAt atomic.Pointer[time.Time]
-	var terminalWritePayload atomic.Pointer[TurnPayload]
+
 	turnLifecycle := NewTurnLifecycle(true)
 	clientFrameConn := &clientFrameConn{
 		closeError: p.CloseError, closedError: p.ClosedError(), normalizeCompleted: p.NormalizeCompleted,
@@ -513,14 +514,6 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			}
 			eventType := p.EventType(payload)
 			turnPayload := turnPayloads.Peek()
-			if p.IsTerminal(eventType) {
-				// A settled terminal can have consumed its queued metadata before this
-				// write. Prefer its saved snapshot when present; an unassociated terminal
-				// can leave the oldest request available through Peek.
-				if completed := terminalWritePayload.Swap(nil); completed != nil {
-					turnPayload = *completed
-				}
-			}
 			if !p.MayContainModel(eventType) {
 				return payload, nil
 			}
@@ -556,6 +549,13 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	// Write the first request through DeadlineConn before starting relay, arming
 	// first-output timing and setting FirstMessageSent so the relay does not send
 	// that request again.
+	beginPerformance := func(turn int, started time.Time) *timing.Performance {
+		if hooks != nil && hooks.BeginPerformance != nil {
+			return hooks.BeginPerformance(turn, started)
+		}
+		return timing.NewPerformanceAt(timing.ModeFromContext(ctx), started, started)
+	}
+	firstPerformance := beginPerformance(1, time.Now())
 	upstreamFirstMessageSent := false
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, o.WriteTimeout)
 	firstWriteErr := relayUpstreamFrameConn.WriteFrame(firstWriteCtx, TextFrame, firstClientMessage)
@@ -593,6 +593,12 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 		UpstreamConn:       relayUpstreamFrameConn,
 		FirstClientMessage: firstClientMessage,
 		Options: RelayOptions{
+			BeginPerformance: func(turn int, started time.Time) *timing.Performance {
+				if turn == 1 {
+					return firstPerformance
+				}
+				return beginPerformance(turn, started)
+			},
 			WriteTimeout:        o.WriteTimeout,
 			WriteTimeoutForTurn: currentWriteTimeout,
 			FirstTurnStartedAt:  firstTurnStartedAt,
@@ -635,8 +641,7 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				if !turn.StartedAt.IsZero() {
 					turnPayload.StartedAt = turn.StartedAt
 				}
-				turnPayloadForWrite := turnPayload
-				terminalWritePayload.Store(&turnPayloadForWrite)
+
 				// Missing queue metadata leaves the relay's initial request model as the
 				// completion fallback; its terminal response model remains a separate field.
 				turnOriginalModel := strings.TrimSpace(turnPayload.OriginalModel)
@@ -664,16 +669,16 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 					UpstreamTerminalEvent:       p.NormalizeTerminal(turn.TerminalEventType),
 					ResponseHeaders:             cloneHeaders(handshakeHeaders),
 					Duration:                    turn.Duration,
-					FirstTokenMs:                turn.FirstTokenMs,
+					Timings:                     turn.Timings,
+					ClientDisconnect:            turn.Timings != nil && turn.Timings.Values["client_disconnected"] == 1,
 				}
 				p.Log(fmt.Sprintf(
-					"relay_turn_completed provider_id=%d turn=%d request_id=%s terminal_event=%s duration_ms=%d first_token_ms=%d input_tokens=%d output_tokens=%d cache_read_tokens=%d",
+					"relay_turn_completed provider_id=%d turn=%d request_id=%s terminal_event=%s duration_ms=%d input_tokens=%d output_tokens=%d cache_read_tokens=%d",
 					o.ProviderID,
 					turnNo,
 					p.Truncate(turnResult.RequestID, 64),
 					p.Truncate(turn.TerminalEventType, 160),
 					turnResult.Duration.Milliseconds(),
-					firstTokenForLog(turnResult.FirstTokenMs),
 					turnResult.Usage.InputTokens,
 					turnResult.Usage.OutputTokens,
 					turnResult.Usage.CacheReadInputTokens,
@@ -704,6 +709,14 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				}
 			},
 			BeforeRelayCancel: func(exit RelayExit) {
+				if (exit.Stage == "read_client" || exit.Stage == "write_client") && hooks != nil && hooks.ClientDisconnected != nil {
+					stoppedAt := time.Now()
+					turnLifecycle.ObserveActive(func() {
+						if !turnPayloads.Peek().StartedAt.IsZero() {
+							hooks.ClientDisconnected(int(completedTurns.Load())+1, stoppedAt)
+						}
+					})
+				}
 				// Parent control cancellation has its own lease-aware close handling after
 				// relay returns; skip this ordinary exit close so it cannot replace that
 				// control reason.
@@ -788,7 +801,7 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 		UpstreamTerminalEvent:       p.NormalizeTerminal(relayResult.TerminalEventType),
 		ResponseHeaders:             cloneHeaders(handshakeHeaders),
 		Duration:                    relayResult.Duration,
-		FirstTokenMs:                relayResult.FirstTokenMs,
+		Timings:                     relayResult.Timings,
 	}
 
 	turnCount := int(completedTurns.Load())
@@ -920,16 +933,6 @@ func cloneHeaders(headers map[string][]string) map[string][]string {
 		out[key] = slices.Clone(values)
 	}
 	return out
-}
-
-// firstTokenForLog returns the supplied elapsed millisecond value for relay
-// diagnostics. Nil returns the unobserved sentinel minus one; other pointed
-// values are returned unchanged rather than normalized or clamped.
-func firstTokenForLog(value *int) int {
-	if value == nil {
-		return -1
-	}
-	return *value
 }
 
 // errorText returns the supplied error's message for relay failure diagnostics.

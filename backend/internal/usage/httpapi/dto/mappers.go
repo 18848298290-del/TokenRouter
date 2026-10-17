@@ -3,7 +3,6 @@ package dto
 import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	billinghttpapi "github.com/TokenFlux/TokenRouter/internal/billing/httpapi"
-	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
@@ -16,10 +15,10 @@ import (
 //
 // The mappers keep absent observations absent and restrict administrator
 // additions to AdminUsageLog. Billing allocations receive their own entries
-// and copied subscription and plan identifiers. Other optional log values,
-// image-size maps and timing pointers retain the source references, so
-// callers treat those shared values as immutable while a response is being
-// encoded.
+// and copied subscription and plan identifiers. TTFT, TPS and detailed timing
+// use copied scalar values derived from the usage snapshot. Other optional log
+// values and image-size maps retain their source references, which callers
+// treat as immutable while a response is being encoded.
 
 // usageLogFromServiceUser builds the common usage response from a nonnil
 // record and optional display language. It selects RequestedModel when
@@ -78,7 +77,9 @@ func usageLogFromServiceUser(l *usage.UsageLog, language ...string) UsageLog {
 		OpenAIWSMode:              openAIWSMode,
 		NativeCompactionV2:        l.NativeCompactionV2,
 		DurationMs:                l.DurationMs,
-		FirstTokenMs:              l.FirstTokenMs,
+		TTFTMs:                    l.Timings.TTFTMs(),
+		TPS:                       l.Timings.TPS(l.OutputTokens),
+		TTFTMode:                  recordedTimingMode(l),
 		ImageCount:                l.ImageCount,
 		ImageSize:                 l.ImageSize,
 		ImageInputSize:            l.ImageInputSize,
@@ -149,6 +150,7 @@ func FromUsageAdmin(l *usage.UsageLog) *AdminUsageLog {
 	usageLog.UpstreamEndpoint = l.UpstreamEndpoint
 	return &AdminUsageLog{
 		UsageLog:               usageLog,
+		DetailedTiming:         TimingFromUsage(l),
 		UpstreamModel:          l.UpstreamModel,
 		UpstreamResponseModel:  l.UpstreamResponseModel,
 		UpstreamModelMismatch:  l.UpstreamModelMismatch,
@@ -160,45 +162,6 @@ func FromUsageAdmin(l *usage.UsageLog) *AdminUsageLog {
 		ProviderStatsCost:      l.ProviderStatsCost,
 		IPAddress:              l.IPAddress,
 		Provider:               providerFromView(l.Provider),
-	}
-}
-
-// TimingFromOps builds the stage-timing response, returning nil when no
-// observation is available. Offset and count pointers remain shared with
-// timing, so callers leave their values unchanged while encoding the
-// response.
-func TimingFromOps(timing *ops.OpsRequestTiming) *UsageLogTiming {
-	if timing == nil {
-		return nil
-	}
-	return &UsageLogTiming{
-		RequestContentLength: timing.RequestContentLength,
-		TimingStream:         timing.TimingStream,
-		TimingAdmitted:       timing.TimingAdmitted,
-
-		RequestBodyReadMs:       timing.RequestBodyReadMs,
-		PreprocessMs:            timing.PreprocessMs,
-		UserSlotWaitMs:          timing.UserSlotWaitMs,
-		ProviderSlotWaitMs:      timing.ProviderSlotWaitMs,
-		RetryProviderSlotWaitMs: timing.RetryProviderSlotWaitMs,
-
-		ProviderSlotAcquiredMs:      timing.ProviderSlotAcquiredMs,
-		UpstreamGetConnMs:           timing.UpstreamGetConnMs,
-		UpstreamGotConnMs:           timing.UpstreamGotConnMs,
-		UpstreamWroteRequestMs:      timing.UpstreamWroteRequestMs,
-		UpstreamFirstResponseByteMs: timing.UpstreamFirstResponseByteMs,
-		UpstreamFirstEventMs:        timing.UpstreamFirstEventMs,
-		UpstreamFirstSSEDataMs:      timing.UpstreamFirstSSEDataMs,
-		FirstVisibleOutputMs:        timing.FirstVisibleOutputMs,
-		FirstDownstreamFlushMs:      timing.FirstDownstreamFlushMs,
-
-		UpstreamGetConnCount:           timing.UpstreamGetConnCount,
-		UpstreamGotConnCount:           timing.UpstreamGotConnCount,
-		UpstreamAttemptCount:           timing.UpstreamAttemptCount,
-		UpstreamFirstResponseByteCount: timing.UpstreamFirstResponseByteCount,
-
-		UpstreamConnectionReused:  timing.UpstreamConnectionReused,
-		UpstreamWroteRequestError: timing.UpstreamWroteRequestError,
 	}
 }
 
@@ -245,4 +208,70 @@ func RequestTypeStringPtr(requestType *int16) *string {
 	}
 	value := usage.RequestTypeFromInt16(*requestType).String()
 	return &value
+}
+
+// TimingFromUsage presents only measurements retained by this usage record.
+// Every returned pointer owns a copied scalar; absent observations remain absent
+// and cannot fall back to unrelated access-log or historical SSE values.
+func TimingFromUsage(log *usage.UsageLog) *UsageLogTiming {
+	if log == nil || log.Timings == nil {
+		return nil
+	}
+	p := log.Timings
+	value := func(key string) *int64 {
+		v, ok := p.Values[key]
+		if !ok {
+			return nil
+		}
+		return &v
+	}
+	flag := func(key string) *bool {
+		v, ok := p.Values[key]
+		if !ok {
+			return nil
+		}
+		result := v == 1
+		return &result
+	}
+	return &UsageLogTiming{
+		UpstreamStream:                 p.Stream,
+		UpstreamComplete:               p.Complete,
+		UsageComplete:                  p.UsageComplete,
+		UpstreamFinishedMs:             value("upstream_finished_ms"),
+		UpstreamStartedMs:              value("upstream_started_ms"),
+		UpstreamFirstOutputMs:          value("upstream_first_output_ms"),
+		UpstreamLastOutputMs:           value("upstream_last_output_ms"),
+		UpstreamCompletedMs:            value("upstream_completed_ms"),
+		AttemptNumber:                  value("attempt_number"),
+		RequestContentLength:           value("request_content_length"),
+		TimingStream:                   value("timing_stream"),
+		TimingAdmitted:                 value("timing_admitted"),
+		RequestBodyReadMs:              value("request_body_read_ms"),
+		PreprocessMs:                   value("preprocess_ms"),
+		UserSlotWaitMs:                 value("user_slot_wait_ms"),
+		ProviderSlotWaitMs:             value("provider_slot_wait_ms"),
+		RetryProviderSlotWaitMs:        value("retry_provider_slot_wait_ms"),
+		ProviderSlotAcquiredMs:         value("provider_slot_acquired_ms"),
+		UpstreamGetConnMs:              value("upstream_get_conn_ms"),
+		UpstreamGotConnMs:              value("upstream_got_conn_ms"),
+		UpstreamWroteRequestMs:         value("upstream_wrote_request_ms"),
+		UpstreamFirstResponseByteMs:    value("upstream_first_response_byte_ms"),
+		UpstreamFirstEventMs:           value("upstream_first_event_ms"),
+		FirstVisibleOutputMs:           value("first_visible_output_ms"),
+		FirstDownstreamFlushMs:         value("first_downstream_flush_ms"),
+		UpstreamGetConnCount:           value("upstream_get_conn_count"),
+		UpstreamGotConnCount:           value("upstream_got_conn_count"),
+		UpstreamAttemptCount:           value("upstream_attempt_count"),
+		UpstreamFirstResponseByteCount: value("upstream_first_response_byte_count"),
+		UpstreamConnectionReused:       flag("upstream_connection_reused"),
+		UpstreamWroteRequestError:      flag("upstream_wrote_request_error"),
+	}
+}
+
+// recordedTimingMode reports the captured policy without inventing historical defaults.
+func recordedTimingMode(log *usage.UsageLog) string {
+	if log == nil || log.Timings == nil {
+		return ""
+	}
+	return log.Timings.Mode
 }

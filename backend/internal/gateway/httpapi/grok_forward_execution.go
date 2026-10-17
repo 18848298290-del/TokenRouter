@@ -308,7 +308,7 @@ func (a *grokForwardAdapter) ObserveSuccess(ctx context.Context, headers http.He
 // to the HTTP stream reader.
 //
 // For a nonnil observation, the adapter keeps measured usage, response ID,
-// media/search units and first-output timing together with HTTP commitment,
+// media/search units together with HTTP commitment,
 // retry commitment and client disconnection. The raw upstream model comes from
 // this request's separate observer, so restored client model text does not
 // replace the observed vendor identity.
@@ -327,12 +327,11 @@ func (a *grokForwardAdapter) ReadStream(ctx context.Context, resp *http.Response
 		HTTPCommitted:         v.HttpCommitted,
 		RetryCommitted:        v.RetryCommitted,
 		ClientDisconnected:    v.ClientDisconnected,
-		FirstSemanticOutput:   v.FirstSemanticOutput,
-		FirstTokenMs:          v.FirstTokenMs,
-		ResponseID:            v.ResponseID,
-		SearchCount:           v.SearchCount,
-		ImageCount:            v.ImageCount,
-		ImageOutputSizes:      v.ImageOutputSizes,
+
+		ResponseID:       v.ResponseID,
+		SearchCount:      v.SearchCount,
+		ImageCount:       v.ImageCount,
+		ImageOutputSizes: v.ImageOutputSizes,
 	}, err
 }
 

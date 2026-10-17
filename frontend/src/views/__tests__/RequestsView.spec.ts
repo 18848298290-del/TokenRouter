@@ -34,14 +34,14 @@ describe('请求详情查询', () => {
 
   it('管理员查询显示多个同名外部 ID 的结果，并可再次搜索', async () => {
     findRequests.mockResolvedValue({ items: [
-      { request_id: 'first', started_at: '2026-10-09T00:00:00Z', state: 'completed', timings: { upstream_first_sse_data_ms: 950 }, aliases: [{ kind: 'upstream', value: 'supplier' }], usage: [], errors: [] },
+      { request_id: 'first', started_at: '2026-10-09T00:00:00Z', state: 'completed', timings: { upstream_first_sse_data_ms: 950 }, aliases: [{ kind: 'upstream', value: 'supplier' }], usage: [{ id: 1, model: 'model', input_tokens: 10, output_tokens: 20, actual_cost: 0, timings: { ttft_mode: 'first_event', upstream_stream: true, values: { upstream_first_event_ms: 950 } } }], errors: [] },
       { request_id: 'second', started_at: '2026-10-09T00:00:00Z', state: 'failed', legacy: true, usage: [], errors: [] },
     ], has_more: false })
     const { wrapper, router } = await open('/admin/requests?request_id=supplier')
     expect(findRequests).toHaveBeenCalledWith('supplier', expect.any(AbortSignal))
     expect(wrapper.findAll('article')).toHaveLength(2)
     expect(wrapper.text()).toContain('requests.legacy')
-    expect(wrapper.text()).toContain('950 ms')
+    expect(wrapper.text()).toContain('950ms')
     expect(wrapper.text()).toContain('requests.timingNames.upstream_first_event_ms')
     await wrapper.get('input[aria-label="requests.id"]').setValue('next-id')
     await wrapper.get('input[aria-label="requests.id"]').trigger('keydown.enter')

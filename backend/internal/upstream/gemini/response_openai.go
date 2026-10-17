@@ -31,9 +31,9 @@ import (
 // Responses events restore tool names and client forms before synchronous
 // output; Chat chunks follow their separate finalization and optional usage
 // rules. Marshal or restoration failures suppress that event, while a write
-// error stops conversion with the observed usage snapshot. First-token timing
-// follows the first successfully decoded nonempty Gemini payload and is
-// separate from semantic-output accounting in the executor.
+// error stops conversion with the observed usage snapshot. The execution owner
+// separately captures performance from the shared upstream observer after
+// response processing and downstream writes finish.
 
 const (
 	// OpenAI-compatible protocol values select the output representation, error
@@ -198,10 +198,9 @@ func (s *ResponseAdapter) WriteGeminiResponsesResponse(
 // Responses events restore tool identity before writing; Chat output owns its
 // optional usage chunk and DONE marker. Serialization or tool-restoration
 // failures skip the affected event. A write failure returns the current
-// usage/timing snapshot with nil error, while a non-EOF read failure returns
-// an error. First-token timing observes the first successfully decoded
-// nonempty payload; executor semantic timing remains an independent
-// observation.
+// usage snapshot with nil error, while a non-EOF read failure returns an error.
+// OutputContext retains write failures for the executor to classify alongside
+// the returned usage before completion.
 func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 	c *upstream.OutputContext,
 	resp *http.Response,
@@ -237,8 +236,6 @@ func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 	clientToolRestorer := bridge.NewResponsesClientToolStreamRestorer(clientToolMapping)
 
 	state := bridge.NewNativeGeminiCompatStream(bridge.NativeGeminiRuntime{RandomHex: upstream.RandomHex, MessageID: upstream.GenerateAnthropicMsgID})
-	var firstTokenMs *int
-	firstChunk := true
 
 	// Chunk serialization errors suppress output, while writer errors signal
 	// disconnect to the outer loop so it can return its accumulated usage
@@ -283,8 +280,7 @@ func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 
 	resultSnapshot := func() *StreamResult {
 		return &StreamResult{
-			Usage:        LegacyNativeGeminiUsage(state.Usage()),
-			FirstTokenMs: firstTokenMs,
+			Usage: LegacyNativeGeminiUsage(state.Usage()),
 		}
 	}
 
@@ -334,14 +330,6 @@ func (s *ResponseAdapter) HandleOpenAICompatStreamingResponseFromGemini(
 					var geminiResp map[string]any
 					if err := json.Unmarshal(rawBytes, &geminiResp); err == nil {
 						s.observeRaw(rawBytes)
-						if firstChunk {
-							firstChunk = false
-							ms := int(time.Since(startTime).Milliseconds())
-							firstTokenMs = &ms
-							if s.Options.ObserveState != nil {
-								s.Options.ObserveState(nil, firstTokenMs)
-							}
-						}
 						for event := range state.Process(geminiResp, rawBytes) {
 							if emitAnthropicEvent(event) {
 								return resultSnapshot(), nil

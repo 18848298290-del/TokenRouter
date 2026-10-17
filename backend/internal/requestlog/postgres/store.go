@@ -208,7 +208,7 @@ func (s *Store) Find(ctx context.Context, id string, userID int64, admin bool) (
 // separate details.
 func (s *Store) findUsage(ctx context.Context, ids []string, searchID string, userID int64, admin, exact bool, result *[]requestlog.Detail, index map[string]int) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(request_id,''),created_at,user_id,COALESCE(team_id,0),api_key_id,
- COALESCE(requested_model,model),input_tokens,output_tokens,actual_cost,COALESCE(duration_ms,0)
+ COALESCE(requested_model,model),input_tokens,output_tokens,actual_cost,duration_ms,timings
  FROM usage_logs WHERE (request_id = ANY($1::text[]) OR (NOT $5 AND upstream_request_id=$4))
  AND ($3 OR user_id=$2 OR team_id IN (SELECT team_id FROM team_memberships WHERE user_id=$2 AND role='owner' AND left_at IS NULL))
  ORDER BY created_at DESC LIMIT 101`, pq.Array(ids), userID, admin, searchID, exact)
@@ -221,10 +221,23 @@ func (s *Store) findUsage(ctx context.Context, ids []string, searchID string, us
 	for rows.Next() {
 		var record telemetry.RequestRecord
 		var usage requestlog.Usage
+		var timingsJSON []byte
+		var usageDuration sql.NullInt64
 		if err = rows.Scan(&usage.ID, &record.RequestID, &record.StartedAt, &record.UserID, &record.TeamID, &record.APIKeyID,
-			&usage.Model, &usage.InputTokens, &usage.OutputTokens, &usage.ActualCost, &record.DurationMs); err != nil {
+			&usage.Model, &usage.InputTokens, &usage.OutputTokens, &usage.ActualCost, &usageDuration, &timingsJSON); err != nil {
 			return err
 		}
+		if len(timingsJSON) > 0 {
+			if err := json.Unmarshal(timingsJSON, &usage.Timings); err != nil {
+				return fmt.Errorf("decode request usage timings: %w", err)
+			}
+		}
+		if usageDuration.Valid {
+			elapsed := usageDuration.Int64
+			usage.DurationMs = &elapsed
+		}
+		usage.TTFTMs = usage.Timings.TTFTMs()
+		usage.TPS = usage.Timings.TPS(int(usage.OutputTokens))
 		record.Model = usage.Model
 		record.State = "usage_recorded"
 		i := ensureDetail(result, index, record)

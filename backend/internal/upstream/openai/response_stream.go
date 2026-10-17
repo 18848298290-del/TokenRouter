@@ -21,7 +21,7 @@ import (
 
 // response_stream.go reads Responses streams and coordinates first-output
 // staging, terminal handling, usage observation, and downstream delivery.
-// HTTP Responses progress, visible content, first-token policy, and client
+// HTTP Responses progress, visible content, flush policy, and client
 // commitment advance through different checks. Native OpenAI attempts can stage
 // initial SSE bytes and provider headers so pre-content failure remains
 // recoverable. Event separators complete staged progress and stop its deadline,
@@ -39,22 +39,6 @@ import (
 // Locally generated read and timeout errors drain pending upstream bytes before
 // using the caller's local error writer, keeping their delivery provenance
 // separate from the upstream events whose output they terminate.
-
-// These labels select gateway timing observations; data arrival, visible
-// payload, and downstream flush can be recorded at different stages of one
-// attempt.
-const (
-	// StreamTimeFlush identifies a flush reported after pending bytes were present.
-	StreamTimeFlush StreamTime = "first_downstream_flush"
-	// StreamTimeVisible identifies a payload recognized as visible output.
-	StreamTimeVisible StreamTime = "first_visible_output"
-	// StreamTimeData identifies an observed upstream SSE data line.
-	StreamTimeData StreamTime = "first_sse_data"
-)
-
-// StreamTime names a response timing observation passed to the gateway's
-// timestamp recorder.
-type StreamTime string
 
 // CyberObservation carries policy failure evidence and usage observed before
 // client error presentation.
@@ -99,10 +83,7 @@ type StreamOptions struct {
 	// sixty-four-KiB buffer can accept a token larger than a smaller configured
 	// budget.
 	MaxLineSize int
-	// TTFTMode supplies the mode snapshot passed to OpenAIStreamDataStartsTTFT;
-	// visible output and client-start predicates are observed independently of its
-	// selected rule.
-	TTFTMode func() string
+
 	// PrepareHeaders receives upstream headers, staging selection, and current
 	// client headers; its returned attempt header map stays available until a
 	// progress-event commit opportunity.
@@ -119,7 +100,7 @@ type StreamOptions struct {
 	// MarkTime receives data, visible, or flush observations from the reader; the
 	// gateway recorder decides whether repeated observations replace an existing
 	// timestamp.
-	MarkTime func(StreamTime)
+
 	// WriteLocalStreamError synchronously writes an already-framed local SSE
 	// failure. ReadStreamingResponse drains pending upstream bytes first and
 	// flushes afterward; the writer keeps local errors outside upstream timing.
@@ -229,10 +210,7 @@ type StreamOptions struct {
 	// the gateway binds its byte-oriented UTF-8 truncation helper for this
 	// callback.
 	TruncateString func(string, int) string
-	// OpenAIStreamDataStartsTTFT chooses first-token evidence from payload, type,
-	// forced failure flush, and TTFT mode; it does not determine writer or retry
-	// commitment.
-	OpenAIStreamDataStartsTTFT func(string, string, bool, string) bool
+
 	// OpenAIStreamEventIsTerminalWithType recognizes terminal evidence using
 	// normalized payload/type; lifecycle headers and duplicate delivery remain
 	// coordinated by the reader.
@@ -250,19 +228,14 @@ type StreamingResult struct {
 	// own observation; first visible data, HTTP heartbeat writes, and retry policy
 	// can advance independently, and passthrough readers leave this group zero.
 	Served, HasUsage, HttpCommitted, RetryCommitted, ClientDisconnected, ObservedOnly bool
-	// FirstSemanticOutput is elapsed time to the first wire-visible payload before
-	// sink delivery; it can be present even when that delivery later fails.
-	FirstSemanticOutput *time.Duration
+
 	// Usage shares the attempt's mutable accumulator; HasUsage tracks parsing
 	// evidence separately because zero counters alone cannot establish absence of
 	// upstream usage.
 	Usage *wire.ForwardUsage
-	// FirstTokenMs is elapsed milliseconds to the selected TTFT event; staged
-	// progress completion and visible-payload time can occur under different
-	// predicates.
-	FirstTokenMs *int
-	ResponseID   string // observed upstream Responses identity
-	ImageCount   int    // observed completed image count
+
+	ResponseID string // observed upstream Responses identity
+	ImageCount int    // observed completed image count
 	// ImageOutputSizes contains known image dimensions from the counter snapshot;
 	// missing metadata is omitted, so its positions need not correspond to every
 	// counted image.
@@ -277,7 +250,7 @@ type StreamingResult struct {
 // through staged events. The ctx argument is unused; response-body and callback
 // contexts govern cancellation.
 //
-// Visible content, completed staging progress, TTFT, HTTP commitment, and retry
+// Visible content, completed staging progress, HTTP commitment, and retry
 // commitment remain separate observations. Visible payload can set Served
 // before delivery succeeds. Timed producers stop sends on return; first-output
 // expiry additionally closes Body and waits for event-channel closure,
@@ -327,8 +300,8 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 		return nil, errors.New("streaming not supported")
 	}
 	maxLineSize := options.MaxLineSize
-	var firstTokenMs *int
-	ttftMode := options.TTFTMode()
+	firstOutputFlushed := false
+
 	firstOutputProgressObserved := false
 	// Four KiB batches ordinary writes; guarded first output uses its separate
 	// bounded stage so early bytes can remain recoverable before sink delivery.
@@ -357,9 +330,6 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 		return int64(bufferedWriter.Buffered())
 	}
 	flushBuffered := func() error {
-		// Remember pending bytes before commit/flush empties their storage; the
-		// flush timestamp follows actual buffered output rather than an empty flusher call.
-		hadPendingBytes := pendingBytes() > 0
 		if firstOutputStage != nil && !firstOutputStage.Closed() {
 			if err := firstOutputStage.CommitTo(w); err != nil {
 				return err
@@ -370,15 +340,12 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 			}
 		}
 		flusher.Flush()
-		if hadPendingBytes {
-			options.MarkTime(StreamTimeFlush)
-		}
 		return nil
 	}
 
 	usage := &wire.ForwardUsage{}
 	hasObservedUsage := false
-	var firstSemanticOutput *time.Duration
+	semanticOutputSeen := false
 	imageCounter := wire.NewOpenAIImageOutputCounter()
 	responseID := ""
 	var firstOutputScanGuard atomic.Bool
@@ -474,8 +441,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 	pendingSSEEventType := ""
 	eventInProgress := false
 	eventStartsClientOutput := false
-	eventStartsVisibleOutput := false
-	eventStartsTTFTOutput := false
+	eventStartsFirstFlush := false
 	eventShouldFlush := false
 	// A write rejected by the open stage remains recoverable: classify it,
 	// annotate safe failover, and close upstream reading before any attempt bytes are committed.
@@ -500,8 +466,7 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 	// delivery remain separate.
 	completeGuardedEvent := func(queueDrained bool) {
 		completedProgressEvent := eventStartsClientOutput
-		completedVisibleEvent := eventStartsVisibleOutput
-		completedTTFTEvent := eventStartsTTFTOutput
+		completedFirstFlushEvent := eventStartsFirstFlush
 		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
 		if !clientDisconnected {
@@ -523,17 +488,12 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 			firstOutputProgressObserved = true
 			stopFirstOutputTimer()
 		}
-		if completedVisibleEvent && firstTokenMs == nil {
-			options.MarkTime(StreamTimeVisible)
-		}
-		if completedTTFTEvent && firstTokenMs == nil {
-			// Report elapsed TTFT in milliseconds for result adapters and request observations.
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
+		if completedFirstFlushEvent && !firstOutputFlushed {
+			// Semantic progress ends the initial flush guard for subsequent stream events.
+			firstOutputFlushed = true
 		}
 		eventStartsClientOutput = false
-		eventStartsVisibleOutput = false
-		eventStartsTTFTOutput = false
+		eventStartsFirstFlush = false
 		eventShouldFlush = false
 	}
 	sendErrorEvent := func(reason string) {
@@ -572,16 +532,13 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 	streamSearchSeen := make(map[string]struct{})
 	resultWithUsage := func() *StreamingResult {
 		return &StreamingResult{
-			Served:              firstSemanticOutput != nil,
-			HasUsage:            hasObservedUsage,
-			HttpCommitted:       c.Writer.Written(),
-			RetryCommitted:      options.IsCommitted(),
-			ClientDisconnected:  clientDisconnected,
-			FirstSemanticOutput: firstSemanticOutput,
+			Served:             semanticOutputSeen,
+			HasUsage:           hasObservedUsage,
+			HttpCommitted:      c.Writer.Written(),
+			RetryCommitted:     options.IsCommitted(),
+			ClientDisconnected: clientDisconnected,
 
 			Usage: usage,
-
-			FirstTokenMs: firstTokenMs,
 
 			ResponseID: responseID,
 
@@ -741,7 +698,6 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 		// Observe upstream data before lifecycle or client-identity repair, keeping
 		// model/tier evidence tied to the provider representation rather than the delivered copy.
 		if data, ok := wire.ExtractSSEDataLine(line); ok {
-			options.MarkTime(StreamTimeData)
 			dataBytes := []byte(data)
 			eventType := wire.EffectiveOpenAISSEEventType(dataBytes, pendingSSEEventType)
 			options.Observe(dataBytes, eventType)
@@ -804,16 +760,11 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 				if hit, code, msg := DetectOpenAICyberPolicy(dataBytes); hit {
 					cyberHit = true
 					options.MarkCyber(CyberObservation{
-						Code: code,
-
-						Message: msg,
-
-						Body: options.TruncateString(string(dataBytes), 4096),
-
+						Code:           code,
+						Message:        msg,
+						Body:           options.TruncateString(string(dataBytes), 4096),
 						UpstreamStatus: http.StatusOK,
-
-						UpstreamInTok: usage.InputTokens,
-
+						UpstreamInTok:  usage.InputTokens,
 						UpstreamOutTok: usage.OutputTokens,
 					})
 				}
@@ -940,15 +891,11 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 			}
 			startsClientOutput := forceFlushFailedEvent || OpenAIStreamDataStartsClientOutput(data, eventType)
 			startsVisibleOutput := wire.StreamDataStartsVisibleOutput(data, eventType)
-			if startsVisibleOutput && firstSemanticOutput == nil {
-				elapsed := time.Since(startTime)
-				firstSemanticOutput = &elapsed
-			}
-			startsTTFTOutput := options.OpenAIStreamDataStartsTTFT(data, eventType, forceFlushFailedEvent, ttftMode)
+			semanticOutputSeen = semanticOutputSeen || startsVisibleOutput
+			startsFirstFlush := forceFlushFailedEvent || OpenAIStreamDataStartsFirstFlush(data, eventType)
 			if stageFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
-				eventStartsVisibleOutput = eventStartsVisibleOutput || startsVisibleOutput
-				eventStartsTTFTOutput = eventStartsTTFTOutput || startsTTFTOutput
+				eventStartsFirstFlush = eventStartsFirstFlush || startsFirstFlush
 				if startsClientOutput {
 					firstOutputScanGuard.Store(false)
 				}
@@ -982,8 +929,8 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 			// also retain that accounting path.
 			if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
-				if firstTokenMs == nil && startsTTFTOutput {
-					// Flush the first token promptly to avoid adding buffering latency to TTFT.
+				if !firstOutputFlushed && startsFirstFlush {
+					// Flush semantic progress promptly so initial buffering does not delay downstream delivery.
 					shouldFlush = true
 				}
 				eventShouldFlush = eventShouldFlush || shouldFlush
@@ -996,15 +943,9 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 				}
 			}
 
-			// Visible timestamps and selected TTFT use different predicates; staged
-			// deadline progress completes at event separators rather than this data-line observation.
-			if startsVisibleOutput {
-				options.MarkTime(StreamTimeVisible)
-			}
-			if !guardFirstOutput && firstTokenMs == nil && startsTTFTOutput {
-				// Report elapsed TTFT in milliseconds for result adapters and request observations.
-				ms := int(time.Since(startTime).Milliseconds())
-				firstTokenMs = &ms
+			if !guardFirstOutput && !firstOutputFlushed && startsFirstFlush {
+				// Semantic progress ends the initial flush guard for subsequent stream events.
+				firstOutputFlushed = true
 				stopFirstOutputTimer()
 			}
 			hasObservedUsage = wire.ParseSSEUsageBytesWithType(dataBytes, eventType, usage) || hasObservedUsage
@@ -1021,7 +962,6 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 				terminalFailurePending = false
 				eventInProgress = false
 				eventStartsClientOutput = false
-				eventStartsVisibleOutput = false
 				eventShouldFlush = false
 				return
 			}
@@ -1029,7 +969,6 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 				terminalFailurePending = false
 				eventInProgress = false
 				eventStartsClientOutput = false
-				eventStartsVisibleOutput = false
 				eventShouldFlush = false
 				return
 			}

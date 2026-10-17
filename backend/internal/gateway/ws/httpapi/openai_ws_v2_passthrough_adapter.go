@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -15,6 +16,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	gatewayws "github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -101,6 +103,20 @@ func (s *OpenAIWebSocketExecutor) proxyResponsesWebSocketV2Passthrough(
 	var coreHooks *gatewayws.PassthroughHooks
 	if hooks != nil {
 		coreHooks = &gatewayws.PassthroughHooks{IngressHooks: wsIngressHooks(hooks), InitialRequestModel: hooks.InitialRequestModel, InitialTurnStartedAt: hooks.InitialTurnStartedAt, OnUpstreamError: hooks.OnUpstreamError}
+		coreHooks.BeginPerformance = func(turn int, started time.Time) *timing.Performance {
+			turnCtx := ctx
+			if hooks.ContextForTurn != nil {
+				turnCtx = hooks.ContextForTurn(turn)
+			}
+			return timing.BeginPerformance(turnCtx, provider.Record.ID, started)
+		}
+		coreHooks.ClientDisconnected = func(turn int, at time.Time) {
+			turnCtx := ctx
+			if hooks.ContextForTurn != nil {
+				turnCtx = hooks.ContextForTurn(turn)
+			}
+			timing.ObserveClientDisconnect(turnCtx, at)
+		}
 	}
 	runtime := gatewayws.PassthroughSession{Parameters: func() gatewayws.Parameters {
 		if s.Runtime != nil {

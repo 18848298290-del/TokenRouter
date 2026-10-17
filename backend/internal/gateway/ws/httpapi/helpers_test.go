@@ -418,9 +418,6 @@ func newWSFixture(v wsFixtureInputs) *wsExecutionFixture {
 	output.ResponseTTL = choices.OpenAIHTTPResponseStickyTTL
 	requests.Turns.TTL = choices.SessionStickyTTL
 	output.Turns = requests.Turns
-	if v.readers != nil {
-		output.TTFT = v.readers.Gateway.GetOpenAITTFTMode
-	}
 	credentials := gatewaytestkit.RequestCredentials(v.providers, requests.Credentials, nil, output.Health.Runtime)
 	routes := gatewayadapter.GrokRoutes{Validate: grok.ValidateBaseURL}
 	if v.options != nil {

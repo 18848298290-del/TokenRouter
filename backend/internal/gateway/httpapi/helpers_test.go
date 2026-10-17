@@ -1400,9 +1400,6 @@ func newWSFixture(v wsFixtureInputs) *wsExecutionFixture {
 	output.ResponseTTL = choices.OpenAIHTTPResponseStickyTTL
 	requests.Turns.TTL = choices.SessionStickyTTL
 	output.Turns = requests.Turns
-	if v.readers != nil {
-		output.TTFT = v.readers.Gateway.GetOpenAITTFTMode
-	}
 	credentials := gatewaytestkit.RequestCredentials(v.providers, requests.Credentials, nil, output.Health.Runtime)
 	routes := gatewayprovider.GrokRoutes{Validate: xai.ValidateBaseURL}
 	if v.options != nil {
@@ -2429,7 +2426,6 @@ func newResponsesFixture(v responsesFixtureInputs) *OpenAIResponsesExecutor {
 	if v.readers != nil {
 		aux.Requests.ClientPolicy.AllowClaudeCode = v.readers.Gateway.IsOpenAIAllowClaudeCodeCodexPluginEnabled
 		aux.Requests.ClientPolicy.BrowserUserAgent = v.readers.Gateway.GetOpenAICodexUserAgent
-		aux.Output.TTFT = v.readers.Gateway.GetOpenAITTFTMode
 	}
 	if v.registerTaskURL != "" {
 		aux.Requests.Identity = gatewayprovider.NewExecutionAgentIdentity(&providercore.OpenAITaskCoordinator{}, v.providers, func(ctx context.Context, value *providercore.Record) (string, error) {

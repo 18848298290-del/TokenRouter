@@ -3,15 +3,14 @@ import { formatRequestTimingForExport, formatTimingMs, timingBreakdown, timingVa
 
 // requestTiming.test.ts covers the shared timing rules behind the usage tooltip,
 // request lookup and export. It checks that zero stays measurable, historical
-// SSE offsets still fill the first-event row, durations appear only when
+// SSE offsets stay ignored, durations appear only when
 // recorded and sum to the slot offset, and synchronous requests lose their
 // stream-only stages.
 describe('request timing breakdown', () => {
-  // The generic first event wins over the SSE offset, including a measured zero.
-  it('prefers generic event offsets and falls back to historical SSE only when absent', () => {
+  // Missing observations remain absent while measured zero remains visible.
+  it('uses current event offsets without historical SSE fallback', () => {
     expect(timingValue({}, 'upstream_first_event_ms')).toBeNull()
-    expect(timingValue({ upstream_first_sse_data_ms: 1500 }, 'upstream_first_event_ms')).toBe(1500)
-    expect(timingValue({ upstream_first_event_ms: 0, upstream_first_sse_data_ms: 1500 }, 'upstream_first_event_ms')).toBe(0)
+    expect(timingValue({ upstream_first_event_ms: 0 }, 'upstream_first_event_ms')).toBe(0)
     expect(timingValue({ user_slot_wait_ms: 0 }, 'user_slot_wait_ms')).toBe(0)
   })
 
@@ -24,9 +23,9 @@ describe('request timing breakdown', () => {
     expect(timingBreakdown({ user_slot_wait_ms: 0, retry_provider_slot_wait_ms: 0 }).retryWait).toBeNull()
     expect(timingBreakdown({ user_slot_wait_ms: 0, retry_provider_slot_wait_ms: 9 }).retryWait?.value).toBe(9)
     expect(timingBreakdown({ user_slot_wait_ms: 0, retry_provider_slot_wait_ms: 9 }).durations).toHaveLength(4)
-    expect(timingBreakdown({}, false).events).toHaveLength(5)
-    expect(timingBreakdown({ timing_stream: 1 }, false).events).toHaveLength(8)
-    expect(timingBreakdown({}).events).toHaveLength(8)
+    expect(timingBreakdown({ upstream_stream: false }, false).events).toHaveLength(7)
+    expect(timingBreakdown({ timing_stream: 1 }, false).events).toHaveLength(13)
+    expect(timingBreakdown({}).events).toHaveLength(13)
     expect(timingBreakdown({}).admitted).toBeNull()
     expect(timingBreakdown({ timing_admitted: 0 }).admitted).toBe(false)
   })
