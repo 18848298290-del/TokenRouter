@@ -158,9 +158,10 @@ type PreludePorts interface {
 	// StripNamespacesRequired reports whether historical calls need namespace
 	// cleanup for this route.
 	StripNamespacesRequired(TransportDecision, bool) bool
-	// KeepNamespaces reports whether current declarations permit retaining
-	// historical tool-call namespaces.
-	KeepNamespaces(TransportDecision, bool, bool, []byte) bool
+	// KeepNamespaces selects retention from the chosen credential and transport.
+	// Compact and explicitly flattened routes use their endpoint rules; ordinary
+	// Responses retains historical tool identities across earlier turns.
+	KeepNamespaces(TransportDecision, bool, bool) bool
 	// StripNamespaces cleans historical call namespaces according to the supplied
 	// retention decision. It returns prepared bytes or a parsing error, which the
 	// prelude presents as an input rejection before dispatch.
@@ -306,11 +307,11 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 			return nil, err
 		}
 	}
-	// Historical namespace retention depends on the declarations that survived
-	// lowering, so determine keep policy from the current body before removing
-	// call metadata.
+	// Retention follows the selected protocol policy. Earlier turns may own the
+	// declaration, so the current body cannot establish that a call namespace is
+	// disposable.
 	if p.StripNamespacesRequired(value.Transport, profile.Passthrough) {
-		keep := p.KeepNamespaces(value.Transport, profile.Passthrough, value.Compact, body)
+		keep := p.KeepNamespaces(value.Transport, profile.Passthrough, value.Compact)
 		body, err = p.StripNamespaces(body, keep)
 		if err != nil {
 			p.Reject(Rejection{Status: 400, Type: "invalid_request_error", Message: err.Error(), Param: "input", ObserveUpstream: true})

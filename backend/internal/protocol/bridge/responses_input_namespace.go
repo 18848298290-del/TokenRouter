@@ -3,7 +3,6 @@ package bridge
 import (
 	"bytes"
 	"fmt"
-	"strings"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -18,9 +17,10 @@ import (
 //
 // Raw item patching avoids decoding the complete request into generic numbers
 // and maps. The array is rebuilt once after selected keys are removed, so
-// unchanged objects retain their JSON spelling. A literal key precheck and
-// gjson traversal establish the supported input path, while the caller owns
-// full-document validation and platform or transport eligibility.
+// unchanged objects retain their JSON spelling. JSON-key traversal recognizes
+// escaped namespace spellings without decoding argument bodies or numeric
+// literals into generic maps. The caller owns full-document validation and
+// platform or transport eligibility.
 
 // openAIResponsesToolCallItemTypes identifies the four call-item spellings
 // eligible to retain namespace during direct input cleanup when the caller
@@ -32,26 +32,6 @@ var openAIResponsesToolCallItemTypes = map[string]bool{
 	"mcp_tool_call":    true,
 }
 
-// HasOpenAIResponsesNamespaceToolDeclaration reports a namespace declaration
-// in the top-level tools array. It trims and compares the type case-
-// insensitively, reads gjson paths without complete-document validation, and
-// ignores nonarray tool containers.
-func HasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
-	tools := gjson.GetBytes(body, "tools")
-	if !tools.IsArray() {
-		return false
-	}
-	found := false
-	tools.ForEach(func(_, tool gjson.Result) bool {
-		if strings.EqualFold(strings.TrimSpace(tool.Get("type").String()), "namespace") {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
-}
-
 // StripOpenAIResponsesInputNamespaces removes namespace keys from direct
 // objects in an input array. With keepToolCallNamespaces, the configured call
 // types retain their keys. Declaration tools and nested input fields remain
@@ -59,16 +39,22 @@ func HasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
 // this cleanup.
 //
 // Each selected object is patched from its raw bytes, then the input array is
-// replaced once. Literal key screening can skip escaped namespace spellings.
+// replaced once. JSON field lookup recognizes escaped namespace spellings.
 // Unchanged cases and either patch failure return the supplied body, with
 // failures carrying an error. Buffer reconstruction retains each unmodified
 // item's raw representation while array separators are rebuilt.
 func StripOpenAIResponsesInputNamespaces(body []byte, keepToolCallNamespaces bool) ([]byte, error) {
-	if !bytes.Contains(body, []byte(`"namespace"`)) {
-		return body, nil
-	}
 	input := gjson.GetBytes(body, "input")
 	if !input.IsArray() {
+		return body, nil
+	}
+	needsCleanup := false
+	input.ForEach(func(_, item gjson.Result) bool {
+		needsCleanup = item.IsObject() && item.Get("namespace").Exists() &&
+			(!keepToolCallNamespaces || !IsOpenAIResponsesToolCallItemType(item.Get("type").String()))
+		return !needsCleanup
+	})
+	if !needsCleanup {
 		return body, nil
 	}
 

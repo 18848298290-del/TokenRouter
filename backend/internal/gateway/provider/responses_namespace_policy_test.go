@@ -79,9 +79,9 @@ func TestShouldFlattenOpenAIResponsesNamespaces(t *testing.T) {
 }
 
 // TestShouldKeepOpenAIResponsesToolCallNamespaces compares OAuth, setup-token,
-// API Key, Compact, and declared namespace tools. Retention follows OAuth
-// flattening or API Key declaration evidence, with Compact and missing targets
-// excluded.
+// API Key and Compact policies. Ordinary requests retain call identity even
+// when earlier turns own their declarations; Compact and flattened paths follow
+// their selected protocol rules.
 func TestShouldKeepOpenAIResponsesToolCallNamespaces(t *testing.T) {
 	oauth := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}
 	apiKey := &ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -105,8 +105,6 @@ func TestShouldKeepOpenAIResponsesToolCallNamespaces(t *testing.T) {
 		passthroughEnabled bool
 		// Compact endpoint selection flag
 		compactPath bool
-		// namespace tool declaration body
-		body []byte
 		// expected namespace policy result
 		want bool
 	}{
@@ -116,20 +114,17 @@ func TestShouldKeepOpenAIResponsesToolCallNamespaces(t *testing.T) {
 		{name: "oauth_flatten_enabled_strips", provider: flattenOAuth, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: false},
 		{name: "oauth_wsv2_keeps", provider: oauth, transport: egress.OpenAIUpstreamTransportResponsesWebsocketV2, want: true},
 		{name: "oauth_compact_wsv2_strips", provider: oauth, transport: egress.OpenAIUpstreamTransportResponsesWebsocketV2, compactPath: true, want: false},
-		// API Key requests normally use the standard schema. Declared namespace tools
-		// require matching namespaces on historical calls for custom upstreams.
-		{name: "apikey_without_namespace_tool_strips", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: false},
-		{name: "apikey_with_namespace_tool_keeps", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"tools":[{"type":"namespace","name":"mcp__codex_app","tools":[]}]}`), want: true},
-		{name: "apikey_with_mixed_case_namespace_tool_keeps", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"tools":[{"type":" Namespace ","name":"mcp__codex_app","tools":[]}]}`), want: true},
-		{name: "apikey_function_tool_with_namespace_field_strips", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, body: []byte(`{"tools":[{"type":"function","name":"automation_update","namespace":"mcp__codex_app"}]}`), want: false},
-		{name: "apikey_compact_with_namespace_tool_strips", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, compactPath: true, body: []byte(`{"tools":[{"type":"namespace","name":"mcp__codex_app","tools":[]}]}`), want: false},
+		// API Key history retains identities even when no current declarations
+		// accompany the request, since upstream state can own those declarations.
+		{name: "apikey_without_namespace_tool_keeps", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: true},
+		{name: "apikey_compact_strips", provider: apiKey, transport: egress.OpenAIUpstreamTransportHTTPSSE, compactPath: true, want: false},
 		{name: "setup_token_keeps", provider: setupToken, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: true},
 		{name: "nil_provider", provider: nil, transport: egress.OpenAIUpstreamTransportHTTPSSE, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.want, ShouldKeepOpenAIResponsesToolCallNamespaces(
-				tt.provider, tt.transport, tt.passthroughEnabled, tt.compactPath, tt.body,
+				tt.provider, tt.transport, tt.passthroughEnabled, tt.compactPath,
 			))
 		})
 	}
@@ -226,6 +221,18 @@ func TestStripOpenAIResponsesInputNamespacesLeavesOtherShapesByteExact(t *testin
 			require.Equal(t, body, stripped)
 		}
 	}
+}
+
+// TestStripOpenAIResponsesInputNamespacesHandlesEscapedKeys supplies namespace
+// keys encoded through Unicode escapes on messages and calls. Cleanup removes
+// the message field while retaining call identity and exact large integers.
+func TestStripOpenAIResponsesInputNamespacesHandlesEscapedKeys(t *testing.T) {
+	body := []byte(`{"input":[{"type":"message","role":"user","na\u006despace":"discard","content":"hello","large":9007199254740993},{"type":"function_call","name":"js","na\u006despace":"browser","arguments":"{}"}]}`)
+	cleaned, err := protocolbridge.StripOpenAIResponsesInputNamespaces(body, true)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(cleaned, "input.0.namespace").Exists())
+	require.Equal(t, "browser", gjson.GetBytes(cleaned, "input.1.namespace").String())
+	require.Equal(t, "9007199254740993", gjson.GetBytes(cleaned, "input.0.large").Raw)
 }
 
 // TestStripOpenAIResponsesInputNamespacesKeepsToolCallNamespaces mixes call

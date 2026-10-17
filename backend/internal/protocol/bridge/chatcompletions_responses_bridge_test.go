@@ -292,18 +292,18 @@ func TestResponsesChatBridge_MixedCustomAndNamespaceToolNames(t *testing.T) {
 		},
 	}
 
-	chatReq, err := ResponsesToChatCompletionsRequestWithOptions(req, nil)
+	chatReq, mapping, err := ResponsesToChatCompletionsRequestWithMapping(req, nil)
 	require.NoError(t, err)
 	require.Len(t, chatReq.Tools, 2)
 	assert.Equal(t, "exec", chatReq.Tools[0].Function.Name)
-	assert.Equal(t, "functions__wait", chatReq.Tools[1].Function.Name)
+	assert.Equal(t, "wait", chatReq.Tools[1].Function.Name)
 
 	customTools := CustomToolNames(req.Tools)
-	namespaceTools := NamespaceToolNames(req.Tools)
+	namespaceTools := mapping.NamespaceTools
 	resp := &ChatCompletionsResponse{Choices: []ChatChoice{{Message: ChatMessage{ToolCalls: []ChatToolCall{
 		{ID: "call_exact", Function: ChatFunctionCall{Name: "exec", Arguments: `{"input":"pwd"}`}},
-		{ID: "call_wait", Function: ChatFunctionCall{Name: "functions__wait", Arguments: `{"cell_id":"1"}`}},
-		{ID: "call_alias", Function: ChatFunctionCall{Name: "functions__exec", Arguments: `not-json`}},
+		{ID: "call_wait", Function: ChatFunctionCall{Name: "wait", Arguments: `{"cell_id":"1"}`}},
+		{ID: "call_alias", Function: ChatFunctionCall{Name: "exec", Arguments: `not-json`}},
 	}}}}}
 
 	out := ChatCompletionsResponseToResponses(testRuntime(), resp, req.Model, customTools, FunctionToolNames(req.Tools), false, namespaceTools)
@@ -312,7 +312,7 @@ func TestResponsesChatBridge_MixedCustomAndNamespaceToolNames(t *testing.T) {
 	assert.Equal(t, "exec", out.Output[0].Name)
 	assert.Equal(t, "pwd", out.Output[0].Input)
 	assert.Equal(t, "function_call", out.Output[1].Type)
-	assert.Equal(t, "functions", out.Output[1].Namespace)
+	assert.Empty(t, out.Output[1].Namespace)
 	assert.Equal(t, "wait", out.Output[1].Name)
 	assert.Equal(t, "custom_tool_call", out.Output[2].Type)
 	assert.Equal(t, "exec", out.Output[2].Name)
@@ -1004,6 +1004,39 @@ func TestResponsesInputToChatMessages_NamespacedFunctionCallHistory(t *testing.T
 
 	require.Len(t, messages[0].ToolCalls, 1)
 	assert.Equal(t, "gmail__send", messages[0].ToolCalls[0].Function.Name)
+}
+
+// TestResponsesChatBridge_DefaultNamespaceUsesBareNames replays a function
+// declared in the default functions namespace. Chat declarations and historical
+// calls use the same bare name for either accepted namespace representation.
+func TestResponsesChatBridge_DefaultNamespaceUsesBareNames(t *testing.T) {
+	for _, namespace := range []string{"", "functions"} {
+		t.Run(namespace, func(t *testing.T) {
+			var request ResponsesRequest
+			require.NoError(t, json.Unmarshal([]byte(`{"model":"gpt-5.6-sol","tools":[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]}],"input":[{"type":"function_call","name":"js","namespace":"`+namespace+`","call_id":"call_1","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`), &request))
+			converted, err := ResponsesToChatCompletionsRequestWithOptions(&request, nil)
+			require.NoError(t, err)
+			require.Len(t, converted.Tools, 1)
+			require.Equal(t, "js", converted.Tools[0].Function.Name)
+			require.Equal(t, "js", converted.Messages[0].ToolCalls[0].Function.Name)
+		})
+	}
+}
+
+// TestResponsesChatBridge_DiscoveredFunctionUsesDeclaredName supplies a plain
+// function loaded by client search and its namespaced history. Chat sends the
+// declared bare name instead of inventing a doubled namespace prefix.
+func TestResponsesChatBridge_DiscoveredFunctionUsesDeclaredName(t *testing.T) {
+	var request ResponsesRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"model":"gpt-5.6-sol","tools":[{"type":"tool_search"}],"input":[{"type":"tool_search_output","call_id":"search_1","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]},{"type":"function_call","name":"js","namespace":"js","call_id":"call_1","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`), &request))
+	converted, err := ResponsesToChatCompletionsRequestWithOptions(&request, nil)
+	require.NoError(t, err)
+	require.Equal(t, "js", converted.Tools[1].Function.Name)
+	for _, message := range converted.Messages {
+		for _, call := range message.ToolCalls {
+			require.Equal(t, "js", call.Function.Name)
+		}
+	}
 }
 
 // TestChatCompletionsChunkToResponsesEvents_CustomToolNameArrivesLate splits

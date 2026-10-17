@@ -312,8 +312,10 @@ func responsesDirectToolDiscovery(tool map[string]any, typ string) (map[string]a
 // one-child groups using the recorded unqualified name. A restored search
 // declaration uses only tool_search type. These declarations let the next
 // adaptation pass reconstruct effective upstream tools when a turn omitted
-// them; nested schemas remain shared and the helper cannot recover custom
-// grammar removed during lowering.
+// them. Discovered plain functions keep function declarations, since rebuilding
+// them as namespace groups would change their next executable name. Nested
+// schemas remain shared and the helper cannot recover custom grammar removed
+// during lowering.
 func restoreInheritedResponsesClientToolDeclarations(lowered []any, mapping ResponsesClientToolMapping) []any {
 	restored := make([]any, 0, len(lowered))
 	for _, raw := range lowered {
@@ -333,7 +335,7 @@ func restoreInheritedResponsesClientToolDeclarations(lowered []any, mapping Resp
 			copy := copyClientTool(tool)
 			copy["type"] = "custom"
 			restored = append(restored, copy)
-		case mapping.NamespaceTools[name].Namespace != "":
+		case mapping.NamespaceTools[name].Namespace != "" && !mapping.FunctionTools[name]:
 			identity := mapping.NamespaceTools[name]
 			child := copyClientTool(tool)
 			child["type"] = "function"

@@ -335,6 +335,42 @@ func TestProxyOpenAIWSHTTPBridgeTurnAPIKeyAdaptsClientTools(t *testing.T) {
 	require.Equal(t, "pwd", gjson.GetBytes(replayInput[0], "input").String())
 }
 
+// TestProxyOpenAIWSHTTPBridgeTurnAPIKeyKeepsDiscoveredFunctionNamespace sends
+// a discovered plain function through an API-key HTTP bridge. Upstream history
+// uses its bare declaration name, while client completion and replay recover
+// the original namespace and call correlation.
+func TestProxyOpenAIWSHTTPBridgeTurnAPIKeyKeepsDiscoveredFunctionNamespace(t *testing.T) {
+	sse := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_js\",\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"js\",\"arguments\":\"{}\",\"status\":\"completed\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+	upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{}, transport: upstream})
+	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 5659, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Concurrency: 1}}
+	payload := []byte(`{"type":"response.create","model":"gpt-5.6-sol","tools":[{"type":"tool_search"}],"input":[{"type":"tool_search_call","call_id":"search_1","arguments":{"query":"js"}},{"type":"tool_search_output","call_id":"search_1","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]},{"type":"function_call","call_id":"call_1","name":"js","namespace":"js","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	var events [][]byte
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, provider, "test-token", payload, len(payload), "gpt-5.6-sol", "", "", "", "", "", 1,
+		func(message []byte) error {
+			events = append(events, append([]byte(nil), message...))
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "js", gjson.GetBytes(upstream.lastBody, "input.2.name").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "input.2.namespace").Exists())
+	require.Len(t, events, 1)
+	require.Equal(t, "js", gjson.GetBytes(events[0], "response.output.0.namespace").String())
+	require.Equal(t, "call_2", gjson.GetBytes(events[0], "response.output.0.call_id").String())
+	replay, exists := result.WSReplayInput()
+	require.True(t, exists)
+	require.Len(t, replay, 1)
+	require.Equal(t, "js", gjson.GetBytes(replay[0], "namespace").String())
+}
+
 // TestProxyOpenAIWSHTTPBridgeTurnAPIKeyRestoresClientToolsInResponseDone ends
 // a lowered custom-tool stream with response.done. Four returned events
 // include a resequenced terminal with restored custom call input and no

@@ -64,6 +64,9 @@ type ResponsesToChatOptions struct {
 	// nonempty ID. Nil disables lookup; an empty return leaves prior pending
 	// reasoning unchanged. Conversion waits for the callback, and any panic propagates.
 	ReasoningContentByID func(itemID string) string
+	// toolMapping belongs to one conversion. The request builder assigns it
+	// before history conversion so declarations and calls share the same names.
+	toolMapping *ResponsesClientToolMapping
 }
 
 // NamespacedToolName identifies a child tool by namespace and unqualified name.
@@ -161,27 +164,48 @@ type ChatCompletionsToResponsesStreamState struct {
 	Usage *ResponsesUsage // latest converted usage observation
 }
 
-// ResponsesToChatCompletionsRequestWithOptions converts decoded Responses
-// fields with an optional synchronous reasoning lookup. Nil request returns an
-// error. Sampling, output-limit, and parallel-call pointers remain shared with
-// the source; model/stream/tier/effort are copied without applying model
-// policy.
-//
-// Input conversion repairs answered-call history and relocates recognized
-// media. Effective declarations include additional tools and eligible
-// discoveries, then collision-checked lowering prepares the Chat list. Choice
-// is omitted when no tools survive, and format conversion handles the text
-// option. Errors abort the returned request, but retained raw schemas and
-// nested declaration values can still share source storage; the conversion is
-// not complete request validation.
+// ResponsesToChatCompletionsRequestWithOptions converts a request with an
+// optional synchronous reasoning lookup. Callers that restore Responses output
+// use ResponsesToChatCompletionsRequestWithMapping to retain the matching tool
+// identities; this request-only entry discards that restoration metadata.
 func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *ResponsesToChatOptions) (*ChatCompletionsRequest, error) {
-	if req == nil {
-		return nil, fmt.Errorf("responses request is nil")
-	}
+	converted, _, err := ResponsesToChatCompletionsRequestWithMapping(req, opts)
+	return converted, err
+}
 
-	messages, err := responsesInputToChatMessagesWithOptions(req.Instructions, req.Input, opts)
+// ResponsesToChatCompletionsRequestWithMapping converts a Responses request
+// and returns the tool identities required to restore its matching response.
+// Effective declarations are resolved before input conversion; errors return
+// no request, preventing partially prepared identities from being forwarded.
+//
+// The caller keeps the returned mapping with this request through response
+// consumption. History, tool choice, and declaration lowering use that same
+// mapping, including default-scope and discovered plain-function aliases.
+// Options are copied before attaching conversion state, leaving caller-owned
+// lookup settings unchanged across independent conversions and retries.
+func ResponsesToChatCompletionsRequestWithMapping(req *ResponsesRequest, opts *ResponsesToChatOptions) (*ChatCompletionsRequest, ResponsesClientToolMapping, error) {
+	if req == nil {
+		return nil, ResponsesClientToolMapping{}, fmt.Errorf("responses request is nil")
+	}
+	effectiveTools, err := EffectiveResponsesTools(req)
 	if err != nil {
-		return nil, err
+		return nil, ResponsesClientToolMapping{}, err
+	}
+	mapping, err := responsesToolIdentityMapping(effectiveTools, req.Input)
+	if err != nil {
+		return nil, ResponsesClientToolMapping{}, err
+	}
+	mapping.CustomTools = CustomToolNames(effectiveTools)
+	mapping.ToolSearch = HasToolSearchTool(effectiveTools)
+	var conversionOptions ResponsesToChatOptions
+	if opts != nil {
+		conversionOptions = *opts
+	}
+	conversionOptions.toolMapping = &mapping
+
+	messages, err := responsesInputToChatMessagesWithOptions(req.Instructions, req.Input, &conversionOptions)
+	if err != nil {
+		return nil, ResponsesClientToolMapping{}, err
 	}
 
 	out := &ChatCompletionsRequest{
@@ -197,14 +221,10 @@ func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *R
 	if req.Reasoning != nil {
 		out.ReasoningEffort = req.Reasoning.Effort
 	}
-	effectiveTools, err := EffectiveResponsesTools(req)
-	if err != nil {
-		return nil, err
-	}
 	if len(effectiveTools) > 0 {
 		tools, err := responsesToolsToChatTools(effectiveTools)
 		if err != nil {
-			return nil, err
+			return nil, ResponsesClientToolMapping{}, err
 		}
 		out.Tools = tools
 	}
@@ -221,7 +241,11 @@ func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *R
 				declared["x_search"] = true
 			}
 		}
-		if tc := responsesToolChoiceToChatToolChoice(req.ToolChoice, declared); len(tc) > 0 {
+		choice, err := responsesMappedToolChoice(req.ToolChoice, &mapping)
+		if err != nil {
+			return nil, ResponsesClientToolMapping{}, err
+		}
+		if tc := responsesToolChoiceToChatToolChoice(choice, declared); len(tc) > 0 {
 			out.ToolChoice = tc
 		}
 	}
@@ -229,7 +253,7 @@ func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *R
 		out.ResponseFormat = responsesTextFormatToChatResponseFormat(req.Text.Format)
 	}
 
-	return out, nil
+	return out, mapping, nil
 }
 
 // EffectiveResponsesTools returns top-level declarations followed by exact
@@ -386,6 +410,9 @@ func NamespaceToolNames(tools []ResponsesTool) map[string]NamespacedToolName {
 				Namespace: tool.Name,
 				Name:      child.Name,
 			}
+			if tool.Name == responsesDefaultToolNamespace {
+				out[child.Name] = NamespacedToolName{Name: child.Name}
+			}
 		}
 	}
 	return out
@@ -422,7 +449,14 @@ func customToolCallName(name string, customTools, functionTools map[string]bool,
 	match := ""
 	for customName := range customTools {
 		for _, namespaceTool := range namespaceTools {
-			if flattenNamespaceToolName(namespaceTool.Namespace, customName) != name {
+			alias := flattenNamespaceToolName(namespaceTool.Namespace, customName)
+			// Captured legacy default-scope mappings can accompany prefixed custom
+			// aliases from older adapters. Current default declarations still dispatch
+			// their own function names without that prefix.
+			if namespaceTool.Namespace == responsesDefaultToolNamespace {
+				alias = responsesDefaultToolNamespace + "__" + customName
+			}
+			if alias != name {
 				continue
 			}
 			if match != "" && match != customName {
@@ -606,9 +640,16 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 				continue
 			}
 			name := rawString(item["name"])
-			// Flatten historical namespace calls with the same naming rule used for
-			// declarations in namespaceChildrenToChatTools.
-			if ns := rawString(item["namespace"]); ns != "" {
+			// The request builder supplies declaration evidence before history is
+			// converted, so a discovered bare function cannot acquire a doubled
+			// prefix while its declaration retains its original name.
+			if opts != nil && opts.toolMapping != nil {
+				resolved, err := opts.toolMapping.resolveCallName(rawString(item["namespace"]), name)
+				if err != nil {
+					return nil, nil, err
+				}
+				name = resolved
+			} else if ns := rawString(item["namespace"]); ns != "" {
 				name = flattenNamespaceToolName(ns, name)
 			}
 			toolCall := ChatToolCall{
@@ -1474,10 +1515,10 @@ func namespaceChildrenToChatTools(tool ResponsesTool, topLevel map[string]bool, 
 	return out, nil
 }
 
-// flattenNamespaceToolName joins namespace and child with two underscores and
-// returns the full value when within the 64-byte budget. Longer values retain
-// a rune-bounded prefix plus two underscores and eight hexadecimal digits from
-// the first four SHA-256 bytes.
+// flattenNamespaceToolName keeps default-scope names bare and joins other
+// namespaces and children with two underscores within the 64-byte budget.
+// Longer values retain a rune-bounded prefix plus two underscores and eight
+// hexadecimal digits from the first four SHA-256 bytes.
 //
 // The suffix derives from the entire joined name, keeping long-name shortening
 // stable while original identities are held separately for restoration. Hash
@@ -1486,6 +1527,11 @@ func namespaceChildrenToChatTools(tool ResponsesTool, topLevel map[string]bool, 
 // are not trimmed or validated, and a short result can contain supplied
 // invalid name syntax.
 func flattenNamespaceToolName(namespace, name string) string {
+	if namespace == "" || namespace == responsesDefaultToolNamespace {
+		// Codex default-scope calls use bare names, so declarations and historical
+		// calls must share that spelling instead of acquiring an executable prefix.
+		return name
+	}
 	full := namespace + "__" + name
 	if len(full) <= chatToolNameMaxLen {
 		return full

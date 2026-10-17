@@ -209,11 +209,11 @@ func (p openAIForwardPreludeAdapter) StripNamespacesRequired(v forward.Transport
 }
 
 // KeepNamespaces delegates whether historical tool calls retain namespaces
-// under current declarations. Provider, transport, passthrough and Compact
-// policy are supplied together; the prelude uses this result when applying
-// input namespace cleanup.
-func (p openAIForwardPreludeAdapter) KeepNamespaces(v forward.TransportDecision, passthrough, compact bool, body []byte) bool {
-	return gatewayprovider.ShouldKeepOpenAIResponsesToolCallNamespaces(p.provider, egress.OpenAIUpstreamTransport(v.Transport), passthrough, compact, body)
+// under the selected protocol policy. Provider, transport, passthrough and
+// Compact policy are supplied together; the prelude uses this result when
+// applying input namespace cleanup.
+func (p openAIForwardPreludeAdapter) KeepNamespaces(v forward.TransportDecision, passthrough, compact bool) bool {
+	return gatewayprovider.ShouldKeepOpenAIResponsesToolCallNamespaces(p.provider, egress.OpenAIUpstreamTransport(v.Transport), passthrough, compact)
 }
 
 // StripNamespaces delegates byte-level historical namespace cleanup with the

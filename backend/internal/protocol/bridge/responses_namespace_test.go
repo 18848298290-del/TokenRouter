@@ -6,6 +6,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestFlattenResponsesNamespacesDefaultScopeRoundTrip lowers a default function
+// declaration and its qualified history. The upstream uses one bare name and
+// restored output omits namespace while retaining call correlation and arguments.
+func TestFlattenResponsesNamespacesDefaultScopeRoundTrip(t *testing.T) {
+	request := map[string]any{
+		"tools": []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "function", "name": "wait"}}}},
+		"input": []any{map[string]any{"type": "function_call", "name": "wait", "namespace": "functions", "call_id": "call_1", "arguments": "{}"}},
+	}
+	names, changed, err := FlattenResponsesNamespaces(request)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, ResponsesNamespaceName{Name: "wait"}, names["wait"])
+	restored, _, err := RestoreResponsesNamespaceCalls([]byte(`{"output":[{"type":"function_call","name":"wait","namespace":"functions","call_id":"call_2","arguments":"{}"}]}`), names)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"output":[{"type":"function_call","name":"wait","call_id":"call_2","arguments":"{}"}]}`, string(restored))
+}
+
 // TestFlattenResponsesNamespaces_RewritesDeclarationHistoryAndChoice flattens
 // one namespace beside a plain function. It checks the returned identity pair,
 // renamed declaration/call/choice, retained message metadata, and model value.

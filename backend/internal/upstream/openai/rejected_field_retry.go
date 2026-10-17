@@ -205,6 +205,12 @@ func NormalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, respon
 			param = messageParam
 		}
 		if index, ok := OpenAIResponsesRejectedNamespaceIndex(param); ok {
+			// Missing-identity diagnostics require retaining the call's namespace. An
+			// inconsistent compatibility code cannot authorize removing the very field
+			// that the upstream explicitly requires for dispatch.
+			if strings.Contains(message, "missing namespace") {
+				return nil, "", false, nil
+			}
 			return RemoveOpenAIResponsesRejectedNamespaceAtIndex(body, index)
 		}
 		if index, ok := OpenAIResponsesRejectedStatusIndex(param); ok {

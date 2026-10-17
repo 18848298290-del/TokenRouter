@@ -9,7 +9,8 @@ import (
 )
 
 // responses_namespace.go flattens namespaced Responses tools and restores
-// namespace identities in replies.
+// namespace identities in replies. Default functions use bare names, while
+// other explicit namespaces use derived executable names and reverse mappings.
 // A Responses namespace gives a tool two identity components, while function-
 // only upstreams accept one name. Flattening joins the namespace and child
 // name, checks ambiguous results before request mutation, and returns the
@@ -93,6 +94,9 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 			}
 			flat := flattenNamespaceToolName(namespace, name)
 			entry := ResponsesNamespaceName{Namespace: namespace, Name: name}
+			if entry.Namespace == responsesDefaultToolNamespace {
+				entry.Namespace = ""
+			}
 			// Check conflicts before publishing new declarations or changing history.
 			// One upstream name must map to one client namespace/name pair for restoration.
 			if topLevel[flat] {
@@ -156,8 +160,9 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 }
 
 // RestoreResponsesNamespaceCalls restores mapped function-call names
-// throughout a JSON value and adds their namespaces. Empty payloads or
-// mappings and documents with no matched calls return the supplied bytes
+// throughout a JSON value and restores their namespace representation. Default
+// scope omits the namespace field. Empty payloads, empty mappings, and
+// documents with no matched calls return the supplied bytes
 // unchanged. Decode or encode errors also return those bytes with false and an
 // error.
 //
@@ -239,7 +244,11 @@ func rewriteNamespaceQualifiedCall(item map[string]any, names map[string]Respons
 	}
 	flat := flattenNamespaceToolName(namespace, name)
 	entry, ok := names[flat]
-	if !ok || entry.Namespace != namespace || entry.Name != name {
+	canonicalNamespace := namespace
+	if canonicalNamespace == responsesDefaultToolNamespace {
+		canonicalNamespace = ""
+	}
+	if !ok || entry.Namespace != canonicalNamespace || entry.Name != name {
 		return false
 	}
 	item["name"] = flat
@@ -250,13 +259,13 @@ func rewriteNamespaceQualifiedCall(item map[string]any, names map[string]Respons
 // restoreResponsesNamespaceValue walks decoded maps and arrays and restores
 // mapped function_call identities. It trims the current function name,
 // replaces a matching flat name with the recorded child name, and writes the
-// recorded namespace. Other object types keep their identity fields while
-// their children are still visited.
+// recorded namespace, omitting it for the default scope. Other object types
+// keep their identity fields while their children are still visited.
 //
-// The operation mutates shared maps and reports whether any call matched,
-// including a match whose values already equal the mapping. Its caller
-// provides an acyclic JSON-shaped value and serializes a changed result; byte
-// and numeric representation are determined by that caller's encoder.
+// The operation mutates shared maps and reports actual identity changes.
+// Already canonical calls need no serialization. Its caller provides an
+// acyclic JSON-shaped value and serializes a changed result; byte and numeric
+// representation are determined by that caller's encoder.
 func restoreResponsesNamespaceValue(value any, names map[string]ResponsesNamespaceName) bool {
 	changed := false
 	switch typed := value.(type) {
@@ -267,9 +276,19 @@ func restoreResponsesNamespaceValue(value any, names map[string]ResponsesNamespa
 	case map[string]any:
 		if strings.TrimSpace(stringValue(typed["type"])) == "function_call" {
 			if entry, ok := names[strings.TrimSpace(stringValue(typed["name"]))]; ok {
-				typed["name"] = entry.Name
-				typed["namespace"] = entry.Namespace
-				changed = true
+				if typed["name"] != entry.Name {
+					typed["name"] = entry.Name
+					changed = true
+				}
+				if entry.Namespace == "" {
+					if _, present := typed["namespace"]; present {
+						delete(typed, "namespace")
+						changed = true
+					}
+				} else if typed["namespace"] != entry.Namespace {
+					typed["namespace"] = entry.Namespace
+					changed = true
+				}
 			}
 		}
 		for _, child := range typed {

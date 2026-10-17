@@ -2,7 +2,6 @@ package provider
 
 import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
-	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
 
 // responses_namespace_policy.go selects namespace flattening and history
@@ -10,8 +9,10 @@ import (
 // Namespace tool declarations and historical calls need compatible naming on
 // the selected Responses path. OAuth-like requests normally retain namespaces,
 // Compact selects flattened declarations and stripped history, and API Key
-// requests retain call namespaces when their current body declares namespace
-// tools.
+// requests retain call namespaces independently of where their declarations
+// appeared. A later turn can reuse tools loaded in earlier history or upstream
+// conversation state, so a missing current declaration cannot authorize
+// deleting the identity of an already executed call.
 //
 // Native WSv2 forwards its namespace representation when passthrough is
 // disabled, so the flattening gate leaves those declarations intact even when
@@ -63,8 +64,8 @@ func ShouldStripOpenAIResponsesInputNamespaces(provider *ExecutionProvider, tran
 
 // ShouldKeepOpenAIResponsesToolCallNamespaces chooses whether call history
 // retains namespaces while other items are cleaned. Nil targets and Compact
-// requests return false; API Key requests retain them when namespace tools are
-// declared.
+// requests return false; ordinary API Key requests retain their supplied call
+// identities even when declarations belong to history or upstream state.
 //
 // OAuth-like requests keep call namespaces when their declaration policy is
 // not flattened, including native WSv2 paths. Flattened declarations instead
@@ -77,7 +78,6 @@ func ShouldKeepOpenAIResponsesToolCallNamespaces(
 	transport egress.OpenAIUpstreamTransport,
 	passthroughEnabled bool,
 	compactPath bool,
-	body []byte,
 ) bool {
 	if provider == nil {
 		return false
@@ -86,7 +86,7 @@ func ShouldKeepOpenAIResponsesToolCallNamespaces(
 		return false
 	}
 	if provider.View().IsOpenAIApiKey() {
-		return protocolbridge.HasOpenAIResponsesNamespaceToolDeclaration(body)
+		return true
 	}
 	if !provider.View().IsOpenAIOAuthLike() {
 		return false

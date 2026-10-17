@@ -144,6 +144,18 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyBindsNamespacePathToRejec
 	require.False(t, gjson.GetBytes(retryBody, "input.1.namespace").Exists())
 }
 
+// TestNormalizeOpenAIResponsesRejectedFieldRetryBodyKeepsRequiredNamespace
+// receives a missing-identity message with an inconsistent compatibility code.
+// The supplied namespace remains intact and no recovery request is admitted.
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyKeepsRequiredNamespace(t *testing.T) {
+	body := []byte(`{"input":[{"type":"function_call","namespace":"browser","name":"js","arguments":"{}"}]}`)
+	response := []byte(`{"error":{"code":"unknown_parameter","param":"input[0].namespace","message":"Missing namespace for function_call 'js'. Round-trip the model's function_call item with its namespace field included."}}`)
+	retry, _, changed, err := openai.NormalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, response)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Nil(t, retry)
+}
+
 // TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDoesNotTreatMaxOutputTokensSuggestionAsRejection
 // suggests max_output_tokens after rejecting the different max_tokens control.
 // It checks no adopted change and absent retry bytes for that unrelated

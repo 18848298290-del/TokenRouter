@@ -6753,11 +6753,11 @@ func TestOpenAIGatewayService_APIKeyRetriesExactRejectedNullMessageContent(t *te
 	require.Equal(t, "continue", gjson.GetBytes(upstream.bodies[1], "input.1.content").String())
 }
 
-// TestOpenAIGatewayService_APIKeyStripsAllIndexedNamespacesBeforeFirstForward
-// sends undeclared namespace fields on function and custom-tool history. It
-// checks the first and only API-key attempt removes both indexed namespace
-// fields.
-func TestOpenAIGatewayService_APIKeyStripsAllIndexedNamespacesBeforeFirstForward(t *testing.T) {
+// TestOpenAIGatewayService_APIKeyKeepsIndexedNamespacesBeforeFirstForward
+// sends function and custom-tool identities without current declarations. It
+// checks the first API-key attempt retains namespaces belonging to historical
+// tools or an upstream conversation.
+func TestOpenAIGatewayService_APIKeyKeepsIndexedNamespacesBeforeFirstForward(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"function_call","name":"first","namespace":"remove-first","arguments":"{}"},{"type":"custom_tool_call","name":"second","namespace":"remove-second","input":"{}"}]}`)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
 		newOpenAIRejectedFieldTestResponse(http.StatusOK, `{"output":[],"usage":{"input_tokens":1,"output_tokens":1,"input_tokens_details":{"cached_tokens":0}}}`),
@@ -6773,8 +6773,103 @@ func TestOpenAIGatewayService_APIKeyStripsAllIndexedNamespacesBeforeFirstForward
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Len(t, upstream.bodies, 1)
-	require.False(t, gjson.GetBytes(upstream.bodies[0], "input.0.namespace").Exists())
-	require.False(t, gjson.GetBytes(upstream.bodies[0], "input.1.namespace").Exists())
+	require.Equal(t, "remove-first", gjson.GetBytes(upstream.bodies[0], "input.0.namespace").String())
+	require.Equal(t, "remove-second", gjson.GetBytes(upstream.bodies[0], "input.1.namespace").String())
+}
+
+// TestOpenAIGatewayService_APIKeyPreservesHistoricalNamespaces exercises
+// declaration placement and omitted tools on native Responses requests. Every
+// first upstream attempt retains the caller's tool identity and correlation.
+func TestOpenAIGatewayService_APIKeyPreservesHistoricalNamespaces(t *testing.T) {
+	declarations := map[string]string{
+		"omitted":    ``,
+		"static":     `,"tools":[{"type":"namespace","name":"browser","tools":[{"type":"function","name":"js"}]}]`,
+		"discovered": `,"tools":[{"type":"tool_search"}]`,
+	}
+	for name, declaration := range declarations {
+		t.Run(name, func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.6-sol","stream":false` + declaration + `,"input":[` +
+				`{"type":"tool_search_output","call_id":"search_1","tools":[{"type":"namespace","name":"browser","tools":[{"type":"function","name":"js"}]}]},` +
+				`{"type":"function_call","call_id":"call_1","name":"js","namespace":"browser","arguments":"{}"},` +
+				`{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`)
+			upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
+				newOpenAIRejectedFieldTestResponse(http.StatusOK, namespaceForwardOKResponse),
+			}}
+			result, err := newOpenAIRejectedFieldTestService(upstream).Forward(
+				context.Background(), newOpenAIRejectedFieldTestContext(body), newOpenAIRejectedFieldTestProvider(), body,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Len(t, upstream.bodies, 1)
+			require.Equal(t, "browser", gjson.GetBytes(upstream.bodies[0], "input.1.namespace").String())
+			require.Equal(t, "call_1", gjson.GetBytes(upstream.bodies[0], "input.1.call_id").String())
+		})
+	}
+}
+
+// TestOpenAIGatewayService_APIKeyPreservesAllCallNamespaceKinds sends the
+// recognized call shapes beside a message carrying a stale namespace. Native
+// forwarding keeps every call identity and cleans only the message field.
+func TestOpenAIGatewayService_APIKeyPreservesAllCallNamespaceKinds(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","stream":false,"input":[{"type":"function_call","name":"js","namespace":"browser","call_id":"call_1","arguments":"{}"},{"type":"custom_tool_call","name":"exec","namespace":"terminal","call_id":"call_2","input":"pwd"},{"type":"tool_call","name":"inspect","namespace":"tools"},{"type":"mcp_tool_call","name":"list","namespace":"mcp"},{"type":"message","role":"user","namespace":"stale","content":"continue"}]}`)
+	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
+		newOpenAIRejectedFieldTestResponse(http.StatusOK, namespaceForwardOKResponse),
+	}}
+	_, err := newOpenAIRejectedFieldTestService(upstream).Forward(context.Background(), newOpenAIRejectedFieldTestContext(body), newOpenAIRejectedFieldTestProvider(), body)
+	require.NoError(t, err)
+	require.Len(t, upstream.bodies, 1)
+	for index, namespace := range []string{"browser", "terminal", "tools", "mcp"} {
+		require.Equal(t, namespace, gjson.GetBytes(upstream.bodies[0], fmt.Sprintf("input.%d.namespace", index)).String())
+	}
+	require.False(t, gjson.GetBytes(upstream.bodies[0], "input.4.namespace").Exists())
+}
+
+// TestOpenAIGatewayService_APIKeyPassthroughRestoresDiscoveredFunction carries
+// a plain discovered function through request lowering and streamed response
+// restoration. Added, done, and terminal items keep its client namespace and
+// the same call ID while the upstream declaration and history stay bare.
+func TestOpenAIGatewayService_APIKeyPassthroughRestoresDiscoveredFunction(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","stream":true,"tools":[{"type":"tool_search","execution":"client"}],"input":[{"type":"tool_search_call","call_id":"search_1","arguments":{"query":"js"},"execution":"client"},{"type":"tool_search_output","call_id":"search_1","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]},{"type":"function_call","name":"js","namespace":"js","call_id":"call_1","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`)
+	sse := "data: {\"type\":\"response.output_item.added\",\"sequence_number\":0,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"js\",\"arguments\":\"{}\"}}\n\n" +
+		"data: {\"type\":\"response.output_item.done\",\"sequence_number\":1,\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"js\",\"arguments\":\"{}\",\"status\":\"completed\"}}\n\n" +
+		"data: {\"type\":\"response.completed\",\"sequence_number\":2,\"response\":{\"id\":\"resp_2\",\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"js\",\"arguments\":\"{}\",\"status\":\"completed\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}}
+	provider := newOpenAIRejectedFieldTestProvider()
+	provider.Record.Extra["openai_passthrough"] = true
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("User-Agent", "curl/8.0")
+	_, err := newOpenAIRejectedFieldTestService(upstream).Forward(context.Background(), c, provider, body)
+	require.NoError(t, err)
+	require.Len(t, upstream.bodies, 1)
+	require.Equal(t, "js", gjson.GetBytes(upstream.bodies[0], "tools.1.name").String())
+	require.Equal(t, "js", gjson.GetBytes(upstream.bodies[0], "input.2.name").String())
+	require.False(t, gjson.GetBytes(upstream.bodies[0], "input.2.namespace").Exists())
+	restored := 0
+	for line := range strings.SplitSeq(recorder.Body.String(), "\n") {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		item := gjson.Get(payload, "item")
+		if gjson.Get(payload, "type").String() == "response.completed" {
+			item = gjson.Get(payload, "response.output.0")
+		}
+		if !item.Exists() {
+			continue
+		}
+		require.Equal(t, "js", item.Get("name").String())
+		require.Equal(t, "js", item.Get("namespace").String())
+		require.Equal(t, "call_2", item.Get("call_id").String())
+		restored++
+	}
+	require.Equal(t, 3, restored)
 }
 
 // TestOpenAIGatewayServiceProactivelyStripsCrossProviderReasoningContent
@@ -6873,11 +6968,11 @@ func TestOpenAIGatewayService_RetriesExplicitMaxOutputTokensRejection(t *testing
 	require.Equal(t, "keep", gjson.GetBytes(upstream.bodies[1], "input.0.content.max_output_tokens").String())
 }
 
-// TestOpenAIGatewayService_ComposesProactiveNamespaceStripWithRejectedFieldRetry
-// combines undeclared tool namespaces with an output limit rejected after
-// preparation. It checks both attempts omit namespaces while only the retry
-// drops the limit.
-func TestOpenAIGatewayService_ComposesProactiveNamespaceStripWithRejectedFieldRetry(t *testing.T) {
+// TestOpenAIGatewayService_KeepsNamespacesDuringRejectedFieldRetry
+// combines historical tool namespaces with an explicitly rejected output
+// limit. Both attempts retain call identities while the retry removes only
+// the rejected output parameter.
+func TestOpenAIGatewayService_KeepsNamespacesDuringRejectedFieldRetry(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","stream":false,"max_output_tokens":2048,"input":[{"type":"function_call","name":"first","namespace":"remove-first","arguments":"{}"},{"type":"custom_tool_call","name":"second","namespace":"remove-second","input":"{}"}]}`)
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
 		newOpenAIRejectedFieldTestResponse(http.StatusBadRequest, `{"error":{"code":"unsupported_parameter","message":"Unsupported parameter: max_output_tokens","param":"max_output_tokens"}}`),
@@ -6895,8 +6990,8 @@ func TestOpenAIGatewayService_ComposesProactiveNamespaceStripWithRejectedFieldRe
 	require.NotNil(t, result)
 	require.Len(t, upstream.bodies, 2)
 	for _, forwardedBody := range upstream.bodies {
-		require.False(t, gjson.GetBytes(forwardedBody, "input.0.namespace").Exists())
-		require.False(t, gjson.GetBytes(forwardedBody, "input.1.namespace").Exists())
+		require.Equal(t, "remove-first", gjson.GetBytes(forwardedBody, "input.0.namespace").String())
+		require.Equal(t, "remove-second", gjson.GetBytes(forwardedBody, "input.1.namespace").String())
 	}
 	require.Equal(t, int64(2048), gjson.GetBytes(upstream.bodies[0], "max_output_tokens").Int())
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "max_output_tokens").Exists())

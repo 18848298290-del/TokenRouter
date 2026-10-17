@@ -36,13 +36,21 @@ var responsesToolCallItemIDPrefixes = []string{"fc_", "ctc_", "tsc_"}
 // conversion reads them.
 type ResponsesClientToolMapping struct {
 	// CustomTools, ToolSearch, and NamespaceTools describe the successful
-	// lowering decision. A restorer copies the struct and shares both maps, so
+	// lowering decision. A restorer copies the struct and shares its maps, so
 	// their contents remain stable while that stream reads identities. Custom
 	// membership wins over search classification; namespace restoration applies
 	// to calls that remain ordinary functions after client-kind restoration.
 	CustomTools    map[string]bool                   // custom client names enabled
 	ToolSearch     bool                              // client discovery proxy enabled
 	NamespaceTools map[string]ResponsesNamespaceName // flat-name namespace identity pairs
+	// CallNames and FunctionTools describe the same accepted declarations as the
+	// reverse map. Published maps stay immutable while later turns or response
+	// readers retain them; history-only identities do not activate declarations.
+	CallNames     map[NamespacedToolName]string // client identity upstream spelling
+	FunctionTools map[string]bool               // ordinary function name membership
+	// DeclaredNamespaces includes empty groups, allowing explicit group selectors
+	// to be checked before a platform filters declarations without executable members.
+	DeclaredNamespaces map[string]bool // supplied namespace group names
 }
 
 // ResponsesClientToolStreamRestorer owns one stream's argument buffers,
@@ -103,8 +111,30 @@ type responsesClientToolStreamCall struct {
 // history/schema validation is performed. Callers discard failed mutable
 // request candidates and keep the mapping with the successful request.
 func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, bool, error) {
+	return adaptResponsesClientTools(req, ResponsesClientToolMapping{})
+}
+
+// adaptResponsesClientTools prepares one effective declaration set while
+// retaining verified plain-function aliases from an omitted-tool continuation.
+// Explicit replacement declarations use an empty inherited mapping. Errors
+// leave the mutable candidate disposable and prevent publication to readers.
+//
+// Effective declarations precede alias creation and history conversion, keeping
+// executable names paired with their response identities. An inherited plain
+// function can retain a discovery namespace only while that same bare function
+// remains declared. Explicit tool replacement does not acquire those inherited
+// aliases, so a reset or a new definition set starts its own conversion state.
+func adaptResponsesClientTools(req map[string]any, inherited ResponsesClientToolMapping) (ResponsesClientToolMapping, bool, error) {
 	if req == nil {
 		return ResponsesClientToolMapping{}, false, nil
+	}
+	inputJSON, err := json.Marshal(req["input"])
+	if err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	additional, err := promoteResponsesAdditionalTools(req)
+	if err != nil {
+		return ResponsesClientToolMapping{}, false, err
 	}
 	tools, ok := req["tools"].([]any)
 	if !ok || len(tools) == 0 {
@@ -117,8 +147,33 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 	if discovered {
 		tools, _ = req["tools"].([]any)
 	}
+	toolsJSON, err := json.Marshal(tools)
+	if err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	var identityTools []ResponsesTool
+	if err := json.Unmarshal(toolsJSON, &identityTools); err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	identities, err := responsesToolIdentityMapping(identityTools, inputJSON)
+	if err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	// Restored plain functions retain their discovery identity through omitted-tool
+	// turns; an explicit replacement enters with no inherited aliases to revive.
+	for upstream, identity := range inherited.NamespaceTools {
+		if inherited.FunctionTools[upstream] && identities.FunctionTools[upstream] &&
+			identity.Namespace == identity.Name && identity.Name == upstream {
+			if current, exists := identities.CallNames[identity]; exists && current != upstream {
+				return ResponsesClientToolMapping{}, false, fmt.Errorf("inherited discovered function conflicts with a current namespace tool")
+			}
+			identities.NamespaceTools[upstream] = identity
+			identities.CallNames[identity] = upstream
+		}
+	}
 
-	adapter := ResponsesClientToolMapping{CustomTools: make(map[string]bool)}
+	adapter := identities
+	adapter.CustomTools = make(map[string]bool)
 	functionNames := make(map[string]bool)
 	customNames := make(map[string]bool)
 	for _, raw := range tools {
@@ -155,7 +210,6 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 	if err != nil {
 		return ResponsesClientToolMapping{}, false, err
 	}
-	adapter.NamespaceTools = names
 	if adapter.ToolSearch {
 		if _, exists := names[toolSearchProxyName]; exists {
 			return ResponsesClientToolMapping{}, false, fmt.Errorf("built-in tool_search conflicts with namespace tool flattened as %q; this upstream cannot disambiguate them, rename the tool", toolSearchProxyName)
@@ -164,7 +218,7 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 
 	tools, _ = req["tools"].([]any)
 	lowered := make([]any, 0, len(tools))
-	changed := discovered || flattened
+	changed := additional || discovered || flattened
 	seenSearch := false
 	for _, raw := range tools {
 		tool, ok := raw.(map[string]any)
@@ -215,6 +269,14 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 	if changed {
 		req["tools"] = lowered
 	}
+	// Flattening handles explicit groups first. Resolve the remaining supplied
+	// identities against discovery evidence before history conversion removes their
+	// original representation or a response reader captures its reverse mapping.
+	identityChanged, err := rewriteResponsesFunctionCalls(req["input"], &adapter)
+	if err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	changed = changed || identityChanged
 	historyChanged, err := rewriteClientToolHistory(req["input"], &adapter)
 	if err != nil {
 		return ResponsesClientToolMapping{}, false, err
@@ -222,6 +284,11 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 	if historyChanged {
 		changed = true
 	}
+	choiceChanged, err := rewriteResponsesToolChoice(req, &adapter)
+	if err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	changed = changed || choiceChanged
 	if rewriteClientToolChoice(req, &adapter) {
 		changed = true
 	}
@@ -279,6 +346,34 @@ func AdaptResponsesClientToolsWithInheritedMapping(
 		return ResponsesClientToolMapping{}, false, nil
 	}
 	if _, toolsPresent := req["tools"]; toolsPresent {
+		tools, valid := req["tools"].([]any)
+		if !valid || len(tools) == 0 {
+			input, err := json.Marshal(req["input"])
+			if err != nil {
+				return ResponsesClientToolMapping{}, false, err
+			}
+			history, err := responsesToolIdentityMapping(nil, input)
+			if err != nil {
+				return ResponsesClientToolMapping{}, false, err
+			}
+			for identity, upstream := range inherited.CallNames {
+				if current, exists := history.CallNames[identity]; exists && current != upstream {
+					return ResponsesClientToolMapping{}, false, fmt.Errorf("historical tool identity conflicts with its inherited mapping")
+				}
+				history.CallNames[identity] = upstream
+			}
+			for upstream, identity := range inherited.NamespaceTools {
+				if current, exists := history.NamespaceTools[upstream]; exists && current != identity {
+					return ResponsesClientToolMapping{}, false, fmt.Errorf("historical upstream tool name conflicts with its inherited mapping")
+				}
+				history.NamespaceTools[upstream] = identity
+			}
+			// A reset removes future declarations, while executed historical calls
+			// still need their known names. Return empty state after that rewrite so
+			// subsequent turns cannot reactivate a cleared tool through inheritance.
+			changed, err := rewriteResponsesFunctionCalls(req["input"], &history)
+			return ResponsesClientToolMapping{}, changed, err
+		}
 		return AdaptResponsesClientTools(req)
 	}
 	if len(inherited.CustomTools) == 0 && !inherited.ToolSearch && len(inherited.NamespaceTools) == 0 {
@@ -286,7 +381,7 @@ func AdaptResponsesClientToolsWithInheritedMapping(
 	}
 	if len(inheritedLoweredTools) > 0 && len(inheritedLoweredTools[0]) > 0 {
 		req["tools"] = restoreInheritedResponsesClientToolDeclarations(inheritedLoweredTools[0], inherited)
-		return AdaptResponsesClientTools(req)
+		return adaptResponsesClientTools(req, inherited)
 	}
 
 	changed, err := rewriteClientToolHistory(req["input"], &inherited)
@@ -302,6 +397,16 @@ func AdaptResponsesClientToolsWithInheritedMapping(
 			changed = true
 		}
 	}
+	identityChanged, err := rewriteResponsesFunctionCalls(req["input"], &inherited)
+	if err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	changed = changed || identityChanged
+	choiceChanged, err := rewriteResponsesToolChoice(req, &inherited)
+	if err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	changed = changed || choiceChanged
 	if rewriteClientToolChoice(req, &inherited) {
 		changed = true
 	}

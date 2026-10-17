@@ -187,6 +187,99 @@ func TestAdaptResponsesClientTools_LowersDiscoveredToolSearchOutput(t *testing.T
 	require.JSONEq(t, `{"output":[{"type":"function_call","name":"spawn_agent","namespace":"multi_agent_v1","call_id":"call_spawn","arguments":"{\"message\":\"work\"}"}]}`, string(restored))
 }
 
+// TestAdaptResponsesClientTools_DiscoveredFunctionPreservesIdentity lowers a
+// plain discovered function with an explicit call namespace. Its request uses
+// the bare upstream name and its response restores the discovered identity.
+func TestAdaptResponsesClientTools_DiscoveredFunctionPreservesIdentity(t *testing.T) {
+	var request map[string]any
+	require.NoError(t, json.Unmarshal([]byte(`{"tools":[{"type":"tool_search"}],"input":[{"type":"tool_search_output","call_id":"search_1","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]},{"type":"function_call","name":"js","namespace":"js","call_id":"call_1","arguments":"{}"}]}`), &request))
+	mapping, changed, err := AdaptResponsesClientTools(request)
+	require.NoError(t, err)
+	require.True(t, changed)
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	require.Equal(t, "js", gjson.GetBytes(encoded, "input.1.name").String())
+	require.False(t, gjson.GetBytes(encoded, "input.1.namespace").Exists())
+	restored, _, err := RestoreResponsesClientToolPayload([]byte(`{"output":[{"type":"function_call","name":"js","call_id":"call_2","arguments":"{}"}]}`), mapping)
+	require.NoError(t, err)
+	require.Equal(t, "js", gjson.GetBytes(restored, "output.0.namespace").String())
+	require.Equal(t, "call_2", gjson.GetBytes(restored, "output.0.call_id").String())
+}
+
+// TestAdaptResponsesClientToolsWithInheritedMappingKeepsDiscoveredBareAlias
+// continues a discovered plain function without resending its declaration.
+// Both outgoing history and restored output retain its original tool identity.
+func TestAdaptResponsesClientToolsWithInheritedMappingKeepsDiscoveredBareAlias(t *testing.T) {
+	var first map[string]any
+	require.NoError(t, json.Unmarshal([]byte(`{"tools":[{"type":"tool_search"}],"input":[{"type":"tool_search_output","call_id":"search_1","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]}]}`), &first))
+	inherited, _, err := AdaptResponsesClientTools(first)
+	require.NoError(t, err)
+	var followup map[string]any
+	require.NoError(t, json.Unmarshal([]byte(`{"input":[{"type":"function_call","name":"js","namespace":"js","call_id":"call_1","arguments":"{}"}]}`), &followup))
+	mapping, changed, err := AdaptResponsesClientToolsWithInheritedMapping(followup, inherited, requireResponsesClientToolValue[[]any](t, first["tools"]))
+	require.NoError(t, err)
+	require.True(t, changed)
+	body, err := json.Marshal(followup)
+	require.NoError(t, err)
+	require.Equal(t, "js", gjson.GetBytes(body, "input.0.name").String())
+	require.False(t, gjson.GetBytes(body, "input.0.namespace").Exists())
+	require.Equal(t, ResponsesNamespaceName{Namespace: "js", Name: "js"}, mapping.NamespaceTools["js"])
+}
+
+// TestAdaptResponsesClientToolsWithInheritedMappingResetsFutureToolsOnly clears
+// active declarations while replaying a previously mapped function call.
+// History retains its executable identity and the returned future mapping clears.
+func TestAdaptResponsesClientToolsWithInheritedMappingResetsFutureToolsOnly(t *testing.T) {
+	var request map[string]any
+	require.NoError(t, json.Unmarshal([]byte(`{"tools":[],"input":[{"type":"function_call","name":"js","namespace":"browser","call_id":"call_1","arguments":"{}"}]}`), &request))
+	inherited := ResponsesClientToolMapping{NamespaceTools: map[string]ResponsesNamespaceName{"browser__js": {Namespace: "browser", Name: "js"}}}
+	mapping, changed, err := AdaptResponsesClientToolsWithInheritedMapping(request, inherited)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Empty(t, mapping)
+	body, err := json.Marshal(request)
+	require.NoError(t, err)
+	require.Empty(t, gjson.GetBytes(body, "tools").Array())
+	require.Equal(t, "browser__js", gjson.GetBytes(body, "input.0.name").String())
+	require.False(t, gjson.GetBytes(body, "input.0.namespace").Exists())
+}
+
+// TestAdaptResponsesClientToolsWithInheritedMappingRejectsAliasReplacement
+// discovers an explicit namespace colliding with a previously loaded plain
+// function. The continuation fails before the inherited alias can replace
+// the newly declared tool's executable identity.
+func TestAdaptResponsesClientToolsWithInheritedMappingRejectsAliasReplacement(t *testing.T) {
+	inherited := ResponsesClientToolMapping{
+		FunctionTools:  map[string]bool{"js": true},
+		NamespaceTools: map[string]ResponsesNamespaceName{"js": {Namespace: "js", Name: "js"}},
+		ToolSearch:     true,
+	}
+	var request map[string]any
+	require.NoError(t, json.Unmarshal([]byte(`{"input":[{"type":"tool_search_output","call_id":"search_2","tools":[{"type":"namespace","name":"js","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]}]}]}`), &request))
+	_, _, err := AdaptResponsesClientToolsWithInheritedMapping(request, inherited, []any{
+		map[string]any{"type": "function", "name": "tool_search"},
+		map[string]any{"type": "function", "name": "js", "parameters": map[string]any{"type": "object"}},
+	})
+	require.ErrorContains(t, err, "conflicts")
+}
+
+// TestAdaptResponsesClientToolsPromotesAdditionalNamespaceTools converts an
+// additional_tools declaration and matching history for function-only execution.
+// The declared and called names agree and the declaration item is consumed.
+func TestAdaptResponsesClientToolsPromotesAdditionalNamespaceTools(t *testing.T) {
+	var request map[string]any
+	require.NoError(t, json.Unmarshal([]byte(`{"input":[{"type":"additional_tools","role":"developer","tools":[{"type":"namespace","name":"browser","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]}]},{"type":"function_call","name":"js","namespace":"browser","call_id":"call_1","arguments":"{}"}]}`), &request))
+	mapping, changed, err := AdaptResponsesClientTools(request)
+	require.NoError(t, err)
+	require.True(t, changed)
+	body, err := json.Marshal(request)
+	require.NoError(t, err)
+	require.Equal(t, "browser__js", gjson.GetBytes(body, "tools.0.name").String())
+	require.Equal(t, "browser__js", gjson.GetBytes(body, "input.0.name").String())
+	require.False(t, gjson.GetBytes(body, "input.0.namespace").Exists())
+	require.Equal(t, ResponsesNamespaceName{Namespace: "browser", Name: "js"}, mapping.NamespaceTools["browser__js"])
+}
+
 // TestAdaptResponsesClientTools_LowersToolSearchDiscoveryPayloadWithoutOutput
 // supplies discovery tools with no output value. The lowered result retains
 // its call ID, serializes the tool list, and removes tools/status/execution.

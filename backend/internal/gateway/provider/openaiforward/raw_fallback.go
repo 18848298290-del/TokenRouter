@@ -190,30 +190,23 @@ func ResponsesViaRawChat(ctx context.Context, body []byte, p RawFallbackPorts) (
 
 	clientStream := responsesReq.Stream
 	serviceTier := p.ServiceTier(body)
-	// Save tool identities before converting them to Chat function tools. Response conversion
-	// restores custom_tool_call and tool_search_call items by these names and flags.
-	// Flattened namespace tools use the saved map to regain function_call.namespace.
-	effectiveTools, err := bridge.EffectiveResponsesTools(&responsesReq)
-	if err != nil {
-		p.Error(http.StatusBadRequest, "invalid_request_error", err.Error())
-		return nil, fmt.Errorf("resolve responses tools: %w", err)
-	}
-	customTools := bridge.CustomToolNames(effectiveTools)
-	functionTools := bridge.FunctionToolNames(effectiveTools)
-	toolSearch := bridge.HasToolSearchTool(effectiveTools)
-	namespaceTools := bridge.NamespaceToolNames(effectiveTools)
-
 	// Cache plaintext summaries before resolving the converted history so
 	// encrypted-only copies with the same item identity can obtain the
 	// corresponding reasoning content.
 	p.RecacheInput(responsesReq.Input)
-	chatReq, err := bridge.ResponsesToChatCompletionsRequestWithOptions(&responsesReq, &bridge.ResponsesToChatOptions{
+	chatReq, mapping, err := bridge.ResponsesToChatCompletionsRequestWithMapping(&responsesReq, &bridge.ResponsesToChatOptions{
 		ReasoningContentByID: p.ReasoningContent,
 	})
 	if err != nil {
 		p.Error(http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, fmt.Errorf("convert responses to chat completions: %w", err)
 	}
+	// Response readers receive the exact mapping produced with this Chat request,
+	// keeping discovery aliases and default namespaces consistent across the round trip.
+	customTools := mapping.CustomTools
+	functionTools := mapping.FunctionTools
+	toolSearch := mapping.ToolSearch
+	namespaceTools := mapping.NamespaceTools
 
 	billingModel := p.BillingModel(originalModel, "")
 	upstreamModel := p.UpstreamModel(billingModel)
