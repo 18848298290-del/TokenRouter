@@ -280,6 +280,16 @@ func TestAdaptResponsesClientToolsPromotesAdditionalNamespaceTools(t *testing.T)
 	require.Equal(t, ResponsesNamespaceName{Namespace: "browser", Name: "js"}, mapping.NamespaceTools["browser__js"])
 }
 
+// TestAdaptResponsesClientToolsRejectsUndeclaredNamespaceChoice selects a group
+// absent from otherwise valid namespace declarations. Lowering rejects that
+// selector before flattening can silently replace it with automatic selection.
+func TestAdaptResponsesClientToolsRejectsUndeclaredNamespaceChoice(t *testing.T) {
+	var request map[string]any
+	require.NoError(t, json.Unmarshal([]byte(`{"tools":[{"type":"namespace","name":"browser","tools":[{"type":"function","name":"js"}]}],"tool_choice":{"type":"namespace","name":"unknown"}}`), &request))
+	_, _, err := AdaptResponsesClientTools(request)
+	require.ErrorContains(t, err, "without a declared group")
+}
+
 // TestAdaptResponsesClientTools_LowersToolSearchDiscoveryPayloadWithoutOutput
 // supplies discovery tools with no output value. The lowered result retains
 // its call ID, serializes the tool list, and removes tools/status/execution.

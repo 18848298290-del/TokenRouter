@@ -244,9 +244,9 @@ func rewriteResponsesFunctionCalls(input any, mapping *ResponsesClientToolMappin
 //
 // History and selectors use the same lookup, preventing a selector from
 // targeting an undeclared doubled name after discovery. Raw byte patches keep
-// other selector fields intact and support escaped JSON keys. Namespace group
-// selection becomes automatic only when a mapped member establishes that the
-// group actually participated in this conversion.
+// other selector fields intact and support escaped JSON keys. A declared group
+// authorizes automatic selection even when platform filtering later removes
+// all executable members from that group.
 func responsesMappedToolChoice(raw json.RawMessage, mapping *ResponsesClientToolMapping) (json.RawMessage, error) {
 	choice := gjson.ParseBytes(raw)
 	if !choice.IsObject() {

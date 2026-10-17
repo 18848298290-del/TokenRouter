@@ -99,10 +99,11 @@ type responsesClientToolStreamCall struct {
 }
 
 // AdaptResponsesClientTools lowers decoded custom, search, and namespace
-// declarations and their history/choice in place. Nil requests or tools that
-// are not a nonempty []any return an empty mapping with no change. Named
-// collisions and missing search-output IDs return errors; the request can
-// already contain earlier mutations when an error is returned.
+// declarations and their history/choice in place. Nil requests remain
+// unchanged. Without active declarations, known historical function identities
+// can still be converted, while the returned future mapping stays empty.
+// Collisions and unresolved identities return errors; failed candidates can
+// contain earlier mutations and are discarded by the caller.
 //
 // Promotion registers effective discoveries before flattening. Custom input
 // uses a fixed string wrapper, search uses a named function proxy, and
@@ -138,7 +139,18 @@ func adaptResponsesClientTools(req map[string]any, inherited ResponsesClientTool
 	}
 	tools, ok := req["tools"].([]any)
 	if !ok || len(tools) == 0 {
-		return ResponsesClientToolMapping{}, false, nil
+		history, err := responsesToolIdentityMapping(nil, inputJSON)
+		if err != nil {
+			return ResponsesClientToolMapping{}, false, err
+		}
+		// Historical declarations can explain executed calls without enabling any
+		// future tools. Validate supplied identities even when the active list is absent.
+		changed, err := rewriteResponsesFunctionCalls(req["input"], &history)
+		if err != nil {
+			return ResponsesClientToolMapping{}, false, err
+		}
+		choiceChanged, err := rewriteResponsesToolChoice(req, &history)
+		return ResponsesClientToolMapping{}, additional || changed || choiceChanged, err
 	}
 	discovered, err := promoteResponsesToolSearchDiscoveries(req)
 	if err != nil {
@@ -203,6 +215,12 @@ func adaptResponsesClientTools(req map[string]any, inherited ResponsesClientTool
 	if adapter.ToolSearch && (functionNames[toolSearchProxyName] || customNames[toolSearchProxyName]) {
 		return ResponsesClientToolMapping{}, false, fmt.Errorf("built-in tool_search conflicts with a declared tool named %q; this upstream cannot disambiguate them, rename the tool", toolSearchProxyName)
 	}
+	// Validate the supplied selector before flattening can replace a namespace
+	// group with auto, keeping an undeclared group from acquiring that downgrade.
+	choiceChanged, err := rewriteResponsesToolChoice(req, &adapter)
+	if err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
 
 	// Derive namespace names before client lowering so declarations, replayed
 	// function calls, and choices use the same names for response restoration.
@@ -218,7 +236,7 @@ func adaptResponsesClientTools(req map[string]any, inherited ResponsesClientTool
 
 	tools, _ = req["tools"].([]any)
 	lowered := make([]any, 0, len(tools))
-	changed := additional || discovered || flattened
+	changed := additional || discovered || flattened || choiceChanged
 	seenSearch := false
 	for _, raw := range tools {
 		tool, ok := raw.(map[string]any)
@@ -284,11 +302,6 @@ func adaptResponsesClientTools(req map[string]any, inherited ResponsesClientTool
 	if historyChanged {
 		changed = true
 	}
-	choiceChanged, err := rewriteResponsesToolChoice(req, &adapter)
-	if err != nil {
-		return ResponsesClientToolMapping{}, false, err
-	}
-	changed = changed || choiceChanged
 	if rewriteClientToolChoice(req, &adapter) {
 		changed = true
 	}
@@ -327,9 +340,10 @@ func stripResponsesDeferredToolFlags(tools []any) bool {
 
 // AdaptResponsesClientToolsWithInheritedMapping adapts decoded follow-up
 // history using inherited identities when tools is absent. Any present tools
-// value selects fresh adaptation, including empty or invalid values. A
-// nonempty first optional lowered slice restores effective client declarations
-// before that fresh pass; later optional slices are ignored.
+// value selects fresh adaptation, including empty or invalid values. With no
+// inherited identities, normal adaptation still resolves additional_tools
+// and validates qualified history. A nonempty first optional lowered slice
+// restores effective client declarations; later optional slices are ignored.
 //
 // Without restored declarations, inherited maps remain shared while history
 // and choice change in place. Namespace rewriting has no change result, so a
@@ -377,7 +391,7 @@ func AdaptResponsesClientToolsWithInheritedMapping(
 		return AdaptResponsesClientTools(req)
 	}
 	if len(inherited.CustomTools) == 0 && !inherited.ToolSearch && len(inherited.NamespaceTools) == 0 {
-		return ResponsesClientToolMapping{}, false, nil
+		return AdaptResponsesClientTools(req)
 	}
 	if len(inheritedLoweredTools) > 0 && len(inheritedLoweredTools[0]) > 0 {
 		req["tools"] = restoreInheritedResponsesClientToolDeclarations(inheritedLoweredTools[0], inherited)

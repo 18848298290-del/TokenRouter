@@ -140,7 +140,7 @@ type ChatCompletionsToResponsesStreamState struct {
 	// recognition; custom recognition precedes search, then namespace restoration.
 	// CustomTools direct lookup reads bool, while inferred aliases range all keys.
 	CustomTools        map[string]bool               // declared client custom names
-	FunctionTools      map[string]bool               // explicit top-level function names
+	FunctionTools      map[string]bool               // ordinary and default-scoped function names
 	ToolSearchDeclared bool                          // client search proxy enabled
 	NamespaceTools     map[string]NamespacedToolName // flat-label client identity pairs
 
