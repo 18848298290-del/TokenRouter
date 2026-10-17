@@ -27,7 +27,7 @@ type usageTrackedBody struct {
 	closed        *atomic.Int64 // shared body-close attempt counter
 }
 
-// TestNativeUsageAdaptersLocalTLS queries seven native adapters through local
+// TestNativeUsageAdaptersLocalTLS queries eight native adapters through local
 // TLS endpoints with competing authorization overrides. Requests must select
 // fixed paths and real credentials, close every response body, and return
 // normalized secret-free results.
@@ -48,6 +48,7 @@ func TestNativeUsageAdaptersLocalTLS(t *testing.T) {
 		{"zhipu coding", &zhipu.ZhipuCodingUsageAdapter{}, "/api/coding/paas/v4", []string{"/api/monitor/usage/quota/limit"}, []string{`{"success":true,"data":{"limits":[{"type":"TOKENS_LIMIT","unit":3,"percentage":32}]}}`}, []string{"key-secret"}, "limits"},
 		{"deepseek", &deepseek.DeepseekBalanceUsageAdapter{}, "/anthropic", []string{"/user/balance"}, []string{`{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"3.5"},{"currency":"USD","total_balance":"1.25"}]}`}, []string{"Bearer key-secret"}, "balance"},
 		{"sub2api", &usageprovider.Sub2APIUsageAdapter{}, "/v1", []string{"/v1/usage"}, []string{`{"isValid":true,"mode":"unrestricted","unit":"USD","planName":"payg","remaining":12.5,"balance":12.5}`}, []string{"Bearer key-secret"}, "balance"},
+		{"derouter", &usageprovider.DerouterUsageAdapter{}, "", []string{"/balance"}, []string{`{"balance":"100.0000","locked_balance":"20.0000","available":"80.0000"}`}, []string{"Bearer key-secret"}, "balance"},
 		{"zivv", &usageprovider.ZivvUsageAdapter{}, "/v1", []string{"/v1/user/balance"}, []string{`{"balance":1,"currency":"USD","is_available":true,"key_limit":0,"key_used":0,"total_used":2}`}, []string{"Bearer key-secret"}, "balance"},
 		{"newapi", &usageprovider.NewAPIUsageAdapter{}, "/v1", []string{"/api/status", "/api/usage/token/", "/user/balance"}, []string{`{"success":true,"data":{"quota_display_type":"USD","quota_per_unit":500000}}`, `{"code":true,"data":{"object":"token_usage","name":"token","total_granted":632500000,"total_used":360000,"total_available":632140000,"unlimited_quota":false,"expires_at":1893456000}}`, `{"balance_infos":[{"currency":"USD","total_balance":"1264.28"}]}`}, []string{"", "Bearer key-secret", "Bearer key-secret"}, "balance"},
 	}

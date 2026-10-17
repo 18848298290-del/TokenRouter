@@ -353,6 +353,41 @@ describe('EditProviderModal', () => {
     getBalanceAlertStatusMock.mockReset().mockResolvedValue({ provider_id: 1 })
   })
 
+  // Editing an Anthropic Account Key provider restores the derouter selection and override.
+  // Saving and reopening retain that configuration independently of the forwarding URL.
+  it('round-trips derouter query settings independently of the Anthropic forwarding URL', async () => {
+    const provider = buildProvider()
+    provider.platform = 'anthropic'
+    provider.credentials.base_url = 'https://forward.example.test/anthropic'
+    provider.extra = { upstream_usage_query: { enabled: true, adapter: 'derouter', base_url: 'https://old-management.example.test' } }
+    updateProviderMock.mockResolvedValue(provider)
+    const wrapper = mountModal(provider)
+    await flushPromises()
+    await wrapper.get('[data-settings-tab-button="quota"]').trigger('click')
+    expect((wrapper.get('[data-testid="upstream-usage-adapter"]').element as HTMLSelectElement).value).toBe('derouter')
+    await wrapper.get('[data-testid="upstream-usage-base-url"]').setValue('https://management.example.test')
+    await wrapper.get('form#edit-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateProviderMock).toHaveBeenCalledTimes(1)
+    const payload = updateProviderMock.mock.calls[0][1]
+    expect(payload.credentials.base_url).toBe('https://forward.example.test/anthropic')
+    expect(payload.extra.upstream_usage_query).toEqual({ enabled: true, adapter: 'derouter', base_url: 'https://management.example.test' })
+    const saved = { ...provider, credentials: payload.credentials, extra: payload.extra, credentials_status: { has_api_key: true } }
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ provider: saved, show: true })
+    await flushPromises()
+    await wrapper.get('[data-settings-tab-button="quota"]').trigger('click')
+    expect((wrapper.get('[data-testid="upstream-usage-adapter"]').element as HTMLSelectElement).value).toBe('derouter')
+    expect((wrapper.get('#edit-provider-base-url').element as HTMLInputElement).value).toBe('https://forward.example.test/anthropic')
+    await wrapper.get('[data-testid="upstream-usage-base-url"]').setValue('')
+    await wrapper.get('form#edit-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateProviderMock).toHaveBeenCalledTimes(2)
+    expect(updateProviderMock.mock.calls[1][1].credentials.base_url).toBe('https://forward.example.test/anthropic')
+    expect(updateProviderMock.mock.calls[1][1].extra.upstream_usage_query).toEqual({ enabled: true, adapter: 'derouter' })
+    wrapper.unmount()
+  })
+
   it.each([undefined, ''])('Jev 地址为 %s 时加载官方默认值', async (baseUrl) => {
     const provider = { ...buildProvider(), platform: 'jev' as const, credentials: { api_key: 'test-jev-key', base_url: baseUrl, upstream_protocols: ['systemone'] } }
     const wrapper = mountModal(provider)

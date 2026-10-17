@@ -17,6 +17,7 @@ import (
 const (
 	UpstreamUsageAdapterSub2API         = "sub2api"          // Sub2API usage query adapter
 	UpstreamUsageAdapterNewAPI          = "new_api"          // New API usage query adapter
+	UpstreamUsageAdapterDerouter        = "derouter"         // derouter.ai account balance adapter
 	UpstreamUsageAdapterZivv            = "zivv"             // Zivv wallet query adapter
 	UpstreamUsageAdapterKimiCoding      = "kimi_coding"      // Kimi coding percentage adapter
 	UpstreamUsageAdapterZhipuCoding     = "zhipu_coding"     // Zhipu coding percentage adapter

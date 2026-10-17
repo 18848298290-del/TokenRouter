@@ -1,3 +1,8 @@
+// providers.ts supplies localized labels and guidance for provider administration.
+// Query configuration explains the authentication and destination expected by
+// each supported adapter, while shared message keys let creation, editing, and
+// list views present consistent provider terminology.
+
 export default {
 // Providers
     providers: {
@@ -441,6 +446,7 @@ export default {
         baseUrl: 'Query base URL override',
         baseUrlPlaceholder: 'Use the provider forwarding base URL',
         baseUrlHint: 'The selected adapter keeps its own fixed paths and request format. Leave blank to reuse the provider base URL.',
+        derouterBaseUrlHint: 'Uses the provider Account Key to query available USD. Leave blank to use https://cf-api.derouter.ai, or enter a management base URL.',
         walletAccessToken: 'New API user access token (optional)',
         walletAccessTokenPlaceholder: 'Leave blank to try the API-key wallet endpoint',
         walletAccessTokenHint: 'Official New API wallet endpoints require a user access token. It is used only for administrator queries, never forwarding.',
@@ -450,7 +456,8 @@ export default {
         adapters: {
           sub2api: 'Sub2API / TokenRouter',
           newApi: 'New API',
-          zivv: 'Zivv'
+          zivv: 'Zivv',
+          derouter: 'derouter.ai (Account Key)'
         },
         errors: {
           UPSTREAM_USAGE_UNAVAILABLE: 'Upstream usage query service is unavailable',

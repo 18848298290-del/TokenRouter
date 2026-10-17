@@ -1459,3 +1459,65 @@ func newUsageContractService(reader acctcore.UpstreamUsageReader, transport inte
 	}
 	return acctcore.NewUpstreamUsageService(reader, NewUpstreamUsageHTTPExecution(options), acctcore.UpstreamUsageOptions{Now: time.Now})
 }
+
+// TestDerouterUsageQuerySeparatesManagementAndForwarding queries an Anthropic
+// API key provider through the account management adapter. The configured
+// query destination and spendable balance are used while stored URLs and
+// credentials remain unchanged for both default and custom management roots.
+func TestDerouterUsageQuerySeparatesManagementAndForwarding(t *testing.T) {
+	for _, override := range []string{"", "https://management.example.test/prefix"} {
+		t.Run(override, func(t *testing.T) {
+			value := &acctcore.Record{
+				ID: 17, Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeAPIKey,
+				Credentials: map[string]any{"api_key": "account-key", "base_url": "https://forward.example.test/anthropic"},
+				Extra:       map[string]any{acctcore.UpstreamUsageQueryExtraKey: map[string]any{"adapter": acctcore.UpstreamUsageAdapterDerouter, "base_url": override}},
+			}
+			original := acctcore.CloneRecord(value)
+			upstream := &upstreamUsageHTTPStub{responses: []struct {
+				status int    // simulated HTTP response status
+				body   string // simulated account response JSON
+				err    error  // simulated transport failure value
+			}{{status: http.StatusOK, body: `{"balance":"100.0000","locked_balance":"20.0000","available":"80.0000"}`}}}
+			service := newUsageContractService(&upstreamUsageProviderRepoStub{provider: value}, upstream, testUpstreamUsageConfig())
+			result, err := service.QueryProvider(context.Background(), value.ID)
+			require.NoError(t, err)
+			require.Equal(t, acctcore.UpstreamUsageAdapterDerouter, result.Adapter)
+			require.Equal(t, 80.0, *result.Balance.Remaining)
+			require.Nil(t, result.Balance.Used)
+			require.Equal(t, original, value)
+			require.Len(t, upstream.requests, 1)
+			want := acctcore.DerouterUsageDefaultBaseURL + "/balance"
+			if override != "" {
+				want = override + "/balance"
+			}
+			require.Equal(t, want, upstream.requests[0].URL.String())
+			require.Equal(t, "GET", upstream.requests[0].Method)
+			require.Equal(t, "Bearer account-key", upstream.requests[0].Header.Get("Authorization"))
+			require.True(t, upstreamcore.HTTPUpstreamRedirectsDisabled(upstream.requests[0].Context()))
+		})
+	}
+}
+
+// TestDerouterUsageQueryValidatesManagementHost checks default and custom query
+// roots against an allowlist containing only the forwarding host. Both queries
+// must fail before transport can receive the Account Key.
+func TestDerouterUsageQueryValidatesManagementHost(t *testing.T) {
+	for _, override := range []string{"", "https://management.example.test"} {
+		t.Run(override, func(t *testing.T) {
+			value := &acctcore.Record{
+				ID: 18, Platform: capability.PlatformAnthropic, Type: capability.ProviderTypeAPIKey,
+				Credentials: map[string]any{"api_key": "fixture-account-key", "base_url": "https://forward.example.test"},
+				Extra: map[string]any{acctcore.UpstreamUsageQueryExtraKey: map[string]any{
+					"adapter": acctcore.UpstreamUsageAdapterDerouter, "base_url": override,
+				}},
+			}
+			upstream := &upstreamUsageHTTPStub{}
+			policy := egress.UsageURLPolicy{Configured: true, Enabled: true, UpstreamHosts: []string{"forward.example.test"}}
+			service := newUsageContractService(&upstreamUsageProviderRepoStub{provider: value}, upstream, policy)
+			result, err := service.QueryProvider(context.Background(), value.ID)
+			require.ErrorIs(t, err, acctcore.ErrUpstreamUsageConfigInvalid)
+			require.Nil(t, result)
+			require.Empty(t, upstream.requests)
+		})
+	}
+}

@@ -1,3 +1,8 @@
+// providers.ts supplies localized labels and guidance for provider administration.
+// Query configuration explains the authentication and destination expected by
+// each supported adapter, while shared message keys let creation, editing, and
+// list views present consistent provider terminology.
+
 export default {
 // Providers Management
     providers: {
@@ -338,6 +343,7 @@ export default {
         baseUrl: '查询 Base URL 覆盖',
         baseUrlPlaceholder: '留空则使用提供商转发 Base URL',
         baseUrlHint: '所选适配器会固定请求路径和格式。留空即可复用提供商的 Base URL。',
+        derouterBaseUrlHint: '使用提供商的 Account Key 查询可用余额（USD）。留空使用 https://cf-api.derouter.ai，也可填写管理接口的根地址。',
         walletAccessToken: 'New API 用户访问令牌（可选）',
         walletAccessTokenPlaceholder: '留空则尝试使用 API Key 钱包端点',
         walletAccessTokenHint: '官方 New API 的钱包接口需要用户级 Access Token；该令牌仅用于管理员查询，不参与转发。',
@@ -347,7 +353,8 @@ export default {
         adapters: {
           sub2api: 'Sub2API / TokenRouter',
           newApi: 'New API',
-          zivv: 'Zivv'
+          zivv: 'Zivv',
+          derouter: 'derouter.ai (Account Key)'
         },
         errors: {
           UPSTREAM_USAGE_UNAVAILABLE: '上游用量查询服务不可用',

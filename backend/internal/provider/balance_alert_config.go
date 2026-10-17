@@ -88,7 +88,8 @@ func BalanceAlertSupported(p *Record) bool {
 		c.Adapter = CNUpstreamUsageAdapterName(p)
 	}
 	switch c.Adapter {
-	case UpstreamUsageAdapterSub2API, UpstreamUsageAdapterNewAPI, UpstreamUsageAdapterZivv, UpstreamUsageAdapterKimiBalance, UpstreamUsageAdapterDeepseekBalance:
+	case UpstreamUsageAdapterSub2API, UpstreamUsageAdapterNewAPI, UpstreamUsageAdapterZivv,
+		UpstreamUsageAdapterDerouter, UpstreamUsageAdapterKimiBalance, UpstreamUsageAdapterDeepseekBalance:
 		return true
 	default:
 		return false

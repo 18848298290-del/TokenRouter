@@ -845,9 +845,6 @@
 <script setup lang="ts">
 import Collapse from '@/components/common/Collapse.vue'
 
-// 协议选择保存提供商支持的协议集合。
-const upstreamProtocols = ref<ProtocolID[] | undefined>(undefined)
-
 import { normalizeLegacyOpenAIExtra, normalizeOpenAICompactMode } from '@/utils/openaiLegacyConfiguration'
 import ProviderProtocolSelector from './ProviderProtocolSelector.vue'
 import { loadProtocolCatalog, nativeProtocolOptions } from '@/api/admin/protocolCapabilities'
@@ -969,6 +966,22 @@ import {
   splitPersistedModelRestriction,
   type QoderSite
 } from '@/composables/useModelWhitelist'
+
+// EditProviderModal.vue loads provider settings into editable drafts and submits
+// credential and configuration updates through the administration API. Platform
+// and authentication type determine the available fields, protocol selections,
+// and defaults. Sensitive credentials are represented by presence flags so an
+// unchanged key can remain stored while other settings are edited.
+//
+// Forwarding addresses and usage-query addresses occupy separate draft values
+// and payload objects. Form hydration temporarily suppresses CN endpoint
+// watchers while stored protocol choices and custom addresses are restored.
+// The save path combines current drafts with preserved provider settings and
+// validates the selected fields before sending the update.
+
+// upstreamProtocols holds the editable native protocol selection restored from
+// stored provider credentials for submission.
+const upstreamProtocols = ref<ProtocolID[] | undefined>(undefined)
 
 interface Props {
   show: boolean
@@ -1581,6 +1594,16 @@ const applyOpenAIModelMappingCredentials = (credentials: Record<string, unknown>
   }
 }
 
+// syncFormFromProvider restores editable settings from a provider response.
+// Null input clears the native protocol selection and leaves other drafts
+// unchanged. Credential presence flags preserve redacted secrets, while query
+// configuration restores its adapter and management address independently of
+// forwarding credentials.
+//
+// Platform-specific restoration chooses protocol defaults and reconstructs
+// stored model restrictions. CN endpoint watchers stay suspended until the next
+// Vue tick so those restored choices are not replaced during hydration. Later
+// user changes use the normal watcher behavior.
 const syncFormFromProvider = (newProvider: Provider | null) => {
   upstreamProtocols.value = Array.isArray(newProvider?.credentials?.upstream_protocols) ? [...newProvider.credentials.upstream_protocols] as ProtocolID[] : undefined
 
@@ -1638,7 +1661,7 @@ const syncFormFromProvider = (newProvider: Provider | null) => {
     const rawUsageConfig = extra?.upstream_usage_query as Record<string, unknown> | undefined
     if (rawUsageConfig && typeof rawUsageConfig === 'object') {
       upstreamUsageEnabled.value = typeof rawUsageConfig.enabled === 'boolean' ? rawUsageConfig.enabled : newProvider.platform !== 'jev'
-      if (rawUsageConfig.adapter === 'new_api' || rawUsageConfig.adapter === 'zivv') {
+      if (rawUsageConfig.adapter === 'new_api' || rawUsageConfig.adapter === 'zivv' || rawUsageConfig.adapter === 'derouter') {
         upstreamUsageAdapter.value = rawUsageConfig.adapter
       }
       if (typeof rawUsageConfig.base_url === 'string') upstreamUsageBaseUrl.value = rawUsageConfig.base_url

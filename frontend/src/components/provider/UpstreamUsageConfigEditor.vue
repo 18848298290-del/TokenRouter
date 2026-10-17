@@ -24,10 +24,14 @@
             v-model="baseUrlModel"
             type="text"
             class="input"
-            :placeholder="t('admin.providers.upstreamUsage.baseUrlPlaceholder')"
+            :placeholder="adapterModel === 'derouter'
+              ? 'https://cf-api.derouter.ai'
+              : t('admin.providers.upstreamUsage.baseUrlPlaceholder')"
             data-testid="upstream-usage-base-url"
           />
-          <p class="input-hint">{{ t('admin.providers.upstreamUsage.baseUrlHint') }}</p>
+          <p class="input-hint">{{ t(adapterModel === 'derouter'
+            ? 'admin.providers.upstreamUsage.derouterBaseUrlHint'
+            : 'admin.providers.upstreamUsage.baseUrlHint') }}</p>
         </div>
         <template v-if="adapterModel === 'new_api'">
           <div>
@@ -71,6 +75,11 @@ import { useI18n } from 'vue-i18n'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
 import type { UpstreamUsageAdapter } from '@/types'
 
+// UpstreamUsageConfigEditor.vue edits the query adapter and its independent
+// management address for API Key providers. Each input emits its own scalar
+// update to the parent form. Derouter exposes its account management default,
+// and New API exposes optional wallet authentication fields.
+
 const props = withDefaults(defineProps<{
   enabled: boolean
   adapter: UpstreamUsageAdapter
@@ -98,11 +107,13 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const uid = useId()
 
-// 前端提供后端已注册适配器的固定选项。
+// adapterOptions lists registered manual query formats with localized labels
+// for the shared configuration selector.
 const adapterOptions = computed<SelectOption[]>(() => [
   { value: 'sub2api', label: t('admin.providers.upstreamUsage.adapters.sub2api') },
   { value: 'new_api', label: t('admin.providers.upstreamUsage.adapters.newApi') },
-  { value: 'zivv', label: t('admin.providers.upstreamUsage.adapters.zivv') }
+  { value: 'zivv', label: t('admin.providers.upstreamUsage.adapters.zivv') },
+  { value: 'derouter', label: t('admin.providers.upstreamUsage.adapters.derouter') }
 ])
 
 const enabledModel = computed({
@@ -110,10 +121,13 @@ const enabledModel = computed({
   set: (value: boolean) => emit('update:enabled', value)
 })
 
+// adapterModel forwards supported selections to the owning provider form.
+// Unknown selector values are ignored, so clearing or malformed input cannot
+// replace the saved adapter with an unregistered format.
 const adapterModel = computed({
   get: () => props.adapter,
   set: (value: string | number | boolean | null) => {
-    if (value === 'sub2api' || value === 'new_api' || value === 'zivv') emit('update:adapter', value)
+    if (value === 'sub2api' || value === 'new_api' || value === 'zivv' || value === 'derouter') emit('update:adapter', value)
   }
 })
 

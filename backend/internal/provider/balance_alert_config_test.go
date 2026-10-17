@@ -48,3 +48,23 @@ func TestBalanceAlertConfigurationMerge(t *testing.T) {
 	_, err = ApplyConfigurationChange(current, desired, ConfigurationChange{Fields: ConfigExtra})
 	require.ErrorIs(t, err, ErrBalanceAlertConfigInvalid)
 }
+
+// TestBalanceAlertConfigurationDerouter accepts account balance reminders with
+// an implicit management root. Reminder validation uses the registered wallet
+// adapter and keeps the administrator's threshold and delivery settings.
+func TestBalanceAlertConfigurationDerouter(t *testing.T) {
+	p := &Record{
+		Type: ProviderTypeAPIKey, Platform: PlatformAnthropic,
+		Extra: map[string]any{
+			UpstreamUsageQueryExtraKey: map[string]any{"adapter": UpstreamUsageAdapterDerouter},
+			UpstreamBalanceAlertExtraKey: map[string]any{
+				"enabled": true, "threshold": 100.0, "interval_minutes": 60, "recipient_email": "ops@example.com",
+			},
+		},
+	}
+	config, err := BalanceAlertConfiguration(p)
+	require.NoError(t, err)
+	require.True(t, config.Enabled)
+	require.Equal(t, 100.0, config.Threshold)
+	require.Equal(t, "ops@example.com", config.RecipientEmail)
+}

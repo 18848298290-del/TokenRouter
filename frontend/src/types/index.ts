@@ -1430,11 +1430,12 @@ export interface ProviderUsageInfo {
   error?: string            // usage 获取失败时的错误信息
 }
 
-// API Key 提供商的上游用量查询协议配置与归一化结果。
+// UpstreamUsageAdapter identifies registered API Key balance and quota query formats.
 export type UpstreamUsageAdapter =
   | 'sub2api'
   | 'new_api'
   | 'zivv'
+  | 'derouter'
   | 'kimi_balance'
   | 'kimi_coding'
   | 'zhipu_coding'

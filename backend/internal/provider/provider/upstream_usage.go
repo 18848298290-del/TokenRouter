@@ -16,7 +16,7 @@ import (
 // upstream_usage.go registers usage adapters and dispatches provider usage
 // queries through their prepared requests.
 // Native usage queries select a named adapter and bind its technical request
-// before execution. The registry installs the seven catalogued adapters for
+// before execution. The registry installs the eight catalogued adapters for
 // fixed platform or relay protocols, while provider services own shared query
 // lifecycle, caching, and identity rechecks around this execution layer.
 
@@ -57,6 +57,7 @@ func NewUpstreamUsageExecution(options UpstreamUsageExecutionOptions) *UpstreamU
 	factories := map[string]func() usagecontract.Adapter{
 		provider.UpstreamUsageAdapterSub2API:         func() usagecontract.Adapter { return &usageprovider.Sub2APIUsageAdapter{} },
 		provider.UpstreamUsageAdapterNewAPI:          func() usagecontract.Adapter { return &usageprovider.NewAPIUsageAdapter{} },
+		provider.UpstreamUsageAdapterDerouter:        func() usagecontract.Adapter { return &usageprovider.DerouterUsageAdapter{} },
 		provider.UpstreamUsageAdapterZivv:            func() usagecontract.Adapter { return &usageprovider.ZivvUsageAdapter{} },
 		provider.UpstreamUsageAdapterKimiCoding:      func() usagecontract.Adapter { return &kimi.KimiCodingUsageAdapter{} },
 		provider.UpstreamUsageAdapterKimiBalance:     func() usagecontract.Adapter { return &kimi.KimiBalanceUsageAdapter{} },

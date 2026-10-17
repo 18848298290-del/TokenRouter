@@ -179,6 +179,27 @@ describe('admin ProvidersView upstream usage', () => {
     getAllGroups.mockResolvedValue([])
   })
 
+  // A derouter observation is cached under its selected adapter and restored on remount.
+  // Reopening the provider list reuses that result without sending another management query.
+  it('restores cached derouter account balances under the correct adapter identity', async () => {
+    const item = provider(1)
+    item.extra = { upstream_usage_query: { enabled: true, adapter: 'derouter' } }
+    listProviders.mockResolvedValue({ items: [item], total: 1, page: 1, page_size: 20, pages: 1 })
+    queryUpstreamUsage.mockResolvedValue({ ...result(1), adapter: 'derouter', provider: 'derouter', balance: { remaining: 80 } })
+    const first = mountView()
+    await flushPromises()
+    await first.get('[data-test="query-upstream"]').trigger('click')
+    await flushPromises()
+    expect(first.get('[data-test="upstream-remaining"]').text()).toBe('80')
+    expect(sessionStorage.key(0)).toContain('derouter')
+    first.unmount()
+    const second = mountView()
+    await flushPromises()
+    expect(second.get('[data-test="upstream-remaining"]').text()).toBe('80')
+    expect(queryUpstreamUsage).toHaveBeenCalledTimes(1)
+    second.unmount()
+  })
+
   it('只在手动查询时访问上游，并在五分钟会话缓存中恢复成功结果', async () => {
     listProviders.mockResolvedValue({ items: [provider(1)], total: 1, page: 1, page_size: 20, pages: 1 })
     queryUpstreamUsage.mockResolvedValue(result(1))

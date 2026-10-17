@@ -27,7 +27,7 @@ describe('UpstreamUsageConfigEditor', () => {
     })
     expect(wrapper.find('[data-testid="upstream-usage-enabled"]').element).toBeTruthy()
     expect(wrapper.find('[data-testid="upstream-usage-adapter"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="upstream-usage-adapter"]').text()).toBe('3')
+    expect(wrapper.find('[data-testid="upstream-usage-adapter"]').text()).toBe('4')
     await wrapper.find('[data-testid="upstream-usage-adapter"]').trigger('click')
     expect(wrapper.emitted('update:adapter')?.[0]).toEqual(['new_api'])
 
@@ -42,5 +42,22 @@ describe('UpstreamUsageConfigEditor', () => {
 
     await wrapper.setProps({ enabled: false })
     expect(wrapper.find('[data-testid="select"]').exists()).toBe(false)
+  })
+
+  // Selecting derouter exposes its account endpoint guidance and independent URL input.
+  // The editor emits the registered adapter and query-address updates to its parent.
+  it('selects derouter and shows the account management default', async () => {
+    const wrapper = mount(UpstreamUsageConfigEditor, {
+      props: { enabled: true, adapter: 'sub2api', baseUrl: '' },
+      global: { stubs: { Select: SelectStub } }
+    })
+    wrapper.findComponent(SelectStub).vm.$emit('update:modelValue', 'derouter')
+    expect(wrapper.emitted('update:adapter')?.at(-1)).toEqual(['derouter'])
+    await wrapper.setProps({ adapter: 'derouter' })
+    expect(wrapper.get('[data-testid="upstream-usage-base-url"]').attributes('placeholder')).toBe('https://cf-api.derouter.ai')
+    expect(wrapper.text()).toContain('admin.providers.upstreamUsage.derouterBaseUrlHint')
+    expect(wrapper.find('[data-testid="upstream-usage-wallet-access-token"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="upstream-usage-base-url"]').setValue('https://management.example.test')
+    expect(wrapper.emitted('update:baseUrl')?.at(-1)).toEqual(['https://management.example.test'])
   })
 })

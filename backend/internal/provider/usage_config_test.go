@@ -60,5 +60,28 @@ func TestEffectiveUpstreamUsageConfigDefaultsAndNormalization(t *testing.T) {
 		{Name: UpstreamUsageAdapterSub2API, Label: "Sub2API / TokenRouter"},
 		{Name: UpstreamUsageAdapterNewAPI, Label: "New API"},
 		{Name: UpstreamUsageAdapterZivv, Label: "Zivv"},
+		{Name: UpstreamUsageAdapterDerouter, Label: "derouter.ai (Account Key)"},
 	}, UpstreamUsageAdapterOptions())
+}
+
+// TestEffectiveUpstreamUsageConfigDerouter resolves an omitted management root
+// and a custom override. Saved configuration and forwarding credentials remain
+// unchanged while the effective query uses the correct account endpoint.
+func TestEffectiveUpstreamUsageConfigDerouter(t *testing.T) {
+	for _, override := range []string{"", "https://management.example.test/prefix"} {
+		extra := map[string]any{UpstreamUsageQueryExtraKey: map[string]any{"adapter": UpstreamUsageAdapterDerouter, "base_url": override}}
+		require.NoError(t, NormalizeUpstreamUsageExtra(extra))
+		p := &Record{Type: ProviderTypeAPIKey, Platform: PlatformAnthropic, Credentials: map[string]any{"base_url": "https://forward.example.test/anthropic"}, Extra: extra}
+		original := CloneRecord(p)
+		got, err := EffectiveUpstreamUsageConfig(p)
+		require.NoError(t, err)
+		want := override
+		if want == "" {
+			want = DerouterUsageDefaultBaseURL
+		}
+		require.Equal(t, want, got.BaseURL)
+		require.Equal(t, UpstreamUsageAdapterDerouter, got.Adapter)
+		require.Equal(t, original, p)
+		require.True(t, BalanceAlertSupported(p))
+	}
 }

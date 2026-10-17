@@ -14,7 +14,7 @@
 }
 ```
 
-普通 API Key 提供商没有这个对象时，按 `enabled=true`、`adapter=sub2api` 处理，根地址使用提供商现有的 API Base URL。Jev 缺少这个对象时默认关闭查询，管理员可配置兼容中继的查询适配器。其他 API Key 提供商通过 `enabled=false` 关闭查询。管理员可以选择的 `adapter` 只有 `sub2api`、`new_api` 和 `zivv`；Kimi、Zhipu、DeepSeek 忽略这个字段，按平台和 `provider_mode` 选择固定的内置适配器。`base_url` 只能覆盖查询的根地址，不能带用户信息、查询串或片段。后端照常执行 HTTPS、allowlist、私网地址和 URL 格式的校验。
+普通 API Key 提供商没有这个对象时，按 `enabled=true`、`adapter=sub2api` 处理，根地址使用提供商现有的 API Base URL。Jev 缺少这个对象时默认关闭查询，管理员可配置兼容中继的查询适配器。其他 API Key 提供商通过 `enabled=false` 关闭查询。管理员可以选择的 `adapter` 只有 `sub2api`、`new_api`、`zivv` 和 `derouter`；Kimi、Zhipu、DeepSeek 忽略这个字段，按平台和 `provider_mode` 选择固定的内置适配器。`base_url` 只能覆盖查询的根地址，不能带用户信息、查询串或片段。后端照常执行 HTTPS、allowlist、私网地址和 URL 格式的校验。`derouter` 的查询地址留空时使用 `https://cf-api.derouter.ai`；其他适配器留空时复用转发地址。
 
 API Key 始终从提供商的 `credentials` 读取，不会出现在 `extra`、接口响应、审计请求体、浏览器缓存和日志里。用户也无法配置任意的路径、方法、Header 模板或脚本。
 
@@ -48,6 +48,12 @@ New API 的钱包需要用户级认证时，可以在 `credentials` 里保存 `n
 
 Zivv 的公开开发者文档说明余额在控制台的钱包页面，适配器使用它前端生成的固定余额接口，不请求任意路径，也不执行脚本。参见 [Zivv 计费说明](https://docs.zivv.pro/billing/overview) 和 [API 端点](https://docs.zivv.pro/reference/endpoints)。
 
+### derouter.ai Account Key
+
+选择 `derouter` 后，使用提供商现有的 Account Key，以 `Authorization: Bearer <api_key>` 请求管理根地址下的 `GET /balance`。官方管理根地址为 `https://cf-api.derouter.ai`，与模型转发地址分别配置。自定义查询根地址经过相同的 URL 安全校验；固定管理路径复用根地址拼接规则，移除末尾版本段并保留部署前缀。本适配器支持 Account Key；Client Key 的 `/sub-key/balance` 需要另一种响应解析。
+
+响应中的 `balance`、`locked_balance`、`available` 接受十进制字符串或 JSON 数字，三个字段都必须存在且为有限数值，锁定金额要求非负，`available` 必须在金额比较容差内等于 `balance - locked_balance`。归一化结果为 `mode=balance`、`unit=USD`，`balance.remaining` 使用 `available`，供列表展示和余额提醒比较。零余额与负余额按实际值返回；缺失、null 或不一致的金额会导致查询失败。锁定金额不代表历史消费，因此结果省略 `used` 和 `total`。协议来源：[derouter.ai 管理 API](https://derouter.ai/docs/api)。
+
 ### 国产供应商
 
 国产供应商的适配器由提供商身份自动选择，管理表单里无法改成其他协议：
@@ -66,7 +72,7 @@ Zhipu payg 没有公开的余额协议，DeepSeek coding 也不是合法的提�
 <a id="native_usage_adapters"></a>
 ## 原生查询与提供商编排
 
-Sub2API、New API、Zivv 的固定查询和归一化在 `upstream/usageprovider`，Kimi、Zhipu、DeepSeek 分别在对应的 `upstream` 包里。`provider/provider.UpstreamUsageExecution` 持有唯一的适配器注册表，`NewUpstreamUsageHTTPExecution` 根据提供商记录构造凭据、代理、TLS 和 Header 的技术快照。app 只整理出站配置和共享的传输接口，直接绑定一个 `provider.UpstreamUsageService`。
+Sub2API、New API、Zivv、derouter.ai 的固定查询和归一化在 `upstream/usageprovider`，Kimi、Zhipu、DeepSeek 分别在对应的 `upstream` 包里。`provider/provider.UpstreamUsageExecution` 持有唯一的适配器注册表，`NewUpstreamUsageHTTPExecution` 根据提供商记录构造凭据、代理、TLS 和 Header 的技术快照。app 只整理出站配置和共享的传输接口，直接绑定一个 `provider.UpstreamUsageService`。
 
 `upstream/usageview` 保存归一化后的值、错误和验证规则，provider 通过类型别名复用它们。`upstream/usagecontract.Request` 是一次查询的技术快照，其中的敏感字段不会出现在 JSON 或普通的字符串格式化结果里。共享的 `upstream/internal/usageclient` 负责固定的读取上限、请求头覆盖顺序、状态映射和关闭响应体。这些原生包不读取提供商仓储，也不写健康、调度或资金数据。
 

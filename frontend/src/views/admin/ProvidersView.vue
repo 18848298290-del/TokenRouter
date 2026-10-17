@@ -579,6 +579,18 @@ import type {
   ClaudeModel
 } from '@/types'
 
+// ProvidersView.vue loads the administrator provider list and coordinates its
+// editing, selection, testing, and usage-query actions. The table combines
+// persisted provider settings with local statistics and separately fetched
+// upstream observations. Provider updates invalidate cached observations so
+// changed credentials and query settings cannot reuse earlier display data.
+//
+// Upstream queries run on administrator actions and retain successful results
+// in session storage under the current administrator identity. Cache identities
+// include the selected adapter, query address, forwarding address, and provider
+// revision. Loading and restoring the table use those identities to decide
+// whether a stored observation still belongs to the displayed provider.
+
 const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
@@ -806,6 +818,9 @@ const providerSupportsBatchUsage = (provider: Provider) => {
   return false
 }
 
+// effectiveUpstreamUsageAdapter resolves the format used for cache identity.
+// CN platform and mode select their fixed formats; manual relay choices retain
+// registered adapter names and otherwise use the Sub2API default.
 const effectiveUpstreamUsageAdapter = (provider: Provider) => {
   if (provider.platform === 'kimi') {
     return provider.credentials?.provider_mode === 'coding' ? 'kimi_coding' : 'kimi_balance'
@@ -815,7 +830,7 @@ const effectiveUpstreamUsageAdapter = (provider: Provider) => {
   }
   if (provider.platform === 'deepseek') return 'deepseek_balance'
   const rawConfig = provider.extra?.upstream_usage_query as Record<string, unknown> | undefined
-  return rawConfig?.adapter === 'new_api' || rawConfig?.adapter === 'zivv'
+  return rawConfig?.adapter === 'new_api' || rawConfig?.adapter === 'zivv' || rawConfig?.adapter === 'derouter'
     ? rawConfig.adapter
     : 'sub2api'
 }

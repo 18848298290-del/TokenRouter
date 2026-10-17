@@ -32,7 +32,8 @@ const (
 // EffectiveUpstreamUsageConfig resolves stored query choices over defaults for
 // the supplied provider. Nil input uses enabled Sub2API defaults, and Jev
 // defaults to disabled. A missing or nil configuration object inherits those
-// defaults.
+// defaults. Derouter uses its official account management root when its query
+// address is empty.
 //
 // Present fields require their expected types, and unknown fields are rejected.
 // CN providers keep the adapter selected by platform and mode even when a
@@ -86,6 +87,11 @@ func EffectiveUpstreamUsageConfig(provider *Record) (UpstreamUsageQueryConfig, e
 	}
 	if !IsKnownUpstreamUsageAdapter(config.Adapter) {
 		return UpstreamUsageQueryConfig{}, ErrUpstreamUsageUnsupported
+	}
+	// Derouter management uses a separate host from model forwarding. Resolve its
+	// default here so execution and query identity checks use the same destination.
+	if config.Adapter == UpstreamUsageAdapterDerouter && config.BaseURL == "" {
+		config.BaseURL = DerouterUsageDefaultBaseURL
 	}
 	if config.BaseURL != "" {
 		if err := egress.ValidateUsageBaseURLFormat(config.BaseURL); err != nil {

@@ -36,7 +36,7 @@
 | DeepSeek | 不支持 | 不支持 | 正式支持 | 不支持 | 不支持 | 不支持 | 不支持 |
 | Jev | 不支持 | 不支持 | 正式支持 | 不支持 | 不支持 | 不支持 | 不支持 |
 
-API Key 提供商可以在管理员列表里配置并手动查询上游用量。普通的兼容上游默认使用 Sub2API 适配器，New API 和 Zivv 需要手动选择；Kimi、Zhipu、DeepSeek 按平台和 `provider_mode` 自动选择固定的只读适配器，Zhipu payg 没有公开的余额协议，所以不支持查询。手动查询的协议错误只影响展示，转发资格不受影响。API Key 行同时展示两类数据：TokenRouter 本地的今日统计和本地配额，以及上游的余额和周期限额。只有手动开启的 CN 周期监控，才会把同样的查询结果写进统一快照，并据此对这个身份临时停调，详见 [API Key 上游用量查询](upstream_usage.md)。
+API Key 提供商可以在管理员列表里配置并手动查询上游用量。普通的兼容上游默认使用 Sub2API 适配器，New API、Zivv 和 derouter.ai Account Key 需要手动选择；Kimi、Zhipu、DeepSeek 按平台和 `provider_mode` 自动选择固定的只读适配器，Zhipu payg 没有公开的余额协议，所以不支持查询。手动查询的协议错误只影响展示，转发资格不受影响。API Key 行同时展示两类数据：TokenRouter 本地的今日统计和本地配额，以及上游的余额和周期限额。只有手动开启的 CN 周期监控，才会把同样的查询结果写进统一快照，并据此对这个身份临时停调，详见 [API Key 上游用量查询](upstream_usage.md)。
 
 <a id="cn_provider_protocols"></a>
 ### 国产平台提供商协议

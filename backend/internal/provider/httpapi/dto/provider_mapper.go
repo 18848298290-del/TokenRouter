@@ -295,7 +295,8 @@ func redactUpstreamUsageQuery(value any) map[string]any {
 	if adapter, ok := object["adapter"].(string); ok {
 		// Arbitrary historical adapter strings may contain secret text. Expose a
 		// recognized adapter name so old credential-shaped values cannot reach the browser.
-		if adapter == provider.UpstreamUsageAdapterSub2API || adapter == provider.UpstreamUsageAdapterNewAPI || adapter == provider.UpstreamUsageAdapterZivv {
+		if adapter == provider.UpstreamUsageAdapterSub2API || adapter == provider.UpstreamUsageAdapterNewAPI ||
+			adapter == provider.UpstreamUsageAdapterZivv || adapter == provider.UpstreamUsageAdapterDerouter {
 			result["adapter"] = adapter
 		}
 	}

@@ -207,3 +207,21 @@ func TestProviderDTOHasIndependentNestedValues(t *testing.T) {
 	require.Equal(t, map[string]any{"model_mapping": map[string]any{"alias": "model"}}, value.Credentials)
 	require.Equal(t, map[string]any{"policy": map[string]any{"enabled": true}}, value.Extra)
 }
+
+// TestProviderFromRecordShallowDerouterRoundTrip maps separate forwarding and
+// management URLs with a registered adapter. The response retains editable
+// query configuration while the API key remains redacted from credentials.
+func TestProviderFromRecordShallowDerouterRoundTrip(t *testing.T) {
+	src := &provider.Record{
+		Now: time.Now, LoadLocation: time.LoadLocation,
+		ID: 19, Type: capability.ProviderTypeAPIKey, Platform: capability.PlatformAnthropic,
+		Credentials: map[string]any{"base_url": "https://forward.example.test", "api_key": "account-secret"},
+		Extra: map[string]any{provider.UpstreamUsageQueryExtraKey: map[string]any{
+			"enabled": true, "adapter": provider.UpstreamUsageAdapterDerouter, "base_url": "https://management.example.test",
+		}},
+	}
+	got := ProviderFromRecordShallow(src)
+	require.Equal(t, src.Extra, got.Extra)
+	require.Equal(t, "https://forward.example.test", got.Credentials["base_url"])
+	require.NotContains(t, got.Credentials, "api_key")
+}

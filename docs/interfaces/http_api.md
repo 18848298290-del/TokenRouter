@@ -275,7 +275,7 @@ Key 自身的配额和滚动限额字段不受这些展示规则影响。
 - `POST /api/v1/admin/providers/:id/upstream-usage/query`
 - `POST /api/v1/admin/providers/upstream-usage/query/batch`，请求体的 `provider_ids` 最多 100 个正整数。
 
-接口只接受 `type=apikey` 的提供商（Bedrock 除外），使用管理员认证和审计中间件。可选的适配器有 `sub2api`、`new_api` 和 `zivv`（Kimi、Zhipu、DeepSeek 使用按平台固定的适配器），由提供商的配置明确选择。成功结果的顶层包含 `adapter`、`provider`、UTC 时间的 `observed_at`，以及余额、限额和订阅字段；批量接口把每个提供商的成功结果和结构化错误分开返回。错误 reason 使用 `UPSTREAM_USAGE_*` 命名空间，覆盖：提供商无效或已禁用、协议不支持、认证失败、钱包不可用、钱包认证失败、限流、超时、响应格式错误、网络错误和身份变化。
+接口只接受 `type=apikey` 的提供商（Bedrock 除外），使用管理员认证和审计中间件。可选的适配器有 `sub2api`、`new_api`、`zivv` 和 `derouter`（Kimi、Zhipu、DeepSeek 使用按平台固定的适配器），由提供商的配置明确选择。成功结果的顶层包含 `adapter`、`provider`、UTC 时间的 `observed_at`，以及余额、限额和订阅字段；批量接口把每个提供商的成功结果和结构化错误分开返回。错误 reason 使用 `UPSTREAM_USAGE_*` 命名空间，覆盖：提供商无效或已禁用、协议不支持、认证失败、钱包不可用、钱包认证失败、限流、超时、响应格式错误、网络错误和身份变化。
 
 查询只读：提供商、Extra、调度快照和计费记录都不会被写入，API Key 也不会出现在响应或审计 body 里。前端只在点击行内按钮或批量操作时发起请求，成功的结果在按管理员隔离的 `sessionStorage` 里缓存五分钟。缓存规则见 [API Key 上游用量查询](upstream_usage.md)。
 

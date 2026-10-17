@@ -287,6 +287,22 @@ describe('CreateProviderModal OpenAI provider options', () => {
     expect(createProviderMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('upstream_balance_alert')
   })
 
+  // Creating an API Key provider selects derouter through the shared editor.
+  // The request stores the adapter in Extra and leaves its default query root implicit.
+  it('creates a provider with the derouter Account Key adapter', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('[data-testid="upstream-usage-adapter"]').setValue('derouter')
+    await wrapper.get('form#create-provider-form input[type="text"]').setValue('Derouter account')
+    await wrapper.get('form#create-provider-form input[type="password"]').setValue('account-key')
+    await wrapper.get('form#create-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createProviderMock).toHaveBeenCalledTimes(1)
+    expect(createProviderMock.mock.calls[0][0].extra.upstream_usage_query).toEqual({ enabled: true, adapter: 'derouter' })
+    wrapper.unmount()
+  })
+
   it('stores the optional New API wallet token in credentials, never in Extra', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
