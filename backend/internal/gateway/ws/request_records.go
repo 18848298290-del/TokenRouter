@@ -136,8 +136,8 @@ func (a *entryAttemptRecords) context(base context.Context, turn int) context.Co
 //
 // An error, missing result, or unsuccessful declared WS terminal records a
 // failed attempt; the attempt list is capped while request timing continues. A
-// non-retry completion sets final state and elapsed duration, adds any result
-// request ID as an upstream alias, then removes pending and attempt-local
+// non-retry completion sets final state and elapsed duration, records the parsed
+// response ID in its own alias category, then removes pending and attempt-local
 // references. Retry instead selects that context as the next provider attempt's
 // first turn, preserving one logical ID across the provider switch.
 func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, providerID int64, platform string, retry bool) context.Context {

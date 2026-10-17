@@ -962,3 +962,71 @@ func TestUpstreamPoolInvokesRequestTimingObserver(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 }
+
+// TestUpstreamPoolFailureFinishesOwningMediaAttempt completes a network failure
+// or cancellation after a newer same-provider exchange. The original error stays
+// recognizable, and only the failed dispatch changes its diagnostic outcome.
+func TestUpstreamPoolFailureFinishesOwningMediaAttempt(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		var saved telemetry.RequestRecord
+		root := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "local"}, func(r telemetry.RequestRecord) { saved = r })
+		root = telemetry.WithRequestProvider(root, 7, "X-Custom")
+		firstContext, cancel := context.WithCancel(root)
+		defer cancel()
+		started := make(chan struct{})
+		releaseFirst := make(chan struct{})
+		release := sync.OnceFunc(func() { close(releaseFirst) })
+		defer release()
+		transportErr := errors.New("fixture network failure")
+		opts := poolTestOptions(7, nil)
+		opts.PrepareClient = func(client *http.Client) *http.Client {
+			client.Transport = poolRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Path == "/first" {
+					close(started)
+					// Hold the original transport until replacement headers have arrived,
+					// then release failure or cancellation to exercise delayed ownership.
+					select {
+					case <-req.Context().Done():
+						return nil, req.Context().Err()
+					case <-releaseFirst:
+						return nil, transportErr
+					}
+				}
+				return &http.Response{
+					StatusCode: 200,
+					Header:     http.Header{"X-Custom": {"second"}},
+					Body:       io.NopCloser(strings.NewReader("ok")),
+					Request:    req,
+				}, nil
+			})
+			return client
+		}
+		pool := NewUpstreamPool()
+		first, err := http.NewRequestWithContext(firstContext, http.MethodGet, "https://example.com/first", nil)
+		require.NoError(t, err)
+		done := make(chan error, 1)
+		go func() {
+			_, failure := pool.Do(first, opts)
+			done <- failure
+		}()
+		<-started
+		second, err := http.NewRequestWithContext(root, http.MethodGet, "https://example.com/second", nil)
+		require.NoError(t, err)
+		response, err := pool.Do(second, opts)
+		require.NoError(t, err)
+		require.NoError(t, response.Body.Close())
+		expected := transportErr
+		if canceled {
+			expected = context.Canceled
+			cancel()
+		} else {
+			release()
+		}
+		require.ErrorIs(t, <-done, expected)
+		require.Len(t, saved.Attempts, 2)
+		require.Equal(t, "failed", saved.Attempts[0].Outcome)
+		require.Empty(t, saved.Attempts[0].RequestID)
+		require.Equal(t, "running", saved.Attempts[1].Outcome)
+		require.Equal(t, "second", saved.Attempts[1].RequestID)
+	}
+}

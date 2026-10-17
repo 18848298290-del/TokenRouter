@@ -16,6 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/moderationflow"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
@@ -264,7 +265,7 @@ func (p *OpenAIResponseOutput) ResponseError(
 			Kind:               "http_error",
 			Message:            errMsg,
 			Detail:             upstreamDetail,
-		})
+		}, telemetry.RequestAttemptFromResponse(resp))
 		c.JSON(resp.StatusCode, gin.H{
 			"error": gin.H{
 				"type":    "invalid_request_error",
@@ -284,7 +285,7 @@ func (p *OpenAIResponseOutput) ResponseError(
 			Kind:               "http_error",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
-		})
+		}, telemetry.RequestAttemptFromResponse(resp))
 		WriteOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, p.Headers)
 		contentType := resp.Header.Get("Content-Type")
 		if contentType == "" {
@@ -310,7 +311,7 @@ func (p *OpenAIResponseOutput) ResponseError(
 			Kind:               "http_error",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
-		})
+		}, telemetry.RequestAttemptFromResponse(resp))
 		WriteOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, p.Headers)
 		contentType := resp.Header.Get("Content-Type")
 		if contentType == "" {
@@ -350,7 +351,7 @@ func (p *OpenAIResponseOutput) ResponseError(
 			Kind:               "http_error",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
-		})
+		}, telemetry.RequestAttemptFromResponse(resp))
 		MarkResponseCommitted(c)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
@@ -381,7 +382,7 @@ func (p *OpenAIResponseOutput) ResponseError(
 		Kind:               kind,
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
-	})
+	}, telemetry.RequestAttemptFromResponse(resp))
 	if kind == "failover" {
 		return nil, &forwardcore.UpstreamFailoverError{
 			StatusCode:              resp.StatusCode,
@@ -560,7 +561,7 @@ func (p *OpenAIResponseOutput) CompatError(
 			Kind:               "http_error",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
-		})
+		}, telemetry.RequestAttemptFromResponse(resp))
 		MarkResponseCommitted(c)
 		writeErrorBody(c, http.StatusBadRequest, body)
 		return nil, fmt.Errorf("upstream invalid request: %d message=%s", resp.StatusCode, upstreamMsg)
@@ -591,7 +592,7 @@ func (p *OpenAIResponseOutput) CompatError(
 			Kind:               "http_error",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
-		})
+		}, telemetry.RequestAttemptFromResponse(resp))
 		MarkResponseCommitted(c)
 		writeError(c, http.StatusInternalServerError, "api_error", "Upstream gateway error")
 		if upstreamMsg == "" {
@@ -617,7 +618,7 @@ func (p *OpenAIResponseOutput) CompatError(
 		Kind:               kind,
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
-	})
+	}, telemetry.RequestAttemptFromResponse(resp))
 	if kind == "failover" {
 		return nil, &forwardcore.UpstreamFailoverError{
 			StatusCode:              resp.StatusCode,

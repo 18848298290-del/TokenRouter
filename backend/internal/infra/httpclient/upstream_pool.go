@@ -24,6 +24,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/proxy"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	servertiming "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
@@ -35,6 +36,8 @@ import (
 // flight; successful responses keep that reservation until body Close
 // releases it once, while request failure releases after the result observer
 // has run. Callers close bodies even after abandoning response processing.
+// Failed transport calls finish their diagnostic attempt using the dispatched
+// request context before their original error returns to platform handling.
 //
 // Cache hits reserve under the read lock, and misses recheck under the write
 // lock before construction or eviction. Expired and oldest-entry eviction
@@ -223,12 +226,16 @@ func NewUpstreamPool() *UpstreamPool {
 // request error before decompression or release. The body release callback
 // runs once, while the underlying Close can still run repeatedly. Pool
 // construction and callback configuration remain separate from provider retry
-// policy.
+// policy. Transport failure updates the captured diagnostic attempt even when
+// the request has no performance collector or response headers.
 // @project-doc docs/operations/upstream_transport_security.md#upstream_client_pool
 func (s *UpstreamPool) Do(req *http.Request, opts UpstreamRequestOptions) (response *http.Response, failure error) {
 	var attemptNumber int64
 	defer func() {
 		if failure != nil && req != nil {
+			// The dispatched request retains its own ordinal after later exchanges start.
+			// Finish failure here because network errors provide no response for platform callbacks.
+			telemetry.ObserveRequestFailure(req.Context(), telemetry.RequestAttemptFromContext(req.Context()))
 			if stages := servertiming.StagesFromContext(req.Context()); stages != nil {
 				stages.FinishAttempt(attemptNumber)
 			}

@@ -17,6 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	providerimages "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -421,4 +422,37 @@ func TestOpenAIImagesTextFallback_RemainsRetryableAndThusCascades(t *testing.T) 
 	require.NotNil(t, err)
 	require.True(t, upstreamopenai.IsOpenAIImagesRetryableUpstreamError(err),
 		"文字兜底判据是可重试的——正因如此，写提供商冷却会沿号池级联")
+}
+
+// TestImageStreamFailureUsesResponseDispatch reports an older image stream error
+// after a replacement exchange starts. The production error adapter must attach
+// its response reference so only the interrupted attempt receives the failure.
+func TestImageStreamFailureUsesResponseDispatch(t *testing.T) {
+	var saved telemetry.RequestRecord
+	ctx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "local"}, func(r telemetry.RequestRecord) { saved = r })
+	ctx = telemetry.WithRequestProvider(ctx, 5400, "X-Custom")
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil).WithContext(ctx)
+	first := telemetry.BeginRequestAttempt(ctx, 0)
+	headers := http.Header{"X-Custom": {"shared"}, "X-Request-Id": {"unselected"}}
+	telemetry.ObserveRequestHeaders(first, telemetry.RequestAttemptFromContext(first), headers, 200)
+	second := telemetry.BeginRequestAttempt(ctx, 0)
+	telemetry.ObserveRequestHeaders(second, telemetry.RequestAttemptFromContext(second), headers, 200)
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     headers,
+		Request:    httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(first),
+		Body:       &openAIImagesReadErrorBody{err: errors.New("stream error: stream ID 11; INTERNAL_ERROR; received from peer")},
+	}
+	target := &gatewayprovider.ExecutionProvider{Record: providerimages.Record{LoadLocation: time.LoadLocation, ID: 5400, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth}}
+	svc := newImagesFixture(imagesFixtureInputs{})
+	_, _, _, readErr := upstreamopenai.ReadImagesOAuthNonStreaming(resp, ResponseSink{Writer: c.Writer}, svc.Output.ImageOptions(c), "b64_json", "gpt-image-2")
+	require.Error(t, readErr)
+	require.Error(t, svc.handleOpenAIImagesOAuthResponseError(ctx, c, target, "gpt-image-2", "", resp, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c), readErr))
+	require.Equal(t, "failed", saved.Attempts[0].Outcome)
+	require.Equal(t, 502, saved.Attempts[0].Status)
+	require.Equal(t, "running", saved.Attempts[1].Outcome)
+	require.Equal(t, 200, saved.Attempts[1].Status)
+	require.Equal(t, "shared", saved.Attempts[0].RequestID)
+	require.Len(t, saved.Aliases, 2)
 }

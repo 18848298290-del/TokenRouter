@@ -16,6 +16,7 @@ import (
 	mediaprovider "github.com/TokenFlux/TokenRouter/internal/gateway/media/provider"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
@@ -111,7 +112,16 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesErrorResponse(
 			return gatewayprovider.ExtractOpenAICyberWarningMessage(body, upstreamMsg), true
 		},
 		Observe: func(kind, message string) {
-			AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{Platform: provider.Record.Platform, ProviderID: provider.Record.ID, ProviderName: provider.Record.Name, UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"), Kind: kind, Message: message, Detail: upstreamDetail})
+			AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
+				Platform:           provider.Record.Platform,
+				ProviderID:         provider.Record.ID,
+				ProviderName:       provider.Record.Name,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				Kind:               kind,
+				Message:            message,
+				Detail:             upstreamDetail,
+			}, telemetry.RequestAttemptFromResponse(resp))
 		},
 		Write: func(response gatewaymedia.ErrorResponse) error {
 			upErr := &openai.OpenAIImagesUpstreamError{StatusCode: response.Status, ErrorType: response.Type, Message: response.Message, UpstreamRequestID: strings.TrimSpace(resp.Header.Get("x-request-id"))}
@@ -308,7 +318,7 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesOAuth(
 						Kind: "failover",
 
 						Message: upstreamMsg,
-					})
+					}, telemetry.RequestAttemptFromResponse(resp))
 				},
 				ApplyPolicy: func() bool {
 					decision = s.Output.ApplyHTTPFailure(upstreamCtx, resp, provider, respBody, requestModel)
@@ -441,7 +451,7 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesOAuthResponseError(
 			Kind: kind,
 
 			Message: message,
-		})
+		}, telemetry.RequestAttemptFromResponse(resp))
 		if !retryable || responseWritten {
 			return err
 		}
@@ -497,7 +507,7 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesOAuthResponseError(
 		Kind: kind,
 
 		Message: upstreamErr.ClientMessage(),
-	})
+	}, telemetry.RequestAttemptFromResponse(resp))
 
 	// The unavailable-tool code selects image-specific policy. Cooldown needs
 	// structured evidence; model-text inference still permits another provider before output.

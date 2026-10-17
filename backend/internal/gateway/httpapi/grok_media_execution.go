@@ -530,7 +530,16 @@ func (s *GrokExecutor) handleGrokMediaErrorResponse(
 			return gatewaymedia.GrokRetry{Retryable: retryable, PolicyRetryable: decision.RetryableOnSameProvider(gatewayprovider.ExecutionErrorPolicy(provider), resp.StatusCode), Delay: delay, Deadline: deadline, Maximum: maximum}
 		},
 		Observe: func(kind, message string) {
-			AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{Platform: provider.Record.Platform, ProviderID: provider.Record.ID, ProviderName: provider.Record.Name, UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: requestIDHeader, Kind: kind, Message: message, Detail: upstreamDetail})
+			AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{
+				Platform:           provider.Record.Platform,
+				ProviderID:         provider.Record.ID,
+				ProviderName:       provider.Record.Name,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamRequestID:  requestIDHeader,
+				Kind:               kind,
+				Message:            message,
+				Detail:             upstreamDetail,
+			}, telemetry.RequestAttemptFromResponse(resp))
 		},
 		Rewrite: func() (gatewaymedia.ErrorResponse, bool) {
 			status, typ, message, matched := ApplyErrorPassthroughRule(c, provider.Record.Platform, resp.StatusCode, body, http.StatusBadGateway, "upstream_error", "Upstream request failed")

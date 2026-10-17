@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
@@ -26,11 +27,13 @@ import (
 // acquiring a slot; VideoLookup closes recovery after forwarding. Result
 // snapshots separately copy every current mutable collection and timing
 // pointer, preserving nil and empty collection evidence for independent
-// completion consumers.
+// completion consumers. The dispatch reference remains attached across result
+// conversion so completion can identify retries with missing or repeated IDs.
 
 // GenerationResult carries observed image/video response and usage evidence
 // into completion.
 type GenerationResult struct {
+	RequestAttempt telemetry.RequestAttemptRef `json:"-"` // originating HTTP dispatch reference
 	// RequestID and ResponseID identify upstream execution and response/task
 	// evidence. Model, BillingModel and UpstreamModel keep client, settlement
 	// and provider names separate so completion can apply the appropriate

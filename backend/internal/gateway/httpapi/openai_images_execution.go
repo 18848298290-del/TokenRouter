@@ -14,6 +14,7 @@ import (
 	gatewaymedia "github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	mediaprovider "github.com/TokenFlux/TokenRouter/internal/gateway/media/provider"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
@@ -229,7 +230,7 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 						Kind: "failover",
 
 						Message: upstreamMsg,
-					})
+					}, telemetry.RequestAttemptFromResponse(resp))
 				},
 				ApplyPolicy: func() bool {
 					shouldDisable = s.Output.ApplyHTTPFailure(upstreamCtx, resp, provider, respBody, upstreamModel).StopScheduling

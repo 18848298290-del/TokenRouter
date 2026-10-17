@@ -493,13 +493,15 @@ func SetOpsUpstreamError(c *gin.Context, upstreamStatusCode int, upstreamMessage
 // Request telemetry retains bounded attempt outcome and provider evidence
 // before the event pointer is published in Gin. Header observers own identifiers;
 // errors never replace them with their separately collected Ops values.
+// The first optional dispatch reference identifies an HTTP response or captured
+// result even after another attempt starts; a conflicting provider is rejected.
 // Authentication failures without an upstream status remain unnumbered beside
 // earlier exchanges. A usage_invalid event reports
 // unknown usage rather than failed inference. Rule matching then updates that
 // published event's suppression flag, so callers serialize observation until
 // this function returns and keep retained event values immutable for later
 // snapshots.
-func AppendOpsUpstreamError(c *gin.Context, ev ops.OpsUpstreamErrorEvent) {
+func AppendOpsUpstreamError(c *gin.Context, ev ops.OpsUpstreamErrorEvent, dispatch ...telemetry.RequestAttemptRef) {
 	if c == nil {
 		return
 	}
@@ -530,14 +532,22 @@ func AppendOpsUpstreamError(c *gin.Context, ev ops.OpsUpstreamErrorEvent) {
 	if c.Request != nil {
 		number := 0
 		beforeDispatch := ev.Stage == string(forward.GatewayFailureStageProviderAuth) && ev.UpstreamStatusCode == 0
+		bound := len(dispatch) > 0 && dispatch[0].Number > 0
 		if !beforeDispatch {
-			if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
+			if bound {
+				number = dispatch[0].Number
+			} else if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
 				number = int(stages.Attempt())
 			} else {
 				number = telemetry.FindRequestAttempt(c.Request.Context(), 0, ev.ProviderID).Number
 			}
 		}
 		telemetry.UpdateRequest(c.Request.Context(), func(record *telemetry.RequestRecord) {
+			// A response-owned reference takes precedence over mutable timing state.
+			// Reject provider conflicts instead of attributing this event to a different exchange.
+			if bound && dispatch[0].ProviderID != ev.ProviderID {
+				return
+			}
 			// Match provider and ordinal before updating diagnostic outcome. An
 			// unattributed error remains in Ops instead of creating a conflicting attempt.
 			outcome := "failed"

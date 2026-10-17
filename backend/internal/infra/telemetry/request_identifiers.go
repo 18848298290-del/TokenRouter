@@ -14,7 +14,8 @@ import (
 // to its provider and ordinal, so responses from abandoned exchanges cannot write
 // their identifiers into a replacement attempt. Empty observations leave an
 // earlier identifier intact, and a configured header never falls back to another
-// response header.
+// response header. Transport failures and HTTP rejections finish the referenced
+// attempt even when no text timing collector or protocol error event exists.
 //
 // Response-object identifiers use a separate alias category. The existing alias
 // value index continues to serve lookup independently of these descriptive JSON
@@ -166,6 +167,8 @@ func FindRequestAttempt(ctx context.Context, number int, providerID int64, heade
 // cannot clear an earlier value, and an absent selected header has no fallback.
 //
 // Provider and ordinal must both match before status or identity is updated.
+// HTTP rejections mark a running attempt failed at header arrival, including
+// callers that return a client error without publishing a separate Ops event.
 // The first valid identifier owns this attempt; later sparse completion and error
 // observations only add evidence. Alias publication occurs in the same mutation,
 // so a persisted snapshot contains both the attempt value and its lookup alias.
@@ -186,6 +189,9 @@ func ObserveRequestHeaders(ctx context.Context, ref RequestAttemptRef, headers h
 			if status > 0 {
 				attempt.Status = status
 			}
+			if status >= http.StatusBadRequest && attempt.Outcome == "running" {
+				attempt.Outcome = "failed"
+			}
 			if attempt.RequestID == "" && validRequestAlias(id) {
 				attempt.RequestID = id
 				attempt.RequestIDHeader = ref.Header
@@ -194,6 +200,29 @@ func ObserveRequestHeaders(ctx context.Context, ref RequestAttemptRef, headers h
 				appendRequestAlias(record, RequestAlias{Kind: "upstream_request", Value: attempt.RequestID, Source: attempt.RequestIDHeader, AttemptNumber: ref.Number, ProviderID: ref.ProviderID})
 			}
 			return
+		}
+	})
+}
+
+// ObserveRequestFailure marks an identified transport attempt failed after dispatch.
+// Provider and ordinal must match, and an existing terminal outcome is retained.
+// The transport calls this before returning its original error, so absent headers
+// and later retries cannot leave that exchange running or erase its identifiers.
+//
+// Empty or conflicting references leave the recorder unchanged. Cancellation uses
+// the same attempt outcome as other transport failures; the enclosing request
+// records its own canceled lifecycle independently of this exchange observation.
+func ObserveRequestFailure(ctx context.Context, ref RequestAttemptRef) {
+	if ref.Number <= 0 {
+		return
+	}
+	UpdateRequest(ctx, func(record *RequestRecord) {
+		for i := range record.Attempts {
+			attempt := &record.Attempts[i]
+			if attempt.Number == ref.Number && attempt.ProviderID == ref.ProviderID && attempt.Outcome == "running" {
+				attempt.Outcome = "failed"
+				return
+			}
 		}
 	})
 }

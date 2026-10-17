@@ -90,3 +90,26 @@ func TestRequestIdentifiersPreserveLegacyAndRejectInvalidValues(t *testing.T) {
 	require.Equal(t, RequestAlias{Kind: "upstream", Value: "resp_legacy"}, saved.Aliases[0])
 	require.Len(t, saved.Aliases, 2)
 }
+
+// TestRequestFailureKeepsObservedIdentity rejects another provider's reference
+// and ignores failure after a completed outcome. A matching transport failure
+// retains its selected ID even after an empty subsequent header observation.
+func TestRequestFailureKeepsObservedIdentity(t *testing.T) {
+	var saved RequestRecord
+	ctx := WithRequestCapture(t.Context(), RequestRecord{RequestID: "local"}, func(r RequestRecord) { saved = r })
+	ctx = BeginRequestAttempt(WithRequestProvider(ctx, 7, "X-Custom"), 0)
+	ref := RequestAttemptFromContext(ctx)
+	ObserveRequestHeaders(ctx, ref, http.Header{"X-Custom": {"known"}}, 200)
+	wrong := ref
+	wrong.ProviderID = 8
+	ObserveRequestFailure(ctx, wrong)
+	require.Equal(t, "running", saved.Attempts[0].Outcome)
+	ObserveRequestFailure(ctx, ref)
+	ObserveRequestHeaders(ctx, ref, nil, 0)
+	require.Equal(t, "failed", saved.Attempts[0].Outcome)
+	require.Equal(t, "known", saved.Attempts[0].RequestID)
+	UpdateRequest(ctx, func(record *RequestRecord) { record.Attempts[0].Outcome = "completed" })
+	ObserveRequestFailure(ctx, ref)
+	require.Equal(t, "completed", saved.Attempts[0].Outcome)
+	require.Len(t, saved.Aliases, 1)
+}

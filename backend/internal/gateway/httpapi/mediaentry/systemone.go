@@ -201,7 +201,15 @@ func (p *systemOneRun) Complete(ctx context.Context, result upstream.AttemptResu
 func (p *systemOneRun) MissingUsage(_ context.Context, result upstream.AttemptResult) {
 	value := p.selection.Provider.Record
 	p.log.Warn("systemone.usage_invalid", zap.Int64("provider_id", value.ID), zap.String("upstream_request_id", result.RequestID))
-	gatewayhttp.AppendOpsUpstreamError(p.c, ops.OpsUpstreamErrorEvent{Platform: provider.PlatformJev, ProviderID: value.ID, ProviderName: value.Name, UpstreamStatusCode: http.StatusOK, UpstreamRequestID: result.RequestID, Kind: "usage_invalid", Message: "SystemOne usage is missing or invalid; billing skipped"})
+	gatewayhttp.AppendOpsUpstreamError(p.c, ops.OpsUpstreamErrorEvent{
+		Platform:           provider.PlatformJev,
+		ProviderID:         value.ID,
+		ProviderName:       value.Name,
+		UpstreamStatusCode: http.StatusOK,
+		UpstreamRequestID:  result.RequestID,
+		Kind:               "usage_invalid",
+		Message:            "SystemOne usage is missing or invalid; billing skipped",
+	}, result.RequestAttempt)
 }
 
 // Switch records a permitted provider replacement for the current decision

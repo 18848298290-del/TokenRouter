@@ -2,6 +2,7 @@ package mediaentry
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -238,11 +239,12 @@ func TestGenerationResultConversionsPreserveCollectionShapes(t *testing.T) {
 func generationConversionForwardFixture() *forward.OpenAIResult {
 	first := 17
 	return &forward.OpenAIResult{
-		RequestID:     "upstream-request",
-		ResponseID:    "media-response",
-		Model:         "client-model",
-		BillingModel:  "billing-model",
-		UpstreamModel: "upstream-model",
+		RequestAttempt: telemetry.RequestAttemptRef{Number: 2, ProviderID: 7, Header: "X-Custom"},
+		RequestID:      "upstream-request",
+		ResponseID:     "media-response",
+		Model:          "client-model",
+		BillingModel:   "billing-model",
+		UpstreamModel:  "upstream-model",
 		Usage: protocolopenai.ForwardUsage{
 			InputTokens:              11,
 			ImageInputTokens:         13,
@@ -276,11 +278,12 @@ func generationConversionForwardFixture() *forward.OpenAIResult {
 func generationConversionMediaFixture() *media.GenerationResult {
 	first := 17
 	return &media.GenerationResult{
-		RequestID:     "upstream-request",
-		ResponseID:    "media-response",
-		Model:         "client-model",
-		BillingModel:  "billing-model",
-		UpstreamModel: "upstream-model",
+		RequestAttempt: telemetry.RequestAttemptRef{Number: 2, ProviderID: 7, Header: "X-Custom"},
+		RequestID:      "upstream-request",
+		ResponseID:     "media-response",
+		Model:          "client-model",
+		BillingModel:   "billing-model",
+		UpstreamModel:  "upstream-model",
 		Usage: protocolopenai.ForwardUsage{
 			InputTokens:              11,
 			ImageInputTokens:         13,
@@ -305,5 +308,55 @@ func generationConversionMediaFixture() *media.GenerationResult {
 		ImageSizeBreakdown:   map[string]int{"1K": 1, "2K": 1},
 		Headers:              map[string][]string{"Trace": {"upstream", "extra-upstream"}},
 		ResponseHeaders:      map[string][]string{"Result": {"response", "extra-response"}},
+	}
+}
+
+// TestGenerationCompletionKeepsDispatchThroughConversions completes image retries
+// and billable video polls through the media result conversions. Missing or reused
+// headers and a newer dispatch must not change the producing attempt or usage ID.
+func TestGenerationCompletionKeepsDispatchThroughConversions(t *testing.T) {
+	for _, id := range []string{"", "reused"} {
+		for _, video := range []bool{false, true} {
+			var saved telemetry.RequestRecord
+			root := context.WithValue(t.Context(), telemetry.RequestID, "local")
+			root = telemetry.WithRequestCapture(root, telemetry.RequestRecord{RequestID: "local"}, func(r telemetry.RequestRecord) {
+				if r.RequestID == "local" {
+					saved = r
+				}
+			})
+			root = telemetry.WithRequestProvider(root, 7, "X-Custom")
+			headers := http.Header{"X-Custom": {id}, "X-Request-Id": {"unselected"}}
+			first := telemetry.BeginRequestAttempt(root, 0)
+			telemetry.ObserveRequestHeaders(first, telemetry.RequestAttemptFromContext(first), headers, 503)
+			exchange := telemetry.BeginRequestAttempt(root, 0)
+			ref := telemetry.RequestAttemptFromContext(exchange)
+			telemetry.ObserveRequestHeaders(exchange, ref, headers, 200)
+			source := &forward.OpenAIResult{RequestAttempt: ref, Model: "model", ResponseID: "resp_generation", UpstreamHeaders: headers}
+			if video {
+				source.VideoCount = 1
+			}
+			result := legacyGenerationResult(generationResultView(source))
+			require.Equal(t, ref, result.RequestAttempt)
+			// Start replacement work before capture to distinguish dispatch ownership
+			// from any inference based on the selected provider's current attempt.
+			newer := telemetry.BeginRequestAttempt(root, 0)
+			telemetry.ObserveRequestHeaders(newer, telemetry.RequestAttemptFromContext(newer), headers, 200)
+			out := gatewayadapter.CaptureOpenAI(root, &gatewayadapter.OpenAICapture{
+				Result:   result,
+				Provider: &provider.Record{ID: 7, Extra: map[string]any{provider.ProviderExtraUpstreamRequestIDHeader: "X-Custom"}},
+			})
+			require.Equal(t, "failed", saved.Attempts[0].Outcome)
+			require.Equal(t, "completed", saved.Attempts[1].Outcome)
+			require.Equal(t, "running", saved.Attempts[2].Outcome)
+			require.Nil(t, out.Result.Timings)
+			if id == "" {
+				require.Nil(t, out.Result.UpstreamRequestID)
+			} else {
+				require.Equal(t, id, *out.Result.UpstreamRequestID)
+			}
+			if !video {
+				require.Contains(t, saved.Aliases, telemetry.RequestAlias{Kind: "response", Value: "resp_generation", Source: "response.id", ProviderID: 7, AttemptNumber: 2})
+			}
+		}
 	}
 }

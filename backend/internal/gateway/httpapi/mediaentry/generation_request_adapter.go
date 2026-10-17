@@ -41,10 +41,11 @@ import (
 // Forwarding compares real response bytes, excluding JSON heartbeat padding
 // for OpenAI image paths, before the loop decides whether a failed attempt
 // can retry. Completion captures source payload, funding and mapped model
-// identity synchronously before worker submission. Grok video creation stores
-// pending pricing and saved ownership for later status or content lookup; its
-// task identifier remains separate from the stable financial request key used
-// when completion is observed.
+// identity synchronously before worker submission. Result conversions carry the
+// immutable dispatch reference through the media loop to completion capture.
+// Grok video creation stores pending pricing and saved ownership for later status
+// or content lookup. Its task identifier remains separate from the stable
+// financial request key used when completion is observed.
 
 // generationRequestAdapter retains request identity and current media target
 // across serial attempts.
@@ -482,7 +483,8 @@ func (p *generationRequestAdapter) completeGrok(requestCtx context.Context, valu
 // generationResultView converts selected media fields from OpenAI forwarding
 // into a cloned generation result. Nil input returns nil. Request, response,
 // billing and upstream model identities retain their separate values along
-// with scalar token, image, video and timing observations.
+// with scalar token, image, video and timing observations. The HTTP dispatch
+// reference retains its provider and ordinal through both result conversions.
 //
 // The generation clone copies the performance maps, image-size slice and map,
 // and both header maps with their value slices, retaining nil and empty
@@ -495,6 +497,7 @@ func generationResultView(r *forwardcore.OpenAIResult) *gatewaymedia.GenerationR
 	// Copy mutable media observations before the loop retains them, so completion
 	// conversions can keep their own timing, size and header evidence across callbacks.
 	return gatewaymedia.CloneGenerationResult(&gatewaymedia.GenerationResult{
+		RequestAttempt:       r.RequestAttempt,
 		RequestID:            r.RequestID,
 		ResponseID:           r.ResponseID,
 		Model:                r.Model,
@@ -529,8 +532,8 @@ func generationResultView(r *forwardcore.OpenAIResult) *gatewaymedia.GenerationR
 // Both header maps, image output sizes and size breakdown come from the
 // private clone, so the returned view can be retained independently of the
 // media loop's result. Nil and empty collections keep their observed shapes.
-// Text and WebSocket observations are absent because the generation schema
-// carries media execution evidence.
+// The HTTP dispatch reference survives the conversion so completion updates the
+// producing attempt even when response headers cannot distinguish retries.
 func legacyGenerationResult(r *gatewaymedia.GenerationResult) *forwardcore.OpenAIResult {
 	if r == nil {
 		return nil
@@ -539,6 +542,7 @@ func legacyGenerationResult(r *gatewaymedia.GenerationResult) *forwardcore.OpenA
 	// scheduling and completion consumers retain observations independently of the loop.
 	r = gatewaymedia.CloneGenerationResult(r)
 	return &forwardcore.OpenAIResult{
+		RequestAttempt:       r.RequestAttempt,
 		RequestID:            r.RequestID,
 		ResponseID:           r.ResponseID,
 		Model:                r.Model,

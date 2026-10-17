@@ -19,6 +19,7 @@ import (
 	mediaprovider "github.com/TokenFlux/TokenRouter/internal/gateway/media/provider"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
@@ -219,7 +220,7 @@ func (s *OpenAIAuxiliary) ForwardEmbeddings(
 						Message: upstreamMsg,
 
 						Detail: upstreamDetail,
-					})
+					}, telemetry.RequestAttemptFromResponse(resp))
 				},
 				NewFailover: func() error {
 					// Failover construction reapplies
