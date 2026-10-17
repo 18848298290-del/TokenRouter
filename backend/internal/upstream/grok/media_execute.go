@@ -160,6 +160,7 @@ func (MediaExecutor) Execute(ctx context.Context, input upstream.AttemptInput, s
 		result.ClientDisconnect = output.Err() != nil
 	}
 	result.RequestID = firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
+	result.CaptureRequestAttempt(resp)
 	result.UpstreamHeaders = resp.Header
 	result.MediaBody = data
 	result.Served = len(data) > 0

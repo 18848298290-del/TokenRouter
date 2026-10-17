@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
@@ -15,6 +16,8 @@ import (
 // observed during that one exchange. The gateway consumes output commitment
 // and usage separately when deciding provider switching, request completion,
 // and settlement after an execution error.
+// Executors attach the originating HTTP dispatch to their result before returning,
+// so completion can identify retries even when response identifiers are absent.
 
 // ExecutionTarget identifies a provider through the concrete target accepted
 // by its executor.
@@ -40,6 +43,7 @@ type AttemptInput struct {
 // Executors can return partial evidence together with an error; the gateway
 // interprets completion eligibility and retry policy for its request protocol.
 type AttemptResult struct {
+	RequestAttempt telemetry.RequestAttemptRef `json:"-"` // originating diagnostic dispatch reference
 	// UpstreamResponseModel records the model declared before client-facing
 	// conversion. Empty means this attempt supplied no retained model declaration.
 	UpstreamResponseModel string // observed vendor model name
@@ -124,4 +128,11 @@ func (r *AttemptResult) CapturePerformance(ctx context.Context, failure error) {
 		r.Timings.Complete = failure == nil
 		r.Timings.UsageComplete = failure == nil && r.HasUsage
 	}
+}
+
+// CaptureRequestAttempt attaches the response's immutable dispatch to this result.
+// Call before returning from the executor; missing response request metadata leaves
+// the reference empty, and usage quantities and wire headers are unchanged.
+func (r *AttemptResult) CaptureRequestAttempt(response *http.Response) {
+	r.RequestAttempt = telemetry.RequestAttemptFromResponse(response)
 }

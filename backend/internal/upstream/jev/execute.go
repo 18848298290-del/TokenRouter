@@ -225,6 +225,7 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	if result.RequestID == "" {
 		result.RequestID = response.Header.Get("request-id")
 	}
+	result.CaptureRequestAttempt(response)
 	result.UpstreamHeaders = response.Header.Clone()
 	// Apply the client alias only after recording the declared upstream
 	// model, so response presentation cannot erase the version used by

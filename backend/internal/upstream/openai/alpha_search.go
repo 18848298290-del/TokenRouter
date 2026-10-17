@@ -163,6 +163,7 @@ func (AlphaSearchExecutor) Execute(ctx context.Context, input upstream.AttemptIn
 		return result, nil
 	}
 	result.RequestID = strings.TrimSpace(resp.Header.Get("x-request-id"))
+	result.CaptureRequestAttempt(resp)
 	result.UpstreamHeaders = resp.Header
 	result.Model = input.ResponseModel
 	result.UpstreamModel = t.Model

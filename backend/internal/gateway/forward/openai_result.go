@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -26,6 +27,7 @@ import (
 
 // OpenAIResult holds OpenAI-compatible execution observations and private WebSocket replay state.
 type OpenAIResult struct {
+	RequestAttempt telemetry.RequestAttemptRef `json:"-"` // originating diagnostic dispatch reference
 	// LocalWarmup marks a locally completed warmup. Gateway turn completion skips
 	// its normal usage and scheduling feedback, and SucceededForScheduling returns false.
 	LocalWarmup bool `json:"-"`

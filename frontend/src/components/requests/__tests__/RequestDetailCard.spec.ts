@@ -60,6 +60,21 @@ describe('RequestDetailCard identifiers', () => {
     expect(wrapper.findAll('dl').at(-1)!.findAll('dd')).toHaveLength(4)
   })
 
+  // Pre-dispatch failures have no HTTP ordinal but retain their selected providers.
+  // Rendering must keep both entries visible without presenting them as a numbered exchange.
+  it('shows multiple unnumbered provider failures', () => {
+    const item = detail()
+    item.attempts = [
+      { number: 0, provider_id: 7, outcome: 'failed', stage: 'provider_auth', reason: 'first failure' },
+      { number: 0, provider_id: 8, outcome: 'failed', stage: 'provider_auth', reason: 'second failure' }
+    ]
+    const wrapper = renderDetail(item)
+    expect(wrapper.text()).toContain('first failure')
+    expect(wrapper.text()).toContain('second failure')
+    expect(wrapper.text()).toContain('Unnumbered')
+    expect(wrapper.text()).not.toContain('#0')
+  })
+
   // Historical identifiers lack reliable provenance even when their spelling resembles Responses.
   // Rendering must retain the generic label and explicitly report the missing source.
   it('does not infer historical response identity from a prefix', () => {

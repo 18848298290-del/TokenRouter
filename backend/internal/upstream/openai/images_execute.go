@@ -163,6 +163,7 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	var usage wire.ForwardUsage
 	var output *upstream.OutputContext
 	result.RequestID = resp.Header.Get("x-request-id")
+	result.CaptureRequestAttempt(resp)
 	result.UpstreamHeaders = resp.Header
 	result.Model = input.ResponseModel
 	result.UpstreamModel = t.Model

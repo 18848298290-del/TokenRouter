@@ -98,6 +98,7 @@ func openAIObservedAttempt(result *forwardcore.OpenAIResult, err error) upstream
 		return upstream.AttemptResult{Cancelled: errors.Is(err, context.Canceled)}
 	}
 	out := upstream.AttemptResult{
+		RequestAttempt:   result.RequestAttempt,
 		RequestID:        result.RequestID,
 		ResponseID:       result.ResponseID,
 		Model:            result.Model,

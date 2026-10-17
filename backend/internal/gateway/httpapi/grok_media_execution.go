@@ -17,6 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/modeltrace"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
@@ -254,7 +255,8 @@ func (s *GrokExecutor) ForwardGrokMedia(
 		}
 	}
 	return &forwardcore.OpenAIResult{
-		RequestID: result.RequestID,
+		RequestAttempt: result.RequestAttempt,
+		RequestID:      result.RequestID,
 
 		UpstreamHeaders: result.UpstreamHeaders,
 
@@ -379,8 +381,9 @@ func (s *GrokExecutor) forwardGrokMediaVideoContent(
 	// Content download also observes completion: done with video.url yields billing units.
 	// The handler merges pending billing data and claims settlement as it does for status polling.
 	result := &forwardcore.OpenAIResult{
-		RequestID:  contentRequestID,
-		VideoState: gatewaymedia.GrokVideoRequestState(statusBody),
+		RequestAttempt: telemetry.RequestAttemptFromResponse(contentResp),
+		RequestID:      contentRequestID,
+		VideoState:     gatewaymedia.GrokVideoRequestState(statusBody),
 
 		UpstreamHeaders: contentResp.Header,
 

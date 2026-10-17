@@ -39,6 +39,7 @@ func ProjectWSResult(r *forwardcore.OpenAIResult) *gatewayws.ForwardResult {
 	replay, replayExists := r.WSReplayInput()
 	out := &gatewayws.ForwardResult{
 		LocalWarmup:                 r.LocalWarmup,
+		RequestAttempt:              r.RequestAttempt,
 		RequestID:                   r.RequestID,
 		ResponseID:                  r.ResponseID,
 		UpstreamHeaders:             r.UpstreamHeaders,
@@ -96,6 +97,7 @@ func ForwardResultFromWS(r *gatewayws.ForwardResult) *forwardcore.OpenAIResult {
 	}
 	out := &forwardcore.OpenAIResult{
 		LocalWarmup:                 r.LocalWarmup,
+		RequestAttempt:              r.RequestAttempt,
 		RequestID:                   r.RequestID,
 		ResponseID:                  r.ResponseID,
 		UpstreamHeaders:             r.UpstreamHeaders,

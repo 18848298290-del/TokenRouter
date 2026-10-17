@@ -30,6 +30,7 @@ export default {
   "usage": "用量与费用",
   "errors": "错误记录",
   "aliases": "关联标识",
+  unassignedAttempt: "未编号",
   sourceUnrecorded: "来源未记录",
   "tokens": "输入 {input} tokens · 输出 {output} tokens",
   "states": {

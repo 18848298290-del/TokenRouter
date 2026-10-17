@@ -112,6 +112,16 @@ func RequestAttemptFromContext(ctx context.Context) RequestAttemptRef {
 	return ref
 }
 
+// RequestAttemptFromResponse reads the dispatch reference retained by net/http.
+// Missing response requests return zero, as they provide no transport ownership
+// evidence. Executors copy this value into results before response cleanup.
+func RequestAttemptFromResponse(response *http.Response) RequestAttemptRef {
+	if response == nil || response.Request == nil {
+		return RequestAttemptRef{}
+	}
+	return RequestAttemptFromContext(response.Request.Context())
+}
+
 // FindRequestAttempt finds an exact ordinal and provider in a captured request.
 // A zero ordinal requires a unique matching attempt; supplied response headers
 // narrow that search using the already observed selected-header value. Reused IDs

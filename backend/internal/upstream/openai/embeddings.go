@@ -178,6 +178,7 @@ func (EmbeddingsExecutor) Execute(ctx context.Context, input upstream.AttemptInp
 	}
 	usage := wire.ExtractEmbeddingsUsage(body)
 	result.RequestID = FirstNonEmptyString(resp.Header.Get("x-request-id"), resp.Header.Get("request-id"))
+	result.CaptureRequestAttempt(resp)
 	result.UpstreamHeaders = resp.Header
 	result.Model = input.ResponseModel
 	result.UpstreamModel = t.Model

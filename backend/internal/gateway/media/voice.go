@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
@@ -37,6 +38,7 @@ type VoiceRequest struct {
 // VoiceResult carries response timing and audio usage into completion
 // callbacks.
 type VoiceResult struct {
+	RequestAttempt telemetry.RequestAttemptRef `json:"-"` // originating diagnostic dispatch reference
 	// RequestID identifies upstream execution, Model is its response model and
 	// UpstreamModel records the provider model. Completion receives all three
 	// identities from the forwarding adapter.

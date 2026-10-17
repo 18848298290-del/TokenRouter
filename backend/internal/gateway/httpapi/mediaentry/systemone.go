@@ -167,7 +167,19 @@ func (p *systemOneRun) Report(ctx context.Context, outcome systemone.Outcome) {
 // its provider lease is still held, and the queued recorder uses the captured
 // values after release.
 func (p *systemOneRun) Complete(ctx context.Context, result upstream.AttemptResult) {
-	value := &forward.OpenAIResult{RequestID: result.RequestID, Model: p.input.Mapping.MappedModel, UpstreamModel: result.UpstreamModel, UpstreamResponseModel: result.UpstreamResponseModel, UpstreamHeaders: result.UpstreamHeaders, Usage: openai.ForwardUsage{InputTokens: result.Usage.InputTokens, OutputTokens: result.Usage.OutputTokens}, Duration: result.Duration}
+	value := &forward.OpenAIResult{
+		RequestAttempt:        result.RequestAttempt,
+		RequestID:             result.RequestID,
+		Model:                 p.input.Mapping.MappedModel,
+		UpstreamModel:         result.UpstreamModel,
+		UpstreamResponseModel: result.UpstreamResponseModel,
+		UpstreamHeaders:       result.UpstreamHeaders,
+		Usage: openai.ForwardUsage{
+			InputTokens:  result.Usage.InputTokens,
+			OutputTokens: result.Usage.OutputTokens,
+		},
+		Duration: result.Duration,
+	}
 	if value.Model == "" {
 		value.Model = p.input.Model
 	}

@@ -273,7 +273,8 @@ func (s *OpenAIAuxiliary) ForwardEmbeddings(
 		return nil, err
 	}
 	return &forwardcore.OpenAIResult{
-		RequestID: result.RequestID,
+		RequestAttempt: result.RequestAttempt,
+		RequestID:      result.RequestID,
 
 		UpstreamHeaders: result.UpstreamHeaders,
 

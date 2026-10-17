@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
@@ -489,8 +490,11 @@ func SetOpsUpstreamError(c *gin.Context, upstreamStatusCode int, upstreamMessage
 // Message receives query sanitization. Detail, URL and response body remain for
 // later queue preparation.
 //
-// Request telemetry retains bounded attempt metadata and the upstream alias
-// before the event pointer is published in Gin. A usage_invalid event reports
+// Request telemetry retains bounded attempt outcome and provider evidence
+// before the event pointer is published in Gin. Header observers own identifiers;
+// errors never replace them with their separately collected Ops values.
+// Authentication failures without an upstream status remain unnumbered beside
+// earlier exchanges. A usage_invalid event reports
 // unknown usage rather than failed inference. Rule matching then updates that
 // published event's suppression flag, so callers serialize observation until
 // this function returns and keep retained event values immutable for later
@@ -525,10 +529,13 @@ func AppendOpsUpstreamError(c *gin.Context, ev ops.OpsUpstreamErrorEvent) {
 
 	if c.Request != nil {
 		number := 0
-		if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
-			number = int(stages.Attempt())
-		} else {
-			number = telemetry.FindRequestAttempt(c.Request.Context(), 0, ev.ProviderID).Number
+		beforeDispatch := ev.Stage == string(forward.GatewayFailureStageProviderAuth) && ev.UpstreamStatusCode == 0
+		if !beforeDispatch {
+			if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
+				number = int(stages.Attempt())
+			} else {
+				number = telemetry.FindRequestAttempt(c.Request.Context(), 0, ev.ProviderID).Number
+			}
 		}
 		telemetry.UpdateRequest(c.Request.Context(), func(record *telemetry.RequestRecord) {
 			// Match provider and ordinal before updating diagnostic outcome. An
@@ -538,8 +545,10 @@ func AppendOpsUpstreamError(c *gin.Context, ev ops.OpsUpstreamErrorEvent) {
 				outcome = "usage_unknown"
 			}
 			matched := false
+			providerObserved := false
 			for i := range record.Attempts {
 				attempt := &record.Attempts[i]
+				providerObserved = providerObserved || attempt.ProviderID == ev.ProviderID
 				if attempt.Number == number && attempt.ProviderID == ev.ProviderID && (number > 0 || attempt.RequestID == ev.UpstreamRequestID) {
 					// Headers already selected the diagnostic ID before this error event.
 					// Ops may carry another upstream header, so it cannot overwrite that identity.
@@ -549,10 +558,10 @@ func AppendOpsUpstreamError(c *gin.Context, ev ops.OpsUpstreamErrorEvent) {
 					break
 				}
 			}
-			if !matched && len(record.Attempts) == 0 {
-				// Failures before an observed exchange retain their provider evidence;
-				// zero ordinal denotes an unstarted or unobserved transport attempt.
-				record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: number, ProviderID: ev.ProviderID, Status: ev.UpstreamStatusCode, Outcome: outcome, Stage: ev.Stage, Reason: ev.Reason})
+			if !matched && len(record.Attempts) < 256 && (beforeDispatch || !providerObserved) {
+				// Credential failures have no dispatch ordinal. Keep their provider evidence
+				// beside earlier exchanges, while late errors for observed providers remain in Ops.
+				record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: 0, ProviderID: ev.ProviderID, Status: ev.UpstreamStatusCode, Outcome: outcome, Stage: ev.Stage, Reason: ev.Reason})
 			}
 		})
 	}

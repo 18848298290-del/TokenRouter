@@ -305,7 +305,17 @@ func alphaResultView(result *forwardcore.OpenAIResult) *gatewaymedia.AlphaResult
 	if result == nil {
 		return nil
 	}
-	return &gatewaymedia.AlphaResult{RequestID: result.RequestID, Model: result.Model, UpstreamModel: result.UpstreamModel, UpstreamEndpoint: result.UpstreamEndpoint, Headers: http.Header(result.UpstreamHeaders).Clone(), ResponseHeaders: http.Header(result.ResponseHeaders).Clone(), Duration: result.Duration, Calls: result.WebSearchCalls}
+	return &gatewaymedia.AlphaResult{
+		RequestAttempt:   result.RequestAttempt,
+		RequestID:        result.RequestID,
+		Model:            result.Model,
+		UpstreamModel:    result.UpstreamModel,
+		UpstreamEndpoint: result.UpstreamEndpoint,
+		Headers:          http.Header(result.UpstreamHeaders).Clone(),
+		ResponseHeaders:  http.Header(result.ResponseHeaders).Clone(),
+		Duration:         result.Duration,
+		Calls:            result.WebSearchCalls,
+	}
 }
 
 // legacyAlphaResult copies media search observations into forwarding fields
@@ -316,5 +326,15 @@ func legacyAlphaResult(result *gatewaymedia.AlphaResult) *forwardcore.OpenAIResu
 	if result == nil {
 		return nil
 	}
-	return &forwardcore.OpenAIResult{RequestID: result.RequestID, Model: result.Model, UpstreamModel: result.UpstreamModel, UpstreamEndpoint: result.UpstreamEndpoint, UpstreamHeaders: http.Header(result.Headers).Clone(), ResponseHeaders: http.Header(result.ResponseHeaders).Clone(), Duration: result.Duration, WebSearchCalls: result.Calls}
+	return &forwardcore.OpenAIResult{
+		RequestAttempt:   result.RequestAttempt,
+		RequestID:        result.RequestID,
+		Model:            result.Model,
+		UpstreamModel:    result.UpstreamModel,
+		UpstreamEndpoint: result.UpstreamEndpoint,
+		UpstreamHeaders:  http.Header(result.Headers).Clone(),
+		ResponseHeaders:  http.Header(result.ResponseHeaders).Clone(),
+		Duration:         result.Duration,
+		WebSearchCalls:   result.Calls,
+	}
 }

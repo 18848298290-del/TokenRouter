@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
@@ -121,12 +122,14 @@ func TestEmbeddingsExecutorLocalTLSAndResourceOwnership(t *testing.T) {
 				WriteHeaders: func(output, input http.Header) { output.Set("x-request-id", input.Get("x-request-id")) },
 			}
 			sink := &embeddingsTestSink{}
-			result, err := (EmbeddingsExecutor{}).Execute(context.Background(), upstream.AttemptInput{Protocol: protocol.ProtocolEmbeddings, Body: requestBody, ResponseModel: "client-alias", Target: target}, sink)
+			ctx := telemetry.BeginRequestAttempt(telemetry.WithRequestProvider(t.Context(), 7, "X-Custom"), 2)
+			result, err := (EmbeddingsExecutor{}).Execute(ctx, upstream.AttemptInput{Protocol: protocol.ProtocolEmbeddings, Body: requestBody, ResponseModel: "client-alias", Target: target}, sink)
 			require.EqualValues(t, 1, requests.Load())
 			require.EqualValues(t, 1, closed.Load())
 			require.EqualValues(t, 1, released.Load())
 			if status == http.StatusOK {
 				require.NoError(t, err)
+				require.Equal(t, telemetry.RequestAttemptFromContext(ctx), result.RequestAttempt)
 				require.True(t, result.HasUsage)
 				require.True(t, result.Served)
 				require.Equal(t, 7, result.Usage.InputTokens)

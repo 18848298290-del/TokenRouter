@@ -26,6 +26,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
@@ -956,6 +957,7 @@ func TestUpstreamPoolInvokesRequestTimingObserver(t *testing.T) {
 	resp, err := pool.Do(req, poolTestOptions(1, nil))
 	require.NoError(t, err)
 	require.Same(t, resp, observed)
+	require.Equal(t, 1, telemetry.RequestAttemptFromResponse(resp).Number)
 	_, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())

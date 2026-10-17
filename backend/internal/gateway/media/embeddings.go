@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
@@ -25,6 +26,7 @@ import (
 // EmbeddingResult carries embedding usage and model observations into
 // gateway completion.
 type EmbeddingResult struct {
+	RequestAttempt telemetry.RequestAttemptRef `json:"-"` // originating diagnostic dispatch reference
 	// RequestID identifies upstream execution; Model, BillingModel and
 	// UpstreamModel describe response, settlement and provider names for that
 	// attempt. A downstream completion adapter can choose among these

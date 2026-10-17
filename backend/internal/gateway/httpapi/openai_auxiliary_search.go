@@ -201,7 +201,15 @@ func (s *OpenAIAuxiliary) ForwardAlphaSearch(
 	if result.SearchCount == 0 {
 		return nil, nil
 	}
-	output := &forwardcore.OpenAIResult{RequestID: result.RequestID, UpstreamHeaders: result.UpstreamHeaders, Model: requestedModel, UpstreamModel: upstreamModel, Duration: result.Duration, WebSearchCalls: 1}
+	output := &forwardcore.OpenAIResult{
+		RequestAttempt:  result.RequestAttempt,
+		RequestID:       result.RequestID,
+		UpstreamHeaders: result.UpstreamHeaders,
+		Model:           requestedModel,
+		UpstreamModel:   upstreamModel,
+		Duration:        result.Duration,
+		WebSearchCalls:  1,
+	}
 	return output, nil
 }
 
@@ -305,7 +313,15 @@ func (s *OpenAIAuxiliary) forwardAlphaSearchViaResponsesWebSearch(
 	if result.SearchCount == 0 {
 		return nil, nil
 	}
-	output := &forwardcore.OpenAIResult{RequestID: result.RequestID, UpstreamHeaders: result.UpstreamHeaders, Model: requestedModel, UpstreamModel: upstreamModel, Duration: result.Duration, WebSearchCalls: 1}
+	output := &forwardcore.OpenAIResult{
+		RequestAttempt:  result.RequestAttempt,
+		RequestID:       result.RequestID,
+		UpstreamHeaders: result.UpstreamHeaders,
+		Model:           requestedModel,
+		UpstreamModel:   upstreamModel,
+		Duration:        result.Duration,
+		WebSearchCalls:  1,
+	}
 	output.UpstreamEndpoint = "/v1/responses"
 	output.ResponseHeaders = result.UpstreamHeaders.Clone()
 	return output, nil

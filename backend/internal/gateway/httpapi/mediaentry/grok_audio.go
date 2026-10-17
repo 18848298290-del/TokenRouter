@@ -249,7 +249,15 @@ func (p *grokVoiceAdapter) ForwardVoice(ctx context.Context, _ providercore.Prov
 	result, err := p.h.bindings.Platform.Voice(ctx, p.c, p.selection.Provider, request.Endpoint, request.Body, request.ContentType)
 	outcome := gatewaymedia.VoiceOutcome{Err: err}
 	if result != nil {
-		outcome.Result = &gatewaymedia.VoiceResult{RequestID: result.RequestID, Headers: http.Header(result.UpstreamHeaders).Clone(), Model: result.Model, UpstreamModel: result.UpstreamModel, Duration: result.Duration, AudioUsage: cloneGrokAudioUsage(result.AudioUsage)}
+		outcome.Result = &gatewaymedia.VoiceResult{
+			RequestAttempt: result.RequestAttempt,
+			RequestID:      result.RequestID,
+			Headers:        http.Header(result.UpstreamHeaders).Clone(),
+			Model:          result.Model,
+			UpstreamModel:  result.UpstreamModel,
+			Duration:       result.Duration,
+			AudioUsage:     cloneGrokAudioUsage(result.AudioUsage),
+		}
 	}
 	if failure, ok := errors.AsType[*forwardcore.UpstreamFailoverError](err); ok {
 		outcome.RetryNext = failure.ShouldRetryNextProvider()
@@ -265,7 +273,15 @@ func (p *grokVoiceAdapter) CompleteVoice(_ context.Context, _ providercore.Provi
 	if result == nil {
 		return
 	}
-	value := &forwardcore.OpenAIResult{RequestID: result.RequestID, UpstreamHeaders: http.Header(result.Headers).Clone(), Model: result.Model, UpstreamModel: result.UpstreamModel, Duration: result.Duration, AudioUsage: cloneGrokAudioUsage(result.AudioUsage)}
+	value := &forwardcore.OpenAIResult{
+		RequestAttempt:  result.RequestAttempt,
+		RequestID:       result.RequestID,
+		UpstreamHeaders: http.Header(result.Headers).Clone(),
+		Model:           result.Model,
+		UpstreamModel:   result.UpstreamModel,
+		Duration:        result.Duration,
+		AudioUsage:      cloneGrokAudioUsage(result.AudioUsage),
+	}
 	p.h.recordGrokVoiceUsage(p.c, p.apiKey, p.selection.Provider, p.subscription, request.Endpoint, request.Body, value)
 }
 

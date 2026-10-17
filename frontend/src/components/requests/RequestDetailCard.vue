@@ -215,8 +215,8 @@ const attemptResponses = (number: number, providerId?: number) =>
           <span class="ml-1 font-normal text-gray-400 dark:text-dark-400">{{ item.attempts.length }}</span>
         </h3>
         <ul class="divide-y divide-gray-100 rounded-control border border-gray-200 dark:divide-dark-700 dark:border-dark-600">
-          <li v-for="attempt in item.attempts" :key="attempt.number" class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm">
-            <span class="w-6 shrink-0 font-mono text-xs text-gray-400 dark:text-dark-400">#{{ attempt.number }}</span>
+          <li v-for="(attempt, attemptIndex) in item.attempts" :key="`${attempt.number}:${attempt.provider_id}:${attemptIndex}`" class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm">
+            <span class="shrink-0 font-mono text-xs text-gray-400 dark:text-dark-400" :class="attempt.number > 0 ? 'w-6' : ''">{{ attempt.number > 0 ? `#${attempt.number}` : t('requests.unassignedAttempt') }}</span>
             <span class="badge" :class="stateStyle(attempt.outcome).badge">{{ stateLabel(attempt.outcome) }}</span>
             <span v-if="attempt.status_code" class="font-mono text-xs" :class="statusClass(attempt.status_code)">HTTP {{ attempt.status_code }}</span>
             <span v-if="attempt.provider_id" class="text-xs text-gray-500 dark:text-dark-300">{{ t('requests.provider') }} #{{ attempt.provider_id }}</span>

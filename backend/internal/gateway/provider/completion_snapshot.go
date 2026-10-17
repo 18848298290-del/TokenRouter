@@ -286,6 +286,7 @@ func completionUserSummary(u *identity.User) *billing.UserSummary {
 // collections remain borrowed.
 func ImagesForwardResult(result upstream.AttemptResult, parsed *media.ImageRequest, imageCount int) *forwardcore.OpenAIResult {
 	return &forwardcore.OpenAIResult{
+		RequestAttempt:  result.RequestAttempt,
 		RequestID:       result.RequestID,
 		UpstreamHeaders: result.UpstreamHeaders,
 

@@ -7,6 +7,7 @@ import (
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -48,6 +49,7 @@ type ClientPayload struct {
 // ForwardResult supplies one turn's accounting observations, output metadata,
 // and replay material.
 type ForwardResult struct {
+	RequestAttempt telemetry.RequestAttemptRef `json:"-"` // originating diagnostic dispatch reference
 	// LocalWarmup marks a locally completed generate=false request. RunEntry skips
 	// upstream health, quota refresh, and normal usage submission for this result.
 	LocalWarmup           bool                         `json:"-"` // gateway handled warmup locally

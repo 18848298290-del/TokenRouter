@@ -129,6 +129,7 @@ func (VoiceExecutor) Execute(ctx context.Context, input upstream.AttemptInput, s
 		result.ClientDisconnect = output.Err() != nil
 	}
 	result.RequestID = firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
+	result.CaptureRequestAttempt(resp)
 	result.UpstreamHeaders = resp.Header
 	// Accepted Voice output remains meterable after a client-write failure;
 	// BaseEndpoint chooses character units for TTS or hours for STT.

@@ -12,6 +12,7 @@ import (
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	gatewaycapture "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	textflow "github.com/TokenFlux/TokenRouter/internal/gateway/text"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
@@ -24,8 +25,9 @@ import (
 // Generic Responses dispatch receives the prepared forwarding bytes and
 // selection context retained when its bridge opens. Selection and platform
 // callbacks use that retained context, while capacity acquisition reads the
-// current Gin request context; later Gin context changes therefore do not
-// replace the argument passed to these platform callbacks.
+// current Gin request context. Selection copies the provider's diagnostic header
+// policy into the retained context before each dispatch, while other Gin context
+// changes leave the execution argument's cancellation and request values intact.
 //
 // An exchange records HTTP commitment separately from a writer-size change.
 // Any size change closes its retry window, including Gin's -1-to-zero first
@@ -56,6 +58,10 @@ func (b *genericResponsesAttemptBridge) Select(excluded map[int64]struct{}) (tex
 	}
 	b.provider = b.selection.Provider
 	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.RoutingSnapshot())
+	// Forward retains the selection context independently of Gin. Copy the chosen
+	// diagnostic policy into that context before its upstream callbacks dispatch.
+	selected := telemetry.RequestProvider(b.c.Request.Context())
+	b.requestCtx = telemetry.WithRequestProvider(b.requestCtx, selected.ProviderID, selected.Header)
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }
 

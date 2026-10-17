@@ -222,3 +222,48 @@ func TestCompletionIdentifiersKeepUsageSelection(t *testing.T) {
 		}
 	}
 }
+
+// TestCompletionMediaRetriesUseCapturedDispatch completes a media retry whose
+// selected header is missing or reused. Its frozen dispatch reference chooses
+// the successful attempt while usage keeps its existing configured-header value.
+func TestCompletionMediaRetriesUseCapturedDispatch(t *testing.T) {
+	for _, id := range []string{"", "reused"} {
+		for _, video := range []bool{false, true} {
+			var saved telemetry.RequestRecord
+			root := context.WithValue(t.Context(), telemetry.RequestID, "local")
+			root = telemetry.WithRequestCapture(root, telemetry.RequestRecord{RequestID: "local"}, func(r telemetry.RequestRecord) { saved = r })
+			root = telemetry.WithRequestProvider(root, 7, "X-Custom")
+			headers := http.Header{"X-Custom": {id}}
+			first := telemetry.BeginRequestAttempt(root, 0)
+			telemetry.ObserveRequestHeaders(first, telemetry.RequestAttemptFromContext(first), headers, 503)
+			telemetry.UpdateRequest(root, func(r *telemetry.RequestRecord) { r.Attempts[0].Outcome = "failed" })
+			second := telemetry.BeginRequestAttempt(root, 0)
+			telemetry.ObserveRequestHeaders(second, telemetry.RequestAttemptFromContext(second), headers, 200)
+			result := &forward.OpenAIResult{RequestAttempt: telemetry.RequestAttemptFromContext(second), ResponseID: "resp_media", Model: "embedding", UpstreamHeaders: headers}
+			if video {
+				result.VideoCount = 1
+			}
+			// A newer dispatch begins before delayed capture, proving that result ownership
+			// remains fixed even when both provider identity and header values are repeated.
+			third := telemetry.BeginRequestAttempt(root, 0)
+			telemetry.ObserveRequestHeaders(third, telemetry.RequestAttemptFromContext(third), headers, 200)
+			target := &providercore.Record{ID: 7, Extra: map[string]any{providercore.ProviderExtraUpstreamRequestIDHeader: "X-Custom"}}
+			out := CaptureOpenAI(root, &OpenAICapture{Provider: target, Result: result})
+			require.Nil(t, out.Result.Timings)
+			if !video {
+				require.Equal(t, "client:local", out.BillingKey)
+			}
+			require.Equal(t, "failed", saved.Attempts[0].Outcome)
+			require.Equal(t, "completed", saved.Attempts[1].Outcome)
+			require.Equal(t, "running", saved.Attempts[2].Outcome)
+			if !video {
+				require.Contains(t, saved.Aliases, telemetry.RequestAlias{Kind: "response", Value: "resp_media", Source: "response.id", ProviderID: 7, AttemptNumber: 2})
+			}
+			if id == "" {
+				require.Nil(t, out.Result.UpstreamRequestID)
+			} else {
+				require.Equal(t, id, *out.Result.UpstreamRequestID)
+			}
+		}
+	}
+}

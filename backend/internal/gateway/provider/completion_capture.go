@@ -230,7 +230,10 @@ func CaptureMessages(ctx context.Context, in *MessagesCapture) *completion.Input
 		}
 	}
 	if in.Result != nil {
-		captureRequestIdentity(ctx, out, in.Result.RequestID, in.Result.UpstreamHeaders, provider.UpstreamRequestIDHeaderName(in.Provider))
+		captureRequestIdentity(
+			ctx, out, in.Result.RequestID, in.Result.UpstreamHeaders,
+			provider.UpstreamRequestIDHeaderName(in.Provider), telemetry.RequestAttemptRef{},
+		)
 		out.RequestedReasoningEffort = requeststate.CanonicalRequestedReasoningEffort(in.RequestBody)
 	}
 	return completion.Snapshot(out)
@@ -271,7 +274,10 @@ func CaptureOpenAI(ctx context.Context, in *OpenAICapture) *completion.Input {
 		}
 	}
 	if in.Result != nil {
-		captureRequestIdentity(ctx, out, in.Result.RequestID, in.Result.UpstreamHeaders, provider.UpstreamRequestIDHeaderName(in.Provider))
+		captureRequestIdentity(
+			ctx, out, in.Result.RequestID, in.Result.UpstreamHeaders,
+			provider.UpstreamRequestIDHeaderName(in.Provider), in.Result.RequestAttempt,
+		)
 	}
 	return completion.Snapshot(out)
 }
@@ -334,12 +340,21 @@ func CaptureCyber(ctx context.Context, in CyberCapture) *completion.Input {
 // rules. Call while the forwarding result and provider selection remain stable;
 // headers are read synchronously before the worker snapshot is constructed.
 //
-// An exact provider and attempt match owns header observations. A missing attempt
+// Media results carry their immutable HTTP dispatch reference through completion.
+// An exact provider and attempt match owns header observations even when the
+// selected response header is missing or reused. A missing attempt
 // is constructed only for an otherwise empty nonchild record; ambiguous retries
 // are never attributed to the latest exchange. The selected diagnostic header is
 // independent of the configured usage field, and parsed response IDs enter their
 // own alias category. Related tasks retain separate records and financial aliases.
-func captureRequestIdentity(ctx context.Context, out *completion.Input, upstreamID string, headers http.Header, headerName string) {
+func captureRequestIdentity(
+	ctx context.Context,
+	out *completion.Input,
+	upstreamID string,
+	headers http.Header,
+	headerName string,
+	dispatch telemetry.RequestAttemptRef,
+) {
 	out.BillingKey = CompletionBillingKey(ctx, upstreamID)
 	out.BillingKey = out.SettlementKey()
 	out.RequestID = telemetry.RequestIDValue(ctx)
@@ -360,6 +375,18 @@ func captureRequestIdentity(ctx context.Context, out *completion.Input, upstream
 	if out.Result.OpenAIWSMode && responseID == "" {
 		responseID = out.Result.RequestID
 	}
+	if out.RequestID != telemetry.RequestIDValue(ctx) && out.Provider != nil && dispatch.ProviderID == out.Provider.ID && dispatch.Number > 0 {
+		// Video billing publishes a related logical record. Finish its parent exchange
+		// through the captured dispatch while preserving any already recorded failure.
+		telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
+			for i := range record.Attempts {
+				attempt := &record.Attempts[i]
+				if attempt.Number == dispatch.Number && attempt.ProviderID == dispatch.ProviderID && attempt.Outcome == "running" {
+					attempt.Outcome = "completed"
+				}
+			}
+		})
+	}
 	childRequest := telemetry.IsChildRequest(ctx)
 	if out.RequestID == telemetry.RequestIDValue(ctx) {
 		var ref telemetry.RequestAttemptRef
@@ -368,7 +395,13 @@ func captureRequestIdentity(ctx context.Context, out *completion.Input, upstream
 			if out.Result.Timings != nil {
 				number = int(out.Result.Timings.Values["attempt_number"])
 			}
-			ref = telemetry.FindRequestAttempt(ctx, number, out.Provider.ID, headers)
+			if dispatch.Number > 0 && dispatch.ProviderID == out.Provider.ID {
+				// Media results retain their actual dispatch even when the chosen ID is
+				// missing or reused, so completion does not infer ownership from header values.
+				ref = telemetry.FindRequestAttempt(ctx, dispatch.Number, dispatch.ProviderID)
+			} else {
+				ref = telemetry.FindRequestAttempt(ctx, number, out.Provider.ID, headers)
+			}
 		}
 		telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
 			record.Model = out.Result.Model

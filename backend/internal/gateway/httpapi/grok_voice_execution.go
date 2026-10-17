@@ -137,6 +137,7 @@ func (s *GrokExecutor) ForwardGrokVoice(ctx context.Context, c *gin.Context, pro
 		return nil, err
 	}
 	return &forwardcore.OpenAIResult{
+		RequestAttempt:  result.RequestAttempt,
 		RequestID:       gatewayprovider.StableAudioBillingRequestID(result.RequestID),
 		UpstreamHeaders: result.UpstreamHeaders,
 		Model:           result.Model,

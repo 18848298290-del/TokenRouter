@@ -237,7 +237,16 @@ func embeddingResultView(result *forwardcore.OpenAIResult) *gatewaymedia.Embeddi
 	if result == nil {
 		return nil
 	}
-	return &gatewaymedia.EmbeddingResult{RequestID: result.RequestID, Model: result.Model, BillingModel: result.BillingModel, UpstreamModel: result.UpstreamModel, Headers: http.Header(result.UpstreamHeaders).Clone(), Usage: result.Usage, Duration: result.Duration}
+	return &gatewaymedia.EmbeddingResult{
+		RequestAttempt: result.RequestAttempt,
+		RequestID:      result.RequestID,
+		Model:          result.Model,
+		BillingModel:   result.BillingModel,
+		UpstreamModel:  result.UpstreamModel,
+		Headers:        http.Header(result.UpstreamHeaders).Clone(),
+		Usage:          result.Usage,
+		Duration:       result.Duration,
+	}
 }
 
 // legacyEmbeddingResult copies media Embeddings observations into forwarding
@@ -248,7 +257,16 @@ func legacyEmbeddingResult(result *gatewaymedia.EmbeddingResult) *forwardcore.Op
 	if result == nil {
 		return nil
 	}
-	return &forwardcore.OpenAIResult{RequestID: result.RequestID, Model: result.Model, BillingModel: result.BillingModel, UpstreamModel: result.UpstreamModel, UpstreamHeaders: http.Header(result.Headers).Clone(), Usage: result.Usage, Duration: result.Duration}
+	return &forwardcore.OpenAIResult{
+		RequestAttempt:  result.RequestAttempt,
+		RequestID:       result.RequestID,
+		Model:           result.Model,
+		BillingModel:    result.BillingModel,
+		UpstreamModel:   result.UpstreamModel,
+		UpstreamHeaders: http.Header(result.Headers).Clone(),
+		Usage:           result.Usage,
+		Duration:        result.Duration,
+	}
 }
 
 // CompleteEmbedding captures a nonnil Embeddings result after successful

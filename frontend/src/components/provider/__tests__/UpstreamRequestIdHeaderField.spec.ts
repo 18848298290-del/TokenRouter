@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import UpstreamRequestIdHeaderField from '../UpstreamRequestIdHeaderField.vue'
+import zh from '@/i18n/locales/zh/admin/providers'
+import en from '@/i18n/locales/en/admin/providers'
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
@@ -53,6 +55,17 @@ describe('UpstreamRequestIdHeaderField', () => {
     expect(text).toContain('admin.providers.upstreamRequestIdHeaderHelp.intro')
     expect(text).not.toContain('admin.providers.upstreamRequestIdHeaderHelp.examplesTitle')
     expect(wrapper.findAll('code')).toHaveLength(0)
+  })
+
+  // The query default differs from usage recording when the setting is blank.
+  // Both translations must explain that distinction instead of promising usage backfill.
+  it('explains the query default and unchanged empty usage identifier', () => {
+    expect(zh.providers.upstreamRequestIdHeaderHelp.intro).toContain('请求查询默认读取 X-Request-ID')
+    expect(zh.providers.upstreamRequestIdHeaderHelp.intro).toContain('使用记录的“上游ID”仍为空')
+    expect(en.providers.upstreamRequestIdHeaderHelp.intro).toContain('request lookup reads X-Request-ID')
+    expect(en.providers.upstreamRequestIdHeaderHelp.intro).toContain('Upstream ID in usage records remains empty')
+    expect(zh.providers.upstreamRequestIdHeaderPlaceholder).toContain('X-Request-ID')
+    expect(en.providers.upstreamRequestIdHeaderPlaceholder).toContain('X-Request-ID')
   })
 
   it('binds the header name through v-model', async () => {

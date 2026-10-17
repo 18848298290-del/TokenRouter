@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
@@ -26,6 +27,7 @@ import (
 // AlphaResult carries search response observations into scheduling and
 // usage completion.
 type AlphaResult struct {
+	RequestAttempt telemetry.RequestAttemptRef `json:"-"` // originating diagnostic dispatch reference
 	// RequestID identifies upstream execution, Model names the client
 	// response, UpstreamModel names provider execution, and UpstreamEndpoint
 	// records the selected search route. These values describe the same

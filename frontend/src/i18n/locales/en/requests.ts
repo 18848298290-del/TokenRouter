@@ -30,6 +30,7 @@ export default {
   "usage": "Usage and charges",
   "errors": "Errors",
   "aliases": "Related identifiers",
+  unassignedAttempt: "Unnumbered",
   sourceUnrecorded: "Source not recorded",
   "tokens": "Input: {input} tokens · Output: {output} tokens",
   "states": {

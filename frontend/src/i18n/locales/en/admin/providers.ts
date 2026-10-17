@@ -774,9 +774,9 @@ export default {
       apiKeyPlaceholder: 'sk-ant-api03-...',
       apiKeyHint: 'Your Claude Console API Key',
       upstreamRequestIdHeader: 'Upstream ID',
-      upstreamRequestIdHeaderPlaceholder: 'Leave empty to record nothing',
+      upstreamRequestIdHeaderPlaceholder: 'Request lookup default: X-Request-ID',
       upstreamRequestIdHeaderHelp: {
-        intro: 'Name of the response header in which the direct upstream declares its request ID. The value is recorded in the "Upstream ID" column of the usage log; leave empty to record nothing.',
+        intro: 'When configured, request lookup and usage records read only this upstream response header. When empty, request lookup reads X-Request-ID and the Upstream ID in usage records remains empty. A missing selected header records no ID.',
         examplesTitle: 'Common values',
         sub2apiNote: 'Matches the request ID column of its usage log',
         official: '{platform} official API'
