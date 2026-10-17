@@ -28,7 +28,9 @@ import (
 // errors and partial writes retain their returned evidence. Header filtering
 // and tool reversal are supplied callbacks, leaving the protocol converter
 // responsible for their content and the HTTP adapter responsible for
-// synchronous response delivery.
+// synchronous response delivery. Converted upstream events carry timing source
+// observation through the active writer chain. Locally generated stream errors
+// use LocalEvent so they cannot establish upstream delivery milestones.
 
 // The interface assertion verifies that conversion output implements the shared
 // synchronous header, body, event and diagnostic callbacks used by forwarders.
@@ -125,15 +127,36 @@ func (o ForwardConversionOutput) ChatJSON(value *protocolopenai.ChatCompletionsR
 	}
 }
 
-// Event writes one SSE frame and returns its byte count and error. A nonempty
-// kind adds an event line; otherwise it emits a data-only frame.
+// Event writes converted upstream output with its timing source attached.
+// Callers emit synchronously and use LocalEvent for converter-generated errors.
+// The source scope ends on every return, including short writes and failures.
+func (o ForwardConversionOutput) Event(kind string, body []byte) (int, error) {
+	sink := NewResponseSink(o.Context)
+	if sink.timing != nil {
+		// Scope the existing writer chain so conversion keeps its exact write
+		// count and error while timing observes only successful upstream bytes.
+		sink.timing.upstreamWrites.Add(1)
+		defer sink.timing.upstreamWrites.Add(-1)
+	}
+	return o.writeEvent(kind, body)
+}
+
+// LocalEvent writes a converter-generated SSE frame with local provenance.
+// It retains terminal commitment and write results; the caller flushes the
+// existing stream after handling the result.
+func (o ForwardConversionOutput) LocalEvent(kind string, body []byte) (int, error) {
+	return o.writeEvent(kind, body)
+}
+
+// writeEvent writes one SSE frame and returns its byte count and error.
+// A nonempty kind adds an event line; otherwise it emits a data-only frame.
 //
 // Handled output is recorded only after the complete frame is written with no
 // error. Responses uses the effective event type for terminal detection, while
 // Chat accepts DONE or an error object. This keeps a partial terminal write
 // from qualifying as delivered completion while outer processing can still
 // retain usage and read failure evidence.
-func (o ForwardConversionOutput) Event(kind string, body []byte) (int, error) {
+func (o ForwardConversionOutput) writeEvent(kind string, body []byte) (int, error) {
 	var frame string
 	if kind != "" {
 		frame = fmt.Sprintf("event: %s\ndata: %s\n\n", kind, body)

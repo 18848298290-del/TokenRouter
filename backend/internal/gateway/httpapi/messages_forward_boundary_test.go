@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/messageforward"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
@@ -43,6 +45,12 @@ type conversionReadFailure struct{}
 // writes.
 type conversionFailingWriter struct {
 	gin.ResponseWriter // underlying Gin metadata and headers
+}
+
+// conversionPartialWriter delivers half a frame with a nil error to expose
+// short-write handling while retaining the original Gin header and flush methods.
+type conversionPartialWriter struct {
+	gin.ResponseWriter // underlying client response writer
 }
 
 // TestHandleCCBufferedFromAnthropic_ToolArgumentsAreValidJSON splits one tool
@@ -809,4 +817,166 @@ func TestConversionTerminalCommit(t *testing.T) {
 			require.True(t, IsResponseCommitted(c))
 		}
 	}
+}
+
+// TestMessagesConversionTiming feeds a complete Anthropic response
+// through the actual Chat and Responses converters with HTTP timing installed.
+// Successful content delivery and usage must coexist with both downstream
+// milestones, including when all observed timestamps round to zero milliseconds.
+func TestMessagesConversionTiming(t *testing.T) {
+	payload := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","content":[],"model":"glm-5.3-flash","usage":{"input_tokens":21}}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``, ``,
+	}, "\n")
+	for _, responses := range []bool{false, true} {
+		name, path := "chat", "/v1/chat/completions"
+		if responses {
+			name, path = "responses", "/v1/responses"
+		}
+		t.Run(name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(TextRequestTiming())
+			var stages *timing.Stages
+			router.POST(path, func(c *gin.Context) {
+				stages = timing.StagesFromContext(c.Request.Context())
+				SetOpsRequestContext(c, "glm-5.3-flash", true)
+				MarkOpsProviderSlotAcquired(c)
+				resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(payload))}
+				timing.ObserveResponse(c.Request.Context(), resp)
+				output := NewMessageForwardBoundary(c, nil).ConversionOutput(responses, &messageforward.AttemptState{})
+				if responses {
+					result, err := forward.ResponsesStreaming(conversionResponseFixture(resp), output, "glm-5.3-flash", "glm-5.3-flash", nil, time.Now(), bridge.ResponsesClientToolMapping{})
+					require.NoError(t, err)
+					require.Equal(t, 4, result.Usage.OutputTokens)
+				} else {
+					result, err := forward.ChatStreaming(conversionResponseFixture(resp), output, "glm-5.3-flash", "glm-5.3-flash", nil, time.Now(), true)
+					require.NoError(t, err)
+					require.Equal(t, 4, result.Usage.OutputTokens)
+				}
+			})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`)))
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.Contains(t, recorder.Body.String(), "hello")
+			require.True(t, recorder.Flushed)
+			snapshot := stages.Snapshot()
+			require.Contains(t, snapshot, "upstream_first_event_ms")
+			for _, key := range []string{"first_visible_output_ms", "first_downstream_flush_ms"} {
+				if _, ok := snapshot[key]; !ok {
+					t.Errorf("missing %s despite delivered converted output", key)
+				}
+			}
+		})
+	}
+}
+
+// TestMessagesConversionTimingReadFailure ends the upstream before any event
+// arrives. The converter must deliver its local stream error and retain the
+// failure while leaving upstream-output and downstream-flush timings absent.
+func TestMessagesConversionTimingReadFailure(t *testing.T) {
+	for _, responses := range []bool{false, true} {
+		path := "/v1/chat/completions"
+		if responses {
+			path = "/v1/responses"
+		}
+		t.Run(path, func(t *testing.T) {
+			router := gin.New()
+			router.Use(TextRequestTiming())
+			var stages *timing.Stages
+			router.POST(path, func(c *gin.Context) {
+				stages = timing.StagesFromContext(c.Request.Context())
+				SetOpsRequestContext(c, "model", true)
+				MarkOpsProviderSlotAcquired(c)
+				resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(conversionReadFailure{})}
+				timing.ObserveResponse(c.Request.Context(), resp)
+				output := NewMessageForwardBoundary(c, nil).ConversionOutput(responses, &messageforward.AttemptState{})
+				var err error
+				if responses {
+					_, err = forward.ResponsesStreaming(conversionResponseFixture(resp), output, "model", "model", nil, time.Now(), bridge.ResponsesClientToolMapping{})
+				} else {
+					_, err = forward.ChatStreaming(conversionResponseFixture(resp), output, "model", "model", nil, time.Now(), true)
+				}
+				require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+				require.True(t, IsResponseCommitted(c))
+			})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`)))
+			require.Contains(t, recorder.Body.String(), "upstream_stream_error")
+			require.True(t, recorder.Flushed)
+			snapshot := stages.Snapshot()
+			require.NotContains(t, snapshot, "upstream_first_event_ms")
+			require.NotContains(t, snapshot, "first_visible_output_ms")
+			require.NotContains(t, snapshot, "first_downstream_flush_ms")
+		})
+	}
+}
+
+// TestMessagesConversionTimingWriteFailure exercises failed and partial writes
+// through the conversion adapter. Neither case may publish delivery timing or
+// leave upstream provenance active when a subsequent local error is flushed.
+func TestMessagesConversionTimingWriteFailure(t *testing.T) {
+	for _, mode := range []string{"error", "short"} {
+		t.Run(mode, func(t *testing.T) {
+			router := gin.New()
+			router.Use(TextRequestTiming())
+			router.POST("/v1/responses", func(c *gin.Context) {
+				stages := timing.StagesFromContext(c.Request.Context())
+				SetOpsRequestContext(c, "model", true)
+				writer, ok := c.Writer.(*timingWriter)
+				require.True(t, ok)
+				original := writer.ResponseWriter
+				if mode == "error" {
+					writer.ResponseWriter = conversionFailingWriter{ResponseWriter: original}
+				} else {
+					writer.ResponseWriter = conversionPartialWriter{ResponseWriter: original}
+				}
+				output := NewMessageForwardBoundary(c, nil).ConversionOutput(true, &messageforward.AttemptState{})
+				output.BeginStream()
+				payload := []byte(`{"type":"response.output_text.delta","delta":"hello"}`)
+				frame := fmt.Sprintf("event: response.output_text.delta\ndata: %s\n\n", payload)
+				n, err := output.Event("response.output_text.delta", payload)
+				if mode == "error" {
+					require.ErrorIs(t, err, io.ErrClosedPipe)
+					require.Zero(t, n)
+				} else {
+					require.NoError(t, err)
+					require.Equal(t, len(frame)/2, n)
+				}
+				require.False(t, IsResponseCommitted(c))
+				require.Zero(t, writer.upstreamWrites.Load())
+				writer.ResponseWriter = original
+				_, err = output.LocalEvent("response.failed", []byte(`{"type":"response.failed","response":{"status":"failed"}}`))
+				require.NoError(t, err)
+				output.Flush()
+				require.True(t, IsResponseCommitted(c))
+				require.NotContains(t, stages.Snapshot(), "first_visible_output_ms")
+				require.NotContains(t, stages.Snapshot(), "first_downstream_flush_ms")
+			})
+			router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`)))
+		})
+	}
+}
+
+// Write forwards half the frame and reports the underlying partial result.
+// Tests use this writer to distinguish successful partial transmission from
+// complete event delivery without injecting a transport error.
+func (w conversionPartialWriter) Write(p []byte) (int, error) {
+	// Deliver half a frame to simulate a successful short write.
+	return w.ResponseWriter.Write(p[:len(p)/2])
 }

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	selectionadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider/selection"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -2414,6 +2416,76 @@ func TestOpenAIStreamingTimeout(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "\"type\":\"error\"") || !strings.Contains(rec.Body.String(), "stream_timeout") {
 		t.Fatalf("expected OpenAI-compatible error SSE event, got %q", rec.Body.String())
+	}
+}
+
+// TestOpenAIStreamingTimeoutTiming separates local timeout output from empty,
+// buffered-metadata and already-delivered upstream streams. Real upstream bytes
+// retain their first flush, while a local error or failed write creates none.
+func TestOpenAIStreamingTimeoutTiming(t *testing.T) {
+	cases := []struct {
+		name        string // diagnostic scenario name
+		prefix      string // upstream bytes before timeout
+		failWrite   bool   // reject downstream error bytes
+		wantFlush   bool   // upstream delivery was flushed
+		wantVisible bool   // useful upstream content arrived
+	}{
+		{name: "empty"},
+		{name: "buffered_metadata", prefix: "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\",\"model\":\"model\"}}\n\n", wantFlush: true},
+		{name: "visible", prefix: "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n", wantFlush: true, wantVisible: true},
+		{name: "failed_write", failWrite: true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				svc := newResponsesFixture(responsesFixtureInputs{options: &responsesFixtureOptions{Response: OpenAIResponseOptions{StreamDataIntervalTimeout: 1, MaxLineSize: OpenAIResponseDefaultMaxLineSize}}})
+				router := gin.New()
+				router.Use(TextRequestTiming())
+				var stages *timing.Stages
+				router.POST("/v1/responses", func(c *gin.Context) {
+					stages = timing.StagesFromContext(c.Request.Context())
+					SetOpsRequestContext(c, "model", true)
+					MarkOpsProviderSlotAcquired(c)
+					if tt.failWrite {
+						c.Writer = timingFailedWriter{ResponseWriter: c.Writer}
+					}
+					pr, pw := io.Pipe()
+					// Keep the pipe open after its prefix so idle expiry, rather than EOF,
+					// ends the reader. Closing both ends releases its scanner before test exit.
+					defer func() { _ = pr.Close() }()
+					defer func() { _ = pw.Close() }()
+					go func() { _, _ = io.WriteString(pw, tt.prefix) }()
+					resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: pr}
+					timing.ObserveResponse(c.Request.Context(), resp)
+					target := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 1, Platform: providercore.PlatformOpenAI}}
+					result, err := svc.Output.ReadStreamObservation(c.Request.Context(), resp, c, target, time.Now(), "model", "model", "")
+					require.ErrorContains(t, err, "stream data interval timeout")
+					require.NotNil(t, result)
+					require.Equal(t, tt.failWrite, result.ClientDisconnected)
+				})
+				recorder := httptest.NewRecorder()
+				router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`)))
+				if tt.failWrite {
+					require.Empty(t, recorder.Body.String())
+				} else {
+					require.Contains(t, recorder.Body.String(), "stream_timeout")
+				}
+				snapshot := stages.Snapshot()
+				_, event := snapshot["upstream_first_event_ms"]
+				_, visible := snapshot["first_visible_output_ms"]
+				flushAt, flushed := snapshot["first_downstream_flush_ms"]
+				require.Equal(t, tt.prefix != "", event)
+				require.Equal(t, tt.wantVisible, visible)
+				require.Equal(t, tt.wantFlush, flushed)
+				if tt.wantVisible {
+					require.Zero(t, flushAt)
+					require.Contains(t, recorder.Body.String(), "hello")
+				} else if tt.wantFlush {
+					require.Equal(t, int64(1000), flushAt)
+					require.Less(t, strings.Index(recorder.Body.String(), "response.created"), strings.Index(recorder.Body.String(), "stream_timeout"))
+				}
+			})
+		})
 	}
 }
 

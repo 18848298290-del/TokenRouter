@@ -35,6 +35,8 @@ import (
 // are bound separately from health and recovery callbacks. Grok selects its
 // own idle timeout after the common configuration is read, while native OpenAI
 // alone receives the first-semantic-output budget used by this reader.
+// Reader-generated errors use the current HTTP writer directly, so their SSE
+// frames remain outside upstream-output timing while retaining writer wrappers.
 
 // StreamOptions binds one Responses stream to its request and selected
 // provider. Callers retain c and the configured services until reading ends;
@@ -69,6 +71,10 @@ func (p *OpenAIResponseOutput) StreamOptions(ctx context.Context, c *gin.Context
 
 		Logf: func(format string, values ...any) {
 			logging.LegacyPrintf("service.openai_gateway", format, values...)
+		},
+
+		WriteLocalStreamError: func(frame []byte) (int, error) {
+			return c.Writer.Write(frame)
 		},
 
 		IsCommitted: func() bool { return IsResponseCommitted(c) },

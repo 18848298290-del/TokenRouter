@@ -31,6 +31,8 @@ import (
 // failure, absent stop/produced-terminal evidence selects a protocol error;
 // frame overflow remains an error even after a stop. FirstTokenMs here measures
 // the first parsed streaming event, which need not contain generated text.
+// Converter-generated failure frames use the local output operation so HTTP
+// adapters can report the error without assigning it an upstream delivery time.
 
 // ResponsesBuffered returns Responses JSON assembled from Anthropic events and
 // retains merged usage plus raw response-model evidence for completion. The
@@ -642,6 +644,7 @@ func ChatStreaming(in Response, out Output, originalModel, mappedModel string, r
 // and flushes when serialization succeeds. Responses output requires nonnil
 // bridge state for identity and sequence fields; Chat output permits nil state.
 // Serialization and event-write failures have no return path from this helper.
+// The local event operation identifies the generated error to output timing.
 func writeConversionStreamError(out Output, responses bool, state *bridge.AnthropicEventToResponsesState) {
 	streamError := &protocolopenai.ResponsesError{Code: "upstream_stream_error", Message: "Upstream stream could not be read completely"}
 	var value any = map[string]any{"error": streamError}
@@ -667,7 +670,7 @@ func writeConversionStreamError(out Output, responses bool, state *bridge.Anthro
 	// is discarded here. Serialization failure leaves output untouched, and the
 	// caller retains its upstream read error regardless of this output attempt.
 	if err == nil {
-		_, _ = out.Event(eventType, payload)
+		_, _ = out.LocalEvent(eventType, payload)
 		out.Flush()
 	}
 }

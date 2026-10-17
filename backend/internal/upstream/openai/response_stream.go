@@ -36,6 +36,9 @@ import (
 // closure to the executor. Bare errors wait for an authoritative failed
 // terminal or EOF synthesis; usage and tool/image/search observations occur
 // before delivery restoration and error trimming.
+// Locally generated read and timeout errors drain pending upstream bytes before
+// using the caller's local error writer, keeping their delivery provenance
+// separate from the upstream events whose output they terminate.
 
 // These labels select gateway timing observations; data arrival, visible
 // payload, and downstream flush can be recorded at different stages of one
@@ -117,6 +120,10 @@ type StreamOptions struct {
 	// gateway recorder decides whether repeated observations replace an existing
 	// timestamp.
 	MarkTime func(StreamTime)
+	// WriteLocalStreamError synchronously writes an already-framed local SSE
+	// failure. ReadStreamingResponse drains pending upstream bytes first and
+	// flushes afterward; the writer keeps local errors outside upstream timing.
+	WriteLocalStreamError func([]byte) (int, error)
 	// IsCommitted supplies caller retry commitment for result snapshots; physical
 	// HTTP writer commitment and visible-payload evidence are measured separately
 	// by this reader.
@@ -539,7 +546,10 @@ func ReadStreamingResponse(ctx context.Context, resp *http.Response, c *upstream
 			clientDisconnected = true
 			return
 		}
-		if _, err := writePendingString("data: " + payload + "\n\n"); err != nil {
+		// Pending upstream bytes have been delivered before this local failure.
+		// Keep its write outside upstream buffering so the error cannot establish
+		// an upstream delivery timestamp or become mixed with genuine response data.
+		if _, err := options.WriteLocalStreamError([]byte("data: " + payload + "\n\n")); err != nil {
 			clientDisconnected = true
 			return
 		}
