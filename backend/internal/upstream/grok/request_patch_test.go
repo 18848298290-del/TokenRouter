@@ -71,10 +71,10 @@ func TestPatchGrokResponsesBodyPreservesGrok105StructuredFunctionOutputImages(t 
 	require.Equal(t, "data:image/png;base64,QUE=", gjson.GetBytes(patched, "input.2.content.1.image_url").String())
 }
 
-// TestPatchGrokResponsesBodyFlattensNamespaceTools combines a namespace function
-// with flat function and shell tools. Patching must retain three supported
-// tools, qualify the namespace function and its choice consistently, and apply
-// the selected upstream model.
+// TestPatchGrokResponsesBodyFlattensNamespaceTools combines a default-scope
+// function with flat function and shell tools. Patching keeps its declaration
+// and choice bare, records default-scope restoration, and applies the selected
+// upstream model while retaining all three supported tools.
 func TestPatchGrokResponsesBodyFlattensNamespaceTools(t *testing.T) {
 	t.Parallel()
 
@@ -89,7 +89,7 @@ func TestPatchGrokResponsesBodyFlattensNamespaceTools(t *testing.T) {
 		"tool_choice": {"type": "function", "namespace": "functions", "name": "inner"}
 	}`)
 
-	patched, _, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.3")
+	patched, mapping, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.3")
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
 	require.Equal(t, "grok-4.3", gjson.GetBytes(patched, "model").String())
@@ -97,9 +97,10 @@ func TestPatchGrokResponsesBodyFlattensNamespaceTools(t *testing.T) {
 	require.False(t, gjson.GetBytes(patched, `tools.#(type=="namespace")`).Exists())
 	require.True(t, gjson.GetBytes(patched, `tools.#(type=="function")`).Exists())
 	require.True(t, gjson.GetBytes(patched, `tools.#(type=="shell")`).Exists())
-	require.Equal(t, "functions__inner", gjson.GetBytes(patched, "tools.0.name").String())
-	require.Equal(t, "functions__inner", gjson.GetBytes(patched, "tool_choice.name").String())
+	require.Equal(t, "inner", gjson.GetBytes(patched, "tools.0.name").String())
+	require.Equal(t, "inner", gjson.GetBytes(patched, "tool_choice.name").String())
 	require.False(t, gjson.GetBytes(patched, "tool_choice.namespace").Exists())
+	require.Equal(t, bridge.ResponsesNamespaceName{Name: "inner"}, mapping.NamespaceTools["inner"])
 }
 
 // TestSanitizeGrokResponsesToolsRemovesDeferredFlagsWithToolSearch supplies an
