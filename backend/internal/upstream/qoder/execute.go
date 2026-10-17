@@ -161,7 +161,7 @@ func (e *Executor) PrepareConversation(target *Target, wireProtocol protocol.Pro
 // stream reading, while the request owner releases provider and user leases.
 // @project-doc docs/interfaces/qoder_upstream.md#qoder_execution_boundary
 func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, executionErr error) {
-	defer func() { result.CapturePerformance(ctx, executionErr) }()
+	defer func() { result.Finish(ctx, executionErr) }()
 	if e.enter != nil {
 		done, err := e.enter()
 		if err != nil {

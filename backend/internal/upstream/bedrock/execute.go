@@ -95,7 +95,7 @@ func (t *Target) GoString() string { return t.String() }
 // records cancellation and elapsed time even when configuration or
 // registration fails before a response exists.
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	defer func() { result.CapturePerformance(ctx, failure) }()
+	defer func() { result.Finish(ctx, failure) }()
 	// Attach failure timing before target validation so invalid configuration and
 	// rejected lifecycle entry still carry elapsed work and cancellation
 	// classification in their result.

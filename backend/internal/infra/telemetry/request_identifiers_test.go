@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -102,14 +103,14 @@ func TestRequestFailureKeepsObservedIdentity(t *testing.T) {
 	ObserveRequestHeaders(ctx, ref, http.Header{"X-Custom": {"known"}}, 200)
 	wrong := ref
 	wrong.ProviderID = 8
-	ObserveRequestFailure(ctx, wrong)
+	ObserveRequestResult(ctx, wrong, errors.New("failed"))
 	require.Equal(t, "running", saved.Attempts[0].Outcome)
-	ObserveRequestFailure(ctx, ref)
+	ObserveRequestResult(ctx, ref, errors.New("failed"))
 	ObserveRequestHeaders(ctx, ref, nil, 0)
 	require.Equal(t, "failed", saved.Attempts[0].Outcome)
 	require.Equal(t, "known", saved.Attempts[0].RequestID)
 	UpdateRequest(ctx, func(record *RequestRecord) { record.Attempts[0].Outcome = "completed" })
-	ObserveRequestFailure(ctx, ref)
+	ObserveRequestResult(ctx, ref, errors.New("failed"))
 	require.Equal(t, "completed", saved.Attempts[0].Outcome)
 	require.Len(t, saved.Aliases, 1)
 }

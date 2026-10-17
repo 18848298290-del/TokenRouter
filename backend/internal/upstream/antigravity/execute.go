@@ -125,7 +125,7 @@ func (t *Target) GoString() string { return t.String() }
 // tracking starts.
 // @project-doc docs/interfaces/antigravity_upstream.md#antigravity_native_execution
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	defer func() { result.CapturePerformance(ctx, failure) }()
+	defer func() { result.Finish(ctx, failure) }()
 	target, ok := input.Target.(*Target)
 	if !ok || target == nil || target.Exchange == nil {
 		return result, errors.New("antigravity execution target is not configured")

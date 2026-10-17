@@ -2811,3 +2811,29 @@ func TestImageBackfillFinishesObservedAttempts(t *testing.T) {
 		require.NotEqual(t, "running", attempt.Outcome, "completed request contains an unfinished HTTP exchange")
 	}
 }
+
+// TestBodyFailureFinishesMediaAttempt reads an API-key image response that
+// fails after successful headers. The failed exchange must retain its selected
+// identifier and a terminal outcome when forwarding returns no completion result.
+func TestBodyFailureFinishesMediaAttempt(t *testing.T) {
+	var saved telemetry.RequestRecord
+	ctx := context.WithValue(t.Context(), telemetry.RequestID, "request")
+	ctx = telemetry.WithRequestCapture(ctx, telemetry.RequestRecord{RequestID: "request", StartedAt: time.Now()}, func(r telemetry.RequestRecord) { saved = r })
+	ctx = telemetry.WithRequestProvider(ctx, 7, "")
+	body := []byte(`{"model":"gpt-image-2","prompt":"test"}`)
+	c, _ := newOpenAIImagesTestContext(t, body)
+	c.Request = c.Request.WithContext(ctx)
+	parsed, err := media.ParseImageRequest(c.Request.URL.Path, c.GetHeader("Content-Type"), body, true)
+	require.NoError(t, err)
+	transport := &imageDiagnosticTransport{pool: httpclient.NewUpstreamPool(), responses: []*http.Response{{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}, "X-Request-Id": {"known"}}, Body: &openAIImagesReadErrorBody{err: io.ErrUnexpectedEOF}}}}
+	svc := newOpenAIImagesTestService(transport)
+	target := newOpenAIImagesAPIKeyProvider()
+	target.Record.ID = 7
+	result, err := svc.ForwardImages(ctx, c, target, body, parsed, "")
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Len(t, saved.Attempts, 1)
+	require.Equal(t, "known", saved.Attempts[0].RequestID)
+	t.Logf("failure=%v attempt=%+v", err, saved.Attempts[0])
+	require.Equal(t, "failed", saved.Attempts[0].Outcome)
+}

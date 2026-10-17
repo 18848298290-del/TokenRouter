@@ -95,7 +95,7 @@ func (t *EmbeddingsTarget) GoString() string { return t.String() }
 // usage object, keeping billing observations separate from downstream write
 // state.
 func (EmbeddingsExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	defer func() { result.CapturePerformance(ctx, failure) }()
+	defer func() { result.Finish(ctx, failure) }()
 	t, ok := input.Target.(*EmbeddingsTarget)
 	if !ok || t == nil {
 		return result, errors.New("openai embeddings target is not configured")
@@ -146,6 +146,7 @@ func (EmbeddingsExecutor) Execute(ctx context.Context, input upstream.AttemptInp
 	if err != nil {
 		return result, t.TransportError(err)
 	}
+	result.CaptureRequestAttempt(resp)
 	// Close the body visible on return. The error path closes transport ownership
 	// early and replaces it with a replay reader for subsequent error classification.
 	defer func() { _ = resp.Body.Close() }()
@@ -178,7 +179,6 @@ func (EmbeddingsExecutor) Execute(ctx context.Context, input upstream.AttemptInp
 	}
 	usage := wire.ExtractEmbeddingsUsage(body)
 	result.RequestID = FirstNonEmptyString(resp.Header.Get("x-request-id"), resp.Header.Get("request-id"))
-	result.CaptureRequestAttempt(resp)
 	result.UpstreamHeaders = resp.Header
 	result.Model = input.ResponseModel
 	result.UpstreamModel = t.Model

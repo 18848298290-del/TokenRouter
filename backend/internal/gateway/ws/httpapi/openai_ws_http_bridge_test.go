@@ -48,6 +48,14 @@ type bridgeDiagnosticTransport struct {
 	responses []*http.Response         // ordered fixture responses
 }
 
+// bridgeRetryDelayBody holds one rejected response read before retry can start.
+// The independent delay distinguishes the rejected exchange from accepted timing.
+type bridgeRetryDelayBody struct {
+	reader   io.Reader // rejected response body
+	delayed  bool      // first delay consumed
+	released time.Time // injected wait completion
+}
+
 // A WS continuation executed over HTTP removes previous_response_id after
 // ingress reconstructs its retained input. Function-only upstream requests
 // lower custom and namespace tools, then restore client tool forms in output
@@ -2868,4 +2876,43 @@ func TestHTTPBridgeUsesTransportAttemptForDiagnostics(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Read delays the first fixture read before delegating to its stored reader.
+func (r *bridgeRetryDelayBody) Read(p []byte) (int, error) {
+	if !r.delayed {
+		r.delayed = true
+		time.Sleep(50 * time.Millisecond)
+		r.released = time.Now()
+	}
+	return r.reader.Read(p)
+}
+
+// TestHTTPBridgeRetryTimingBelongsToAcceptedDispatch retries a rejected field
+// after a measurable first-attempt delay. The performance labeled with the second
+// dispatch must start at that dispatch rather than include its rejected predecessor.
+func TestHTTPBridgeRetryTimingBelongsToAcceptedDispatch(t *testing.T) {
+	var saved telemetry.RequestRecord
+	origin := time.Now()
+	ctx := context.WithValue(t.Context(), telemetry.RequestID, "turn")
+	ctx = telemetry.WithRequestCapture(ctx, telemetry.RequestRecord{RequestID: "turn", StartedAt: origin}, func(r telemetry.RequestRecord) { saved = r })
+	ctx = telemetry.WithRequestProvider(ctx, 7, "X-Custom")
+	target := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 7, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Concurrency: 1}}
+	delayed := &bridgeRetryDelayBody{reader: strings.NewReader(`{"error":{"type":"invalid_request_error","code":"invalid_parameter","param":"truncation","message":"Unsupported parameter: truncation"}}`)}
+	transport := &bridgeDiagnosticTransport{pool: httpclient.NewUpstreamPool(), responses: []*http.Response{
+		{StatusCode: 400, Header: http.Header{}, Body: io.NopCloser(delayed)},
+		{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"))},
+	}}
+	svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{}, transport: transport})
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil).WithContext(ctx)
+	payload := []byte(`{"type":"response.create","model":"gpt-5","input":"hi","truncation":"auto"}`)
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(ctx, c, target, "sk-test", payload, len(payload), "gpt-5", "", "", "", "", 1, func([]byte) error { return nil })
+	require.NoError(t, err)
+	require.Len(t, saved.Attempts, 2)
+	require.Equal(t, int64(2), result.Timings.Values["attempt_number"])
+	secondStart := saved.Attempts[1].StartedAt.Sub(origin).Milliseconds()
+	t.Logf("accepted attempt starts at %d ms; attributed performance=%+v", secondStart, result.Timings.Values)
+	require.GreaterOrEqual(t, result.Timings.Values["upstream_started_ms"], delayed.released.Sub(origin).Milliseconds())
+	require.GreaterOrEqual(t, result.Duration.Milliseconds()-int64(*result.Timings.DurationMs()), int64(49))
 }

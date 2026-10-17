@@ -106,7 +106,7 @@ func (t *Target) GoString() string { return t.String() }
 // the attempt timing origin has been selected.
 // @project-doc docs/interfaces/gemini_upstream.md#gemini_native_execution
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	defer func() { result.CapturePerformance(ctx, failure) }()
+	defer func() { result.Finish(ctx, failure) }()
 	target, ok := input.Target.(*Target)
 	if !ok || target == nil || target.Exchange.Build == nil || target.Exchange.Do == nil {
 		return result, errors.New("gemini execution target is not configured")

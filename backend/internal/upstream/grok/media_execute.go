@@ -95,7 +95,7 @@ func (*MissingImageOutput) Error() string { return "xAI upstream returned no ima
 // measures this HTTP call. Successful results retain shared response headers
 // and the emitted byte storage; copy either before independent mutation.
 func (MediaExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	defer func() { result.CapturePerformance(ctx, failure) }()
+	defer func() { result.Finish(ctx, failure) }()
 	target, ok := input.Target.(*MediaTarget)
 	if !ok || target == nil || target.Request == nil || target.Do == nil || target.ReadBody == nil {
 		return result, errors.New("grok media target is not configured")
@@ -116,6 +116,7 @@ func (MediaExecutor) Execute(ctx context.Context, input upstream.AttemptInput, s
 	}
 	started := time.Now()
 	resp, err := target.Do(target.Request)
+	result.CaptureRequestAttempt(resp)
 	if target.AfterExchange != nil {
 		err = target.AfterExchange(time.Since(started), err)
 	}
@@ -160,7 +161,6 @@ func (MediaExecutor) Execute(ctx context.Context, input upstream.AttemptInput, s
 		result.ClientDisconnect = output.Err() != nil
 	}
 	result.RequestID = firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
-	result.CaptureRequestAttempt(resp)
 	result.UpstreamHeaders = resp.Header
 	result.MediaBody = data
 	result.Served = len(data) > 0

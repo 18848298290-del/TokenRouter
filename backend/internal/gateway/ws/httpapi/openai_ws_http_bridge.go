@@ -55,7 +55,9 @@ import (
 // terminal, read failure or turn cancellation; results and errors describe both
 // observation and delivery. HTTP transport owns each dispatch ordinal; the bridge
 // attaches that ordinal to its performance and result instead of registering a
-// second socket attempt for the same upstream exchange.
+// second socket attempt for the same upstream exchange. Internal HTTP retries
+// start fresh performance observations, while total turn duration retains the
+// original turn start for lifecycle reporting.
 
 // These byte limits bound client frames, select first-turn HTTP conversion, and
 // restrict error-body diagnostics; group conversion permission is checked separately.
@@ -751,7 +753,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	}
 
 	turnStart := time.Now()
-	performance := timing.NewRequestPerformance(ctx, turnStart)
+	var performance *timing.Performance
 	rejectedFieldRetryState := upstreamopenai.NewOpenAIResponsesRejectedFieldRetryState(body)
 	var resp *http.Response
 	for {
@@ -759,6 +761,9 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 		if buildErr != nil {
 			return nil, buildErr
 		}
+		// Rejected-field recovery dispatches another request. Start its performance
+		// here so the accepted response's ordinal cannot inherit the rejected exchange's wait.
+		performance = timing.NewRequestPerformance(ctx, time.Now())
 		resp, err = s.Requests.Transport.DoWithTLS(upstreamReq, proxyURL, provider.Record.ID, provider.Record.Concurrency, s.Requests.TLSProfile(provider, routerMatch...))
 		if err != nil {
 			if turn == 1 {

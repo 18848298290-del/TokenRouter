@@ -204,15 +204,16 @@ func ObserveRequestHeaders(ctx context.Context, ref RequestAttemptRef, headers h
 	})
 }
 
-// ObserveRequestFailure marks an identified transport attempt failed after dispatch.
+// ObserveRequestResult finishes an identified dispatch after reading or transport failure.
 // Provider and ordinal must match, and an existing terminal outcome is retained.
-// The transport calls this before returning its original error, so absent headers
-// and later retries cannot leave that exchange running or erase its identifiers.
+// Nil failure records completion; other failures record a failed attempt. Call
+// after body processing or when transport returns an error, so absent headers and
+// later retries cannot leave that exchange running or erase its identifiers.
 //
 // Empty or conflicting references leave the recorder unchanged. Cancellation uses
 // the same attempt outcome as other transport failures; the enclosing request
 // records its own canceled lifecycle independently of this exchange observation.
-func ObserveRequestFailure(ctx context.Context, ref RequestAttemptRef) {
+func ObserveRequestResult(ctx context.Context, ref RequestAttemptRef, failure error) {
 	if ref.Number <= 0 {
 		return
 	}
@@ -220,7 +221,10 @@ func ObserveRequestFailure(ctx context.Context, ref RequestAttemptRef) {
 		for i := range record.Attempts {
 			attempt := &record.Attempts[i]
 			if attempt.Number == ref.Number && attempt.ProviderID == ref.ProviderID && attempt.Outcome == "running" {
-				attempt.Outcome = "failed"
+				attempt.Outcome = "completed"
+				if failure != nil {
+					attempt.Outcome = "failed"
+				}
 				return
 			}
 		}

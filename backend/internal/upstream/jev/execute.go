@@ -142,7 +142,7 @@ func RetryAfterResetTime(headers http.Header, now time.Time) *time.Time {
 // is set before Begin, HTTPCommitted follows a successful Begin, and either
 // sink failure sets ClientDisconnect while retaining the observed answer data.
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	defer func() { result.CapturePerformance(ctx, failure) }()
+	defer func() { result.Finish(ctx, failure) }()
 	target, ok := input.Target.(*Target)
 	if !ok || target == nil || target.Do == nil || input.Protocol != protocol.ProtocolSystemOne {
 		return result, errors.New("SystemOne target is not configured")
@@ -181,6 +181,7 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		result.FailureClass = "transport"
 		return result, err
 	}
+	result.CaptureRequestAttempt(response)
 	// Release the transport's response ownership on every later exit,
 	// including read or decode failure and client write failure; close
 	// errors do not replace the exchange result.
@@ -225,7 +226,6 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 	if result.RequestID == "" {
 		result.RequestID = response.Header.Get("request-id")
 	}
-	result.CaptureRequestAttempt(response)
 	result.UpstreamHeaders = response.Header.Clone()
 	// Apply the client alias only after recording the declared upstream
 	// model, so response presentation cannot erase the version used by

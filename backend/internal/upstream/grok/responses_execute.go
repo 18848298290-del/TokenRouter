@@ -78,7 +78,7 @@ func (t *ResponsesTarget) GoString() string { return t.String() }
 // remain shared with the response or reader; copy them before independent
 // mutation.
 func (ResponsesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, err error) {
-	defer func() { result.CapturePerformance(ctx, err) }()
+	defer func() { result.Finish(ctx, err) }()
 	t, ok := input.Target.(*ResponsesTarget)
 	if !ok || t == nil || t.ReadResponse == nil || t.Exchange.Build == nil || t.Exchange.Do == nil || t.Exchange.ReadError == nil {
 		return result, errors.New("grok responses target is not configured")

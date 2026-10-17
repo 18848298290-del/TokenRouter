@@ -16,8 +16,15 @@ import (
 // observed during that one exchange. The gateway consumes output commitment
 // and usage separately when deciding provider switching, request completion,
 // and settlement after an execution error.
-// Executors attach the originating HTTP dispatch to their result before returning,
-// so completion can identify retries even when response identifiers are absent.
+// Media executors attach the originating HTTP dispatch before
+// reading the body. Finish can then record failures that return no billable
+// result, while later completion can identify retries with absent response IDs.
+//
+// Diagnostic outcome and accounting evidence serve separate consumers. Finish
+// closes the referenced exchange and freezes performance, while observed tokens,
+// served output, and commitment flags remain available to gateway policy. Partial
+// output can therefore retain its usage after an error, and a path without a
+// performance collector still records its diagnostic terminal state.
 
 // ExecutionTarget identifies a provider through the concrete target accepted
 // by its executor.
@@ -109,14 +116,17 @@ type Executor interface {
 // TokenUsage aliases the protocol token counts consumed by attempt completion.
 type TokenUsage = protocol.TokenUsage
 
-// CapturePerformance freezes the current exchange after platform reading has finished.
+// Finish finalizes the exchange's diagnostic outcome and freezes its performance.
 // A conversion error makes final usage ineligible for throughput. A client
 // disconnect can still retain complete upstream usage collected by bounded drain. Missing
-// collectors remain absent, and no lifecycle or billing state is changed here.
-func (r *AttemptResult) CapturePerformance(ctx context.Context, failure error) {
+// performance collectors remain absent; a captured dispatch still receives its
+// terminal outcome. Call after body processing finishes, including error returns.
+// Request lifecycle and billing ownership remain with their entrypoint and completion.
+func (r *AttemptResult) Finish(ctx context.Context, failure error) {
 	if r == nil {
 		return
 	}
+	telemetry.ObserveRequestResult(ctx, r.RequestAttempt, failure)
 	r.Timings = timing.PerformanceFromContext(ctx)
 	if r.Timings == nil {
 		return
@@ -131,8 +141,9 @@ func (r *AttemptResult) CapturePerformance(ctx context.Context, failure error) {
 }
 
 // CaptureRequestAttempt attaches the response's immutable dispatch to this result.
-// Call before returning from the executor; missing response request metadata leaves
-// the reference empty, and usage quantities and wire headers are unchanged.
+// Call as soon as the transport returns, before body reading can fail. Missing
+// response request metadata leaves the reference empty; Finish requires that
+// fixed reference to close the same diagnostic exchange on success or failure.
 func (r *AttemptResult) CaptureRequestAttempt(response *http.Response) {
 	r.RequestAttempt = telemetry.RequestAttemptFromResponse(response)
 }

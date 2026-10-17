@@ -26,6 +26,7 @@ import (
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -1608,4 +1609,62 @@ func TestGrokMediaPoolModeRetryFlagFollowsExplicitPolicies(t *testing.T) {
 		require.Equal(t, "vendor-image-model", repo.lastModelRateLimitScope)
 		require.Equal(t, "vendor-image-model", gjson.GetBytes(upstream.lastBody, "model").String())
 	})
+}
+
+// TestVideoContentKeepsDispatchAndTerminalOutcomes reads status and downloaded
+// content through real pool observation. Success, body failures, and redirects
+// must close only their own attempts and retain the producing download reference.
+func TestVideoContentKeepsDispatchAndTerminalOutcomes(t *testing.T) {
+	for _, mode := range []string{"success", "billable", "status_read_failure", "status_redirect", "content_read_failure", "content_redirect"} {
+		t.Run(mode, func(t *testing.T) {
+			var saved telemetry.RequestRecord
+			ctx := context.WithValue(t.Context(), telemetry.RequestID, "poll")
+			ctx = telemetry.WithRequestCapture(ctx, telemetry.RequestRecord{RequestID: "poll", StartedAt: time.Now()}, func(r telemetry.RequestRecord) { saved = r })
+			target := grokMediaContentTestProvider()
+			target.Record.ID = 7
+			ctx = telemetry.WithRequestProvider(ctx, 7, "")
+			status := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}, "X-Request-Id": {"status-id"}}, Body: io.NopCloser(strings.NewReader(`{"status":"completed"}`))}
+			content := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"video/mp4"}, "X-Request-Id": {"content-id"}}, Body: io.NopCloser(strings.NewReader("video-payload"))}
+			switch mode {
+			case "billable":
+				status.Body = io.NopCloser(strings.NewReader(`{"status":"done","model":"grok-imagine-video-1.5","video":{"url":"https://vidgen.x.ai/a.mp4","duration":9}}`))
+			case "status_read_failure":
+				status.Body = &openAIImagesReadErrorBody{err: io.ErrUnexpectedEOF}
+			case "status_redirect":
+				status.StatusCode = 302
+			case "content_read_failure":
+				content.Body = &openAIImagesReadErrorBody{err: io.ErrUnexpectedEOF}
+			case "content_redirect":
+				content.StatusCode = 302
+			}
+			transport := &imageDiagnosticTransport{pool: httpclient.NewUpstreamPool(), responses: []*http.Response{status, content}}
+			c, _ := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", nil)
+			c.Request = c.Request.WithContext(ctx)
+			result, err := grokMediaFixture(transport).ForwardGrokMedia(ctx, c, target, grok.GrokMediaEndpointVideoContent, "task-1", nil, "")
+			if strings.HasPrefix(mode, "status_") {
+				require.Error(t, err)
+				require.Len(t, saved.Attempts, 1)
+				require.Equal(t, "failed", saved.Attempts[0].Outcome)
+			} else {
+				require.Len(t, saved.Attempts, 2)
+				require.Equal(t, "completed", saved.Attempts[0].Outcome)
+				require.Equal(t, "content-id", saved.Attempts[1].RequestID)
+				if mode == "success" || mode == "billable" {
+					require.NoError(t, err)
+					require.NotNil(t, result)
+					require.Equal(t, 2, result.RequestAttempt.Number)
+					require.Equal(t, "completed", saved.Attempts[1].Outcome)
+					if mode == "billable" {
+						require.Equal(t, 1, result.VideoCount)
+						gatewayprovider.CaptureOpenAI(ctx, &gatewayprovider.OpenAICapture{Result: result, Provider: target.View()})
+						require.Equal(t, "completed", saved.Attempts[1].Outcome)
+					}
+				} else {
+					require.Error(t, err)
+					require.Equal(t, "failed", saved.Attempts[1].Outcome)
+				}
+			}
+			require.Equal(t, "status-id", saved.Attempts[0].RequestID)
+		})
+	}
 }

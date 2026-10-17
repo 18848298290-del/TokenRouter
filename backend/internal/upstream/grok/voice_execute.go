@@ -73,7 +73,7 @@ func (t *VoiceTarget) GoString() string { return t.String() }
 // operations return no audio meter. Returned UpstreamHeaders shares the
 // response map; copy it before changing retained header values.
 func (VoiceExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	defer func() { result.CapturePerformance(ctx, failure) }()
+	defer func() { result.Finish(ctx, failure) }()
 	target, ok := input.Target.(*VoiceTarget)
 	if !ok || target == nil || target.Do == nil || target.Request == nil || target.ReadBody == nil {
 		return result, errors.New("grok voice target is not configured")
@@ -96,6 +96,7 @@ func (VoiceExecutor) Execute(ctx context.Context, input upstream.AttemptInput, s
 	result.Model = target.BaseEndpoint
 	result.UpstreamModel = target.BaseEndpoint
 	resp, err := target.Do(target.Request)
+	result.CaptureRequestAttempt(resp)
 	if target.AfterExchange != nil {
 		err = target.AfterExchange(time.Since(started), err)
 	}
@@ -129,7 +130,6 @@ func (VoiceExecutor) Execute(ctx context.Context, input upstream.AttemptInput, s
 		result.ClientDisconnect = output.Err() != nil
 	}
 	result.RequestID = firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
-	result.CaptureRequestAttempt(resp)
 	result.UpstreamHeaders = resp.Header
 	// Accepted Voice output remains meterable after a client-write failure;
 	// BaseEndpoint chooses character units for TTS or hours for STT.

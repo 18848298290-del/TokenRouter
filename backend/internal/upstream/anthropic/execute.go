@@ -107,7 +107,7 @@ func (t *Target) GoString() string { return t.String() }
 // request's fast marker. Failures retain cancellation classification and
 // duration, including failures that occur before any usage is observed.
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	defer func() { result.CapturePerformance(ctx, failure) }()
+	defer func() { result.Finish(ctx, failure) }()
 	// Failure can occur before a response supplies usage or a start timestamp.
 	// Classify cancellation and fill missing failure timing at return so these
 	// early attempts remain observable.

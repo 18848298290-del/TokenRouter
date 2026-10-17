@@ -300,14 +300,17 @@ func (s *GrokExecutor) ForwardGrokMedia(
 // distinguishes authenticated relay paths from signed vendor URLs. A completed
 // status can also supply video units even when this call was for download. The
 // returned result carries those observations; saved creation metadata and
-// settlement claiming remain in the media completion owner.
+// settlement claiming remain in the media completion owner. The status and
+// download exchanges retain separate dispatch references. Opening the download
+// completes status processing; the final return records the download outcome,
+// including body-read and downstream-write failures after successful headers.
 func (s *GrokExecutor) forwardGrokMediaVideoContent(
 	ctx context.Context,
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
 	token, requestID string,
 	startTime time.Time,
-) (*forwardcore.OpenAIResult, error) {
+) (result *forwardcore.OpenAIResult, failure error) {
 	statusURL, err := s.Routes.Media(provider, grok.GrokMediaEndpointVideoStatus, requestID)
 	if err != nil {
 		return nil, err
@@ -327,6 +330,8 @@ func (s *GrokExecutor) forwardGrokMediaVideoContent(
 	}
 	handled := false
 	var handledResult *forwardcore.OpenAIResult
+	var dispatch telemetry.RequestAttemptRef
+	defer func() { telemetry.ObserveRequestResult(ctx, dispatch, failure) }()
 	resource, err := mediaprovider.OpenVideoContent(upstreamCtx, mediaprovider.VideoContentOptions{
 		StatusURL: statusURL,
 		RequestID: requestID,
@@ -343,7 +348,12 @@ func (s *GrokExecutor) forwardGrokMediaVideoContent(
 			provideradapter.ApplyProviderHeaderOverrides(gatewayprovider.ExecutionProtocolRecord(provider), headers)
 		},
 		Do: func(req *http.Request) (*http.Response, error) {
-			return s.Transport.Do(req, proxyURL, provider.Record.ID, provider.Record.Concurrency)
+			// A second exchange starts only after status reading and URL validation
+			// succeed. Finish that status dispatch before observing the content response.
+			telemetry.ObserveRequestResult(ctx, dispatch, nil)
+			resp, err := s.Transport.Do(req, proxyURL, provider.Record.ID, provider.Record.Concurrency)
+			dispatch = telemetry.RequestAttemptFromResponse(resp)
+			return resp, err
 		},
 		ReadStatus: func(reader io.Reader) ([]byte, error) {
 			return ReadUpstreamResponseBody(reader, s.Output.Options.ReadLimit, c, OpenAIResponseTooLarge)
@@ -380,8 +390,8 @@ func (s *GrokExecutor) forwardGrokMediaVideoContent(
 	}
 	// Content download also observes completion: done with video.url yields billing units.
 	// The handler merges pending billing data and claims settlement as it does for status polling.
-	result := &forwardcore.OpenAIResult{
-		RequestAttempt: telemetry.RequestAttemptFromResponse(contentResp),
+	result = &forwardcore.OpenAIResult{
+		RequestAttempt: dispatch,
 		RequestID:      contentRequestID,
 		VideoState:     gatewaymedia.GrokVideoRequestState(statusBody),
 

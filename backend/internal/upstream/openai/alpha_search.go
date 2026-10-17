@@ -89,7 +89,7 @@ func (t *AlphaSearchTarget) GoString() string { return t.String() }
 // Served false and SearchCount zero, so outer completion logic can distinguish
 // delivery from a successful search.
 func (AlphaSearchExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	defer func() { result.CapturePerformance(ctx, failure) }()
+	defer func() { result.Finish(ctx, failure) }()
 	t, ok := input.Target.(*AlphaSearchTarget)
 	if !ok || t == nil || t.Request == nil {
 		return result, errors.New("openai alpha search target is not configured")
@@ -110,6 +110,7 @@ func (AlphaSearchExecutor) Execute(ctx context.Context, input upstream.AttemptIn
 	if err != nil {
 		return result, t.TransportError(err)
 	}
+	result.CaptureRequestAttempt(resp)
 	// HTTPError may replace resp.Body with a replay reader. Retain the original
 	// body so cleanup releases the connection owned by this HTTP exchange.
 	originalBody := resp.Body
@@ -163,7 +164,6 @@ func (AlphaSearchExecutor) Execute(ctx context.Context, input upstream.AttemptIn
 		return result, nil
 	}
 	result.RequestID = strings.TrimSpace(resp.Header.Get("x-request-id"))
-	result.CaptureRequestAttempt(resp)
 	result.UpstreamHeaders = resp.Header
 	result.Model = input.ResponseModel
 	result.UpstreamModel = t.Model

@@ -235,7 +235,7 @@ func (s *UpstreamPool) Do(req *http.Request, opts UpstreamRequestOptions) (respo
 		if failure != nil && req != nil {
 			// The dispatched request retains its own ordinal after later exchanges start.
 			// Finish failure here because network errors provide no response for platform callbacks.
-			telemetry.ObserveRequestFailure(req.Context(), telemetry.RequestAttemptFromContext(req.Context()))
+			telemetry.ObserveRequestResult(req.Context(), telemetry.RequestAttemptFromContext(req.Context()), failure)
 			if stages := servertiming.StagesFromContext(req.Context()); stages != nil {
 				stages.FinishAttempt(attemptNumber)
 			}

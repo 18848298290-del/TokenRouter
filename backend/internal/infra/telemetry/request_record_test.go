@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -115,7 +116,7 @@ func TestWithoutRequestCapturePreservesRequestContext(t *testing.T) {
 	got, _ := hidden.Deadline()
 	require.Equal(t, want, got)
 	dispatch := BeginRequestAttempt(hidden, 0)
-	ObserveRequestFailure(dispatch, RequestAttemptFromContext(dispatch))
+	ObserveRequestResult(dispatch, RequestAttemptFromContext(dispatch), errors.New("failed"))
 	require.Empty(t, saved.Attempts)
 	cancel()
 	require.ErrorIs(t, hidden.Err(), context.Canceled)

@@ -105,7 +105,7 @@ func (t *ImagesTarget) GoString() string { return t.String() }
 // image. OAuth errors in buffered mode or before a completed streaming image
 // invoke ResponseError after those observations are captured.
 func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
-	defer func() { result.CapturePerformance(ctx, failure) }()
+	defer func() { result.Finish(ctx, failure) }()
 	t, ok := input.Target.(*ImagesTarget)
 	if !ok || t == nil || t.Request == nil {
 		return result, errors.New("openai images target is not configured")
@@ -137,6 +137,7 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	if err != nil {
 		return result, t.TransportError(err)
 	}
+	result.CaptureRequestAttempt(resp)
 	// Close the body visible after response policy returns, before admission
 	// release; HTTP failures replace the already closed transport body with redacted replay bytes.
 	defer func() { _ = resp.Body.Close() }()
@@ -163,7 +164,6 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	var usage wire.ForwardUsage
 	var output *upstream.OutputContext
 	result.RequestID = resp.Header.Get("x-request-id")
-	result.CaptureRequestAttempt(resp)
 	result.UpstreamHeaders = resp.Header
 	result.Model = input.ResponseModel
 	result.UpstreamModel = t.Model
