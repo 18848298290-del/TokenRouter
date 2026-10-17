@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -92,4 +93,47 @@ func TestEntryCloseKeepsDisconnectBeforeIncompleteDrain(t *testing.T) {
 	require.Equal(t, started, *record.FinishedAt)
 	require.Zero(t, record.DurationMs)
 	require.Equal(t, "websocket_turn_incomplete", record.ErrorCode)
+}
+
+// TestEntryHTTPAttemptsKeepOneOrdinal completes HTTP bridge attempts with and
+// without a result. Existing transport failures remain singular, and a later
+// same-provider preparation failure cannot overwrite the preceding exchange.
+func TestEntryHTTPAttemptsKeepOneOrdinal(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		saved := make(map[string]telemetry.RequestRecord)
+		root := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "connection", StartedAt: time.Now()}, func(r telemetry.RequestRecord) { saved[r.RequestID] = r })
+		session := newEntryRequestRecords(root)
+		attempt := session.attempt()
+		base := telemetry.WithRequestProvider(root, 7, "X-Custom")
+		ctx := attempt.context(base, 1)
+		id := telemetry.RequestIDValue(ctx)
+		performance := timing.NewRequestPerformance(ctx, time.Now())
+		exchange := timing.BeginHTTPTrace(ctx)
+		ref := telemetry.RequestAttemptFromContext(exchange)
+		status := 200
+		if failed {
+			status = 503
+		}
+		timing.ObserveResponse(exchange, &http.Response{StatusCode: status, Header: http.Header{"X-Custom": {"upstream"}}})
+		capture := TurnCapture{Turn: 1, Result: &ForwardResult{RequestAttempt: ref, RequestID: "resp_bridge", ResponseID: "resp_bridge", OpenAIWSMode: true, UpstreamTerminalEvent: "response.completed", Timings: performance}}
+		if failed {
+			capture.Result = nil
+			capture.Err = errors.New("first transport failed")
+		}
+		attempt.finish(base, capture, 7, "openai", failed)
+		require.Len(t, saved[id].Attempts, 1)
+		require.Equal(t, "upstream", saved[id].Attempts[0].RequestID)
+		if !failed {
+			require.Equal(t, "completed", saved[id].Attempts[0].Outcome)
+			require.Equal(t, int64(1), capture.Result.Timings.Values["attempt_number"])
+			require.Contains(t, saved[id].Aliases, telemetry.RequestAlias{Kind: "response", Value: "resp_bridge", Source: "response.id", AttemptNumber: 1, ProviderID: 7})
+			continue
+		}
+		retry := session.attempt()
+		retry.finish(base, TurnCapture{Turn: 1, Err: errors.New("next credentials failed")}, 7, "openai", false)
+		require.Len(t, saved[id].Attempts, 2)
+		require.Equal(t, "first transport failed", saved[id].Attempts[0].Reason)
+		require.Equal(t, "next credentials failed", saved[id].Attempts[1].Reason)
+		require.Empty(t, saved[id].Attempts[1].RequestID)
+	}
 }

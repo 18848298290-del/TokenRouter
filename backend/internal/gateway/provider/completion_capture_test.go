@@ -20,6 +20,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// videoDiagnosticUsageWriter accepts rows while retaining the real completion
+// writer's diagnostic behavior for a derived video request record.
+type videoDiagnosticUsageWriter struct{}
+
 // TestCompletionCaptureKeepsTurnTimeAndIndependentInputs captures a WS pricing
 // time with mutable payer, Key, multiplier, image metadata, and request bytes.
 // Later mutations leave the asserted snapshot values and requested reasoning
@@ -265,5 +269,40 @@ func TestCompletionMediaRetriesUseCapturedDispatch(t *testing.T) {
 				require.Equal(t, id, *out.Result.UpstreamRequestID)
 			}
 		}
+	}
+}
+
+// Create acknowledges fixture rows without changing their configured upstream ID.
+func (videoDiagnosticUsageWriter) Create(context.Context, *completion.UsageLog) (bool, error) {
+	return true, nil
+}
+
+// TestVideoUsageKeepsOneDiagnosticID sends a captured video completion
+// through the real usage writer. Its truncated usage value must not become a
+// second unclassified diagnostic alias beside the full selected response header.
+func TestVideoUsageKeepsOneDiagnosticID(t *testing.T) {
+	records := make(map[string]telemetry.RequestRecord)
+	observe := func(r telemetry.RequestRecord) {
+		if previous, ok := records[r.RequestID]; ok {
+			r = telemetry.MergeRequestRecord(previous, r)
+		}
+		records[r.RequestID] = r
+	}
+	ctx := context.WithValue(t.Context(), telemetry.RequestID, "poll")
+	ctx = telemetry.WithRequestCapture(ctx, telemetry.RequestRecord{RequestID: "poll", StartedAt: time.Now()}, observe)
+	ctx = telemetry.WithRequestProvider(ctx, 7, "X-Custom")
+	exchange := telemetry.BeginRequestAttempt(ctx, 0)
+	full := strings.Repeat("a", 200)
+	headers := http.Header{"X-Custom": {full}}
+	telemetry.ObserveRequestHeaders(exchange, telemetry.RequestAttemptFromContext(exchange), headers, 200)
+	target := &providercore.Record{ID: 7, Extra: map[string]any{providercore.ProviderExtraUpstreamRequestIDHeader: "X-Custom"}}
+	input := CaptureOpenAI(ctx, &OpenAICapture{Provider: target, Result: &forward.OpenAIResult{RequestAttempt: telemetry.RequestAttemptFromContext(exchange), RequestID: "grok-video:task", ResponseID: "task", Model: "video", VideoCount: 1, UpstreamHeaders: headers}})
+	recorder := completion.NewRecorder(completion.Dependencies{Logs: videoDiagnosticUsageWriter{}, RequestRecords: observe}, completion.RecorderOptions{})
+	row := &completion.UsageLog{RequestID: input.RequestID, BillingKey: input.BillingKey, ProviderID: 7, UpstreamRequestID: input.Result.UpstreamRequestID}
+	completion.WrapTaskContext(ctx, func(worker context.Context) { recorder.WriteUsage(worker, row, "review") })(t.Context())
+	t.Logf("video aliases: %+v", records[input.RequestID].Aliases)
+	require.Equal(t, full[:128], *row.UpstreamRequestID)
+	for _, alias := range records[input.RequestID].Aliases {
+		require.NotEqual(t, "upstream", alias.Kind, "usage must not add an unclassified truncated alias")
 	}
 }

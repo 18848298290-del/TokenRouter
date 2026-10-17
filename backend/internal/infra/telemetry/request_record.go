@@ -28,6 +28,8 @@ import (
 // maps, while the FinishedAt pointer remains shared. Related-record
 // publication occurs outside the parent lock before adding the parent alias,
 // and normalization prepares bounded diagnostic text for PostgreSQL storage.
+// Auxiliary delivery work can mask the shared recorder while retaining the
+// request's cancellation and policy values for its outbound transport.
 
 // requestCaptureKey names the context slot for a shared logical recorder,
 // allowing detached completion work to update the same request snapshot.
@@ -174,6 +176,17 @@ func WithRequestCapture(ctx context.Context, record RequestRecord, observe func(
 	ctx = context.WithValue(ctx, requestCaptureKey, capture)
 	UpdateRequest(ctx, func(*RequestRecord) {})
 	return ctx
+}
+
+// WithoutRequestCapture excludes auxiliary work from the inherited request recorder.
+// Cancellation, deadlines, identity values, and other observers remain available.
+// Use the returned context for downloads that deliver generated output rather
+// than representing another provider generation attempt; a nil input uses background.
+func WithoutRequestCapture(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, requestCaptureKey, (*RequestCapture)(nil))
 }
 
 // UpdateRequest invokes a mutation under the capture mutex and publishes a

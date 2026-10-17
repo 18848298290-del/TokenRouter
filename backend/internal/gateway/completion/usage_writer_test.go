@@ -236,3 +236,30 @@ func TestWriteUsageKeepsDiagnosticHeaderAndStoredValueSeparate(t *testing.T) {
 		require.Equal(t, []telemetry.RequestAlias{{Kind: "upstream_request", Value: full, Source: "X-Custom-ID", ProviderID: 7, AttemptNumber: 1}}, latest.Aliases)
 	}
 }
+
+// TestWriteUsageSuppressesOnlyLinkedDiagnosticAliases compares a recorded child
+// against unrelated tasks and providers. Existing usage values stay unchanged,
+// and only proven parent-child diagnostic coverage suppresses a legacy alias.
+func TestWriteUsageSuppressesOnlyLinkedDiagnosticAliases(t *testing.T) {
+	for _, linked := range []bool{false, true} {
+		for _, providerID := range []int64{7, 8} {
+			initial := telemetry.RequestRecord{RequestID: "parent", Attempts: []telemetry.RequestAttempt{{Number: 1, ProviderID: 7, RequestIDHeader: "X-Custom", RequestID: "full"}}}
+			if linked {
+				initial.Aliases = []telemetry.RequestAlias{{Kind: "related", Value: "child"}}
+			}
+			var task telemetry.RequestRecord
+			ctx := telemetry.WithRequestCapture(t.Context(), initial, nil)
+			recorder := NewRecorder(Dependencies{Logs: usageWriterSpy{}, RequestRecords: func(r telemetry.RequestRecord) { task = r }}, RecorderOptions{})
+			value := "stored"
+			row := &UsageLog{RequestID: "child", ProviderID: providerID, UpstreamRequestID: &value}
+			recorder.WriteUsage(ctx, row, "test")
+			require.Equal(t, "stored", *row.UpstreamRequestID)
+			legacy := telemetry.RequestAlias{Kind: "upstream", Value: "stored"}
+			if linked && providerID == 7 {
+				require.NotContains(t, task.Aliases, legacy)
+			} else {
+				require.Contains(t, task.Aliases, legacy)
+			}
+		}
+	}
+}

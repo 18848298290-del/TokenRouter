@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
 // TestPerformanceSeparatesMetadataAndContent compares the two policies on the same
@@ -225,4 +227,25 @@ func TestPerformanceToolInputsKeepItemAndCloneOwnership(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "seenOutputParts")
 	require.NotContains(t, string(encoded), "actual input")
+}
+
+// TestRequestPerformanceKeepsClockWithoutRegisteringAttempt checks HTTP bridge
+// observations against a known request origin. Constructing performance leaves
+// dispatch registration to transport while preserving live disconnect recording.
+func TestRequestPerformanceKeepsClockWithoutRegisteringAttempt(t *testing.T) {
+	origin := time.Now().Add(-time.Second)
+	var saved telemetry.RequestRecord
+	ctx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "request", StartedAt: origin}, func(r telemetry.RequestRecord) { saved = r })
+	observer := NewRequestPerformance(ctx, origin.Add(40*time.Millisecond))
+	require.Empty(t, saved.Attempts)
+	require.Equal(t, int64(40), observer.Values["upstream_started_ms"])
+	require.Zero(t, observer.Values["attempt_number"])
+	observer.FinishAt(origin.Add(120 * time.Millisecond))
+	require.Equal(t, 80, *observer.DurationMs())
+	observer.Disconnected(origin.Add(150 * time.Millisecond))
+	require.Equal(t, origin.Add(150*time.Millisecond), *saved.ClientDisconnectedAt)
+	require.Equal(t, "canceled", saved.State)
+	clone := observer.Clone()
+	clone.Disconnected(origin.Add(10 * time.Millisecond))
+	require.Equal(t, origin.Add(150*time.Millisecond), *saved.ClientDisconnectedAt)
 }

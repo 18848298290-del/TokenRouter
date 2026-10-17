@@ -25,6 +25,9 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	sessiontestkit "github.com/TokenFlux/TokenRouter/internal/gateway/session/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/ws"
+	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
+	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
@@ -34,6 +37,16 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
+
+// bridgeDiagnosticRoundTrip replaces the wire response while preserving the production
+// upstream pool's dispatch observation and response ownership behavior.
+type bridgeDiagnosticRoundTrip func(*http.Request) (*http.Response, error)
+
+// bridgeDiagnosticTransport serves bridge response fixtures through the real pool.
+type bridgeDiagnosticTransport struct {
+	pool      *httpclient.UpstreamPool // production HTTP pool
+	responses []*http.Response         // ordered fixture responses
+}
 
 // A WS continuation executed over HTTP removes previous_response_id after
 // ingress reconstructs its retained input. Function-only upstream requests
@@ -2770,6 +2783,89 @@ func TestProxyOpenAIWSHTTPBridgeGrokReasoningOptions(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.Equal(t, tc.want, gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+		})
+	}
+}
+
+// RoundTrip delegates one local response fixture to its configured handler.
+func (f bridgeDiagnosticRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Do sends one fixture exchange through production attempt and header observation.
+func (p *bridgeDiagnosticTransport) Do(req *http.Request, _ string, id int64, _ int) (*http.Response, error) {
+	return p.pool.Do(req, httpclient.UpstreamRequestOptions{ProviderID: id, PrepareClient: func(c *http.Client) *http.Client {
+		c.Transport = bridgeDiagnosticRoundTrip(func(r *http.Request) (*http.Response, error) {
+			response := p.responses[0]
+			p.responses = p.responses[1:]
+			response.Request = r
+			return response, nil
+		})
+		return c
+	}})
+}
+
+// DoWithTLS reuses fixture dispatch while leaving fingerprint behavior outside this probe.
+func (p *bridgeDiagnosticTransport) DoWithTLS(req *http.Request, proxy string, id int64, n int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return p.Do(req, proxy, id, n)
+}
+
+// TestHTTPBridgeUsesTransportAttemptForDiagnostics runs the real bridge and HTTP
+// pool through success, rejection, and rejected-field retry. Header provenance,
+// response identity, and completion must agree on the transport's dispatch number.
+func TestHTTPBridgeUsesTransportAttemptForDiagnostics(t *testing.T) {
+	for _, mode := range []string{"success", "retry", "failure", "interrupted"} {
+		t.Run(mode, func(t *testing.T) {
+			var saved telemetry.RequestRecord
+			ctx := context.WithValue(t.Context(), telemetry.RequestID, "turn")
+			ctx = telemetry.WithRequestCapture(ctx, telemetry.RequestRecord{RequestID: "turn", StartedAt: time.Now()}, func(r telemetry.RequestRecord) { saved = r })
+			ctx = telemetry.WithRequestProvider(ctx, 7, "X-Custom")
+			target := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 7, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Concurrency: 1, Extra: map[string]any{providercore.ProviderExtraUpstreamRequestIDHeader: "X-Custom"}}}
+			responses := []*http.Response{}
+			if mode == "retry" {
+				responses = append(responses, &http.Response{StatusCode: 400, Header: http.Header{"X-Custom": {"rejected"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","code":"invalid_parameter","param":"truncation","message":"Unsupported parameter: truncation"}}`))})
+			}
+			status := 200
+			body := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_bridge\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+			if mode == "failure" {
+				status = 503
+				body = `{"error":{"message":"unavailable"}}`
+			}
+			if mode == "interrupted" {
+				body = "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_bridge\"}}\n\n"
+			}
+			responses = append(responses, &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"text/event-stream"}, "X-Custom": {"selected"}, "X-Request-Id": {"unselected"}}, Body: io.NopCloser(strings.NewReader(body))})
+			count := len(responses)
+			transport := &bridgeDiagnosticTransport{pool: httpclient.NewUpstreamPool(), responses: responses}
+			svc := newWSFixture(wsFixtureInputs{options: &wsFixtureOptions{}, transport: transport})
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil).WithContext(ctx)
+			payload := []byte(`{"type":"response.create","model":"gpt-5","input":"hi","truncation":"auto"}`)
+			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(ctx, c, target, "sk-test", payload, len(payload), "gpt-5", "", "", "", "", 1, func([]byte) error { return nil })
+			require.Len(t, saved.Attempts, count)
+			require.Equal(t, "selected", saved.Attempts[count-1].RequestID)
+			if mode == "failure" {
+				require.Error(t, err)
+				require.Equal(t, "failed", saved.Attempts[0].Outcome)
+				return
+			}
+			if mode == "interrupted" {
+				require.Error(t, err)
+				require.Contains(t, saved.Aliases, telemetry.RequestAlias{Kind: "response", Value: "resp_bridge", Source: "response.id", AttemptNumber: count, ProviderID: 7})
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, count, result.RequestAttempt.Number)
+			require.Equal(t, int64(count), result.Timings.Values["attempt_number"])
+			input := gatewayprovider.CaptureOpenAI(ctx, &gatewayprovider.OpenAICapture{Result: result, Provider: target.View()})
+			require.Nil(t, input.Result.UpstreamRequestID)
+			require.Equal(t, "completed", saved.Attempts[count-1].Outcome)
+			if mode == "retry" {
+				require.Equal(t, "failed", saved.Attempts[0].Outcome)
+			}
+			require.Contains(t, saved.Aliases, telemetry.RequestAlias{Kind: "response", Value: "resp_bridge", Source: "response.id", AttemptNumber: count, ProviderID: 7})
+			for _, alias := range saved.Aliases {
+				require.NotEqual(t, "unselected", alias.Value)
+			}
 		})
 	}
 }

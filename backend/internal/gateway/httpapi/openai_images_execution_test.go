@@ -30,6 +30,8 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
+	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -72,6 +74,16 @@ type openAIImageTestSSEEvent struct {
 	// reconstruction to the native response reader under test.
 	Name string // captured SSE event label
 	Data string // captured final data line
+}
+
+// imageDiagnosticRoundTrip replaces the wire response while preserving the production
+// upstream pool's dispatch observation and response ownership behavior.
+type imageDiagnosticRoundTrip func(*http.Request) (*http.Response, error)
+
+// imageDiagnosticTransport serves generation and CDN fixtures through the real pool.
+type imageDiagnosticTransport struct {
+	pool      *httpclient.UpstreamPool // production HTTP pool
+	responses []*http.Response         // ordered fixture responses
 }
 
 // TestOpenAIImagesJSONKeepalive_HeartbeatBeforeForwardStillFailsOver commits
@@ -2745,4 +2757,57 @@ func TestDetachUpstreamContextSemantics(t *testing.T) {
 		defer release()
 		require.NoError(t, detached.Err())
 	})
+}
+
+// RoundTrip delegates one local response fixture to its configured handler.
+func (f imageDiagnosticRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Do sends one fixture exchange through production attempt and header observation.
+func (p *imageDiagnosticTransport) Do(req *http.Request, _ string, id int64, _ int) (*http.Response, error) {
+	return p.pool.Do(req, httpclient.UpstreamRequestOptions{ProviderID: id, PrepareClient: func(c *http.Client) *http.Client {
+		c.Transport = imageDiagnosticRoundTrip(func(r *http.Request) (*http.Response, error) {
+			response := p.responses[0]
+			p.responses = p.responses[1:]
+			response.Request = r
+			return response, nil
+		})
+		return c
+	}})
+}
+
+// DoWithTLS reuses fixture dispatch while leaving fingerprint behavior outside this probe.
+func (p *imageDiagnosticTransport) DoWithTLS(req *http.Request, proxy string, id int64, n int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return p.Do(req, proxy, id, n)
+}
+
+// TestImageBackfillFinishesObservedAttempts exercises a successful image
+// generation followed by its optional CDN download. Completion must not leave
+// an unfinished provider attempt after all upstream work and image delivery finish.
+func TestImageBackfillFinishesObservedAttempts(t *testing.T) {
+	var saved telemetry.RequestRecord
+	ctx := context.WithValue(t.Context(), telemetry.RequestID, "local")
+	ctx = telemetry.WithRequestCapture(ctx, telemetry.RequestRecord{RequestID: "local", StartedAt: time.Now()}, func(r telemetry.RequestRecord) { saved = r })
+	ctx = telemetry.WithRequestProvider(ctx, 7, "")
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","size":"1024x1024"}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body)).WithContext(ctx)
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("api_key", &apikey.APIKey{ID: 42})
+	svc := newImagesFixture(imagesFixtureInputs{})
+	parsed, err := media.ParseImageRequest(c.Request.URL.Path, c.GetHeader("Content-Type"), body, true)
+	require.NoError(t, err)
+	svc.Requests.Transport = &imageDiagnosticTransport{pool: httpclient.NewUpstreamPool(), responses: []*http.Response{
+		{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}, "X-Request-Id": {"generation-id"}}, Body: io.NopCloser(strings.NewReader(`{"data":[{"url":"https://cdn.example.com/cat.png"}],"usage":{"input_tokens":10,"output_tokens":20}}`))},
+		b64BackfillImageResponse(http.StatusOK, "image/png", b64BackfillPNGBytes),
+	}}
+	target := b64BackfillProvider(true)
+	result, err := svc.ForwardImages(ctx, c, target, body, parsed, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	gatewayprovider.CaptureOpenAI(ctx, &gatewayprovider.OpenAICapture{Result: result, Provider: target.View()})
+	t.Logf("attempts: %+v", saved.Attempts)
+	require.Len(t, saved.Attempts, 1)
+	for _, attempt := range saved.Attempts {
+		require.NotEqual(t, "running", attempt.Outcome, "completed request contains an unfinished HTTP exchange")
+	}
 }

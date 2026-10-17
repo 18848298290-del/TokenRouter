@@ -17,7 +17,8 @@ import (
 // capture updates therefore leave its timing and terminal state intact. A
 // different task ID instead receives a related completion record through the
 // bound observer, keeping polling traffic separate from the task whose measured
-// work is being logged.
+// work is being logged. Recorded parent-child links let task writes reuse the
+// parent's identifier observations and keep truncated usage values out of aliases.
 //
 // Usage persistence follows the funds attempt. Best-effort rejection triggers one
 // synchronous Create call, using a fresh detached context when the earlier budget
@@ -35,6 +36,9 @@ import (
 // synchronous retry, with a renewed context when that budget has expired. Callers
 // own the row during these updates and use SnapshotLogWriter when repositories
 // may mutate their arguments. Write errors are observed and do not resubmit funds.
+// Known diagnostic header observations suppress usage-derived aliases for the
+// captured request and its explicitly linked children; unrelated tasks retain
+// their existing sparse-record supplementation.
 func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey string) {
 	writeStarted := time.Now()
 	if s.logs == nil || usageLog == nil {
@@ -73,14 +77,17 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 		if usageLog.BillingKey != "" {
 			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "billing", Value: usageLog.BillingKey})
 		}
-		if usageLog.UpstreamRequestID != nil {
-			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "upstream", Value: *usageLog.UpstreamRequestID})
-		}
 		// A matched capture may already be failed or cancelled; supplement its model
 		// and aliases while retaining the entrypoint's terminal state, timing, and status.
 		identifiersObserved := false
-		if telemetry.UpdateRequestForID(ctx, record.RequestID, func(current *telemetry.RequestRecord) {
+		matched := false
+		telemetry.UpdateRequest(ctx, func(current *telemetry.RequestRecord) {
+			matched = current.RequestID == record.RequestID
+			related := false
 			for _, alias := range current.Aliases {
+				if alias.Kind == "related" && alias.Value == record.RequestID {
+					related = true
+				}
 				if alias.Kind == "upstream_request" && alias.ProviderID == usageLog.ProviderID {
 					identifiersObserved = true
 				}
@@ -89,6 +96,12 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 				if attempt.ProviderID == usageLog.ProviderID && attempt.RequestIDHeader != "" {
 					identifiersObserved = true
 				}
+			}
+			// A video task has a different logical ID but an explicit parent link.
+			// Its already captured headers remain authoritative over the truncated usage value.
+			identifiersObserved = identifiersObserved && (matched || related)
+			if !matched {
+				return
 			}
 			if record.Model != "" {
 				current.Model = record.Model
@@ -99,13 +112,13 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 			if record.Platform != "" {
 				current.Platform = record.Platform
 			}
-		}) {
+		})
+		if usageLog.UpstreamRequestID != nil && !identifiersObserved {
+			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "upstream", Value: *usageLog.UpstreamRequestID})
+		}
+		if matched {
 			for _, alias := range record.Aliases {
-				// Live completion already recorded its selected header with provenance.
-				// The usage value can be truncated and must not create another diagnostic ID.
-				if alias.Kind != "upstream" || !identifiersObserved {
-					telemetry.AddRequestAlias(ctx, alias.Kind, alias.Value)
-				}
+				telemetry.AddRequestAlias(ctx, alias.Kind, alias.Value)
 			}
 		} else {
 			// A task or otherwise unmatched ID needs its own summary; submitting this

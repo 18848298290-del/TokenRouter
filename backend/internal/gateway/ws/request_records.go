@@ -22,7 +22,9 @@ import (
 // retains its context while retry remains possible. Each provider attempt maps
 // local turn numbers to those child contexts; a replacement attempt starts with
 // the retained next context, then later turns allocate fresh identities.
-// Completion updates the observed model, provider, outcome, and upstream alias
+// Each mapping also retains the first ordinal that can belong to its attempt,
+// so a failure before dispatch cannot replace an earlier provider's exchange.
+// Completion updates the observed model, provider, outcome, and response alias
 // before removing finished state. Connection cleanup marks any retained request
 // incomplete, using canceled state when the session root has ended.
 
@@ -48,7 +50,15 @@ type entryAttemptRecords struct {
 	// lock; finish releases session.mu before acquiring this mutex for removal.
 	mu      sync.Mutex              // attempt turn mapping lock
 	session *entryRequestRecords    // shared connection request tracker
-	turns   map[int]context.Context // local turn context mapping
+	turns   map[int]entryTurnRecord // local turn identity and ordinal range
+}
+
+// entryTurnRecord fixes a logical turn's context and provider-attempt ordinal range.
+type entryTurnRecord struct {
+	context context.Context // shared logical request capture
+	// firstAttempt excludes dispatches recorded before this provider attempt began.
+	// It is captured once and retained until finish removes the local turn mapping.
+	firstAttempt int // first eligible dispatch ordinal
 }
 
 // newEntryRequestRecords creates a tracker and eagerly allocates its first
@@ -94,7 +104,26 @@ func (r *entryRequestRecords) attempt() *entryAttemptRecords {
 	if r.next == nil {
 		r.next = r.newTurn(time.Now())
 	}
-	return &entryAttemptRecords{session: r, turns: map[int]context.Context{1: r.next}}
+	return &entryAttemptRecords{session: r, turns: map[int]entryTurnRecord{1: captureEntryTurn(r.next)}}
+}
+
+// captureEntryTurn retains a turn context and its next available dispatch ordinal.
+// Call before forwarding starts. The captured lower bound prevents later errors
+// without a result from being matched to a preceding provider attempt's failure.
+//
+// The ordinal is sampled under the request recorder's lock, while the retained
+// context shares that recorder with subsequent exchanges. One HTTP bridge turn
+// can dispatch several exchanges during rejected-field recovery. Finish can then
+// locate its terminal exchange within this range even when the transport already
+// marked the failure and returned no completion result.
+func captureEntryTurn(ctx context.Context) entryTurnRecord {
+	turn := entryTurnRecord{context: ctx, firstAttempt: 1}
+	telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
+		for _, attempt := range record.Attempts {
+			turn.firstAttempt = max(turn.firstAttempt, attempt.Number+1)
+		}
+	})
+	return turn
 }
 
 // context attaches one logical turn's identity and capture state to base for
@@ -112,14 +141,16 @@ func (a *entryAttemptRecords) context(base context.Context, turn int) context.Co
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	ctx := a.turns[turn]
-	if ctx == nil {
+	tracked, exists := a.turns[turn]
+	if !exists {
 		a.session.mu.Lock()
-		ctx = a.session.newTurn(time.Now())
+		ctx := a.session.newTurn(time.Now())
 		a.session.next = ctx
 		a.session.mu.Unlock()
-		a.turns[turn] = ctx
+		tracked = captureEntryTurn(ctx)
+		a.turns[turn] = tracked
 	}
+	ctx := tracked.context
 	base = context.WithValue(base, telemetry.RequestID, telemetry.RequestIDValue(ctx))
 	base = routing.CopyModelAttributes(base, ctx)
 	if at, ok := ctx.Value(telemetry.RequestStartedAt).(time.Time); ok {
@@ -140,8 +171,15 @@ func (a *entryAttemptRecords) context(base context.Context, turn int) context.Co
 // response ID in its own alias category, then removes pending and attempt-local
 // references. Retry instead selects that context as the next provider attempt's
 // first turn, preserving one logical ID across the provider switch.
+//
+// A result uses its fixed HTTP reference or socket performance ordinal. Without
+// a result, the latest dispatch in this provider attempt's captured range owns
+// the failure, including transports that already marked their exchange failed.
 func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, providerID int64, platform string, retry bool) context.Context {
 	ctx := a.context(base, capture.Turn)
+	a.mu.Lock()
+	firstAttempt := a.turns[max(capture.Turn, 1)].firstAttempt
+	a.mu.Unlock()
 	var ref telemetry.RequestAttemptRef
 	telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
 		record.Model = capture.OriginalModel
@@ -153,12 +191,20 @@ func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, 
 			outcome = "failed"
 		}
 		number := 0
-		if capture.Result != nil && capture.Result.Timings != nil {
-			number = int(capture.Result.Timings.Values["attempt_number"])
+		if capture.Result != nil {
+			if capture.Result.RequestAttempt.ProviderID == providerID && capture.Result.RequestAttempt.Number > 0 {
+				number = capture.Result.RequestAttempt.Number
+			} else if capture.Result.Timings != nil {
+				number = int(capture.Result.Timings.Values["attempt_number"])
+			}
 		}
 		index := -1
 		for i := range record.Attempts {
-			if (number > 0 && record.Attempts[i].Number == number && record.Attempts[i].ProviderID == providerID) || (number == 0 && record.Attempts[i].ProviderID == providerID && record.Attempts[i].Outcome == "running") {
+			attempt := &record.Attempts[i]
+			if attempt.ProviderID != providerID || attempt.Number < firstAttempt {
+				continue
+			}
+			if number > 0 && attempt.Number == number || number == 0 && (index < 0 || attempt.Number > record.Attempts[index].Number) {
 				index = i
 			}
 		}

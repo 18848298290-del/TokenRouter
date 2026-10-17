@@ -24,6 +24,8 @@ import (
 // retain lifecycle and failure diagnostics separately. TTFT follows the mode
 // captured for the request, whereas TPS always uses the first and last useful
 // upstream content and requires complete usage from a completed stream.
+// Socket execution registers its attempt here; HTTP bridges take their ordinal
+// from transport while using the same request clock and event calculations.
 
 // FirstOutput and FirstEvent select the observed upstream event used for latency.
 // The normalized default measures useful content; neither mode changes TPS.
@@ -90,6 +92,34 @@ func NewPerformance(mode string, started int64) *Performance {
 func NewPerformanceAt(mode string, origin, started time.Time) *Performance {
 	p := NewPerformance(mode, started.Sub(origin).Milliseconds())
 	p.origin = origin
+	return p
+}
+
+// NewRequestPerformance creates an observer using the logical request's clock.
+// HTTP bridges use it when the transport owns attempt registration, then copy
+// the returned response's dispatch ordinal into Values before completion.
+//
+// A nonzero context start takes precedence. When that value is absent, the
+// captured record can supply its start; otherwise started remains the reference.
+// The live disconnect callback retains the request capture,
+// while Clone removes it before background completion. This constructor leaves
+// attempt registration to its caller so HTTP dispatch and socket dispatch can
+// share the same duration and event calculations without recording two attempts.
+func NewRequestPerformance(ctx context.Context, started time.Time) *Performance {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	origin := started
+	if at, ok := ctx.Value(telemetry.RequestStartedAt).(time.Time); ok && !at.IsZero() {
+		origin = at
+	}
+	telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
+		if _, ok := ctx.Value(telemetry.RequestStartedAt).(time.Time); !ok && !record.StartedAt.IsZero() {
+			origin = record.StartedAt
+		}
+	})
+	p := NewPerformanceAt(ModeFromContext(ctx), origin, started)
+	p.onDisconnect = func(at time.Time) { ObserveClientDisconnect(ctx, at) }
 	return p
 }
 
@@ -401,18 +431,9 @@ func ModeFromContext(ctx context.Context) string {
 // while allocating another ordinal. Without either context or capture origin, the
 // dispatch time becomes the reference, and no request record is fabricated.
 func BeginPerformance(ctx context.Context, providerID int64, started time.Time) *Performance {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	origin := started
-	if at, ok := ctx.Value(telemetry.RequestStartedAt).(time.Time); ok && !at.IsZero() {
-		origin = at
-	}
+	p := NewRequestPerformance(ctx, started)
 	number := int64(1)
 	telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
-		if _, ok := ctx.Value(telemetry.RequestStartedAt).(time.Time); !ok && !record.StartedAt.IsZero() {
-			origin = record.StartedAt
-		}
 		for _, previous := range record.Attempts {
 			number = max(number, int64(previous.Number)+1)
 		}
@@ -421,9 +442,7 @@ func BeginPerformance(ctx context.Context, providerID int64, started time.Time) 
 			record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: int(number), ProviderID: providerID, StartedAt: &at, Outcome: "running"})
 		}
 	})
-	p := NewPerformanceAt(ModeFromContext(ctx), origin, started)
 	p.Values["attempt_number"] = number
-	p.onDisconnect = func(at time.Time) { ObserveClientDisconnect(ctx, at) }
 	return p
 }
 

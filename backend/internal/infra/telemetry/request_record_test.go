@@ -98,3 +98,25 @@ func TestMergeRequestRecordRetainsSparseTimingStages(t *testing.T) {
 	require.Zero(t, before.FailureTimings["provider_slot_wait_ms"])
 	require.Len(t, after.FailureTimings, 1)
 }
+
+// TestWithoutRequestCapturePreservesRequestContext masks model diagnostics for
+// delivery downloads. Their cancellation, deadline, and request identity remain
+// shared while header and failure observations cannot alter the parent capture.
+func TestWithoutRequestCapturePreservesRequestContext(t *testing.T) {
+	base, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	base = context.WithValue(base, RequestID, "parent")
+	var saved RequestRecord
+	base = WithRequestCapture(base, RequestRecord{RequestID: "parent"}, func(r RequestRecord) { saved = r })
+	base = WithRequestProvider(base, 7, "X-Custom")
+	hidden := WithoutRequestCapture(base)
+	require.Equal(t, "parent", RequestIDValue(hidden))
+	want, _ := base.Deadline()
+	got, _ := hidden.Deadline()
+	require.Equal(t, want, got)
+	dispatch := BeginRequestAttempt(hidden, 0)
+	ObserveRequestFailure(dispatch, RequestAttemptFromContext(dispatch))
+	require.Empty(t, saved.Attempts)
+	cancel()
+	require.ErrorIs(t, hidden.Err(), context.Canceled)
+}

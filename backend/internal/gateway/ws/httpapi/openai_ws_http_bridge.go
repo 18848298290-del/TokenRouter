@@ -24,6 +24,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
@@ -52,7 +53,9 @@ import (
 // local continuation and all output for provider replacement. Recognized client
 // disconnect stops writes while the reader collects available usage until a
 // terminal, read failure or turn cancellation; results and errors describe both
-// observation and delivery.
+// observation and delivery. HTTP transport owns each dispatch ordinal; the bridge
+// attaches that ordinal to its performance and result instead of registering a
+// second socket attempt for the same upstream exchange.
 
 // These byte limits bound client frames, select first-turn HTTP conversion, and
 // restrict error-body diagnostics; group conversion permission is checked separately.
@@ -748,7 +751,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	}
 
 	turnStart := time.Now()
-	performance := timing.BeginPerformance(ctx, provider.Record.ID, turnStart)
+	performance := timing.NewRequestPerformance(ctx, turnStart)
 	rejectedFieldRetryState := upstreamopenai.NewOpenAIResponsesRejectedFieldRetryState(body)
 	var resp *http.Response
 	for {
@@ -844,6 +847,10 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	defer func() { _ = resp.Body.Close() }()
 	stopCancelBody := context.AfterFunc(ctx, func() { _ = resp.Body.Close() })
 	defer stopCancelBody()
+	dispatch := telemetry.RequestAttemptFromResponse(resp)
+	if dispatch.Number > 0 {
+		performance.Values["attempt_number"] = int64(dispatch.Number)
+	}
 	if provider.Record.Platform == capability.PlatformGrok {
 		s.Output.GrokHealth.ObserveResponse(ctx, provider.View(), resp.Header, resp.StatusCode, resolveGrokWSUpstreamModel(provider, body, originalModel))
 	}
@@ -875,6 +882,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 		performance.FinishAt(time.Now())
 		imageCount := imageCounter.Count()
 		result := &forward.OpenAIResult{
+			RequestAttempt:              dispatch,
 			RequestID:                   responseID,
 			ResponseID:                  responseID,
 			Usage:                       usage,
@@ -993,6 +1001,9 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 		performance.ObserveAt(string(upstreamMessage), eventType, time.Now())
 		if responseID == "" && eventResponseID != "" {
 			responseID = eventResponseID
+			// Retain parsed identity before a later stream failure can discard the
+			// result, using the same HTTP dispatch that owns its selected response header.
+			telemetry.ObserveResponseID(ctx, dispatch, responseID)
 		}
 		if eventType != "" {
 			eventCount++
