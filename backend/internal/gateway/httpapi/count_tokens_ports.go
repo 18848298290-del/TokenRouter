@@ -241,7 +241,7 @@ func (b *countAttempt) Select(excluded map[int64]struct{}) (textflow.Selection, 
 	}
 	b.target = target
 	value := target.Snapshot()
-	SetOpsSelectedProvider(b.c, value.ID, value.Platform)
+	SetOpsSelectedProvider(b.c, value)
 	return textflow.Selection{Provider: value, RetryLimit: target.RetryLimit()}, nil
 }
 

@@ -1796,7 +1796,7 @@ func newGrokCacheTestContext(apiKeyID int64) *gin.Context {
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	if apiKeyID > 0 {
-		SetOpsSelectedProvider(c, 1, capability.PlatformGrok)
+		SetOpsSelectedProvider(c, providercore.ProviderSnapshot{ID: 1, Platform: capability.PlatformGrok})
 		c.Set("api_key", &apikey.APIKey{ID: apiKeyID, Group: &routing.Group{}})
 	}
 	return c

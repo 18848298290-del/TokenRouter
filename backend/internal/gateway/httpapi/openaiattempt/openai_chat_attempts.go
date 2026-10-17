@@ -76,7 +76,7 @@ func (b *openAIChatAttemptBridge) Select(excluded map[int64]struct{}) (textflow.
 	b.sessionHash = EnsureOpenAIPoolModeSessionHash(b.sessionHash, b.provider)
 	b.reqLog.Debug("openai_chat_completions.provider_selected", zap.Int64("provider_id", b.provider.Record.ID), zap.String("provider_name", b.provider.Record.Name))
 	_ = scheduleDecision
-	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.ID, b.provider.Record.Platform)
+	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.RoutingSnapshot())
 
 	return b.selectedView(), nil
 }

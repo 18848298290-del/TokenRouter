@@ -79,7 +79,7 @@ func (b *qoderCompatibleAttemptBridge) Select(excluded map[int64]struct{}) (text
 	}
 	b.selection = selected
 	b.provider = selected.Target()
-	SetOpsSelectedProvider(b.c, b.provider.Snapshot().ID, b.provider.Snapshot().Platform)
+	SetOpsSelectedProvider(b.c, b.provider.Snapshot())
 	return textflow.Selection{Provider: b.provider.Snapshot()}, nil
 }
 
@@ -211,7 +211,7 @@ func (b *qoderCompatibleAttemptBridge) Refresh() textflow.QoderRefreshResult {
 	if err == nil && provider != nil {
 		b.log.Info("qoder.provider_refreshed_after_auth_error", zap.Int64("provider_id", b.provider.Snapshot().ID))
 		b.provider = provider
-		SetOpsSelectedProvider(b.c, provider.Snapshot().ID, provider.Snapshot().Platform)
+		SetOpsSelectedProvider(b.c, provider.Snapshot())
 		return textflow.QoderRefreshResult{Ready: true}
 	}
 	if errors.Is(err, providercore.ErrQoderRefreshInProgress) {

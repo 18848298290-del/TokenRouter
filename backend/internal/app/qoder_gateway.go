@@ -126,10 +126,10 @@ func (o *qoderHTTPObservation) Prepared(request gateway.Request) {
 	gatewayhttp.SetOpsLatencyMs(o.c, gatewayhttp.OpsAuthLatencyMsKey, time.Since(request.Metadata.StartedAt).Milliseconds())
 }
 
-// Selected publishes the selected provider identity and platform to HTTP
-// diagnostics.
+// Selected publishes provider identity and diagnostic header selection to HTTP
+// request observations.
 func (o *qoderHTTPObservation) Selected(snapshot provider.ProviderSnapshot) {
-	gatewayhttp.SetOpsSelectedProvider(o.c, snapshot.ID, snapshot.Platform)
+	gatewayhttp.SetOpsSelectedProvider(o.c, snapshot)
 }
 
 // Waiting returns request-bound wait observation with ten-second comment pings.

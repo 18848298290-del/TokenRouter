@@ -30,6 +30,7 @@ export default {
   "usage": "用量与费用",
   "errors": "错误记录",
   "aliases": "关联标识",
+  sourceUnrecorded: "来源未记录",
   "tokens": "输入 {input} tokens · 输出 {output} tokens",
   "states": {
     "running": "未完成",
@@ -48,8 +49,10 @@ export default {
     "internal": "内部错误"
   },
   "aliasKinds": {
-    "caller": "调用方",
-    "upstream": "上游",
+    "caller": "调用方请求 ID",
+    "upstream": "上游标识（类型未记录）",
+    "upstream_request": "上游请求 ID",
+    "response": "响应 ID",
     "billing": "计费关联",
     "task": "任务",
     "legacy": "历史标识",

@@ -48,7 +48,7 @@ type Stages struct {
 
 	// response observes each opened upstream response without consuming it. Set
 	// before sharing the context; readers invoke it synchronously on their exchange.
-	response func(*http.Response)
+	response func(context.Context, *http.Response)
 }
 
 // stageBody measures original reads without buffering or retaining request bytes.
@@ -65,7 +65,7 @@ type stageBody struct {
 // Install before the first generation dispatch. BeginHTTPTrace binds transport
 // callbacks to this collector's ingress reference and a distinct exchange ordinal,
 // so late callbacks from discarded attempts cannot replace current observations.
-func WithStages(ctx context.Context, start time.Time, response func(*http.Response)) (context.Context, *Stages) {
+func WithStages(ctx context.Context, start time.Time, response func(context.Context, *http.Response)) (context.Context, *Stages) {
 	if s := StagesFromContext(ctx); s != nil {
 		return ctx, s
 	}
@@ -82,28 +82,17 @@ func StagesFromContext(ctx context.Context) *Stages {
 	return s
 }
 
-// ObserveResponse invokes the installed protocol observer for an upstream response.
-// It performs no reads itself; absent collectors and failed exchanges require
-// no observation and leave response ownership with the original caller.
+// ObserveResponse records headers using the dispatch's immutable attempt reference.
+// It then invokes the optional protocol observer with that same context. Neither
+// operation consumes the response body, and ownership remains with the caller.
 func ObserveResponse(ctx context.Context, response *http.Response) {
-	if s := StagesFromContext(ctx); s != nil && response != nil {
-		number := s.Attempt()
-		telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
-			for i := range record.Attempts {
-				if int64(record.Attempts[i].Number) == number {
-					record.Attempts[i].Status = response.StatusCode
-					id := response.Header.Get("x-request-id")
-					if id == "" {
-						id = response.Header.Get("x-amzn-requestid")
-					}
-					if id != "" {
-						record.Attempts[i].RequestID = id
-					}
-				}
-			}
-		})
+	if response == nil {
+		return
+	}
+	telemetry.ObserveRequestHeaders(ctx, telemetry.RequestAttemptFromContext(ctx), response.Header, response.StatusCode)
+	if s := StagesFromContext(ctx); s != nil {
 		if s.response != nil {
-			s.response(response)
+			s.response(ctx, response)
 		}
 	}
 }

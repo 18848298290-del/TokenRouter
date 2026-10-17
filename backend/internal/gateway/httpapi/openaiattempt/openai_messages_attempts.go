@@ -94,7 +94,7 @@ func (b *openAIMessageAttemptBridge) Select(excluded map[int64]struct{}) (textfl
 	b.sessionHash = EnsureOpenAIPoolModeSessionHash(b.sessionHash, b.provider)
 	b.reqLog.Debug("openai_messages.provider_selected", zap.Int64("provider_id", b.provider.Record.ID), zap.String("provider_name", b.provider.Record.Name))
 	_ = scheduleDecision
-	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.ID, b.provider.Record.Platform)
+	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.RoutingSnapshot())
 
 	return b.selectedView(), nil
 }

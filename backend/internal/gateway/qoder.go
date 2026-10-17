@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/execution"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
@@ -351,6 +352,7 @@ func (u *QoderUseCase) run(ctx context.Context, request Request, ports RequestPo
 // actual executor calls, retaining partial usage and route evidence before
 // provider release.
 func (u *QoderUseCase) attempt(ctx context.Context, request Request, ports RequestPorts, parent *scheduler.Lease, selected *Selection, output *OutputTracker, execution *ExecutionResult) (upstream.AttemptResult, error) {
+	ctx = telemetry.WithRequestProvider(ctx, selected.Snapshot.ID, selected.Snapshot.RequestIDHeader)
 	if observer, ok := output.Sink.(ExecutionObserver); ok {
 		observer.Selected(selected.Snapshot)
 	}

@@ -82,7 +82,7 @@ func (b *nativeGeminiAttemptBridge) Select(excluded map[int64]struct{}) (textflo
 		return textflow.Selection{}, err
 	}
 	b.provider = b.selection.Provider
-	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.ID, b.provider.Record.Platform)
+	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.RoutingSnapshot())
 	change := b.signatureState.Select(b.provider.Record.ID, b.sessionKey != "", b.body)
 	// Clean retained native signatures before another provider receives the
 	// history, using the state's missing-owner flag to distinguish that

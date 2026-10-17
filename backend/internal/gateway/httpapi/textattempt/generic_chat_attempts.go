@@ -62,7 +62,7 @@ func (b *genericChatAttemptBridge) Select(excluded map[int64]struct{}) (textflow
 		return textflow.Selection{}, err
 	}
 	b.provider = b.selection.Provider
-	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.ID, b.provider.Record.Platform)
+	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.RoutingSnapshot())
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }
 

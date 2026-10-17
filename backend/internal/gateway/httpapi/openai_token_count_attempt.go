@@ -83,7 +83,7 @@ func (p *openAICountAttempt) SelectionFailed(err error) {
 // owns count response output.
 func (p *openAICountAttempt) Forward() error {
 	selected := p.provider.Snapshot()
-	SetOpsSelectedProvider(p.c, selected.ID, selected.Platform)
+	SetOpsSelectedProvider(p.c, selected)
 	body := p.call.MappedBody(p.call.Mapping.Mapped, p.call.Mapping.MappedModel)
 	return p.provider.ForwardCount(p.c.Request.Context(), p.c, body, p.call.ProviderLayerModel)
 }

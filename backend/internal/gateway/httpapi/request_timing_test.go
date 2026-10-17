@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -17,12 +18,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
+	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
+	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
@@ -35,6 +39,9 @@ type timingFailedWriter struct {
 type timingUploadBody struct {
 	io.Reader /* original encoded request bytes */
 }
+
+// identifierFailureReader terminates an upstream stream after its observable metadata.
+type identifierFailureReader struct{}
 
 // TestTextRequestTimingWireMatrix exercises common wire shapes used by every
 // HTTP text platform. Metadata and heartbeats precede useful content, and final
@@ -460,4 +467,82 @@ func TestTextRequestTimingFinalUsageAndToolInput(t *testing.T) {
 			})
 		})
 	}
+}
+
+// Read ends the fixture with an unexpected upstream EOF. The preceding reader
+// already supplied a complete response-created frame, so the collector must
+// preserve that earlier metadata.
+func (identifierFailureReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+// TestRequestIdentifiersSurviveStreamFailure observes a response-created frame
+// before failure or cancellation. The selected header and parsed response ID
+// survive later empty and conflicting Ops events without changing wire headers.
+func TestRequestIdentifiersSurviveStreamFailure(t *testing.T) {
+	for _, cancelRequest := range []bool{false, true} {
+		var saved telemetry.RequestRecord
+		var mu sync.Mutex
+		router := gin.New()
+		router.Use(middleware.RequestLogger(func(r telemetry.RequestRecord) {
+			mu.Lock()
+			saved = r
+			mu.Unlock()
+		}), TextRequestTiming())
+		router.POST("/v1/responses", func(c *gin.Context) {
+			SetOpsSelectedProvider(c, providercore.ProviderSnapshot{ID: 7, Platform: "openai", RequestIDHeader: "X-Client-Request-ID"})
+			base, cancel := context.WithCancel(c.Request.Context())
+			defer cancel()
+			c.Request = c.Request.WithContext(base)
+			ctx := timing.BeginHTTPTrace(base)
+			body := "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_partial\"}}\n\n"
+			resp := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}, "X-Request-Id": {"unselected"}, "X-Client-Request-Id": {"chosen"}}, Body: io.NopCloser(io.MultiReader(strings.NewReader(body), identifierFailureReader{}))}
+			timing.ObserveResponse(ctx, resp)
+			_, err := io.ReadAll(resp.Body)
+			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+			require.NoError(t, resp.Body.Close())
+			if cancelRequest {
+				cancel()
+			}
+			AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{ProviderID: 7, UpstreamStatusCode: 502, Kind: "stream_error"})
+			AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{ProviderID: 7, UpstreamStatusCode: 502, UpstreamRequestID: "unselected", Kind: "stream_error"})
+			require.Equal(t, "unselected", resp.Header.Get("X-Request-ID"))
+			require.Equal(t, "chosen", resp.Header.Get("X-Client-Request-ID"))
+			c.Status(502)
+		})
+		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("{}")))
+		mu.Lock()
+		actual := saved
+		mu.Unlock()
+		require.Len(t, actual.Attempts, 1)
+		require.Equal(t, "chosen", actual.Attempts[0].RequestID)
+		require.Equal(t, "X-Client-Request-Id", actual.Attempts[0].RequestIDHeader)
+		require.Contains(t, actual.Aliases, telemetry.RequestAlias{Kind: "response", Value: "resp_partial", Source: "response.id", AttemptNumber: 1, ProviderID: 7})
+		for _, alias := range actual.Aliases {
+			require.NotEqual(t, "unselected", alias.Value)
+		}
+	}
+}
+
+// TestRequestIdentifierResponseUsesOriginalDispatch delays the first response
+// until another provider is selected. Actual response observation must retain
+// its original provider, header policy, and ordinal despite the newer collector state.
+func TestRequestIdentifierResponseUsesOriginalDispatch(t *testing.T) {
+	var saved telemetry.RequestRecord
+	router := gin.New()
+	router.Use(middleware.RequestLogger(func(r telemetry.RequestRecord) { saved = r }), TextRequestTiming())
+	router.POST("/v1/responses", func(c *gin.Context) {
+		SetOpsSelectedProvider(c, providercore.ProviderSnapshot{ID: 7, Platform: "openai", RequestIDHeader: "X-Client-Request-ID"})
+		first := timing.BeginHTTPTrace(c.Request.Context())
+		SetOpsSelectedProvider(c, providercore.ProviderSnapshot{ID: 8, Platform: "openai"})
+		second := timing.BeginHTTPTrace(c.Request.Context())
+		timing.ObserveResponse(second, &http.Response{StatusCode: 200, Header: http.Header{"X-Request-Id": {"second"}}})
+		timing.ObserveResponse(first, &http.Response{StatusCode: 502, Header: http.Header{"X-Request-Id": {"unselected"}, "X-Client-Request-Id": {"first"}}})
+		AppendOpsUpstreamError(c, ops.OpsUpstreamErrorEvent{ProviderID: 7, UpstreamStatusCode: 502, UpstreamRequestID: "unselected"})
+		c.Status(200)
+	})
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("{}")))
+	require.Len(t, saved.Attempts, 2)
+	require.Equal(t, "first", saved.Attempts[0].RequestID)
+	require.Equal(t, 7, int(saved.Attempts[0].ProviderID))
+	require.Equal(t, "second", saved.Attempts[1].RequestID)
+	require.Equal(t, 200, saved.Attempts[1].Status)
 }

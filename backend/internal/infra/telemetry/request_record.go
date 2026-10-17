@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -36,7 +35,10 @@ const requestCaptureKey ContextKey = "request_capture"
 
 // RequestAlias labels an external identifier, billing key, or related request ID.
 type RequestAlias struct {
-	Kind string `json:"kind"` // alias category text
+	Kind          string `json:"kind"`                     // alias category text
+	Source        string `json:"source,omitempty"`         // observed header or response field
+	AttemptNumber int    `json:"attempt_number,omitempty"` // owning upstream attempt number
+	ProviderID    int64  `json:"provider_id,omitempty"`    // owning upstream provider identifier
 	// Value is trimmed during normalization; values above 255 bytes or containing
 	// CR, LF, or NUL are rejected before aliases enter diagnostic storage.
 	Value string `json:"value"` // external or related identifier
@@ -53,12 +55,13 @@ type RequestAttempt struct {
 	// unsuccessful exchange. A usage-producing attempt stores its performance on usage.
 	FailureTimings map[string]int64 `json:"failure_timings,omitempty"`
 
-	Number     int    `json:"number"`                        // upstream attempt ordinal
-	ProviderID int64  `json:"provider_id,omitempty"`         // attempted provider database ID
-	RequestID  string `json:"upstream_request_id,omitempty"` // external upstream request ID
-	Status     int    `json:"status_code,omitempty"`         // observed HTTP status code
-	DurationMs *int64 `json:"duration_ms,omitempty"`         // attempt duration in milliseconds
-	Outcome    string `json:"outcome,omitempty"`             // observed attempt outcome text
+	Number          int    `json:"number"`                               // upstream attempt ordinal
+	ProviderID      int64  `json:"provider_id,omitempty"`                // attempted provider database ID
+	RequestID       string `json:"upstream_request_id,omitempty"`        // external upstream request ID
+	RequestIDHeader string `json:"upstream_request_id_header,omitempty"` // selected upstream response header
+	Status          int    `json:"status_code,omitempty"`                // observed HTTP status code
+	DurationMs      *int64 `json:"duration_ms,omitempty"`                // attempt duration in milliseconds
+	Outcome         string `json:"outcome,omitempty"`                    // observed attempt outcome text
 }
 
 // RequestRecord summarizes a request independently of monitoring sampling.
@@ -230,21 +233,7 @@ func UpdateRequestForID(ctx context.Context, id string, update func(*RequestReco
 // ignored; duplicate pairs and aliases past the 128-entry cap add no record
 // change. kind is normalized later during storage preparation.
 func AddRequestAlias(ctx context.Context, kind, value string) {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 255 || strings.ContainsAny(value, "\r\n\x00") {
-		return
-	}
-	UpdateRequest(ctx, func(record *RequestRecord) {
-		alias := RequestAlias{Kind: kind, Value: value}
-		if slices.Contains(record.Aliases, alias) {
-			return
-		}
-		// Retain a bounded alias history so repeated upstream attempts cannot
-		// grow one diagnostic request without limit; valid existing aliases stay available.
-		if len(record.Aliases) < 128 {
-			record.Aliases = append(record.Aliases, alias)
-		}
-	})
+	AddRequestAliasWithSource(ctx, RequestAlias{Kind: kind, Value: value})
 }
 
 // CopyRequestCapture attaches source's shared recorder to destination when
@@ -499,6 +488,7 @@ func NormalizeRequestRecord(record RequestRecord) RequestRecord {
 	for _, alias := range aliases {
 		alias.Value = strings.TrimSpace(alias.Value)
 		alias.Kind = requestText(alias.Kind, 32)
+		alias.Source = requestText(alias.Source, 128)
 		if alias.Value == "" || len(alias.Value) > 255 || strings.ContainsAny(alias.Value, "\r\n\x00") || seen[alias] {
 			continue
 		}
@@ -517,6 +507,7 @@ func NormalizeRequestRecord(record RequestRecord) RequestRecord {
 		record.Attempts[i].Outcome = requestText(record.Attempts[i].Outcome, 32)
 		record.Attempts[i].Stage = requestText(record.Attempts[i].Stage, 64)
 		record.Attempts[i].Reason = requestText(record.Attempts[i].Reason, 512)
+		record.Attempts[i].RequestIDHeader = requestText(record.Attempts[i].RequestIDHeader, 64)
 		if len(record.Attempts[i].RequestID) > 255 || strings.ContainsAny(record.Attempts[i].RequestID, "\r\n\x00") {
 			record.Attempts[i].RequestID = ""
 		}

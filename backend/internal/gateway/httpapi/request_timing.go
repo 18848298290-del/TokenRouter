@@ -87,17 +87,23 @@ func TextRequestTiming() gin.HandlerFunc {
 			start = time.Now()
 		}
 		var stages *timing.Stages
-		ctx, stages := timing.WithStages(c.Request.Context(), start, func(resp *http.Response) {
+		ctx, stages := timing.WithStages(c.Request.Context(), start, func(exchangeCtx context.Context, resp *http.Response) {
 			if resp.Body == nil {
 				return
 			}
-			attempt := stages.Attempt()
+			ref := telemetry.RequestAttemptFromContext(exchangeCtx)
+			attempt := int64(ref.Number)
 			body := &timingResponseBody{ReadCloser: resp.Body, done: func() { stages.FinishAttempt(attempt) }}
 			contentType := resp.Header.Get("Content-Type")
 			sse := strings.Contains(contentType, "text/event-stream")
 			nativeStream := resp.Request != nil && strings.Contains(resp.Request.URL.Path, "streamGenerateContent")
 			if resp.StatusCode < http.StatusBadRequest && !strings.Contains(contentType, "eventstream") && (sse || nativeStream || stages.Streaming()) {
 				body.frames = &timingFrames{observe: func(data, event string) {
+					// The original upstream frame identifies its response before output
+					// conversion or interruption can discard the executor's final result.
+					if strings.HasPrefix(event, "response.") || strings.HasPrefix(gjson.Get(data, "type").String(), "response.") {
+						telemetry.ObserveResponseID(exchangeCtx, ref, gjson.Get(data, "response.id").String())
+					}
 					if event != "@json" || nativeStream {
 						stages.ObserveEventAt(attempt, data, event, body.arrivedAt)
 					}

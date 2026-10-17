@@ -450,9 +450,14 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 			reasoningEffortMappings = apiKey.Group.ReasoningEffortMappings
 		}
 		attemptRecords := requestRecords.attempt()
+		// Bind diagnostic selection to this provider while retaining the current
+		// execution cancellation context used by the existing turn callbacks.
+		contextForAttempt := func() context.Context {
+			return telemetry.WithRequestProvider(ctx, provider.ID, provider.RequestIDHeader)
+		}
 		hooks := &EntryHooks{
-			ContextForTurn:              func(turn int) context.Context { return attemptRecords.context(ctx, turn) },
-			TurnStarted:                 func(turn int, _ time.Time) { _ = attemptRecords.context(ctx, turn) },
+			ContextForTurn:              func(turn int) context.Context { return attemptRecords.context(contextForAttempt(), turn) },
+			TurnStarted:                 func(turn int, _ time.Time) { _ = attemptRecords.context(contextForAttempt(), turn) },
 			ClientLifecycleContext:      clientLifecycleCtx,
 			InitialRequestModel:         reqModel,
 			InitialTurnStartedAt:        firstTurnStartedAt,
@@ -509,7 +514,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				return routingModel, nil
 			},
 			BeforeRequest: func(turn int, payload []byte, originalModel, _ string) ([]byte, error) {
-				turnContext := attemptRecords.context(ctx, turn)
+				turnContext := attemptRecords.context(contextForAttempt(), turn)
 				telemetry.UpdateRequest(turnContext, func(record *telemetry.RequestRecord) { record.Model = originalModel })
 				if turn == 1 {
 					return payload, nil
@@ -553,7 +558,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				return payload, nil
 			},
 			BeforeTurn: func(turn int) error {
-				_ = attemptRecords.context(ctx, turn)
+				_ = attemptRecords.context(contextForAttempt(), turn)
 				if cyberBlockedThisConn.Load() {
 					return p.CloseError(1008, p.BlockedMessage(), nil)
 				}
@@ -621,7 +626,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				// failed attempt that can select another provider retains the same logical
 				// turn identity and allowance.
 				_, requestRetry := p.Failover(turnErr)
-				requestCtx := attemptRecords.finish(ctx, capture, provider.ID, provider.Platform, turnErr != nil && requestRetry)
+				requestCtx := attemptRecords.finish(contextForAttempt(), capture, provider.ID, provider.Platform, turnErr != nil && requestRetry)
 				if turnErr == nil || !requestRetry {
 					releaseKey()
 				}
@@ -725,7 +730,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 			defer cleanupPreempt()
 		}
 
-		if err := selection.Target.Run(ctx, client, wsFirstMessage, hooks); err != nil {
+		if err := selection.Target.Run(contextForAttempt(), client, wsFirstMessage, hooks); err != nil {
 			if p.SessionPreempted(err) {
 				return
 			}

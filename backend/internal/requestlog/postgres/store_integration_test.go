@@ -602,3 +602,26 @@ func TestStoreTimingStagesThroughQueue(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, record.FailureTimings, rows[0].FailureTimings)
 }
+
+// TestStoreIdentifierProvenanceSurvivesQueueAndLookup stores typed aliases through
+// the real batching service. Existing alias lookup returns source and ownership
+// metadata while a later sparse snapshot retains the original observations.
+func TestStoreIdentifierProvenanceSurvivesQueueAndLookup(t *testing.T) {
+	store := NewStore(postgrescontainer.New(t))
+	service := requestlog.NewService(store, 30, nil)
+	start := time.Now().UTC().Truncate(time.Microsecond)
+	aliases := []telemetry.RequestAlias{
+		{Kind: "upstream_request", Value: "chosen-id", Source: "X-Client-Request-Id", AttemptNumber: 1, ProviderID: 7},
+		{Kind: "response", Value: "resp_result", Source: "response.id", AttemptNumber: 1, ProviderID: 7},
+	}
+	service.Observe(telemetry.RequestRecord{RequestID: "typed-request", UserID: 101, State: "running", StartedAt: start, UpdatedAt: start, Aliases: aliases, Attempts: []telemetry.RequestAttempt{{Number: 1, ProviderID: 7, RequestID: "chosen-id", RequestIDHeader: "X-Client-Request-Id"}}})
+	service.Observe(telemetry.RequestRecord{RequestID: "typed-request", UserID: 101, State: "failed", UpdatedAt: start.Add(time.Second)})
+	require.NoError(t, service.Stop(t.Context()))
+	for _, search := range []string{"typed-request", "chosen-id", "resp_result"} {
+		items, err := store.Find(t.Context(), search, 0, true)
+		require.NoError(t, err)
+		require.Len(t, items, 1)
+		require.ElementsMatch(t, aliases, items[0].Aliases)
+		require.Equal(t, "X-Client-Request-Id", items[0].Attempts[0].RequestIDHeader)
+	}
+}

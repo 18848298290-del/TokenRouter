@@ -139,7 +139,7 @@ func (e *UnifiedTextExecutor) Chat(ctx context.Context, c *gin.Context, target *
 // local permission output in the inbound format; other platforms retain the
 // supplied bytes after pricing, and caller context changes remain in Gin.
 func (e *UnifiedTextExecutor) prepare(c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, source protocol.ProtocolID) ([]byte, error) {
-	SetOpsSelectedProvider(c, target.Record.ID, target.Record.Platform)
+	SetOpsSelectedProvider(c, target.Record.RoutingSnapshot())
 	if err := e.checkPricing(c, target, body, source); err != nil {
 		return nil, err
 	}

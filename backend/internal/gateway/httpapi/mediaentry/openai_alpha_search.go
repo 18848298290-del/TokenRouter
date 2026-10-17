@@ -17,6 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/httpapi/openaiattempt"
 	gatewaymedia "github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewaycapture "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -167,6 +168,8 @@ func (p *alphaRequestAdapter) AcquireAlpha(_ context.Context, _ gatewaymedia.Alp
 // direct error. The media loop combines those observations with its own retry
 // counters and current client availability.
 func (p *alphaRequestAdapter) ForwardAlpha(ctx context.Context, _ gatewaymedia.AlphaSelection, body []byte) gatewaymedia.AlphaOutcome {
+	selected := telemetry.RequestProvider(p.c.Request.Context())
+	ctx = telemetry.WithRequestProvider(ctx, selected.ProviderID, selected.Header)
 	size := p.c.Writer.Size()
 	provider := p.selection.Provider
 	match := p.h.bindings.Common.Forward.MatchOpenAITLSFingerprintRouterForRequest(p.c, provider)
@@ -228,7 +231,7 @@ func (p *alphaRequestAdapter) AlphaClientGone() bool { return gatewayhttp.Failov
 func (p *alphaRequestAdapter) ObserveAlpha(e gatewaymedia.AlphaEvent) {
 	switch e.Kind {
 	case "selected":
-		gatewayhttp.SetOpsSelectedProvider(p.c, e.Provider.ID, e.Provider.Platform)
+		gatewayhttp.SetOpsSelectedProvider(p.c, e.Provider)
 	case "routing":
 		// Ops phase fields use whole milliseconds for the retained duration observations.
 		gatewayhttp.SetOpsLatencyMs(p.c, gatewayhttp.OpsRoutingLatencyMsKey, e.Elapsed.Milliseconds())

@@ -78,7 +78,18 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 		}
 		// A matched capture may already be failed or cancelled; supplement its model
 		// and aliases while retaining the entrypoint's terminal state, timing, and status.
+		identifiersObserved := false
 		if telemetry.UpdateRequestForID(ctx, record.RequestID, func(current *telemetry.RequestRecord) {
+			for _, alias := range current.Aliases {
+				if alias.Kind == "upstream_request" && alias.ProviderID == usageLog.ProviderID {
+					identifiersObserved = true
+				}
+			}
+			for _, attempt := range current.Attempts {
+				if attempt.ProviderID == usageLog.ProviderID && attempt.RequestIDHeader != "" {
+					identifiersObserved = true
+				}
+			}
 			if record.Model != "" {
 				current.Model = record.Model
 			}
@@ -90,7 +101,11 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 			}
 		}) {
 			for _, alias := range record.Aliases {
-				telemetry.AddRequestAlias(ctx, alias.Kind, alias.Value)
+				// Live completion already recorded its selected header with provenance.
+				// The usage value can be truncated and must not create another diagnostic ID.
+				if alias.Kind != "upstream" || !identifiersObserved {
+					telemetry.AddRequestAlias(ctx, alias.Kind, alias.Value)
+				}
 			}
 		} else {
 			// A task or otherwise unmatched ID needs its own summary; submitting this

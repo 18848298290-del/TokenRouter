@@ -87,7 +87,10 @@ func TestSystemOneMissingUsageRetainsSuccessfulRequest(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, gatewayhttp.EndpointSystemOne, nil).WithContext(ctx)
 	c.Data(200, "application/json", []byte(`{"answers":{"available":{"type":"noul","noul":1}}}`))
 	run := &systemOneRun{c: c, log: zap.NewNop(), selection: &gatewayprovider.SelectionResult{Provider: gatewayprovider.NewExecutionProvider(&provider.Record{ID: 42, Platform: provider.PlatformJev, Type: provider.ProviderTypeAPIKey})}}
-	run.MissingUsage(ctx, upstream.AttemptResult{Served: true, RequestID: "upstream"})
+	ctx = telemetry.BeginRequestAttempt(telemetry.WithRequestProvider(ctx, 42, "X-Client-Request-ID"), 1)
+	c.Request = c.Request.WithContext(ctx)
+	telemetry.ObserveRequestHeaders(ctx, telemetry.RequestAttemptFromContext(ctx), http.Header{"X-Client-Request-Id": {"upstream"}}, 200)
+	run.MissingUsage(ctx, upstream.AttemptResult{Served: true, RequestID: "unselected"})
 	require.Equal(t, 200, c.Writer.Status())
 	require.Equal(t, "completed", saved.State)
 	require.Len(t, saved.Attempts, 1)

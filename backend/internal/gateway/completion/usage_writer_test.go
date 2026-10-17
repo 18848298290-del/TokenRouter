@@ -3,6 +3,7 @@ package completion
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -208,4 +209,30 @@ func TestWriteUsagePanicCannotAcknowledgePersistence(t *testing.T) {
 	require.Panics(t, func() { recorder.WriteUsage(ctx, &UsageLog{RequestID: "request", Timings: p}, "test") })
 	require.Equal(t, "unknown", saved.UsageWriteState)
 	require.Equal(t, int64(10), saved.FailureTimings["upstream_started_ms"])
+}
+
+// TestWriteUsageKeepsDiagnosticHeaderAndStoredValueSeparate writes an already
+// truncated configured usage identifier after full diagnostic capture. The usage
+// value stays unchanged and does not create a second unclassified request alias.
+func TestWriteUsageKeepsDiagnosticHeaderAndStoredValueSeparate(t *testing.T) {
+	for _, withAttempt := range []bool{false, true} {
+		full := strings.Repeat("a", 200)
+		stored := full[:128]
+		var latest telemetry.RequestRecord
+		observe := func(record telemetry.RequestRecord) { latest = record }
+		initial := telemetry.RequestRecord{
+			RequestID: "request", ProviderID: 7,
+			Attempts: []telemetry.RequestAttempt{{Number: 1, ProviderID: 7, RequestID: full, RequestIDHeader: "X-Custom-ID"}},
+			Aliases:  []telemetry.RequestAlias{{Kind: "upstream_request", Value: full, Source: "X-Custom-ID", ProviderID: 7, AttemptNumber: 1}},
+		}
+		if !withAttempt {
+			initial.Attempts = nil
+		}
+		ctx := telemetry.WithRequestCapture(t.Context(), initial, observe)
+		recorder := NewRecorder(Dependencies{Logs: usageWriterSpy{}, RequestRecords: observe}, RecorderOptions{})
+		row := &UsageLog{RequestID: "request", ProviderID: 7, UpstreamRequestID: &stored}
+		recorder.WriteUsage(ctx, row, "test")
+		require.Equal(t, strings.Repeat("a", 128), *row.UpstreamRequestID)
+		require.Equal(t, []telemetry.RequestAlias{{Kind: "upstream_request", Value: full, Source: "X-Custom-ID", ProviderID: 7, AttemptNumber: 1}}, latest.Aliases)
+	}
 }

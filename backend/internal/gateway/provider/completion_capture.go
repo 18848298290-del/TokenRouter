@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -229,7 +230,7 @@ func CaptureMessages(ctx context.Context, in *MessagesCapture) *completion.Input
 		}
 	}
 	if in.Result != nil {
-		captureRequestIdentity(ctx, out, in.Result.RequestID)
+		captureRequestIdentity(ctx, out, in.Result.RequestID, in.Result.UpstreamHeaders, provider.UpstreamRequestIDHeaderName(in.Provider))
 		out.RequestedReasoningEffort = requeststate.CanonicalRequestedReasoningEffort(in.RequestBody)
 	}
 	return completion.Snapshot(out)
@@ -270,7 +271,7 @@ func CaptureOpenAI(ctx context.Context, in *OpenAICapture) *completion.Input {
 		}
 	}
 	if in.Result != nil {
-		captureRequestIdentity(ctx, out, in.Result.RequestID)
+		captureRequestIdentity(ctx, out, in.Result.RequestID, in.Result.UpstreamHeaders, provider.UpstreamRequestIDHeaderName(in.Provider))
 	}
 	return completion.Snapshot(out)
 }
@@ -328,18 +329,17 @@ func CaptureCyber(ctx context.Context, in CyberCapture) *completion.Input {
 	})
 }
 
-// captureRequestIdentity assigns financial and diagnostic identities before
-// completion outlives the request. It first resolves BillingKey and applies
-// SettlementKey overrides, then retains the telemetry request ID unless a
-// missing ID or video completion needs a stable related record.
+// captureRequestIdentity binds completion to its financial and diagnostic identities.
+// BillingKey and RequestID retain their existing settlement and logical-request
+// rules. Call while the forwarding result and provider selection remain stable;
+// headers are read synchronously before the worker snapshot is constructed.
 //
-// Main-request capture updates model/provider observations and aliases,
-// limiting appended attempts to nonchild requests below the cap. A distinct
-// derived ID receives a completed related record with actor, Key, team,
-// provider, and timing evidence. out.Result must be present. Existing
-// client/local context seeds can coincide, while task or WS settlement
-// identity remains separate from the diagnostic row.
-func captureRequestIdentity(ctx context.Context, out *completion.Input, upstreamID string) {
+// An exact provider and attempt match owns header observations. A missing attempt
+// is constructed only for an otherwise empty nonchild record; ambiguous retries
+// are never attributed to the latest exchange. The selected diagnostic header is
+// independent of the configured usage field, and parsed response IDs enter their
+// own alias category. Related tasks retain separate records and financial aliases.
+func captureRequestIdentity(ctx context.Context, out *completion.Input, upstreamID string, headers http.Header, headerName string) {
 	out.BillingKey = CompletionBillingKey(ctx, upstreamID)
 	out.BillingKey = out.SettlementKey()
 	out.RequestID = telemetry.RequestIDValue(ctx)
@@ -352,47 +352,53 @@ func captureRequestIdentity(ctx context.Context, out *completion.Input, upstream
 		}
 		out.RequestID = telemetry.StableRequestID(fmt.Sprintf("%d/%s", keyID, out.BillingKey))
 	}
+	selected := telemetry.RequestProvider(ctx)
+	if out.Provider != nil && selected.ProviderID != out.Provider.ID {
+		selected = telemetry.RequestProvider(telemetry.WithRequestProvider(ctx, out.Provider.ID, headerName))
+	}
+	responseID := out.Result.ResponseID
+	if out.Result.OpenAIWSMode && responseID == "" {
+		responseID = out.Result.RequestID
+	}
 	childRequest := telemetry.IsChildRequest(ctx)
 	if out.RequestID == telemetry.RequestIDValue(ctx) {
+		var ref telemetry.RequestAttemptRef
+		if out.Provider != nil {
+			number := 0
+			if out.Result.Timings != nil {
+				number = int(out.Result.Timings.Values["attempt_number"])
+			}
+			ref = telemetry.FindRequestAttempt(ctx, number, out.Provider.ID, headers)
+		}
 		telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
 			record.Model = out.Result.Model
-			if out.Provider != nil {
-				record.ProviderID = out.Provider.ID
-				record.Platform = out.Provider.Platform
-				number := 0
-				if out.Result.Timings != nil {
-					number = int(out.Result.Timings.Values["attempt_number"])
-				}
-				index := -1
-				for i := range record.Attempts {
-					if number > 0 && record.Attempts[i].Number == number {
-						index = i
-						break
-					}
-				}
-				if index < 0 && !childRequest && len(record.Attempts) < 256 {
-					record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: len(record.Attempts) + 1, ProviderID: out.Provider.ID, Outcome: "completed"})
-					index = len(record.Attempts) - 1
-				}
-				if index >= 0 {
-					attempt := &record.Attempts[index]
-					if attempt.Outcome == "running" {
-						attempt.Outcome = "completed"
-					}
-					if out.Result.UpstreamRequestID != nil {
-						attempt.RequestID = *out.Result.UpstreamRequestID
-					}
+			if out.Provider == nil {
+				return
+			}
+			record.ProviderID = out.Provider.ID
+			record.Platform = out.Provider.Platform
+			// Completion can construct a diagnostic attempt for adapters without a
+			// dispatch observer. Existing ambiguous attempts are never guessed or replaced.
+			if ref.Number == 0 && len(record.Attempts) == 0 && !childRequest {
+				ref = selected
+				ref.Number = 1
+				record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: 1, ProviderID: ref.ProviderID, RequestIDHeader: ref.Header, Outcome: "completed"})
+			}
+			for i := range record.Attempts {
+				attempt := &record.Attempts[i]
+				if attempt.Number == ref.Number && attempt.ProviderID == ref.ProviderID && attempt.Outcome == "running" {
+					attempt.Outcome = "completed"
 				}
 			}
 		})
+		if !out.Result.OpenAIWSMode {
+			telemetry.ObserveRequestHeaders(ctx, ref, headers, 0)
+		}
+		if ref.ProviderID == 0 && out.Provider != nil {
+			ref.ProviderID = out.Provider.ID
+		}
 		telemetry.AddRequestAlias(ctx, "billing", out.BillingKey)
-		if !completion.ForcedRequestID(upstreamID) && !strings.HasPrefix(upstreamID, "x_search:") {
-			telemetry.AddRequestAlias(ctx, "upstream", upstreamID)
-		}
-		telemetry.AddRequestAlias(ctx, "upstream", out.Result.ResponseID)
-		if out.Result.UpstreamRequestID != nil {
-			telemetry.AddRequestAlias(ctx, "upstream", *out.Result.UpstreamRequestID)
-		}
+		telemetry.ObserveResponseID(ctx, ref, responseID)
 	}
 	// A derived diagnostic ID needs its own completed record rather than rewriting
 	// the active request record; carry settlement aliases and captured actor/provider identity.
@@ -404,8 +410,11 @@ func captureRequestIdentity(ctx context.Context, out *completion.Input, upstream
 			record.StartedAt = time.Now()
 		}
 		record.Aliases = []telemetry.RequestAlias{{Kind: "billing", Value: out.BillingKey}}
-		if upstreamID != "" {
-			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "upstream", Value: upstreamID})
+		if id := strings.TrimSpace(headers.Get(selected.Header)); id != "" && !out.Result.OpenAIWSMode {
+			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "upstream_request", Value: id, Source: selected.Header, ProviderID: selected.ProviderID})
+		}
+		if responseID != "" {
+			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "response", Value: responseID, Source: "response.id", ProviderID: selected.ProviderID})
 		}
 		if out.APIKey != nil {
 			record.UserID = out.APIKey.ActorUserID

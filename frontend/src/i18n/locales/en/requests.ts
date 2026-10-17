@@ -30,6 +30,7 @@ export default {
   "usage": "Usage and charges",
   "errors": "Errors",
   "aliases": "Related identifiers",
+  sourceUnrecorded: "Source not recorded",
   "tokens": "Input: {input} tokens · Output: {output} tokens",
   "states": {
     "running": "Unfinished",
@@ -48,8 +49,10 @@ export default {
     "internal": "Internal error"
   },
   "aliasKinds": {
-    "caller": "Caller",
-    "upstream": "Upstream",
+    "caller": "Caller request ID",
+    "upstream": "Upstream identifier (unclassified)",
+    "upstream_request": "Upstream request ID",
+    "response": "Response ID",
     "billing": "Billing reference",
     "task": "Task",
     "legacy": "Historical",

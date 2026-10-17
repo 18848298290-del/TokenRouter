@@ -5,6 +5,15 @@ import apiClient from './client'
 // carries its own captured performance and derived metrics, including its producing
 // attempt and fixed TTFT selection.
 
+// RequestAlias describes one observed identifier and its optional diagnostic ownership.
+export interface RequestAlias {
+  kind: string // Recorded identifier category.
+  value: string // Observed identifier value.
+  source?: string // Actual header or response field.
+  attempt_number?: number // Owning upstream attempt number.
+  provider_id?: number // Owning upstream provider identifier.
+}
+
 // RequestDetail combines one request lifecycle with separately owned usage and error references.
 export interface RequestDetail {
   request_id: string
@@ -23,9 +32,9 @@ export interface RequestDetail {
   pending?: boolean
   usage_write_state?: string // Observed usage persistence result.
   usage_write_error?: string // Bounded persistence failure diagnostic.
-  aliases?: { kind: string; value: string }[]
+  aliases?: RequestAlias[]
   failure_timings?: Record<string, number> // Failed request stage observations.
-  attempts?: { number: number; provider_id?: number; upstream_request_id?: string; status_code?: number; duration_ms?: number | null; outcome?: string; stage?: string; reason?: string; failure_timings?: Record<string, number> }[]
+  attempts?: { number: number; provider_id?: number; upstream_request_id?: string; upstream_request_id_header?: string; status_code?: number; duration_ms?: number | null; outcome?: string; stage?: string; reason?: string; failure_timings?: Record<string, number> }[]
   usage: { id: number; model: string; input_tokens: number; output_tokens: number; actual_cost: number; duration_ms?: number | null; ttft_ms?: number | null; tps?: number | null; timings?: { ttft_mode: string; upstream_stream: boolean; values: Record<string, number> } }[] | null
   errors: { id: number; status_code: number; phase: string }[] | null
   audit_ids?: number[]

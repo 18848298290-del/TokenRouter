@@ -64,7 +64,7 @@ func (p *inputTokensAttemptBridge) Select(excluded map[int64]struct{}) (textflow
 	}
 	p.selection = selected
 	provider := selected.Target.Snapshot()
-	SetOpsSelectedProvider(p.c, provider.ID, provider.Platform)
+	SetOpsSelectedProvider(p.c, provider)
 	return textflow.Selection{Provider: provider, RetryLimit: selected.Target.RetryLimit()}, true, nil
 }
 

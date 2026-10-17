@@ -527,7 +527,7 @@ func (p *openAIWSEntryAdapter) Select(ctx context.Context, previous, hash, model
 	out := &gatewayws.EntrySelection{Acquired: selection.Acquired, ReleaseFunc: selection.ReleaseFunc, WaitPlan: selection.WaitPlan}
 	if a := selection.Provider; a != nil {
 		out.Provider = &gatewayws.EntryProvider{
-			ProviderSnapshot: provider.ProviderSnapshot{ID: a.Record.ID, Platform: a.Record.Platform, Type: a.Record.Type, Concurrency: a.Record.Concurrency},
+			ProviderSnapshot: provider.ProviderSnapshot{ID: a.Record.ID, Platform: a.Record.Platform, Type: a.Record.Type, Concurrency: a.Record.Concurrency, RequestIDHeader: provider.UpstreamRequestIDHeaderName(a.View())},
 			Name:             a.Record.Name,
 			Shadow:           a.View().IsShadow(),
 		}

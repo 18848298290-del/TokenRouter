@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -175,4 +176,49 @@ func TestResolveUsageBillingRequestID_ForcedGrokAudioBeatsClientID(t *testing.T)
 	ctx := context.WithValue(context.Background(), telemetry.ClientRequestID, "client-shared-id")
 	got := CompletionBillingKey(ctx, StableAudioBillingRequestID("up-9"))
 	require.Equal(t, "grok_audio:up-9", got)
+}
+
+// TestCompletionIdentifiersKeepUsageSelection exercises both completion adapters
+// with competing response headers. Diagnostics default to X-Request-ID, while
+// usage remains absent unless its configured header actually exists.
+func TestCompletionIdentifiersKeepUsageSelection(t *testing.T) {
+	for _, header := range []string{"", "X-Client-Request-ID", "X-Missing"} {
+		for _, messages := range []bool{false, true} {
+			var saved telemetry.RequestRecord
+			ctx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "local"}, func(r telemetry.RequestRecord) { saved = r })
+			ctx = telemetry.WithRequestProvider(ctx, 7, header)
+			ctx = telemetry.BeginRequestAttempt(ctx, 1)
+			headers := http.Header{"X-Request-Id": {"standard"}, "X-Client-Request-Id": {"custom"}}
+			telemetry.ObserveRequestHeaders(ctx, telemetry.RequestAttemptFromContext(ctx), headers, 200)
+			ctx = context.WithValue(ctx, telemetry.RequestID, "local")
+			target := &providercore.Record{ID: 7, Extra: map[string]any{providercore.ProviderExtraUpstreamRequestIDHeader: header}}
+			var actual *string
+			if messages {
+				out := CaptureMessages(ctx, &MessagesCapture{Provider: target, Result: &forward.MessagesResult{RequestID: "unselected", Model: "model", UpstreamHeaders: headers}})
+				actual = out.Result.UpstreamRequestID
+			} else {
+				out := CaptureOpenAI(ctx, &OpenAICapture{Provider: target, Result: &forward.OpenAIResult{RequestID: "unselected", ResponseID: "resp_result", Model: "model", UpstreamHeaders: headers}})
+				actual = out.Result.UpstreamRequestID
+				require.Contains(t, saved.Aliases, telemetry.RequestAlias{Kind: "response", Value: "resp_result", Source: "response.id", AttemptNumber: 1, ProviderID: 7})
+			}
+			if header == "X-Client-Request-ID" {
+				require.NotNil(t, actual)
+				require.Equal(t, "custom", *actual)
+				require.Equal(t, "custom", saved.Attempts[0].RequestID)
+			} else {
+				require.Nil(t, actual)
+				if header == "" {
+					require.Equal(t, "standard", saved.Attempts[0].RequestID)
+				} else {
+					require.Empty(t, saved.Attempts[0].RequestID)
+				}
+			}
+			for _, alias := range saved.Aliases {
+				require.NotEqual(t, "unselected", alias.Value)
+				if header != "" {
+					require.NotEqual(t, "standard", alias.Value)
+				}
+			}
+		}
+	}
 }

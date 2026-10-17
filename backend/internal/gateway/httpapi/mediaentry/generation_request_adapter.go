@@ -136,7 +136,7 @@ func (p *generationRequestAdapter) ActivateGeneration(_ gatewaymedia.GenerationS
 	if !p.usesGrok() {
 		p.reqLog.Debug("openai.images.provider_selected", zap.Int64("provider_id", provider.Record.ID), zap.String("provider_name", provider.Record.Name))
 	}
-	gatewayhttp.SetOpsSelectedProvider(p.c, provider.Record.ID, provider.Record.Platform)
+	gatewayhttp.SetOpsSelectedProvider(p.c, provider.Record.RoutingSnapshot())
 }
 
 // GenerationEligible delegates Grok media eligibility using the retained
@@ -179,6 +179,8 @@ func (p *generationRequestAdapter) StartGenerationKeepalive() func() {
 // failures contribute retry evidence, while image errors retain their own
 // retryable, status, category and code observations for terminal handling.
 func (p *generationRequestAdapter) ForwardGeneration(ctx context.Context, _ gatewaymedia.GenerationSelection, body []byte) gatewaymedia.GenerationOutcome {
+	selected := telemetry.RequestProvider(p.c.Request.Context())
+	ctx = telemetry.WithRequestProvider(ctx, selected.ProviderID, selected.Header)
 	provider := p.selection.Provider
 	var result *forwardcore.OpenAIResult
 	var err error

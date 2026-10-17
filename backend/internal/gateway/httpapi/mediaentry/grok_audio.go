@@ -17,6 +17,7 @@ import (
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	gatewaymedia "github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewaycapture "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
@@ -244,6 +245,7 @@ func (p *grokVoiceAdapter) AcquireVoice(_ context.Context, _ providercore.Provid
 // from the Voice request. Any returned result clones headers and AudioUsage
 // for the outcome; typed failover errors separately supply retry eligibility.
 func (p *grokVoiceAdapter) ForwardVoice(ctx context.Context, _ providercore.ProviderSnapshot, request gatewaymedia.VoiceRequest) gatewaymedia.VoiceOutcome {
+	ctx = telemetry.WithRequestProvider(ctx, p.selection.Provider.Record.ID, providercore.UpstreamRequestIDHeaderName(p.selection.Provider.View()))
 	result, err := p.h.bindings.Platform.Voice(ctx, p.c, p.selection.Provider, request.Endpoint, request.Body, request.ContentType)
 	outcome := gatewaymedia.VoiceOutcome{Err: err}
 	if result != nil {

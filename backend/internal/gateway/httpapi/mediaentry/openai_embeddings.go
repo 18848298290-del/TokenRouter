@@ -16,6 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/httpapi/openaiattempt"
 	gatewaymedia "github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewaycapture "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -94,6 +95,8 @@ func (p *embeddingRequestAdapter) AcquireEmbedding(_ context.Context, _ provider
 // Callers perform selection and acquisition first and keep the shared request
 // body stable through forwarding.
 func (p *embeddingRequestAdapter) ForwardEmbedding(ctx context.Context, _ providercore.ProviderSnapshot, body []byte) gatewaymedia.EmbeddingOutcome {
+	selected := telemetry.RequestProvider(p.c.Request.Context())
+	ctx = telemetry.WithRequestProvider(ctx, selected.ProviderID, selected.Header)
 	forwardBody := body
 	// Group substitution precedes the platform's provider mapping. Derive it from
 	// the loop's source body on each attempt so these two mapping stages stay separate.
@@ -147,7 +150,7 @@ func (p *embeddingRequestAdapter) ClientGone() bool { return gatewayhttp.Failove
 func (p *embeddingRequestAdapter) ObserveEmbedding(event gatewaymedia.EmbeddingEvent) {
 	switch event.Kind {
 	case "selected":
-		gatewayhttp.SetOpsSelectedProvider(p.c, event.Provider.ID, event.Provider.Platform)
+		gatewayhttp.SetOpsSelectedProvider(p.c, event.Provider)
 	case "routing":
 		// Ops latency fields store the loop's elapsed duration in whole milliseconds.
 		gatewayhttp.SetOpsLatencyMs(p.c, gatewayhttp.OpsRoutingLatencyMsKey, event.Elapsed.Milliseconds())

@@ -191,10 +191,10 @@ func RequestLogger(observers ...func(telemetry.RequestRecord)) gin.HandlerFunc {
 		}
 		record := telemetry.RequestRecord{RequestID: requestID, StartedAt: started, Method: c.Request.Method, Path: path, State: "running"}
 		if parentID != "" {
-			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "caller", Value: parentID})
+			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "caller", Value: parentID, Source: requestIDHeader})
 		}
 		if clientID, valid := normalizeCorrelationID(c.GetHeader(clientRequestIDHeader)); valid {
-			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "caller", Value: clientID})
+			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "caller", Value: clientID, Source: clientRequestIDHeader})
 		}
 		// Publish the initial running snapshot before downstream updates begin. Later
 		// context copies retain the same capture, so observations enrich this entry's

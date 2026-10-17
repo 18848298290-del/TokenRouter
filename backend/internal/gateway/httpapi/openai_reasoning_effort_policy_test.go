@@ -13,6 +13,7 @@ import (
 	keyhttp "github.com/TokenFlux/TokenRouter/internal/apikey/httpapi"
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
@@ -25,7 +26,7 @@ func TestApplyOpenAIReasoningEffortPolicyForRequest_MapsConfiguredNoneForAstra(t
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	SetOpsSelectedProvider(c, 1, capability.PlatformOpenAI)
+	SetOpsSelectedProvider(c, provider.ProviderSnapshot{ID: 1, Platform: capability.PlatformOpenAI})
 
 	apiKey := &apikey.APIKey{
 		Group: &routing.Group{
@@ -61,7 +62,7 @@ func TestApplyAnthropicReasoningEffortPolicyForRequest_CapsOutputConfigEffort(t 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	SetOpsSelectedProvider(c, 1, capability.PlatformAnthropic)
+	SetOpsSelectedProvider(c, provider.ProviderSnapshot{ID: 1, Platform: capability.PlatformAnthropic})
 	apiKey := &apikey.APIKey{Group: &routing.Group{
 		MaxReasoningEffort: "high",
 	}}
@@ -86,7 +87,7 @@ func TestAnthropicReasoningPolicy_PreservesForcedPlatformAndDefault(t *testing.T
 		body := []byte(`{"model":"claude-fable-5-1"}`)
 		if forced {
 			c.Set(string(keyhttp.ContextKeyForcePlatform), capability.PlatformAntigravity)
-			SetOpsSelectedProvider(c, 1, capability.PlatformAntigravity)
+			SetOpsSelectedProvider(c, provider.ProviderSnapshot{ID: 1, Platform: capability.PlatformAntigravity})
 			body = []byte(`{"model":"claude-fable-5-1","output_config":{"effort":"max"}}`)
 		}
 		updated, changed, err := ApplyAnthropicReasoningEffortPolicyForRequest(c, apiKey, body)

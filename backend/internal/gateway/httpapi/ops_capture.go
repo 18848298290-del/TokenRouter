@@ -21,6 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 	opscore "github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
+	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
@@ -275,28 +276,24 @@ func SetOpsEndpointContext(c *gin.Context, upstreamModel string, requestType int
 	c.Set(opsRequestTypeKey, requestType)
 }
 
-// SetOpsSelectedProvider records positive provider identity and clears prior
-// upstream model attribution. Missing context or nonpositive ID skips all
-// updates. Only platform[0] is inspected and its nonblank trimmed value enters
-// request telemetry. Later variadic entries are ignored, and a blank first
-// value retains previous platform evidence.
-func SetOpsSelectedProvider(c *gin.Context, providerID int64, platform ...string) {
-	if c == nil || providerID <= 0 {
+// SetOpsSelectedProvider records selected identity and freezes its diagnostic header.
+// A missing context or nonpositive provider ID skips observation. Configuration is
+// copied into the request context before dispatch, so retries and detached work
+// keep the selected header even when the provider record later changes.
+func SetOpsSelectedProvider(c *gin.Context, value provider.ProviderSnapshot) {
+	if c == nil || value.ID <= 0 {
 		return
 	}
-	// Clear the previous attempt model before publishing a new provider, so
-	// credential or preparation failures cannot inherit the earlier provider
-	// model.
+	// Clear prior model attribution before selection, preventing a preparation
+	// failure from inheriting the previous provider's upstream model and diagnostics.
 	ClearOpsUpstreamModel(c)
-	c.Set(OpsProviderIDKey, providerID)
+	c.Set(OpsProviderIDKey, value.ID)
 	if c.Request != nil {
-		ctx := context.WithValue(c.Request.Context(), telemetry.ProviderID, providerID)
-		if len(platform) > 0 {
-			p := strings.TrimSpace(platform[0])
-			if p != "" {
-				ctx = context.WithValue(ctx, telemetry.Platform, p)
-			}
+		ctx := context.WithValue(c.Request.Context(), telemetry.ProviderID, value.ID)
+		if platform := strings.TrimSpace(value.Platform); platform != "" {
+			ctx = context.WithValue(ctx, telemetry.Platform, platform)
 		}
+		ctx = telemetry.WithRequestProvider(ctx, value.ID, value.RequestIDHeader)
 		c.Request = c.Request.WithContext(ctx)
 	}
 }

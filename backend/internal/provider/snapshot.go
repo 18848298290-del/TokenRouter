@@ -12,7 +12,8 @@ import (
 // Candidate protocol checks need provider identity and eligibility while
 // credentials stay in the execution record. RoutingSnapshot captures those
 // fields, resolves configured protocols, and detaches its protocol slice and
-// optional identity/expiry pointers for later candidate checks.
+// optional identity/expiry pointers for later candidate checks. The diagnostic
+// response-header name is copied for execution observation before dispatch.
 
 // ProviderSnapshot holds provider identity, eligibility, and runtime selection data.
 type ProviderSnapshot struct {
@@ -32,6 +33,7 @@ type ProviderSnapshot struct {
 	Status           string                  // stored provider lifecycle status
 	Schedulable      bool                    // configured candidate scheduling flag
 	Concurrency      int                     // configured request concurrency limit
+	RequestIDHeader  string                  `json:"-"` // selected diagnostic response header
 	Priority         int                     // configured candidate ordering priority
 	// ExpiresAt retains the optional stored expiry. RoutingSnapshot copies that
 	// value so changing the snapshot's timestamp leaves the source record unchanged.
@@ -50,7 +52,7 @@ func (r *Record) RoutingSnapshot() ProviderSnapshot {
 	snapshot := ProviderSnapshot{
 		ID: r.ID, Platform: r.Platform, Type: r.Type, AuthMode: ProtocolAuthMode(r),
 		EnabledProtocols: slices.Clone(r.UpstreamProtocols()), Status: r.Status, Schedulable: r.Schedulable,
-		Concurrency: r.Concurrency, Priority: r.Priority,
+		Concurrency: r.Concurrency, Priority: r.Priority, RequestIDHeader: UpstreamRequestIDHeaderName(r),
 	}
 	if r.ParentProviderID != nil {
 		id := *r.ParentProviderID

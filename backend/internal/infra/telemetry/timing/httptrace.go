@@ -21,7 +21,7 @@ import (
 // frozen copy after response reading and existing downstream writes finish.
 
 // BeginHTTPTrace registers one actual exchange and binds its transport observations.
-// Call immediately before dispatch; request setup must already have installed Stages.
+// Call immediately before dispatch; request setup supplies provider observation policy.
 // Existing unrelated trace callbacks are composed by net/http, but performance writes
 // accept only the current ordinal. Repeated dispatch starts another isolated exchange
 // and preserves the previous attempt's diagnostic identity without joining timestamps
@@ -32,12 +32,11 @@ func BeginHTTPTrace(ctx context.Context) context.Context {
 	}
 	stages := StagesFromContext(ctx)
 	if stages == nil {
-		return ctx
+		return telemetry.BeginRequestAttempt(ctx, 0)
 	}
 	previousNumber := stages.Attempt()
 	previousFailure := stages.AttemptFailureSnapshot()
 	number := stages.BeginAttempt()
-	providerID, _ := ctx.Value(telemetry.ProviderID).(int64)
 	telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
 		usageOwned := record.UsageAttempt == previousNumber && (record.UsageWriteState == "pending" || record.UsageWriteState == "persisted")
 		// Completed or usage-owned exchanges retain their identity and outcome.
@@ -58,11 +57,8 @@ func BeginHTTPTrace(ctx context.Context) context.Context {
 				attempt.Outcome = "failed"
 			}
 		}
-		if len(record.Attempts) < 256 {
-			at := time.Now()
-			record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: int(number), ProviderID: providerID, StartedAt: &at, Outcome: "running"})
-		}
 	})
+	ctx = telemetry.BeginRequestAttempt(ctx, int(number))
 	trace := &httptrace.ClientTrace{
 		GetConn: func(string) { stages.Transport(number, "upstream_get_conn_ms", time.Now(), false) },
 		GotConn: func(info httptrace.GotConnInfo) {

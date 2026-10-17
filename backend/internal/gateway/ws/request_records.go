@@ -142,6 +142,7 @@ func (a *entryAttemptRecords) context(base context.Context, turn int) context.Co
 // first turn, preserving one logical ID across the provider switch.
 func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, providerID int64, platform string, retry bool) context.Context {
 	ctx := a.context(base, capture.Turn)
+	var ref telemetry.RequestAttemptRef
 	telemetry.UpdateRequest(ctx, func(record *telemetry.RequestRecord) {
 		record.Model = capture.OriginalModel
 		record.ProviderID = providerID
@@ -157,7 +158,7 @@ func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, 
 		}
 		index := -1
 		for i := range record.Attempts {
-			if (number > 0 && record.Attempts[i].Number == number) || (number == 0 && record.Attempts[i].ProviderID == providerID && record.Attempts[i].Outcome == "running") {
+			if (number > 0 && record.Attempts[i].Number == number && record.Attempts[i].ProviderID == providerID) || (number == 0 && record.Attempts[i].ProviderID == providerID && record.Attempts[i].Outcome == "running") {
 				index = i
 			}
 		}
@@ -175,8 +176,8 @@ func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, 
 				ms := time.Since(*attempt.StartedAt).Milliseconds()
 				attempt.DurationMs = &ms
 			}
+			ref = telemetry.RequestAttemptRef{Number: attempt.Number, ProviderID: providerID, Header: attempt.RequestIDHeader}
 			if capture.Result != nil {
-				attempt.RequestID = capture.Result.RequestID
 				if capture.Result.Timings != nil {
 					capture.Result.Timings.Values["attempt_number"] = int64(attempt.Number)
 				}
@@ -203,7 +204,11 @@ func (a *entryAttemptRecords) finish(base context.Context, capture TurnCapture, 
 		}
 	})
 	if capture.Result != nil {
-		telemetry.AddRequestAlias(ctx, "upstream", capture.Result.RequestID)
+		responseID := capture.Result.ResponseID
+		if responseID == "" && capture.Result.OpenAIWSMode {
+			responseID = capture.Result.RequestID
+		}
+		telemetry.ObserveResponseID(ctx, ref, responseID)
 	}
 	// Publish retry identity or remove completed identity only after recording the
 	// attempt and alias, so the replacement attempt inherits that logical capture.

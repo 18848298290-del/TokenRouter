@@ -149,7 +149,7 @@ func (b *messageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Sel
 		return textflow.Selection{}, err
 	}
 	b.provider = b.selection.Provider
-	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.ID, b.provider.Record.Platform)
+	gatewayhttp.SetOpsSelectedProvider(b.c, b.provider.Record.RoutingSnapshot())
 	if b.sessionKey != "" {
 		b.binding().trackSession(b.sessionAttempts, b.provider, b.sessionKey)
 	}

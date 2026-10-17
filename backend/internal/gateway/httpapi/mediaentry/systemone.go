@@ -17,6 +17,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/systemone"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -93,7 +94,7 @@ func (p *systemOneRun) Select(ctx context.Context, excluded map[int64]struct{}) 
 		return provider.ProviderSnapshot{}, err
 	}
 	value := gatewayprovider.ExecutionSnapshot(selection.Provider)
-	gatewayhttp.SetOpsSelectedProvider(p.c, value.ID, value.Platform)
+	gatewayhttp.SetOpsSelectedProvider(p.c, value)
 	return value, err
 }
 
@@ -110,6 +111,8 @@ func (p *systemOneRun) Acquire(_ context.Context) (func(), bool) {
 // model field; a typed failover error supplies retry metadata and the
 // provider's pool retry budget.
 func (p *systemOneRun) Forward(ctx context.Context) systemone.Outcome {
+	selected := telemetry.RequestProvider(p.c.Request.Context())
+	ctx = telemetry.WithRequestProvider(ctx, selected.ProviderID, selected.Header)
 	// Funds can change during a slot wait or earlier pool exchange; recheck
 	// each attempt with RPM skipped so retries share the initial admission count.
 	if failure := (mediaHTTPAdapter{p.h}).checkFunding(p.c, true); failure != nil {

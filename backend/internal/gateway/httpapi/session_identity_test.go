@@ -17,6 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	gatewaysession "github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	sessiontestkit "github.com/TokenFlux/TokenRouter/internal/gateway/session/testkit"
+	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
@@ -102,13 +103,13 @@ func TestGrokConversationHeaderIsScopedToGrokRequestScheduling(t *testing.T) {
 	require.Equal(t, "native-grok-session", ExplicitOpenAIRequestSessionID(grokContext, body))
 
 	openAIContext := newGrokCacheTestContext(601)
-	SetOpsSelectedProvider(openAIContext, 1, capability.PlatformOpenAI)
+	SetOpsSelectedProvider(openAIContext, provider.ProviderSnapshot{ID: 1, Platform: capability.PlatformOpenAI})
 	openAIContext.Set("api_key", &apikey.APIKey{ID: 601, Group: &routing.Group{}})
 	openAIContext.Request.Header.Set(GrokConversationIDHeader, "must-be-ignored")
 	require.Equal(t, "body-session", ExplicitOpenAIRequestSessionID(openAIContext, body))
 
 	withoutGrokHeader := newGrokCacheTestContext(601)
-	SetOpsSelectedProvider(withoutGrokHeader, 1, capability.PlatformOpenAI)
+	SetOpsSelectedProvider(withoutGrokHeader, provider.ProviderSnapshot{ID: 1, Platform: capability.PlatformOpenAI})
 	withoutGrokHeader.Set("api_key", &apikey.APIKey{ID: 601, Group: &routing.Group{}})
 	require.Equal(t, GenerateOpenAISessionHash(withoutGrokHeader, body), GenerateOpenAISessionHash(openAIContext, body))
 }

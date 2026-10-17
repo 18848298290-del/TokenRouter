@@ -11,7 +11,7 @@ import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { formatDateTime, formatTokens } from '@/utils/format'
 import { timingBreakdown } from '@/utils/requestTiming'
 import type { IconName } from '@/components/icons/registry'
-import type { RequestDetail } from '@/api/requests'
+import type { RequestAlias, RequestDetail } from '@/api/requests'
 
 // RequestDetailCard.vue presents one request with its timing, attempts, usage,
 // errors and related identifiers. Timing writes the admission durations as one
@@ -91,6 +91,14 @@ const formatCost = (value: number) => formatBalanceAmount(value, { fractionDigit
 const usageRows = computed(() => props.item.usage ?? [])
 const errorRows = computed(() => props.item.errors ?? [])
 const aliasRows = computed(() => props.item.aliases ?? [])
+
+// aliasKey retains separate rows when providers, attempts, or sources share an identifier.
+const aliasKey = (alias: RequestAlias) =>
+  JSON.stringify([alias.kind, alias.value, alias.source, alias.attempt_number, alias.provider_id])
+
+// attemptResponses returns response-object identifiers with matching provider and attempt ownership.
+const attemptResponses = (number: number, providerId?: number) =>
+  aliasRows.value.filter(alias => alias.kind === 'response' && alias.attempt_number === number && alias.provider_id === providerId)
 </script>
 
 <template>
@@ -212,7 +220,15 @@ const aliasRows = computed(() => props.item.aliases ?? [])
             <span class="badge" :class="stateStyle(attempt.outcome).badge">{{ stateLabel(attempt.outcome) }}</span>
             <span v-if="attempt.status_code" class="font-mono text-xs" :class="statusClass(attempt.status_code)">HTTP {{ attempt.status_code }}</span>
             <span v-if="attempt.provider_id" class="text-xs text-gray-500 dark:text-dark-300">{{ t('requests.provider') }} #{{ attempt.provider_id }}</span>
-            <RequestIdLink v-if="attempt.upstream_request_id" :value="attempt.upstream_request_id" :link="false" />
+            <span v-if="attempt.upstream_request_id" class="flex flex-wrap items-center gap-2 text-xs" :title="attempt.upstream_request_id_header || t('requests.sourceUnrecorded')">
+              <span>{{ t(attempt.upstream_request_id_header ? 'requests.aliasKinds.upstream_request' : 'requests.aliasKinds.upstream') }}</span>
+              <RequestIdLink :value="attempt.upstream_request_id" :link="false" />
+              <span v-if="attempt.upstream_request_id_header" class="font-mono text-gray-500 dark:text-dark-400">{{ attempt.upstream_request_id_header }}</span>
+            </span>
+            <span v-for="alias in attemptResponses(attempt.number, attempt.provider_id)" :key="aliasKey(alias)" class="flex items-center gap-2 text-xs">
+              <span>{{ t('requests.aliasKinds.response') }}</span>
+              <RequestIdLink :value="alias.value" :link="false" />
+            </span>
             <span class="ml-auto font-mono text-xs tabular-nums text-gray-600 dark:text-dark-200">{{ formatDuration(attempt.duration_ms) }}</span>
             <span v-if="attempt.reason" class="w-full break-words text-xs text-gray-500 dark:text-dark-300">{{ attempt.stage }} {{ attempt.reason }}</span>
             <RequestTimingDetails v-if="attempt.failure_timings" class="w-full" :timing="attempt.failure_timings" />
@@ -271,9 +287,13 @@ const aliasRows = computed(() => props.item.aliases ?? [])
       <!-- 关联标识，仅管理员可见 -->
       <section v-if="aliasRows.length" class="px-6 py-5">
         <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-dark-50">{{ t('requests.aliases') }}</h3>
-        <dl class="grid grid-cols-[minmax(0,6rem)_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs sm:grid-cols-[8rem_minmax(0,1fr)]">
-          <template v-for="alias in aliasRows" :key="`${alias.kind}:${alias.value}`">
-            <dt class="text-gray-500 dark:text-dark-400">{{ aliasLabel(alias.kind) }}</dt>
+        <dl class="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs sm:grid-cols-[11rem_minmax(0,1fr)]">
+          <template v-for="alias in aliasRows" :key="aliasKey(alias)">
+            <dt class="text-gray-500 dark:text-dark-400">
+              <span>{{ aliasLabel(alias.kind) }}</span>
+              <span v-if="alias.source || ['caller', 'upstream', 'upstream_request', 'response'].includes(alias.kind)" class="mt-1 block break-all font-mono">{{ alias.source || t('requests.sourceUnrecorded') }}</span>
+              <span v-if="alias.provider_id" class="mt-1 block">{{ t('requests.provider') }} #{{ alias.provider_id }}<template v-if="alias.attempt_number"> · #{{ alias.attempt_number }}</template></span>
+            </dt>
             <dd class="min-w-0"><RequestIdLink :value="alias.value" :link="false" full /></dd>
           </template>
         </dl>

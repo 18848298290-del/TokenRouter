@@ -524,14 +524,15 @@ func AppendOpsUpstreamError(c *gin.Context, ev ops.OpsUpstreamErrorEvent) {
 	}
 
 	if c.Request != nil {
+		number := 0
+		if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
+			number = int(stages.Attempt())
+		} else {
+			number = telemetry.FindRequestAttempt(c.Request.Context(), 0, ev.ProviderID).Number
+		}
 		telemetry.UpdateRequest(c.Request.Context(), func(record *telemetry.RequestRecord) {
-			// Cap request-attempt metadata while continuing to append Ops evidence and
-			// correlation aliases, so request indexing does not grow indefinitely during
-			// repeated failures.
-			number := 0
-			if stages := timing.StagesFromContext(c.Request.Context()); stages != nil {
-				number = int(stages.Attempt())
-			}
+			// Match provider and ordinal before updating diagnostic outcome. An
+			// unattributed error remains in Ops instead of creating a conflicting attempt.
 			outcome := "failed"
 			if ev.Kind == "usage_invalid" {
 				outcome = "usage_unknown"
@@ -539,20 +540,21 @@ func AppendOpsUpstreamError(c *gin.Context, ev ops.OpsUpstreamErrorEvent) {
 			matched := false
 			for i := range record.Attempts {
 				attempt := &record.Attempts[i]
-				if attempt.Number == number && (number > 0 || attempt.ProviderID == ev.ProviderID && attempt.RequestID == ev.UpstreamRequestID) {
-					attempt.Outcome, attempt.Status, attempt.RequestID = outcome, ev.UpstreamStatusCode, ev.UpstreamRequestID
+				if attempt.Number == number && attempt.ProviderID == ev.ProviderID && (number > 0 || attempt.RequestID == ev.UpstreamRequestID) {
+					// Headers already selected the diagnostic ID before this error event.
+					// Ops may carry another upstream header, so it cannot overwrite that identity.
+					attempt.Outcome, attempt.Status = outcome, ev.UpstreamStatusCode
 					attempt.Stage, attempt.Reason = ev.Stage, ev.Reason
 					matched = true
 					break
 				}
 			}
-			if !matched && len(record.Attempts) < 256 {
+			if !matched && len(record.Attempts) == 0 {
 				// Failures before an observed exchange retain their provider evidence;
 				// zero ordinal denotes an unstarted or unobserved transport attempt.
-				record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: number, ProviderID: ev.ProviderID, RequestID: ev.UpstreamRequestID, Status: ev.UpstreamStatusCode, Outcome: outcome, Stage: ev.Stage, Reason: ev.Reason})
+				record.Attempts = append(record.Attempts, telemetry.RequestAttempt{Number: number, ProviderID: ev.ProviderID, Status: ev.UpstreamStatusCode, Outcome: outcome, Stage: ev.Stage, Reason: ev.Reason})
 			}
 		})
-		telemetry.AddRequestAlias(c.Request.Context(), "upstream", ev.UpstreamRequestID)
 	}
 	evCopy := ev
 	existing = append(existing, &evCopy)

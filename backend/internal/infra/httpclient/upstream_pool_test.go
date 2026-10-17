@@ -951,7 +951,7 @@ func (blockingHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, 
 func TestUpstreamPoolInvokesRequestTimingObserver(t *testing.T) {
 	pool := NewUpstreamPool()
 	var observed *http.Response
-	ctx, _ := timing.WithStages(t.Context(), time.Now(), func(resp *http.Response) { observed = resp })
+	ctx, _ := timing.WithStages(t.Context(), time.Now(), func(_ context.Context, resp *http.Response) { observed = resp })
 	req := poolTestRequest(t).WithContext(ctx)
 	resp, err := pool.Do(req, poolTestOptions(1, nil))
 	require.NoError(t, err)
