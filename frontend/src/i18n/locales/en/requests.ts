@@ -32,6 +32,10 @@ export default {
   "aliases": "Related identifiers",
   unassignedAttempt: "Unnumbered",
   sourceUnrecorded: "Source not recorded",
+  via: "from {source}",
+  attemptNumber: "Attempt #{number}",
+  producedBy: "From attempt",
+  reason: "Reason",
   "tokens": "Input: {input} tokens · Output: {output} tokens",
   "states": {
     "running": "Unfinished",

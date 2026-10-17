@@ -2,22 +2,28 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
-import RequestTimingDetails from '@/components/requests/RequestTimingDetails.vue'
+import RequestTimeline from '@/components/requests/RequestTimeline.vue'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import PlatformBadge from '@/components/common/PlatformBadge.vue'
 import RequestIdLink from '@/components/common/RequestIdLink.vue'
 import SettingsNotice from '@/components/common/settings/SettingsNotice.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { formatDateTime, formatTokens } from '@/utils/format'
-import { timingBreakdown } from '@/utils/requestTiming'
+import { formatTimingMs } from '@/utils/requestTiming'
 import type { IconName } from '@/components/icons/registry'
+import type { UsageLogTiming } from '@/types'
 import type { RequestAlias, RequestDetail } from '@/api/requests'
 
 // RequestDetailCard.vue presents one request with its timing, attempts, usage,
-// errors and related identifiers. Timing writes the admission durations as one
-// equation whose total is the slot offset, above a waterfall of ingress-relative
-// offsets; only recorded offsets get a bar, and stream-only stages of
-// synchronous requests are hidden by the shared breakdown rules.
+// errors and related identifiers. Timing lists the request's failure stages and
+// each usage row's performance as separate timelines on one scale, because
+// usage owns its performance while failure diagnostics belong to the request.
+//
+// Each attempt shows the identifiers it owns: the upstream request ID with the
+// header it came from and any response ID recorded for the same provider and
+// attempt number. The related identifiers section lists only the remaining
+// aliases, so an ID appears once and an alias whose attempt is missing from
+// the attempt list keeps its provider and attempt ownership.
 
 const props = defineProps<{
   item: RequestDetail
@@ -50,38 +56,9 @@ function statusClass(code?: number) {
   return 'text-emerald-600 dark:text-emerald-400'
 }
 
-// formatDuration 把毫秒数显示成 ms 或保留两位小数的秒。
-function formatDuration(ms?: number | null) {
-  if (ms == null) return '-'
-  if (ms < 1000) return `${ms} ms`
-  return `${(ms / 1000).toFixed(2)} s`
-}
-
 const errorText = computed(() => {
   const code = props.item.error_code
   return code ? t(`requests.errorCodes.${code}`, code) : ''
-})
-
-// timings splits the record into inline durations and waterfall bars scaled to
-// the longest of the request duration and any recorded offset.
-const timings = computed(() => {
-  const breakdown = timingBreakdown(props.item.failure_timings ?? {})
-  const events = breakdown.events.filter((row) => row.value != null).sort((a, b) => (a.value ?? 0) - (b.value ?? 0))
-  const total = Math.max(props.item.duration_ms ?? 0, ...events.map((row) => row.value ?? 0), 1)
-  return {
-    total,
-    durations: breakdown.durations,
-    admissionTotal: breakdown.admissionTotal,
-    retryWait: breakdown.retryWait,
-    admitted: breakdown.admitted,
-    rows: events.map((row) => ({
-      key: row.key,
-      label: t(`requests.timingNames.${row.key}`),
-      value: row.value ?? 0,
-      // Keep a sliver visible for offsets near zero so the bar still marks the stage.
-      percent: Math.max(((row.value ?? 0) / total) * 100, 0.5),
-    })),
-  }
 })
 
 const phaseLabel = (phase: string) => t(`requests.errorPhases.${phase}`, phase)
@@ -91,14 +68,85 @@ const formatCost = (value: number) => formatBalanceAmount(value, { fractionDigit
 const usageRows = computed(() => props.item.usage ?? [])
 const errorRows = computed(() => props.item.errors ?? [])
 const aliasRows = computed(() => props.item.aliases ?? [])
+const attemptRows = computed(() => props.item.attempts ?? [])
+
+// Timeline pairs one timing record with the caption shown when several exist.
+interface Timeline {
+  key: string // Stable list key.
+  label: string // Failure timing title or the usage row's model and attempt.
+  timing: UsageLogTiming // Ingress-relative observations to draw.
+}
+
+// timelines collects the request's failure stages and every usage row's
+// performance. Captions appear only when a request carries more than one; a
+// lone failure timeline titles the section, while a lone usage timeline keeps
+// the generic title because its usage row already names the model and attempt.
+const timelines = computed<Timeline[]>(() => {
+  const list: Timeline[] = []
+  const failure = props.item.failure_timings
+  if (failure && Object.keys(failure).length) {
+    list.push({ key: 'failure', label: t('requests.failureTimings'), timing: failure })
+  }
+  for (const usage of usageRows.value) {
+    if (!usage.timings) continue
+    const attempt = usage.timings.values.attempt_number
+    list.push({
+      key: `usage:${usage.id}`,
+      label: attempt ? `${usage.model} · ${t('requests.attemptNumber', { number: attempt })}` : usage.model,
+      timing: { ...usage.timings.values, upstream_stream: usage.timings.upstream_stream },
+    })
+  }
+  return list
+})
+// timingTitle names the timing section after its only timeline when that is the failure record.
+const timingTitle = computed(() => {
+  const [only] = timelines.value
+  return timelines.value.length === 1 && only.key === 'failure' ? only.label : t('requests.timings')
+})
 
 // aliasKey retains separate rows when providers, attempts, or sources share an identifier.
 const aliasKey = (alias: RequestAlias) =>
   JSON.stringify([alias.kind, alias.value, alias.source, alias.attempt_number, alias.provider_id])
 
+// Attempt is one upstream attempt entry of the request detail.
+type Attempt = NonNullable<RequestDetail['attempts']>[number]
+
 // attemptResponses returns response-object identifiers with matching provider and attempt ownership.
-const attemptResponses = (number: number, providerId?: number) =>
-  aliasRows.value.filter(alias => alias.kind === 'response' && alias.attempt_number === number && alias.provider_id === providerId)
+const attemptResponses = (attempt: Attempt) =>
+  aliasRows.value.filter((alias) =>
+    alias.kind === 'response'
+    && alias.attempt_number === attempt.number
+    && alias.provider_id === attempt.provider_id)
+
+// shownByAttempt reports whether an attempt row already displays the alias.
+// Classified identifiers match by provider and attempt number; historical
+// unclassified upstream aliases carry no owner and match by value instead.
+function shownByAttempt(alias: RequestAlias) {
+  return attemptRows.value.some((attempt) => {
+    if (alias.kind === 'upstream') return !alias.attempt_number && attempt.upstream_request_id === alias.value
+    if (alias.attempt_number !== attempt.number || alias.provider_id !== attempt.provider_id) return false
+    return alias.kind === 'response' || (alias.kind === 'upstream_request' && alias.value === attempt.upstream_request_id)
+  })
+}
+// listedAliases holds the identifiers left for the related identifiers section.
+const listedAliases = computed(() => aliasRows.value.filter((alias) => !shownByAttempt(alias)))
+
+// Identifier kinds whose origin matters enough to say so when it is unknown.
+const SOURCE_KINDS = new Set(['caller', 'upstream', 'upstream_request', 'response'])
+
+// aliasMeta describes where an identifier came from and which attempt owns it.
+function aliasMeta(alias: RequestAlias) {
+  const parts: string[] = []
+  if (alias.source) parts.push(t('requests.via', { source: alias.source }))
+  else if (SOURCE_KINDS.has(alias.kind)) parts.push(t('requests.sourceUnrecorded'))
+  if (alias.provider_id) parts.push(`${t('requests.provider')} #${alias.provider_id}`)
+  if (alias.attempt_number) parts.push(t('requests.attemptNumber', { number: alias.attempt_number }))
+  return parts.join(' · ')
+}
+
+// attemptHasDetails reports whether an attempt needs the detail list under its summary line.
+const attemptHasDetails = (attempt: Attempt) =>
+  Boolean(attempt.upstream_request_id || attempt.reason || attempt.stage || attemptResponses(attempt).length)
 </script>
 
 <template>
@@ -134,7 +182,7 @@ const attemptResponses = (number: number, providerId?: number) =>
       </div>
       <div>
         <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('requests.duration') }}</dt>
-        <dd class="mt-1 text-sm font-medium tabular-nums text-gray-900 dark:text-dark-50">{{ formatDuration(item.duration_ms) }}</dd>
+        <dd class="mt-1 text-sm font-medium tabular-nums text-gray-900 dark:text-dark-50">{{ formatTimingMs(item.duration_ms) }}</dd>
       </div>
       <div>
         <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('requests.statusCode') }}</dt>
@@ -165,75 +213,62 @@ const attemptResponses = (number: number, providerId?: number) =>
         </div>
       </div>
 
-      <!-- 耗时：阶段时长一行，事件时刻画成瀑布条 -->
-      <section v-if="timings.rows.length || timings.durations.length" class="px-6 py-5">
-        <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-dark-50">{{ t('requests.failureTimings') }}</h3>
-        <!-- 四段时长写成等式，合计就是下面瀑布里取得槽位的时刻。 -->
-        <p v-if="timings.durations.length" class="mb-3 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-xs">
-          <span class="font-medium text-gray-900 dark:text-dark-50">{{ timings.admitted === false ? t('requests.timing.untilEnd') : t('requests.timingNames.provider_slot_acquired_ms') }}</span>
-          <span v-if="timings.admissionTotal != null" class="font-mono font-medium tabular-nums text-gray-900 dark:text-dark-50">{{ formatDuration(timings.admissionTotal) }}</span>
-          <span class="text-gray-400 dark:text-dark-500">=</span>
-          <template v-for="(row, index) in timings.durations" :key="row.key">
-            <span v-if="index" class="text-gray-400 dark:text-dark-500">+</span>
-            <span class="text-gray-500 dark:text-dark-400">{{ t(`requests.timingNames.${row.key}`) }}</span>
-            <span class="font-mono tabular-nums text-gray-900 dark:text-dark-100">{{ formatDuration(row.value) }}</span>
-          </template>
-          <template v-if="timings.retryWait">
-            <span class="ml-3 text-gray-500 dark:text-dark-400">{{ t('requests.timingNames.retry_provider_slot_wait_ms') }}</span>
-            <span class="font-mono tabular-nums text-gray-900 dark:text-dark-100">{{ formatDuration(timings.retryWait.value) }}</span>
-          </template>
-        </p>
-        <ol v-if="timings.rows.length" class="space-y-2">
-          <li
-            v-for="row in timings.rows"
-            :key="row.key"
-            class="grid grid-cols-[minmax(0,8.5rem)_minmax(0,1fr)_4rem] items-center gap-3 text-xs sm:grid-cols-[10rem_minmax(0,1fr)_5rem]"
-          >
-            <span class="truncate text-gray-600 dark:text-dark-300" :title="row.label">{{ row.label }}</span>
-            <span class="relative h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-800">
-              <span class="absolute inset-y-0 left-0 rounded-full bg-primary-500/70" :style="{ width: `${row.percent}%` }" />
-            </span>
-            <span class="text-right font-mono tabular-nums text-gray-900 dark:text-dark-100">{{ formatDuration(row.value) }}</span>
-          </li>
-          <li
-            v-if="item.duration_ms != null"
-            class="grid grid-cols-[minmax(0,8.5rem)_minmax(0,1fr)_4rem] items-center gap-3 border-t border-dashed border-gray-200 pt-2 text-xs dark:border-dark-600 sm:grid-cols-[10rem_minmax(0,1fr)_5rem]"
-          >
-            <span class="font-medium text-gray-900 dark:text-dark-50">{{ t('requests.totalDuration') }}</span>
-            <span class="relative h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-800">
-              <span class="absolute inset-y-0 left-0 rounded-full bg-primary-600 dark:bg-primary-500" :style="{ width: `${(item.duration_ms / timings.total) * 100}%` }" />
-            </span>
-            <span class="text-right font-mono font-medium tabular-nums text-gray-900 dark:text-dark-50">{{ formatDuration(item.duration_ms) }}</span>
-          </li>
-        </ol>
+      <!-- Timing: one timeline per failure record or usage row, all scaled to the request duration. -->
+      <section v-if="timelines.length" class="px-6 py-5">
+        <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-dark-50">{{ timingTitle }}</h3>
+        <div class="space-y-5">
+          <div v-for="timeline in timelines" :key="timeline.key">
+            <p v-if="timelines.length > 1" class="mb-2 text-xs font-medium text-gray-700 dark:text-dark-200">{{ timeline.label }}</p>
+            <RequestTimeline :timing="timeline.timing" :duration="item.duration_ms" />
+          </div>
+        </div>
       </section>
 
-      <!-- 上游尝试 -->
-      <section v-if="item.attempts?.length" class="px-6 py-5">
+      <!-- Attempts: a summary line, then details that align with the outcome badge from sm upward. -->
+      <section v-if="attemptRows.length" class="px-6 py-5">
         <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-dark-50">
           {{ t('requests.attempts') }}
-          <span class="ml-1 font-normal text-gray-400 dark:text-dark-400">{{ item.attempts.length }}</span>
+          <span class="ml-1 font-normal text-gray-400 dark:text-dark-400">{{ attemptRows.length }}</span>
         </h3>
-        <ul class="divide-y divide-gray-100 rounded-control border border-gray-200 dark:divide-dark-700 dark:border-dark-600">
-          <li v-for="(attempt, attemptIndex) in item.attempts" :key="`${attempt.number}:${attempt.provider_id}:${attemptIndex}`" class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm">
-            <span class="shrink-0 font-mono text-xs text-gray-400 dark:text-dark-400" :class="attempt.number > 0 ? 'w-6' : ''">{{ attempt.number > 0 ? `#${attempt.number}` : t('requests.unassignedAttempt') }}</span>
-            <span class="badge" :class="stateStyle(attempt.outcome).badge">{{ stateLabel(attempt.outcome) }}</span>
-            <span v-if="attempt.status_code" class="font-mono text-xs" :class="statusClass(attempt.status_code)">HTTP {{ attempt.status_code }}</span>
-            <span v-if="attempt.provider_id" class="text-xs text-gray-500 dark:text-dark-300">{{ t('requests.provider') }} #{{ attempt.provider_id }}</span>
-            <span v-if="attempt.upstream_request_id" class="flex flex-wrap items-center gap-2 text-xs" :title="attempt.upstream_request_id_header || t('requests.sourceUnrecorded')">
-              <span>{{ t(attempt.upstream_request_id_header ? 'requests.aliasKinds.upstream_request' : 'requests.aliasKinds.upstream') }}</span>
-              <RequestIdLink :value="attempt.upstream_request_id" :link="false" />
-              <span v-if="attempt.upstream_request_id_header" class="font-mono text-gray-500 dark:text-dark-400">{{ attempt.upstream_request_id_header }}</span>
-            </span>
-            <span v-for="alias in attemptResponses(attempt.number, attempt.provider_id)" :key="aliasKey(alias)" class="flex items-center gap-2 text-xs">
-              <span>{{ t('requests.aliasKinds.response') }}</span>
-              <RequestIdLink :value="alias.value" :link="false" />
-            </span>
-            <span class="ml-auto font-mono text-xs tabular-nums text-gray-600 dark:text-dark-200">{{ formatDuration(attempt.duration_ms) }}</span>
-            <span v-if="attempt.reason" class="w-full break-words text-xs text-gray-500 dark:text-dark-300">{{ attempt.stage }} {{ attempt.reason }}</span>
-            <RequestTimingDetails v-if="attempt.failure_timings" class="w-full" :timing="attempt.failure_timings" />
+        <ol class="divide-y divide-gray-100 rounded-control border border-gray-200 dark:divide-dark-700 dark:border-dark-600">
+          <li v-for="(attempt, attemptIndex) in attemptRows" :key="`${attempt.number}:${attempt.provider_id}:${attemptIndex}`" class="px-4 py-3">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 whitespace-nowrap text-sm">
+              <span class="w-6 shrink-0 font-mono text-xs text-gray-400 dark:text-dark-400">
+                <template v-if="attempt.number > 0">#{{ attempt.number }}</template>
+                <template v-else>
+                  <span aria-hidden="true" :title="t('requests.unassignedAttempt')">-</span>
+                  <span class="sr-only">{{ t('requests.unassignedAttempt') }}</span>
+                </template>
+              </span>
+              <span class="badge" :class="stateStyle(attempt.outcome).badge">{{ stateLabel(attempt.outcome) }}</span>
+              <span v-if="attempt.status_code" class="font-mono text-xs" :class="statusClass(attempt.status_code)">HTTP {{ attempt.status_code }}</span>
+              <span v-if="attempt.provider_id" class="text-xs text-gray-500 dark:text-dark-300">{{ t('requests.provider') }} #{{ attempt.provider_id }}</span>
+              <span v-if="attempt.duration_ms != null" class="ml-auto font-mono text-xs tabular-nums text-gray-600 dark:text-dark-200">{{ formatTimingMs(attempt.duration_ms) }}</span>
+            </div>
+            <dl v-if="attemptHasDetails(attempt)" class="mt-2 grid grid-cols-1 items-baseline gap-x-3 gap-y-1 text-xs sm:ml-9 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-y-1.5">
+              <template v-if="attempt.upstream_request_id">
+                <dt class="mt-1 text-gray-500 first:mt-0 dark:text-dark-400 sm:mt-0">{{ aliasLabel(attempt.upstream_request_id_header ? 'upstream_request' : 'upstream') }}</dt>
+                <dd class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                  <RequestIdLink :value="attempt.upstream_request_id" :link="false" full />
+                  <span class="text-gray-400 dark:text-dark-500">{{ attempt.upstream_request_id_header ? t('requests.via', { source: attempt.upstream_request_id_header }) : t('requests.sourceUnrecorded') }}</span>
+                </dd>
+              </template>
+              <template v-for="alias in attemptResponses(attempt)" :key="aliasKey(alias)">
+                <dt class="mt-1 text-gray-500 first:mt-0 dark:text-dark-400 sm:mt-0">{{ aliasLabel('response') }}</dt>
+                <dd class="min-w-0"><RequestIdLink :value="alias.value" :link="false" full /></dd>
+              </template>
+              <template v-if="attempt.reason || attempt.stage">
+                <dt class="mt-1 text-gray-500 first:mt-0 dark:text-dark-400 sm:mt-0">{{ t('requests.reason') }}</dt>
+                <dd class="min-w-0 break-words text-gray-700 dark:text-dark-100">
+                  <span v-if="attempt.stage" class="font-medium">{{ phaseLabel(attempt.stage) }}</span>
+                  <span v-if="attempt.stage && attempt.reason" class="text-gray-400 dark:text-dark-500"> · </span>
+                  <span v-if="attempt.reason">{{ attempt.reason }}</span>
+                </dd>
+              </template>
+            </dl>
+            <RequestTimeline v-if="attempt.failure_timings" class="mt-3 sm:ml-9" :timing="attempt.failure_timings" />
           </li>
-        </ul>
+        </ol>
       </section>
 
       <section v-if="item.usage_write_error || (item.usage_write_state && item.usage_write_state !== 'persisted' && (item.usage_write_state !== 'pending' || !usageRows.length))" class="px-6 py-5">
@@ -243,24 +278,42 @@ const attemptResponses = (number: number, providerId?: number) =>
         </SettingsNotice>
       </section>
 
-      <!-- 用量与费用 -->
+      <!-- Usage: model, tokens and cost, then the performance of the producing attempt. -->
       <section v-if="usageRows.length" class="px-6 py-5">
         <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-dark-50">{{ t('requests.usage') }}</h3>
         <ul class="divide-y divide-gray-100 rounded-control border border-gray-200 dark:divide-dark-700 dark:border-dark-600">
-          <li v-for="usage in usageRows" :key="usage.id" class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm">
-            <span class="flex min-w-0 items-center gap-1.5 font-medium text-gray-900 dark:text-dark-50">
-              <ModelIcon :model="usage.model" size="16px" class="shrink-0" />
-              <span class="truncate">{{ usage.model }}</span>
-            </span>
-            <span class="text-xs tabular-nums text-gray-500 dark:text-dark-300">
-              {{ t('requests.tokens', { input: formatTokens(usage.input_tokens), output: formatTokens(usage.output_tokens) }) }}
-            </span>
-            <span class="ml-auto text-sm font-medium tabular-nums text-emerald-600 dark:text-emerald-400">{{ formatCost(usage.actual_cost) }}</span>
-            <span v-if="usage.duration_ms != null" class="text-xs tabular-nums">{{ t('requests.upstreamDuration') }} {{ formatDuration(usage.duration_ms) }}</span>
-            <span v-if="usage.timings?.values.attempt_number" class="font-mono text-xs">#{{ usage.timings.values.attempt_number }}</span>
-            <span v-if="usage.ttft_ms != null" class="text-xs tabular-nums">{{ usage.timings?.ttft_mode === 'first_event' ? t('usage.latencyFirstEvent') : t('usage.latencyFirstToken') }} {{ formatDuration(usage.ttft_ms) }}</span>
-            <span v-if="usage.tps != null" class="text-xs tabular-nums">TPS {{ usage.tps.toFixed(1) }}</span>
-            <RequestTimingDetails v-if="usage.timings" class="w-full" :timing="{ ...usage.timings.values, upstream_stream: usage.timings.upstream_stream }" />
+          <li v-for="usage in usageRows" :key="usage.id" class="px-4 py-3">
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <span class="flex min-w-0 items-center gap-1.5 font-medium text-gray-900 dark:text-dark-50">
+                <ModelIcon :model="usage.model" size="16px" class="shrink-0" />
+                <span class="truncate">{{ usage.model }}</span>
+              </span>
+              <span class="text-xs tabular-nums text-gray-500 dark:text-dark-300">
+                {{ t('requests.tokens', { input: formatTokens(usage.input_tokens), output: formatTokens(usage.output_tokens) }) }}
+              </span>
+              <span class="ml-auto text-sm font-medium tabular-nums text-emerald-600 dark:text-emerald-400">{{ formatCost(usage.actual_cost) }}</span>
+            </div>
+            <dl
+              v-if="usage.timings?.values.attempt_number || usage.duration_ms != null || usage.ttft_ms != null || usage.tps != null"
+              class="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs"
+            >
+              <div v-if="usage.timings?.values.attempt_number" class="flex gap-1.5">
+                <dt class="text-gray-500 dark:text-dark-400">{{ t('requests.producedBy') }}</dt>
+                <dd class="font-mono text-gray-900 dark:text-dark-100">#{{ usage.timings.values.attempt_number }}</dd>
+              </div>
+              <div v-if="usage.duration_ms != null" class="flex gap-1.5">
+                <dt class="text-gray-500 dark:text-dark-400">{{ t('requests.upstreamDuration') }}</dt>
+                <dd class="font-mono tabular-nums text-gray-900 dark:text-dark-100">{{ formatTimingMs(usage.duration_ms) }}</dd>
+              </div>
+              <div v-if="usage.ttft_ms != null" class="flex gap-1.5">
+                <dt class="text-gray-500 dark:text-dark-400">{{ usage.timings?.ttft_mode === 'first_event' ? t('usage.latencyFirstEvent') : t('usage.latencyFirstToken') }}</dt>
+                <dd class="font-mono tabular-nums text-gray-900 dark:text-dark-100">{{ formatTimingMs(usage.ttft_ms) }}</dd>
+              </div>
+              <div v-if="usage.tps != null" class="flex gap-1.5">
+                <dt class="text-gray-500 dark:text-dark-400">TPS</dt>
+                <dd class="font-mono tabular-nums text-gray-900 dark:text-dark-100">{{ usage.tps.toFixed(1) }}</dd>
+              </div>
+            </dl>
           </li>
         </ul>
       </section>
@@ -284,17 +337,16 @@ const attemptResponses = (number: number, providerId?: number) =>
         </ul>
       </section>
 
-      <!-- 关联标识，仅管理员可见 -->
-      <section v-if="aliasRows.length" class="px-6 py-5">
+      <!-- Related identifiers left after attempts show their own IDs; administrators only. -->
+      <section v-if="listedAliases.length" class="px-6 py-5">
         <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-dark-50">{{ t('requests.aliases') }}</h3>
-        <dl class="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs sm:grid-cols-[11rem_minmax(0,1fr)]">
-          <template v-for="alias in aliasRows" :key="aliasKey(alias)">
-            <dt class="text-gray-500 dark:text-dark-400">
-              <span>{{ aliasLabel(alias.kind) }}</span>
-              <span v-if="alias.source || ['caller', 'upstream', 'upstream_request', 'response'].includes(alias.kind)" class="mt-1 block break-all font-mono">{{ alias.source || t('requests.sourceUnrecorded') }}</span>
-              <span v-if="alias.provider_id" class="mt-1 block">{{ t('requests.provider') }} #{{ alias.provider_id }}<template v-if="alias.attempt_number"> · #{{ alias.attempt_number }}</template></span>
-            </dt>
-            <dd class="min-w-0"><RequestIdLink :value="alias.value" :link="false" full /></dd>
+        <dl class="grid grid-cols-1 items-baseline gap-x-3 gap-y-1 text-xs sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-y-2">
+          <template v-for="alias in listedAliases" :key="aliasKey(alias)">
+            <dt class="mt-1 text-gray-500 first:mt-0 dark:text-dark-400 sm:mt-0">{{ aliasLabel(alias.kind) }}</dt>
+            <dd class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <RequestIdLink :value="alias.value" :link="false" full />
+              <span v-if="aliasMeta(alias)" class="text-gray-400 dark:text-dark-500">{{ aliasMeta(alias) }}</span>
+            </dd>
           </template>
         </dl>
       </section>

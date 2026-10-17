@@ -32,6 +32,10 @@ export default {
   "aliases": "关联标识",
   unassignedAttempt: "未编号",
   sourceUnrecorded: "来源未记录",
+  via: "来自 {source}",
+  attemptNumber: "尝试 #{number}",
+  producedBy: "来自尝试",
+  reason: "原因",
   "tokens": "输入 {input} tokens · 输出 {output} tokens",
   "states": {
     "running": "未完成",
