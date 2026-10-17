@@ -57,13 +57,17 @@ describe('UpstreamRequestIdHeaderField', () => {
     expect(wrapper.findAll('code')).toHaveLength(0)
   })
 
-  // The query default differs from usage recording when the setting is blank.
-  // Both translations must explain that distinction instead of promising usage backfill.
-  it('explains the query default and unchanged empty usage identifier', () => {
-    expect(zh.providers.upstreamRequestIdHeaderHelp.intro).toContain('请求查询默认读取 X-Request-ID')
-    expect(zh.providers.upstreamRequestIdHeaderHelp.intro).toContain('使用记录的“上游ID”仍为空')
-    expect(en.providers.upstreamRequestIdHeaderHelp.intro).toContain('request lookup reads X-Request-ID')
-    expect(en.providers.upstreamRequestIdHeaderHelp.intro).toContain('Upstream ID in usage records remains empty')
+  // Request lookup and usage recording share the default when configuration is
+  // blank. Both translations describe custom header precedence and missing values.
+  it('explains the shared default and configured header selection', () => {
+    expect(zh.providers.upstreamRequestIdHeaderHelp.intro).toContain('请求查询和使用记录使用相同规则')
+    expect(zh.providers.upstreamRequestIdHeaderHelp.intro).toContain('留空时默认读取上游响应头 X-Request-ID')
+    expect(zh.providers.upstreamRequestIdHeaderHelp.intro).toContain('填写后只读取指定头')
+    expect(zh.providers.upstreamRequestIdHeaderHelp.intro).toContain('未返回或为空时不记录')
+    expect(en.providers.upstreamRequestIdHeaderHelp.intro).toContain('Request lookup and usage records use the same rule')
+    expect(en.providers.upstreamRequestIdHeaderHelp.intro).toContain('an empty setting reads the upstream X-Request-ID response header')
+    expect(en.providers.upstreamRequestIdHeaderHelp.intro).toContain('a configured setting reads only the selected header')
+    expect(en.providers.upstreamRequestIdHeaderHelp.intro).toContain('A missing or empty selected header records no ID')
     expect(zh.providers.upstreamRequestIdHeaderPlaceholder).toContain('X-Request-ID')
     expect(en.providers.upstreamRequestIdHeaderPlaceholder).toContain('X-Request-ID')
   })

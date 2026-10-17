@@ -182,10 +182,10 @@ func TestResolveUsageBillingRequestID_ForcedGrokAudioBeatsClientID(t *testing.T)
 	require.Equal(t, "grok_audio:up-9", got)
 }
 
-// TestCompletionIdentifiersKeepUsageSelection exercises both completion adapters
-// with competing response headers. Diagnostics default to X-Request-ID, while
-// usage remains absent unless its configured header actually exists.
-func TestCompletionIdentifiersKeepUsageSelection(t *testing.T) {
+// TestCompletionIdentifiersUseSelectedHeader exercises both completion adapters
+// with competing response headers. Request diagnostics and usage select the
+// same default or custom header, and missing custom headers leave both empty.
+func TestCompletionIdentifiersUseSelectedHeader(t *testing.T) {
 	for _, header := range []string{"", "X-Client-Request-ID", "X-Missing"} {
 		for _, messages := range []bool{false, true} {
 			var saved telemetry.RequestRecord
@@ -205,17 +205,18 @@ func TestCompletionIdentifiersKeepUsageSelection(t *testing.T) {
 				actual = out.Result.UpstreamRequestID
 				require.Contains(t, saved.Aliases, telemetry.RequestAlias{Kind: "response", Value: "resp_result", Source: "response.id", AttemptNumber: 1, ProviderID: 7})
 			}
-			if header == "X-Client-Request-ID" {
+			switch header {
+			case "X-Client-Request-ID":
 				require.NotNil(t, actual)
 				require.Equal(t, "custom", *actual)
 				require.Equal(t, "custom", saved.Attempts[0].RequestID)
-			} else {
+			case "":
+				require.NotNil(t, actual)
+				require.Equal(t, "standard", *actual)
+				require.Equal(t, "standard", saved.Attempts[0].RequestID)
+			default:
 				require.Nil(t, actual)
-				if header == "" {
-					require.Equal(t, "standard", saved.Attempts[0].RequestID)
-				} else {
-					require.Empty(t, saved.Attempts[0].RequestID)
-				}
+				require.Empty(t, saved.Attempts[0].RequestID)
 			}
 			for _, alias := range saved.Aliases {
 				require.NotEqual(t, "unselected", alias.Value)

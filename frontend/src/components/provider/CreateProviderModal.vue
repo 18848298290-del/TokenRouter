@@ -1564,6 +1564,18 @@
 import { vContentReveal } from '@/directives/contentReveal'
 import Collapse from '@/components/common/Collapse.vue'
 
+// CreateProviderModal.vue collects administrator input and creates providers with
+// platform-specific credentials, protocols, and routing settings. API Key forms
+// submit their configuration directly. OAuth forms collect authorization input
+// through the embedded flow and pass resulting token data into the selected
+// platform's creation path.
+//
+// Form drafts combine shared fields with platform-specific options before
+// submission. The upstream request-ID field stores a response-header override in
+// provider Extra. A blank override omits that key, allowing the backend default
+// to apply across request diagnostics and usage recording. The dialog reports
+// completed creation through its event callbacks.
+
 // 协议选择保存提供商支持的协议集合。
 const upstreamProtocols = ref<ProtocolID[] | undefined>(undefined)
 
@@ -1718,8 +1730,8 @@ const oauthStepTitle = computed(() => {
   return t('admin.providers.oauth.title')
 })
 
-// Platform-specific hints for API Key type
-// 上游ID：直接上游声明请求标识的响应头名，留空不记录。
+// upstreamRequestIdHeader selects the upstream response header captured in request
+// diagnostics and usage records; a blank field uses the backend X-Request-ID default.
 const upstreamRequestIdHeader = ref('')
 const withUpstreamRequestIdHeader = <T extends Record<string, unknown> | undefined>(extra: T): T | Record<string, unknown> => {
   const name = upstreamRequestIdHeader.value.trim()

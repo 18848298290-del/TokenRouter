@@ -8,12 +8,16 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// upstream_request_id.go extracts configured upstream response identifiers and
-// prepares bounded values for usage records.
-// Usage records capture an upstream request ID only from the
-// provider-configured response header. WebSocket turns omit that
-// header-derived value, and HTTP IDs are trimmed and byte-capped before
-// storage, with truncated tails reduced to valid UTF-8.
+// upstream_request_id.go selects upstream response identifiers and prepares
+// bounded values for usage records. HTTP completion adapters use a provider's
+// configured header, or X-Request-ID when its configuration is blank. Only the
+// selected response header contributes an identifier, so a missing custom header
+// leaves the usage field empty even when another header is present.
+//
+// Usage identifiers fit a byte-limited database field. Values are trimmed before
+// capture, then truncated with any incomplete UTF-8 suffix removed. WebSocket
+// turns omit header-derived identifiers because individual turns share one HTTP
+// connection. A missing provider also leaves the usage field empty.
 
 const (
 	// maxUsageUpstreamRequestIDLen bounds captured upstream IDs in bytes before
@@ -21,16 +25,19 @@ const (
 	maxUsageUpstreamRequestIDLen = 128
 )
 
-// UpstreamRequestIDFromHeaders reads the provider-configured response header
-// and trims its value. Empty headers or an absent configured name return an
-// empty string; common platform header names are not inferred.
+// UpstreamRequestIDFromHeaders reads and trims the selected upstream response
+// header. Blank provider configuration selects X-Request-ID. Nil providers,
+// empty headers, and a missing selected header return an empty string; a
+// configured header takes precedence even when another header has a value.
 func UpstreamRequestIDFromHeaders(provider *acctcore.Record, h http.Header) string {
-	if len(h) == 0 {
+	if provider == nil || len(h) == 0 {
 		return ""
 	}
 	name := acctcore.UpstreamRequestIDHeaderName(provider)
 	if name == "" {
-		return ""
+		// Match request diagnostics so ordinary HTTP completions retain a searchable
+		// upstream identifier when administrators leave the header setting blank.
+		name = "X-Request-ID"
 	}
 	return strings.TrimSpace(h.Get(name))
 }

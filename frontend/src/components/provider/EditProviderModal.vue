@@ -1207,7 +1207,9 @@ const autoPause5hThreshold = ref<number | null>(null)
 const autoPause7dThreshold = ref<number | null>(null)
 const autoPause5hDisabled = ref(false)
 const autoPause7dDisabled = ref(false)
-// 上游ID：直接上游声明请求标识的响应头名，留空不记录。
+
+// upstreamRequestIdHeader holds the editable response-header override. Clearing it
+// removes the saved override and restores X-Request-ID for subsequent HTTP requests.
 const upstreamRequestIdHeader = ref('')
 const readUpstreamRequestIdHeader = (extra: unknown): string => {
   const value = (extra as Record<string, unknown> | undefined)?.upstream_request_id_header

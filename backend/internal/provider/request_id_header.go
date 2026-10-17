@@ -9,10 +9,10 @@ import (
 
 // request_id_header.go validates and reads the configured upstream response
 // header used for request-ID capture.
-// Provider request-ID recording reads one administrator-selected response Header
-// from the direct upstream. An absent or blank setting disables capture; saving
-// validates Header token syntax and size before replacing the Extra value used
-// by request observation.
+// Request diagnostics and usage capture read the administrator's selected
+// response header from the direct upstream, using X-Request-ID when the setting
+// is absent or blank. Saving validates header token syntax and size before
+// replacing the Extra value used by those readers.
 
 // Header-name size and Extra-key values govern administrator validation and the
 // direct upstream Header read used by request-ID capture.
@@ -20,14 +20,14 @@ const (
 	maxUpstreamRequestIDHeaderNameLen = 64
 
 	// ProviderExtraUpstreamRequestIDHeader names the Extra field selecting the
-	// direct upstream response Header. An unset field disables upstream request-ID
-	// capture.
+	// direct upstream response header. An unset field lets request diagnostics
+	// and usage capture select their default X-Request-ID header.
 	ProviderExtraUpstreamRequestIDHeader = "upstream_request_id_header"
 )
 
-// UpstreamRequestIDHeaderName returns the trimmed configured response Header
-// name used for direct upstream request-ID capture. Nil providers or unset
-// values return empty, disabling this optional observation at its consumers.
+// UpstreamRequestIDHeaderName returns the trimmed response header override used
+// for upstream request-ID capture. Nil providers or unset values return empty;
+// request diagnostics and usage capture apply their default header selection.
 func UpstreamRequestIDHeaderName(provider *Record) string {
 	if provider == nil {
 		return ""

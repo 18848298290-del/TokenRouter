@@ -864,9 +864,9 @@ export default {
       apiKeyPlaceholder: 'sk-ant-api03-...',
       apiKeyHint: '您的 Claude Console API Key',
       upstreamRequestIdHeader: '上游ID',
-      upstreamRequestIdHeaderPlaceholder: '请求查询默认 X-Request-ID',
+      upstreamRequestIdHeaderPlaceholder: '默认 X-Request-ID',
       upstreamRequestIdHeaderHelp: {
-        intro: '填写后，请求查询和使用记录都只读取指定的上游响应头。留空时，请求查询默认读取 X-Request-ID，使用记录的“上游ID”仍为空。指定头未返回时不记录。',
+        intro: '请求查询和使用记录使用相同规则：留空时默认读取上游响应头 X-Request-ID，填写后只读取指定头。选中的头未返回或为空时不记录。',
         examplesTitle: '常见取值',
         sub2apiNote: '对应对方用量明细的请求ID列',
         official: '{platform} 官方 API'
