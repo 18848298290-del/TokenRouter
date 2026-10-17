@@ -1,10 +1,5 @@
 <template>
   <div :class="isTooltip ? 'space-y-3' : 'space-y-4 text-sm'">
-    <p v-if="attributes.route_differences" class="flex items-start gap-1.5" :class="isTooltip ? 'text-amber-300' : 'text-amber-700 dark:text-amber-300'">
-      <Icon name="exclamationTriangle" size="xs" class="mt-0.5 h-3.5 w-3.5" />
-      <span>{{ t('admin.modelAttributes.routeDifferences') }}</span>
-    </p>
-
     <!-- 数值上限保留文字标签，数字右对齐并使用等宽数字方便比较。 -->
     <dl :class="isTooltip ? 'space-y-1.5' : 'space-y-2'">
       <div v-for="field in textFields" :key="field" class="flex items-baseline justify-between gap-4">
@@ -61,6 +56,11 @@
         <dd class="min-w-0 break-words text-right" :class="row.muted ? mutedClass : valueClass">{{ row.value }}</dd>
       </div>
     </dl>
+    <slot />
+    <p v-if="attributes.route_differences" class="flex items-start gap-1.5" :class="isTooltip ? 'text-amber-300' : 'text-amber-700 dark:text-amber-300'">
+      <Icon name="exclamationTriangle" size="xs" class="mt-0.5 h-3.5 w-3.5" />
+      <span>{{ t('admin.modelAttributes.routeDifferences') }}</span>
+    </p>
   </div>
 </template>
 
@@ -73,6 +73,11 @@ import ModalityIcon from '@/components/common/ModalityIcon.vue'
 import type { IconName } from '@/components/icons/registry'
 import type { ModelModality } from '@/utils/modelCapabilities'
 import { attributeCapabilities, attributeLimits, attributeModalities, conditionalCapabilities, mediaLimitFields, mediaListFields, type ConditionalCapability, type ModelAttributes, type ParameterCondition, type ReasoningOption } from '@/types/modelAttributes'
+
+// ModelAttributesSummary.vue renders model limits, modalities, and capability
+// details in tooltips and administrative views. Unknown values remain distinct
+// from unsupported capabilities. The default slot places supplementary content,
+// such as protocols, before the final route differences notice.
 
 const props = withDefaults(defineProps<{
   attributes: ModelAttributes

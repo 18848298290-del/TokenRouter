@@ -13,7 +13,7 @@ export default {
     "unsupported": "不支持",
     "unknown": "未知 / 不适用",
     "none": "无",
-    "routeDifferences": "不同上游路线的属性存在差异，此处展示共同能力和已知最小上限。",
+    "routeDifferences": "路线属性有差异，取共同能力和已知最小上限",
     "create": "新增属性配置",
     "edit": "编辑属性配置",
     "details": "查看属性",

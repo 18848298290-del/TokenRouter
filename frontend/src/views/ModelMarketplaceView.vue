@@ -241,12 +241,17 @@
                           <Icon name="infoCircle" size="sm" class="h-4 w-4" />
                         </button>
                       </template>
-                      <ModelAttributesSummary v-if="model.attributes" :attributes="model.attributes" variant="tooltip" />
-                      <!-- 有属性时，协议段用和属性浮层相同的分隔线隔开。 -->
+                      <ModelAttributesSummary v-if="model.attributes" :attributes="model.attributes" variant="tooltip">
+                        <ModelProtocolChips
+                          :protocols="model.protocols"
+                          :native-protocols="model.native_protocols"
+                          class="border-t border-white/10 pt-3 dark:border-dark-700"
+                        />
+                      </ModelAttributesSummary>
                       <ModelProtocolChips
+                        v-else
                         :protocols="model.protocols"
                         :native-protocols="model.native_protocols"
-                        :class="model.attributes ? 'mt-3 border-t border-white/10 pt-3 dark:border-dark-700' : ''"
                       />
                     </HelpTooltip>
                   </div>
@@ -319,6 +324,11 @@ import { marketplaceProtocols } from '@/utils/marketplaceProtocols'
 import { sanitizeUrl } from '@/utils/url'
 import type { MarketplaceGroup, MarketplaceModelPricing, MarketplacePricingInterval } from '@/types'
 import { useAppStore, useAuthStore } from '@/stores'
+
+// ModelMarketplaceView.vue displays public model groups with searchable pricing
+// and capability details. Authenticated visitors use the application layout,
+// while guests receive the public page. Model tooltips combine attributes and
+// protocols, with route differences shown after both sections.
 
 type VisibleMarketplaceGroup = MarketplaceGroup
 type PricingFilter = 'all' | 'token' | 'image' | 'unpriced'

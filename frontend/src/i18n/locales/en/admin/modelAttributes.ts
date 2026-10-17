@@ -13,7 +13,7 @@ export default {
     "unsupported": "Not supported",
     "unknown": "Unknown / not applicable",
     "none": "None",
-    "routeDifferences": "Upstream routes have different attributes. Common capabilities and the lowest known limits are shown.",
+    "routeDifferences": "Routes differ: shared capabilities, lowest known limits",
     "create": "Create config",
     "edit": "Edit attribute configuration",
     "details": "View attributes",
