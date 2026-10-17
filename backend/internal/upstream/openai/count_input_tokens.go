@@ -27,6 +27,9 @@ import (
 // callbacks. Request construction forwards only the supplied User-Agent and
 // language values before custom User-Agent selection and provider overrides,
 // keeping inference-session headers out of the token-query request.
+// Each returned HTTP response also fixes the diagnostic dispatch reference;
+// finalization records validation and read failures even though counts produce
+// no usage record that could otherwise close the attempt.
 
 // InputTokensOptions supplies admission, transport, and error output for
 // compatibility token counting.
@@ -56,8 +59,9 @@ type NativeInputTokensOptions struct {
 // CountInputTokens sends request, extracts input_tokens, and writes a
 // compatibility count response. Enter is optional; all other callbacks and
 // request are required, response ownership stays here, and missing counts or
-// read failures also invoke WriteError.
-func CountInputTokens(request *http.Request, options InputTokensOptions, sink upstream.OutputSink) error {
+// read failures also invoke WriteError. The response's fixed dispatch is finished
+// on return, including handled HTTP failures whose presenter returns nil.
+func CountInputTokens(request *http.Request, options InputTokensOptions, sink upstream.OutputSink) (failure error) {
 	if options.Enter != nil {
 		done, err := options.Enter()
 		if err != nil {
@@ -71,6 +75,9 @@ func CountInputTokens(request *http.Request, options InputTokensOptions, sink up
 	if err != nil {
 		return options.TransportError(err)
 	}
+	var attempt upstream.AttemptResult
+	attempt.CaptureRequestAttempt(resp)
+	defer func() { attempt.Finish(request.Context(), failure) }()
 	// Release the acquired response on status, field-validation, and read exits
 	// so token-query failures do not keep an HTTP transport connection occupied.
 	defer func() { _ = resp.Body.Close() }()
@@ -139,8 +146,9 @@ func BuildInputTokensRequest(ctx context.Context, body []byte, options Responses
 // CountNativeInputTokens sends request and forwards complete JSON after
 // validating a numeric input_tokens field. Enter is optional and other
 // callbacks are required; this function closes the response, while ReadBody
-// determines its read budget and WriteError emits local failures.
-func CountNativeInputTokens(request *http.Request, options NativeInputTokensOptions, sink upstream.OutputSink) error {
+// determines its read budget and WriteError emits local failures. Finalization
+// uses the response's dispatch reference to close its diagnostic attempt.
+func CountNativeInputTokens(request *http.Request, options NativeInputTokensOptions, sink upstream.OutputSink) (failure error) {
 	if options.Enter != nil {
 		done, err := options.Enter()
 		if err != nil {
@@ -154,6 +162,9 @@ func CountNativeInputTokens(request *http.Request, options NativeInputTokensOpti
 	if err != nil {
 		return options.TransportError(err)
 	}
+	var attempt upstream.AttemptResult
+	attempt.CaptureRequestAttempt(resp)
+	defer func() { attempt.Finish(request.Context(), failure) }()
 	// Release the acquired response on status, field-validation, and read exits
 	// so token-query failures do not keep an HTTP transport connection occupied.
 	defer func() { _ = resp.Body.Close() }()

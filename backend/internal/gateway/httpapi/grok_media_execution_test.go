@@ -1637,7 +1637,7 @@ func TestVideoContentKeepsDispatchAndTerminalOutcomes(t *testing.T) {
 			case "content_redirect":
 				content.StatusCode = 302
 			}
-			transport := &imageDiagnosticTransport{pool: httpclient.NewUpstreamPool(), responses: []*http.Response{status, content}}
+			transport := &diagnosticHTTPTransport{pool: httpclient.NewUpstreamPool(), responses: []*http.Response{status, content}}
 			c, _ := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", nil)
 			c.Request = c.Request.WithContext(ctx)
 			result, err := grokMediaFixture(transport).ForwardGrokMedia(ctx, c, target, grok.GrokMediaEndpointVideoContent, "task-1", nil, "")

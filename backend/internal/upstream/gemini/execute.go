@@ -26,7 +26,8 @@ import (
 // counters while presence and served flags accumulate across payloads;
 // inline-image observation uses the maximum count from one payload. A native
 // count fallback emits an estimate on its own path and leaves upstream usage
-// and semantic-output observations unset.
+// and semantic-output observations unset. Count output validation failures
+// propagate through finalization so a rejected count cannot appear completed.
 
 const (
 	// Response mode values select the exchange and response adapter used for
@@ -103,7 +104,9 @@ func (t *Target) GoString() string { return t.String() }
 // per-payload image count, while later usage values replace earlier counters.
 // An estimated token result emits a native count response and remains separate
 // from billed usage. Deferred timing and cancellation annotate failures after
-// the attempt timing origin has been selected.
+// the attempt timing origin has been selected. Counting returns output errors,
+// including count-shape validation from a compatibility sink; generation retains
+// its independently observed usage after a client delivery failure.
 // @project-doc docs/interfaces/gemini_upstream.md#gemini_native_execution
 func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
 	defer func() { result.Finish(ctx, failure) }()
@@ -159,9 +162,10 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		output.JSON(http.StatusOK, map[string]any{"totalTokens": *exchange.EstimatedTokens})
 		result.Stream = false
 		result.ClientDisconnect = output.Err() != nil
-		return result, nil
+		return result, output.Err()
 	}
 	resp := exchange.Response
+	result.CaptureRequestAttempt(resp)
 	if resp == nil || resp.Body == nil {
 		return result, errors.New("gemini upstream returned empty response")
 	}
@@ -225,5 +229,10 @@ func (Executor) Execute(ctx context.Context, input upstream.AttemptInput, sink u
 		result.Usage = *usage
 	}
 	result.ClientDisconnect = output.Err() != nil
+	if target.Exchange.CountFallback && err == nil {
+		// Count sinks can reject a syntactically valid upstream payload after reading.
+		// Propagate that failure so the same dispatch receives a failed diagnostic outcome.
+		err = output.Err()
+	}
 	return result, err
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
 // runtime.go starts Messages, counting, Chat, and Responses flows with fresh
@@ -13,7 +14,8 @@ import (
 // Each Messages entry creates its own preparation state before invoking
 // gateway/forward. Chat and Responses retain separate output modes while using
 // the same selected provider and request-local tool restoration, and counting
-// follows a distinct error format.
+// follows a distinct error format. Count completion uses the retained HTTP
+// response to finish its diagnostic attempt because counting has no usage writer.
 
 // Execute forwards one parsed Messages request using fresh attempt state for
 // the selected provider. gateway/forward controls preparation and partial
@@ -27,9 +29,14 @@ func (r *Runtime) Execute(ctx context.Context, output HTTPBoundary, target *gate
 
 // Count runs token counting with fresh preparation state for the selected
 // provider. The counting flow owns its response format and reports unsupported
-// routes separately from ordinary generation errors.
-func (r *Runtime) Count(ctx context.Context, output HTTPBoundary, target *gatewayadapter.ExecutionProvider, parsed *requeststate.ParsedRequest) error {
+// routes separately from ordinary generation errors. The latest retained HTTP
+// response identifies the final dispatch after signature repair; prior HTTP
+// failures and failed sends keep their already observed outcomes.
+func (r *Runtime) Count(ctx context.Context, output HTTPBoundary, target *gatewayadapter.ExecutionProvider, parsed *requeststate.ParsedRequest) (failure error) {
 	adapter := &countAttempt{attempt: newAttempt(r, output, target)}
+	defer func() {
+		telemetry.ObserveRequestResult(ctx, telemetry.RequestAttemptFromResponse(adapter.response), failure)
+	}()
 	return forward.CountTokens(ctx, adapter, adapter.input(), parsed)
 }
 

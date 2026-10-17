@@ -652,6 +652,16 @@ type geminiPrefaceBackend struct {
 // completion flow.
 type unifiedRecordFunds struct{}
 
+// diagnosticRoundTrip replaces the wire response while preserving the production
+// upstream pool's dispatch observation and response ownership behavior.
+type diagnosticRoundTrip func(*http.Request) (*http.Response, error)
+
+// diagnosticHTTPTransport serves controlled upstream fixtures through the real pool.
+type diagnosticHTTPTransport struct {
+	pool      *httpclient.UpstreamPool // production HTTP pool
+	responses []*http.Response         // ordered fixture responses
+}
+
 // init leaves shared HTTP fixture setup with each owning test.
 func init() {}
 
@@ -3515,4 +3525,25 @@ func textPricingFixture(t *testing.T, cards ...routing.ModelPricingEntry) *admis
 // the returned balance result as completion-flow evidence.
 func (unifiedRecordFunds) Apply(_ context.Context, command *billing.UsageBillingCommand) (*billing.UsageBillingApplyResult, error) {
 	return &billing.UsageBillingApplyResult{Applied: true, BalanceAmountUSD: command.BillableAmountUSD}, nil
+}
+
+// RoundTrip delegates one local response fixture to its configured handler.
+func (f diagnosticRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Do sends one fixture exchange through production attempt and header observation.
+func (p *diagnosticHTTPTransport) Do(req *http.Request, _ string, id int64, _ int) (*http.Response, error) {
+	return p.pool.Do(req, httpclient.UpstreamRequestOptions{ProviderID: id, PrepareClient: func(c *http.Client) *http.Client {
+		c.Transport = diagnosticRoundTrip(func(r *http.Request) (*http.Response, error) {
+			response := p.responses[0]
+			p.responses = p.responses[1:]
+			response.Request = r
+			return response, nil
+		})
+		return c
+	}})
+}
+
+// DoWithTLS reuses fixture dispatch while leaving fingerprint behavior outside this probe.
+func (p *diagnosticHTTPTransport) DoWithTLS(req *http.Request, proxy string, id int64, n int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return p.Do(req, proxy, id, n)
 }
