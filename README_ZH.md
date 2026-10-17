@@ -13,7 +13,7 @@
   </p>
 
   <p><strong>简体中文</strong> | <a href="README.md">English</a></p>
-  <p><a href="https://discord.gg/4tPj7uk4">加入 Discord 群组</a></p>
+  <p><a href="https://discord.com/invite/7XZzukhX4E">加入 Discord 群组</a></p>
 </div>
 
 ## 简介
