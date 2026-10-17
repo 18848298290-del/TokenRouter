@@ -2382,3 +2382,32 @@ func TestRelay_OnTurnComplete_RealOpenAIStream_TTFT(t *testing.T) {
 	require.NotNil(t, result.Timings.TTFTMs())
 	require.Greater(t, *result.Timings.TTFTMs(), 0)
 }
+
+// TestRelayToolArgumentsDoneExtendsContentInterval supplies a tool name followed by
+// its first full arguments and repeated terminal snapshots. Callback and aggregate
+// performance must retain two useful arrivals and the same nonempty TPS estimate.
+func TestRelayToolArgumentsDoneExtendsContentInterval(t *testing.T) {
+	client := newPassthroughTestFrameConn(nil, false)
+	upstream := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.created","response":{"id":"r"}}`)},
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.output_item.added","response_id":"r","item":{"id":"call1","type":"function_call","name":"lookup","arguments":""}}`)},
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.function_call_arguments.done","response_id":"r","item_id":"call1","arguments":"{}"}`)},
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.output_item.done","response_id":"r","item":{"id":"call1","type":"function_call","name":"lookup","arguments":"{}"}}`)},
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.completed","response":{"id":"r","output":[{"id":"call1","type":"function_call","name":"lookup","arguments":"{}"}],"usage":{"input_tokens":10,"output_tokens":20}}}`)},
+	}, true)
+	base := time.Unix(0, 0)
+	var tick atomic.Int64
+	var turn RelayTurnResult
+	result, exit := Relay(t.Context(), client, upstream, []byte(`{"type":"response.create","model":"model","input":[]}`), RelayOptions{
+		// Workers share an advancing atomic clock, keeping distinct frame arrivals
+		// ordered while avoiding real sleeps or assumptions about goroutine scheduling.
+		Now:            func() time.Time { return base.Add(time.Duration(tick.Add(1)) * 10 * time.Millisecond) },
+		OnTurnComplete: func(value RelayTurnResult) { turn = value },
+	})
+	require.Nil(t, exit)
+	require.NotNil(t, turn.Timings)
+	require.Equal(t, int64(2), turn.Timings.Values["upstream_output_event_count"])
+	require.NotNil(t, turn.Timings.TPS(20))
+	require.Equal(t, turn.Timings.TPS(20), result.Timings.TPS(20))
+	require.Less(t, turn.Timings.Values["upstream_last_output_ms"], turn.Timings.Values["upstream_completed_ms"])
+}

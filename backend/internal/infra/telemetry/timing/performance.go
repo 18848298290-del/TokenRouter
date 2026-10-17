@@ -30,7 +30,16 @@ import (
 const (
 	FirstOutput = "first_output" // first useful upstream content
 	FirstEvent  = "first_event"  // first non-heartbeat upstream event
+
+	// Response content flags separate static tool identity from text and argument
+	// arrivals, allowing completed snapshots to contribute fields not observed earlier.
+	responseText      responseContentParts = 1 << 0 // text or reasoning content
+	responseToolName  responseContentParts = 1 << 1 // explicit tool name
+	responseToolInput responseContentParts = 1 << 2 // actual tool input
 )
+
+// responseContentParts identifies independently observed content within one Responses item.
+type responseContentParts uint8
 
 // Performance carries one usage-producing exchange and its request observations.
 // Offsets are milliseconds from request ingress. Completion copies Values before
@@ -41,15 +50,15 @@ type Performance struct {
 	origin       time.Time       // runtime request clock reference
 	onDisconnect func(time.Time) // active request lifecycle observer
 
-	// Values and seenItems mutate only while this exchange is observed. Clone
+	// Values and seenOutputParts mutate only while this exchange is observed. Clone
 	// separates both maps before another goroutine retains the captured performance.
-	Mode          string           `json:"ttft_mode"`         // request mode snapshot
-	Values        map[string]int64 `json:"values"`            // request-relative observations
-	Stream        bool             `json:"upstream_stream"`   // observed upstream streaming mode
-	Complete      bool             `json:"upstream_complete"` // successful upstream terminal observed
-	UsageComplete bool             `json:"usage_complete"`    // final output usage observed
-	seenItems     map[string]bool  // streamed output item identities
-	failed        bool             // unsuccessful terminal already observed
+	Mode            string                          `json:"ttft_mode"`         // request mode snapshot
+	Values          map[string]int64                `json:"values"`            // request-relative observations
+	Stream          bool                            `json:"upstream_stream"`   // observed upstream streaming mode
+	Complete        bool                            `json:"upstream_complete"` // successful upstream terminal observed
+	UsageComplete   bool                            `json:"usage_complete"`    // final output usage observed
+	seenOutputParts map[string]responseContentParts // observed per-item content kinds
+	failed          bool                            // unsuccessful terminal already observed
 }
 
 // performanceKey carries immutable completion observations across detached contexts.
@@ -94,7 +103,7 @@ func (p *Performance) Clone() *Performance {
 	out := *p
 	out.onDisconnect = nil
 	out.Values = maps.Clone(p.Values)
-	out.seenItems = maps.Clone(p.seenItems)
+	out.seenOutputParts = maps.Clone(p.seenOutputParts)
 	return &out
 }
 
@@ -184,7 +193,7 @@ func WithPerformance(ctx context.Context, p *Performance) context.Context {
 // without treating EOF or an error frame as a successful generation.
 //
 // Final usage is recognized through protocol-specific terminal or usage envelopes.
-// Item identities distinguish streamed content from repeated done snapshots, so
+// Item identities and content kinds distinguish new fields from repeated snapshots, so
 // bookkeeping at the end cannot extend the output interval. Only identities and
 // numeric observations survive this call; content payloads remain borrowed input.
 func (p *Performance) Observe(data, event string, now int64) {
@@ -232,11 +241,15 @@ func (p *Performance) Observe(data, event string, now int64) {
 	chatFinished := false
 	finalMessage := false
 	for _, choice := range v.Get("choices").Array() {
-		finished := nonemptyString(choice.Get("finish_reason"))
+		finished := nonemptyString(choice.Get("finish_reason")) && strings.TrimSpace(choice.Get("finish_reason").String()) != ""
 		chatFinished = chatFinished || finished
 		finalMessage = finalMessage || wrappedBody && finished && content(choice.Get("message"))
 	}
-	terminal = terminal || finalMessage
+	// Chat readers accept finish reasons and final usage without a DONE sentinel.
+	// Incomplete counters still leave TPS unavailable even after a finish reason.
+	chatOutput := v.Get("usage.completion_tokens")
+	chatUsage := usageOnly && chatOutput.Type == gjson.Number && chatOutput.Int() >= 0 && (kind == "" || v.Get("choices").IsArray())
+	terminal = terminal || chatFinished || chatUsage || finalMessage
 	if terminal {
 		p.Complete = !p.failed
 		if _, recorded := p.Values["upstream_completed_ms"]; !recorded {
@@ -261,34 +274,102 @@ func (p *Performance) Observe(data, event string, now int64) {
 		p.Complete = false
 		return
 	}
-	item := v.Get("item_id").String()
-	if item == "" {
-		item = v.Get("item.id").String()
-	}
-	// Responses done payloads repeat completed items, while Gemini terminal
-	// candidates can carry another incremental content chunk that still counts.
-	snapshot := kind == "response.completed" || strings.HasSuffix(kind, ".done") || finalMessage
-	repeatedSnapshot := snapshot && p.Values["upstream_output_event_count"] > 0 && (item == "" || p.seenItems[item])
 	useful := UsefulOutput(data, event)
+	if strings.HasPrefix(kind, "response.") {
+		useful = p.observeResponseContent(v, kind, useful)
+	} else if finalMessage && p.Values["upstream_output_event_count"] > 0 {
+		// Qoder final messages repeat the accumulated Chat output. Its incremental
+		// deltas have already established the content interval before this snapshot arrives.
+		useful = false
+	}
 	if event == "qoder_content_delta" {
 		useful = nonemptyString(v.Get("text"))
 	}
 	if kind == "tool_use_start" || kind == "tool_use_delta" || kind == "tool_call_delta" {
 		useful = nonemptyString(v.Get("name")) || nonemptyString(v.Get("tool_name")) || toolInput(v.Get("arguments")) || toolInput(v.Get("input")) || nonemptyString(v.Get("partial_json"))
 	}
-	if useful && !repeatedSnapshot {
-		if item != "" {
-			if p.seenItems == nil {
-				p.seenItems = make(map[string]bool)
-			}
-			p.seenItems[item] = true
-		}
+	if useful {
 		if _, ok := p.Values["upstream_first_output_ms"]; !ok {
 			p.Values["upstream_first_output_ms"] = now
 		}
 		p.Values["upstream_last_output_ms"] = now
 		p.Values["upstream_output_event_count"]++
 	}
+}
+
+// observeResponseContent distinguishes new Responses fields from completed echoes.
+// Incremental deltas always advance their content interval; full item and response
+// snapshots contribute only content kinds that were not already observed. A tool
+// name therefore cannot suppress the first arrival of that tool's actual input.
+//
+// Completed responses can contain several items, so every item updates its own
+// evidence even after another item qualifies this event. The caller counts the
+// entire event once, and these flags retain no generated content or persistence data.
+func (p *Performance) observeResponseContent(v gjson.Result, kind string, useful bool) bool {
+	if !useful {
+		return false
+	}
+	if output := v.Get("response.output"); output.IsArray() {
+		fresh := false
+		for _, item := range output.Array() {
+			observed := p.observeResponseParts(item.Get("id").String(), responseItemParts(item), false)
+			fresh = fresh || observed
+		}
+		return fresh
+	}
+	if item := v.Get("item"); item.IsObject() {
+		return p.observeResponseParts(item.Get("id").String(), responseItemParts(item), false)
+	}
+	parts := responseText
+	if strings.Contains(kind, "function_call_arguments") || strings.Contains(kind, "custom_tool_call_input") {
+		parts = responseToolInput
+	}
+	return p.observeResponseParts(v.Get("item_id").String(), parts, strings.HasSuffix(kind, ".delta"))
+}
+
+// responseItemParts selects meaningful text, tool name and input fields in one item.
+// Empty input placeholders contribute no input flag. Other item types use the
+// shared content predicate, keeping signatures, image artifacts and metadata excluded.
+func responseItemParts(item gjson.Result) responseContentParts {
+	if kind := item.Get("type").String(); kind == "function_call" || kind == "custom_tool_call" {
+		var parts responseContentParts
+		if nonemptyString(item.Get("name")) {
+			parts |= responseToolName
+		}
+		if toolInput(item.Get("arguments")) || toolInput(item.Get("input")) {
+			parts |= responseToolInput
+		}
+		return parts
+	}
+	if content(item) {
+		return responseText
+	}
+	return 0
+}
+
+// observeResponseParts remembers which content fields arrived for an output item.
+// A full snapshot advances timing only when it introduces another kind of content;
+// deltas advance on every call because repeated text can represent additional tokens.
+//
+// Some compatible payloads omit item IDs. An unidentified snapshot compares the
+// fields observed across the exchange, while an identified item can reuse earlier
+// anonymous evidence. This conservative association avoids extending the interval
+// merely because an otherwise repeated terminal gained or lost its identifier.
+func (p *Performance) observeResponseParts(item string, parts responseContentParts, incremental bool) bool {
+	if parts == 0 {
+		return false
+	}
+	if p.seenOutputParts == nil {
+		p.seenOutputParts = make(map[string]responseContentParts)
+	}
+	seen := p.seenOutputParts[item] | p.seenOutputParts[""]
+	if item == "" {
+		for _, previous := range p.seenOutputParts {
+			seen |= previous
+		}
+	}
+	p.seenOutputParts[item] |= parts
+	return incremental || parts&^seen != 0
 }
 
 // WithModeReader installs the global setting reader before request authorization.

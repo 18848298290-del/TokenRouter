@@ -407,3 +407,57 @@ func TestTimingLocalFailureDoesNotFlushUpstream(t *testing.T) {
 	require.NotContains(t, stages.Snapshot(), "upstream_first_event_ms")
 	require.NotContains(t, stages.Snapshot(), "first_downstream_flush_ms")
 }
+
+// TestTextRequestTimingFinalUsageAndToolInput exercises the upstream body observer
+// with separately arriving SSE frames. Both accepted Chat completion and newly
+// arrived tool arguments must retain complete usage and the actual content interval.
+func TestTextRequestTimingFinalUsageAndToolInput(t *testing.T) {
+	for name, frames := range map[string][]string{
+		"chat_without_done": {
+			`{"choices":[{"delta":{"content":"hello"}}]}`,
+			`{"choices":[{"delta":{"content":" world"}}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":20}}`,
+		},
+		"tool_arguments_done": {
+			`{"type":"response.output_item.added","item":{"id":"tool","type":"function_call","name":"lookup","arguments":""}}`,
+			`{"type":"response.function_call_arguments.done","item_id":"tool","arguments":"{}"}`,
+			`{"type":"response.completed","response":{"output":[{"id":"tool","type":"function_call","name":"lookup","arguments":"{}"}],"usage":{"input_tokens":10,"output_tokens":20}}}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				router := gin.New()
+				router.Use(TextRequestTiming())
+				var observed *timing.Performance
+				router.POST("/v1/responses", func(c *gin.Context) {
+					SetOpsRequestContext(c, "model", true)
+					MarkOpsProviderSlotAcquired(c)
+					reader, writer := io.Pipe()
+					// Each pipe write waits for the reader before virtual time advances again,
+					// distinguishing upstream arrivals without relying on machine scheduling delays.
+					go func() {
+						defer func() { _ = writer.Close() }()
+						for _, frame := range frames {
+							time.Sleep(100 * time.Millisecond)
+							if _, err := io.WriteString(writer, "data: "+frame+"\n\n"); err != nil {
+								return
+							}
+						}
+					}()
+					response := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: reader}
+					timing.ObserveResponse(timing.BeginHTTPTrace(c.Request.Context()), response)
+					_, err := io.ReadAll(response.Body)
+					require.NoError(t, err)
+					require.NoError(t, response.Body.Close())
+					observed = timing.PerformanceFromContext(c.Request.Context())
+				})
+				router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+				require.NotNil(t, observed)
+				require.True(t, observed.Complete)
+				require.True(t, observed.UsageComplete)
+				require.Equal(t, int64(2), observed.Values["upstream_output_event_count"])
+				require.Equal(t, 200.0, *observed.TPS(20))
+			})
+		})
+	}
+}

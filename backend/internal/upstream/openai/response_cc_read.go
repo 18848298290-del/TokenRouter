@@ -67,9 +67,8 @@ type CCStreamScanState struct {
 // scanner uses the configured growth limit.
 //
 // Raw payload observation and usage extraction precede typed JSON decoding, so
-// malformed chunks can be observed before they are skipped. The first typed
-// output-start chunk sets elapsed milliseconds unless it is usage-only. DONE
-// ends scanning, while absent DONE remains distinguishable from a scanner
+// malformed chunks can be observed before they are skipped. DONE ends
+// scanning, while absent DONE remains distinguishable from a scanner
 // error. Callers use Err to avoid synthesizing successful conversion
 // finalization after interruption and read the selected processing tier after
 // scanning.
@@ -91,9 +90,9 @@ func ScanCCStream(resp *http.Response, options CCResponseOptions, logPrefix, req
 			st.SawDone = true
 			break
 		}
-		options.ObserveChunk([]byte(payload))
 		// Observe the echoed model and tier for billing. Chat chunks have no event type
 		// and therefore use the untyped-payload tier observation path.
+		options.ObserveChunk([]byte(payload))
 
 		if u := wire.ExtractCCStreamUsage(payload); u != nil {
 			st.Usage = *u
