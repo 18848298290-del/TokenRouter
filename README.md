@@ -3,7 +3,7 @@
 
   <h1>TokenRouter</h1>
 
-  <p>开源的大模型统一网关</p>
+  <p>An open source unified LLM gateway</p>
 
   <p>
     <a href="https://github.com/TokenFlux/TokenRouter/actions/workflows/ci.yml"><img src="https://github.com/TokenFlux/TokenRouter/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
@@ -12,120 +12,120 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0--or--later-4c1.svg" alt="License: LGPL-3.0-or-later" /></a>
   </p>
 
-  <p><strong>简体中文</strong> | <a href="README_EN.md">English</a></p>
-  <p><a href="https://discord.gg/4tPj7uk4">加入 Discord 群组</a></p>
+  <p><a href="README_ZH.md">简体中文</a> | <strong>English</strong></p>
+  <p><a href="https://discord.gg/4tPj7uk4">Join our Discord community</a></p>
 </div>
 
-## 简介
+## Overview
 
-TokenRouter 是一个开源的大模型统一网关。它把 Anthropic、OpenAI、Gemini 等多家厂商的模型服务接到同一个入口，用户用一个 API Key 就能调用不同厂商的模型。
+TokenRouter is an open source unified LLM gateway. It puts model services from Anthropic, OpenAI, Gemini, and other vendors behind one endpoint, so a client can call models from different vendors with a single API key.
 
 > [!WARNING]
-> 本项目允许在遵守开源许可证的前提下用于商业中转服务，但不得冒充 TokenFlux 官方站点，或通过名称、Logo、域名、界面及宣传造成官方运营、授权、合作或背书关系的混淆。建议商业运营者定制前端并清晰标明实际运营主体；对于侵权或造成上述混淆的行为，相关权利人保留依法要求整改的权利。详见[商业使用与品牌声明](BRANDING.md)。
+> Commercial API gateway services are permitted under the applicable open-source licenses. You must not impersonate the official TokenFlux service or use names, logos, domains, interfaces, or promotional materials that misleadingly suggest official operation, authorization, partnership, or endorsement by TokenFlux. Commercial operators are encouraged to customize the frontend and clearly identify the actual operator. The relevant rights holders reserve the right to seek corrective action under applicable law for infringement or such confusion. See the [Commercial Use and Branding Notice](BRANDING_EN.md).
 
-## 界面预览
+## Screenshots
 
 <details open>
-<summary>浅色模式</summary>
+<summary>Light mode</summary>
 
-### 仪表盘
+### Dashboard
 
-<img src="assets/screenshots/dashboard-light.jpg" alt="TokenRouter 仪表盘 · 浅色模式" width="1600" />
+<img src="assets/screenshots/dashboard-light.jpg" alt="TokenRouter Dashboard · Light mode" width="1600" />
 
-### 模型广场
+### Model Marketplace
 
-<img src="assets/screenshots/models-light.jpg" alt="TokenRouter 模型广场 · 浅色模式" width="1600" />
+<img src="assets/screenshots/models-light.jpg" alt="TokenRouter Model Marketplace · Light mode" width="1600" />
 
 </details>
 
 <details>
-<summary>深色模式</summary>
+<summary>Dark mode</summary>
 
-### 仪表盘
+### Dashboard
 
-<img src="assets/screenshots/dashboard-dark.jpg" alt="TokenRouter 仪表盘 · 深色模式" width="1600" />
+<img src="assets/screenshots/dashboard-dark.jpg" alt="TokenRouter Dashboard · Dark mode" width="1600" />
 
-### 模型广场
+### Model Marketplace
 
-<img src="assets/screenshots/models-dark.jpg" alt="TokenRouter 模型广场 · 深色模式" width="1600" />
+<img src="assets/screenshots/models-dark.jpg" alt="TokenRouter Model Marketplace · Dark mode" width="1600" />
 
 </details>
 
-TokenFlux 官方运营站点：[tokenflux.dev](https://tokenflux.dev)。
+Visit the service officially operated by TokenFlux at [tokenflux.dev](https://tokenflux.dev).
 
-## 核心能力
+## Capabilities
 
-| 方向    | 可以做什么                                                                                                           |
-|-------|-----------------------------------------------------------------------------------------------------------------|
-| 模型接入  | 兼容 Anthropic Messages、OpenAI Responses、Chat Completions 和 Gemini 协议，分组允许的协议之间可以互相转换                             |
-| 上游平台  | 接入 Anthropic、OpenAI、Gemini、Antigravity、Grok、Qoder、Kimi、智谱和 DeepSeek，支持 OAuth 账号、API Key、AWS Bedrock 和 Vertex AI |
-| 调度与重试 | 按模型、协议能力、限流状态和粘性会话选择上游，上游出错时自动换下一个                                                                              |
-| 访问控制  | 管理用户、团队、分组和 API Key 的额度、并发与 RPM。登录支持邮箱密码、Passkey、两步验证，以及 GitHub、Google、LinuxDo、OIDC、微信和钉钉                       |
-| 计费与支付 | 按用量计费，支持余额、订阅套餐、额度包、兑换码和邀请返利。内置易支付、支付宝、微信支付、Stripe 和 Airwallex                                                  |
-| 内容审核  | 按关键词和哈希规则拦截请求，可以自动封禁违规用户                                                                                        |
-| 管理后台  | 查看用量日志和统计、配置监控告警和邮件报表、在线升级和回滚，网页创作台可以生成和编辑图片。界面支持简体中文和英语                                                        |
+| Area | What you can do |
+| --- | --- |
+| Model access | Accept Anthropic Messages, OpenAI Responses, Chat Completions, and Gemini requests, and convert between the protocols a group allows |
+| Upstream platforms | Connect Anthropic, OpenAI, Gemini, Antigravity, Grok, Qoder, Kimi, Zhipu, and DeepSeek through OAuth accounts, API keys, AWS Bedrock, or Vertex AI |
+| Routing and retries | Pick an upstream by model, protocol support, rate limit state, and sticky sessions, and move to the next one when an upstream fails |
+| Access control | Manage users, teams, groups, and API key quotas, concurrency, and RPM limits. Sign in with email and password, passkeys, two-factor authentication, GitHub, Google, LinuxDo, OIDC, WeChat, or DingTalk |
+| Billing and payments | Charge by usage, with balance, subscription plans, quota packs, redeem codes, and referral rebates. Built-in payments support EasyPay, Alipay, WeChat Pay, Stripe, and Airwallex |
+| Content moderation | Block requests with keyword and hash rules, and ban offending users automatically |
+| Admin dashboard | Browse usage logs and statistics, set up alerts and email reports, and upgrade or roll back online. The creative studio generates and edits images in the browser. The UI is available in Simplified Chinese and English |
 
-### 协议与接口
+### Protocols and Endpoints
 
-| 接口类型                    | 常用入口                                                                                              |
-|-------------------------|---------------------------------------------------------------------------------------------------|
-| Anthropic Messages      | `POST /v1/messages`                                                                               |
-| OpenAI Responses / Chat | `POST /v1/responses`、`POST /v1/chat/completions`                                                  |
-| Gemini                  | `POST /v1beta/models/{model}:generateContent`、`POST /v1beta/models/{model}:streamGenerateContent` |
-| WebSocket               | `GET /v1/responses`、`GET /v1/realtime`                                                            |
-| 向量                      | `POST /v1/embeddings`                                                                             |
-| 图片                      | `/v1/images/generations`、`/v1/images/edits`、`/v1/images/batches`                                  |
-| 视频                      | `/v1/videos/generations`、`/v1/videos/edits`、`/v1/videos/extensions`                               |
-| 语音                      | `/v1/tts`、`/v1/stt`、`/v1/custom-voices`                                                           |
-| 搜索                      | `/v1/web_search`、`/v1/x_search`、`/v1/alpha/search`                                                |
-| 模型与用量                   | `GET /v1/models`、`GET /v1/usage`                                                                  |
+| Type | Common endpoints |
+| --- | --- |
+| Anthropic Messages | `POST /v1/messages` |
+| OpenAI Responses / Chat | `POST /v1/responses`, `POST /v1/chat/completions` |
+| Gemini | `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent` |
+| WebSocket | `GET /v1/responses`, `GET /v1/realtime` |
+| Embeddings | `POST /v1/embeddings` |
+| Images | `/v1/images/generations`, `/v1/images/edits`, `/v1/images/batches` |
+| Video | `/v1/videos/generations`, `/v1/videos/edits`, `/v1/videos/extensions` |
+| Voice | `/v1/tts`, `/v1/stt`, `/v1/custom-voices` |
+| Search | `/v1/web_search`, `/v1/x_search`, `/v1/alpha/search` |
+| Models and usage | `GET /v1/models`, `GET /v1/usage` |
 
-详细见[上游提供商能力矩阵](docs/interfaces/upstream_provider_matrix.md)。
+The [upstream provider capability matrix (Chinese)](docs/interfaces/upstream_provider_matrix.md) lists which upstream platforms serve each endpoint.
 
-## 快速开始
+## Quick Start
 
-使用 Docker Compose 部署：
+Deploy with Docker Compose:
 
 ```bash
 mkdir -p tokenrouter-deploy && cd tokenrouter-deploy
 
-# 下载 Compose 文件和 .env，并生成数据库密码和密钥
+# Download the Compose file and .env, and generate the database password and secrets
 curl -sSL https://raw.githubusercontent.com/TokenFlux/TokenRouter/main/deploy/docker-deploy.sh | bash
 
 docker compose up -d
 ```
 
-启动后打开 `http://localhost:8080`。管理员密码可以在 `.env` 的 `ADMIN_PASSWORD` 里设置，没有设置时会随机生成并打印到日志：
+Then open `http://localhost:8080`. You can set the admin password with `ADMIN_PASSWORD` in `.env`. If it is not set, TokenRouter generates a random password and prints it to the log:
 
 ```bash
 docker compose logs tokenrouter | grep "admin password"
 ```
 
-更多部署方式，见[部署指南](docs/guides/deployment/index.md)。
+The [deployment guide (Chinese)](docs/guides/deployment/index.md) covers other options such as the install script and standalone containers.
 
-## 本地开发
+## Development
 
-后端使用 Go，前端用 Vue 3。从源码启动完整环境：
+The backend is written in Go and the frontend in Vue 3. To run the full stack from source:
 
 ```bash
 docker compose -f deploy/docker-compose.dev.yml up --build
 ```
 
-环境要求、分别启动前后端的方法和测试命令，见[开发、验证与上游同步](docs/operations/development_workflow.md)。
+[Development workflow (Chinese)](docs/operations/development_workflow.md) lists the required toolchain versions, how to run the backend and frontend separately, and the test commands.
 
-## 文档
+## Documentation
 
-- [使用与运维指南](docs/guides/index.md)：部署、支付配置和外部系统集成。
-- [工程文档](docs/index.md)：架构、业务规则、接口和运维约束，修改代码前从这里查。
-- [升级说明](docs/operations/upgrade_notes.md)：各版本需要注意的变化。
+- [Usage and operations guides (Chinese)](docs/guides/index.md): deployment, payment setup, and external integrations.
+- [Engineering documentation (Chinese)](docs/index.md): architecture, business rules, interfaces, and operational constraints. Start here before changing code.
+- [Upgrade notes (Chinese)](docs/operations/upgrade_notes.md): changes to watch for in each release.
 
-## 许可证
+## License
 
-本项目依据 [GNU Lesser General Public License v3.0 或更高版本](LICENSE) 发布。
+This project is distributed under the [GNU Lesser General Public License v3.0 or later](LICENSE).
 
 Copyright (c) 2026 Wesley Liddick & TokenFlux
 
-## Star 趋势
+## Star History
 
 <a href="https://star-history.com/#TokenFlux/TokenRouter&Date">
   <picture>
