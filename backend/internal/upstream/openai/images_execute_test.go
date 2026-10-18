@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -28,6 +29,9 @@ type imagesContractSink struct {
 	// immediately afterward so later progress cannot repeat the fixture
 	// notification.
 	onPartial func()
+	// failAfterChunks rejects later nonempty writes after this many accepted
+	// fragments. Zero keeps delivery enabled for ordinary successful fixtures.
+	failAfterChunks int
 }
 
 // imagesCloseRecorder counts closure of the acquired image response body.
@@ -49,10 +53,10 @@ func (b *imagesCloseRecorder) Read(data []byte) (int, error) {
 	return b.ReadCloser.Read(data)
 }
 
-// TestImagesExecuteRequiresEventStream checks image streaming media types for
-// API-key and OAuth targets. Valid parameterized SSE is consumed, while missing,
-// malformed, or non-SSE types terminate before reading or retaining image usage.
-func TestImagesExecuteRequiresEventStream(t *testing.T) {
+// TestImagesExecuteSelectsStreamFormat checks streaming media types for API-key
+// and OAuth targets. Valid SSE uses its event reader; other types require a
+// complete Images JSON document and reject an SSE body presented as JSON.
+func TestImagesExecuteSelectsStreamFormat(t *testing.T) {
 	for _, oauth := range []bool{false, true} {
 		for _, contentType := range []string{"text/event-stream; charset=utf-8", "Text/Event-Stream", "application/json", "", `application/json; note="text/event-stream"`, "text/event-stream; broken"} {
 			t.Run(fmt.Sprintf("oauth=%t/type=%s", oauth, contentType), func(t *testing.T) {
@@ -93,7 +97,7 @@ func TestImagesExecuteRequiresEventStream(t *testing.T) {
 				require.Equal(t, "invalid_upstream_response", presented.Code)
 				require.Equal(t, http.StatusBadGateway, presented.StatusCode)
 				require.Equal(t, http.StatusOK, observedStatus)
-				require.Zero(t, reads.Load())
+				require.Positive(t, reads.Load())
 				require.Zero(t, result.ObservedImages)
 				require.False(t, result.HasUsage)
 			})
@@ -109,6 +113,9 @@ func (s *imagesContractSink) Begin(head upstream.OutputHead) error { s.head = he
 // progressive events cannot close its observation channel twice.
 func (s *imagesContractSink) Emit(event upstream.OutputEvent) error {
 	if len(event.Data) > 0 {
+		if s.failAfterChunks > 0 && len(s.chunks) >= s.failAfterChunks {
+			return errors.New("fixture client disconnected")
+		}
 		s.chunks = append(s.chunks, string(event.Data))
 	}
 	if event.Flush {
@@ -119,6 +126,220 @@ func (s *imagesContractSink) Emit(event upstream.OutputEvent) error {
 		s.onPartial = nil
 	}
 	return nil
+}
+
+// TestImagesExecuteJSONStreamAccounting converts buffered image responses for
+// both credentials and operations. Actual image count and total usage survive
+// client write failure, while successful delivery includes total usage once.
+func TestImagesExecuteJSONStreamAccounting(t *testing.T) {
+	for _, oauth := range []bool{false, true} {
+		for _, operation := range []protocol.ProtocolID{protocol.ProtocolImagesGenerations, protocol.ProtocolImagesEdits} {
+			for _, disconnect := range []bool{false, true} {
+				t.Run(fmt.Sprintf("oauth_%t/%s/disconnect_%t", oauth, operation, disconnect), func(t *testing.T) {
+					body := `{"created":1710000000,"size":"1024x1024","background":"transparent","usage":{"input_tokens":12,"output_tokens":21,"output_tokens_details":{"image_tokens":9},"input_tokens_details":{"image_tokens":2}},"data":[{"b64_json":"first","size":"512x512","revised_prompt":"revised"},{"url":"https://example.invalid/second.png"}]}`
+					var closed atomic.Int32
+					active := false
+					stops := 0
+					options := imagesTestResponseOptions()
+					options.StartKeepalive = func() func() {
+						active = true
+						return func() {
+							if active {
+								stops++
+								active = false
+							}
+						}
+					}
+					options.ReadBody = func(reader io.Reader) ([]byte, error) {
+						require.True(t, active, "JSON reads retain the waiting heartbeat")
+						return io.ReadAll(reader)
+					}
+					copyHeaders := options.ResponseHeaders
+					options.ResponseHeaders = func(dst, src http.Header) {
+						require.False(t, active, "response construction takes over after heartbeat stop")
+						copyHeaders(dst, src)
+					}
+					calls := 0
+					target := &ImagesTarget{
+						OAuth:   oauth,
+						Model:   "gpt-image-2",
+						Options: options,
+						Request: httptest.NewRequest(http.MethodPost, "https://example.invalid/images", nil),
+						Do: func(*http.Request) (*http.Response, error) {
+							calls++
+							require.True(t, active)
+							return &http.Response{
+								StatusCode: http.StatusOK,
+								Header:     http.Header{"Content-Type": {"application/json; charset=utf-8"}, "Content-Length": {"123"}, "X-Request-Id": {"json-request"}},
+								Body:       &imagesCloseRecorder{ReadCloser: io.NopCloser(strings.NewReader(body)), closed: &closed},
+							}, nil
+						},
+					}
+					sink := &imagesContractSink{}
+					if disconnect {
+						sink.failAfterChunks = 2
+					}
+					result, err := (ImagesExecutor{}).Execute(t.Context(), upstream.AttemptInput{Protocol: operation, Stream: true, Target: target}, sink)
+					require.NoError(t, err)
+					require.Equal(t, 1, calls)
+					require.Equal(t, 1, stops)
+					require.EqualValues(t, 1, closed.Load())
+					require.Equal(t, 2, result.ObservedImages)
+					require.Equal(t, []string{"512x512", "1024x1024"}, result.ImageOutputSizes)
+					require.Equal(t, 12, result.Usage.InputTokens)
+					require.Equal(t, 21, result.Usage.OutputTokens)
+					require.Equal(t, 9, result.Usage.ImageOutputTokens)
+					require.Equal(t, 2, result.ImageInputTokens)
+					require.True(t, result.HasUsage)
+					require.Equal(t, disconnect, result.ClientDisconnect)
+					require.Equal(t, "text/event-stream", sink.head.Header.Get("Content-Type"))
+					require.Empty(t, sink.head.Header.Get("Content-Length"))
+					if disconnect {
+						return
+					}
+					eventName := "image_generation.completed"
+					if operation == protocol.ProtocolImagesEdits {
+						eventName = "image_edit.completed"
+					}
+					stream := strings.Join(sink.chunks, "")
+					require.Equal(t, 2, strings.Count(stream, "event: "+eventName+"\n"))
+					require.Equal(t, 1, strings.Count(stream, `"usage":`))
+					require.Contains(t, stream, `"url":"https://example.invalid/second.png"`)
+					require.Contains(t, stream, `"revised_prompt":"revised"`)
+					require.Contains(t, stream, `"created_at":1710000000`)
+					require.Contains(t, stream, "data: [DONE]\n\n")
+				})
+			}
+		}
+	}
+}
+
+// TestImagesExecuteJSONStreamWithoutUsage observes one JSON image carrying both
+// supported content fields. Streaming converts it once; nonstream delivery
+// retains JSON, and neither path invents token usage or a second image.
+func TestImagesExecuteJSONStreamWithoutUsage(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			body := `{"data":[{"b64_json":"first","url":"https://example.invalid/first.png"}]}`
+			starts := 0
+			options := imagesTestResponseOptions()
+			options.StartKeepalive = func() func() {
+				starts++
+				return func() {}
+			}
+			target := &ImagesTarget{
+				Options: options,
+				Request: httptest.NewRequest(http.MethodPost, "https://example.invalid/images", nil),
+				Do: func(*http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+				},
+			}
+			sink := &imagesContractSink{}
+			result, err := (ImagesExecutor{}).Execute(t.Context(), upstream.AttemptInput{Protocol: protocol.ProtocolImagesGenerations, Stream: stream, Target: target}, sink)
+			require.NoError(t, err)
+			require.Equal(t, 1, result.ObservedImages)
+			require.False(t, result.HasUsage)
+			require.Zero(t, result.Usage.InputTokens)
+			require.Zero(t, result.Usage.OutputTokens)
+			output := strings.Join(sink.chunks, "")
+			if stream {
+				require.Equal(t, 1, starts)
+				require.Equal(t, 1, strings.Count(output, "event: image_generation.completed\n"))
+				require.NotContains(t, output, `"usage":`)
+			} else {
+				require.Zero(t, starts)
+				require.JSONEq(t, body, output)
+				require.Equal(t, "application/json", sink.head.Header.Get("Content-Type"))
+			}
+		})
+	}
+}
+
+// TestImagesExecuteJSONStreamReadCancellation preserves cancellation and timeout
+// causes returned by a buffered read. Diagnostics retain the canceled flag,
+// and no image completion or protocol-error presentation follows that stop.
+func TestImagesExecuteJSONStreamReadCancellation(t *testing.T) {
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			readErr := fmt.Errorf("fixture JSON read stopped: %w", cause)
+			var closed atomic.Int32
+			presented := false
+			options := imagesTestResponseOptions()
+			options.WriteHTTPError = func(*OpenAIImagesUpstreamError) bool {
+				presented = true
+				return true
+			}
+			target := &ImagesTarget{
+				Options: options,
+				Request: httptest.NewRequest(http.MethodPost, "https://example.invalid/images", nil),
+				Do: func(*http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": {"application/json"}},
+						Body:       &imagesCloseRecorder{ReadCloser: io.NopCloser(iotest.ErrReader(readErr)), closed: &closed},
+					}, nil
+				},
+			}
+			sink := &imagesContractSink{}
+			result, err := (ImagesExecutor{}).Execute(t.Context(), upstream.AttemptInput{Protocol: protocol.ProtocolImagesEdits, Stream: true, Target: target}, sink)
+			require.ErrorIs(t, err, cause)
+			require.True(t, result.Cancelled)
+			require.False(t, presented)
+			require.Zero(t, result.ObservedImages)
+			require.False(t, result.HasUsage)
+			require.Empty(t, sink.chunks)
+			require.EqualValues(t, 1, closed.Load())
+		})
+	}
+}
+
+// TestImagesExecuteJSONStreamFailures rejects error and malformed JSON bodies
+// before presenting a completion. No failed body retains image usage, and
+// terminal presentation occurs once after waiting heartbeats have stopped.
+func TestImagesExecuteJSONStreamFailures(t *testing.T) {
+	for _, body := range []string{
+		`{"error":{"type":"invalid_request_error","code":"content_policy_violation","param":"prompt","message":"fixture policy"}}`,
+		`{"error":{"type":"invalid_request_error","message":"fixture policy"},"data":[{"b64_json":"hidden"}]}`,
+		`{"data":{"b64_json":"hidden"}}`,
+		`{"data":[]}`, `{"data":[{"url":123}]}`, `{"data":[{"id":"metadata"}]}`,
+		`{"data":[{"b64_json":"valid"},{}]}`, `{"data":[{"b64_json":"valid"}],"usage":[]}`, `{"data":[`,
+		"read failure",
+	} {
+		t.Run(body, func(t *testing.T) {
+			var closed atomic.Int32
+			reader := io.Reader(strings.NewReader(body))
+			if body == "read failure" {
+				reader = iotest.ErrReader(errors.New("fixture JSON read failure"))
+			}
+			options := imagesTestResponseOptions()
+			presentations := 0
+			options.WriteHTTPError = func(err *OpenAIImagesUpstreamError) bool {
+				presentations++
+				if strings.Contains(body, "content_policy_violation") {
+					require.Equal(t, "content_policy_violation", err.Code)
+					require.Equal(t, "prompt", err.Param)
+				}
+				return true
+			}
+			target := &ImagesTarget{
+				OAuth:   true,
+				Options: options,
+				Request: httptest.NewRequest(http.MethodPost, "https://example.invalid/images", nil),
+				Do: func(*http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: &imagesCloseRecorder{ReadCloser: io.NopCloser(reader), closed: &closed}}, nil
+				},
+			}
+			sink := &imagesContractSink{}
+			result, err := (ImagesExecutor{}).Execute(t.Context(), upstream.AttemptInput{Protocol: protocol.ProtocolImagesEdits, Stream: true, Target: target}, sink)
+			var imageErr *OpenAIImagesUpstreamError
+			require.ErrorAs(t, err, &imageErr)
+			require.Equal(t, 1, presentations)
+			require.EqualValues(t, 1, closed.Load())
+			require.Zero(t, result.ObservedImages)
+			require.False(t, result.HasUsage)
+			require.Empty(t, sink.chunks)
+		})
+	}
 }
 
 // Close increments the fixture close count before delegating response-body

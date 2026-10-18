@@ -37,12 +37,22 @@ import (
 // diagnostic summaries remain bound to their shared output services.
 func (p *OpenAIResponseOutput) ImageOptions(c *gin.Context) upstreamopenai.ImageResponseOptions {
 	return upstreamopenai.ImageResponseOptions{
+		StartKeepalive: func() func() { return StartOpenAISSEKeepalive(c, p.ImageKeepaliveInterval()) },
+
 		PreserveContentType: p.Options.Configured && !p.Options.ResponseHeadersEnabled,
 
 		ReadLimit: func() int64 { return p.Options.ReadLimit },
 
 		ReadBody: func(r io.Reader) ([]byte, error) {
-			return ReadUpstreamResponseBody(r, p.Options.ReadLimit, c, OpenAIResponseTooLarge)
+			// Buffered image overflow can follow an SSE heartbeat. Use image-aware
+			// presentation so the size-limit failure ends the already selected format.
+			return ReadUpstreamResponseBody(r, p.Options.ReadLimit, c, func(c *gin.Context) {
+				WriteOpenAIImagesUpstreamErrorResponse(c, &upstreamopenai.OpenAIImagesUpstreamError{
+					StatusCode: http.StatusBadGateway,
+					ErrorType:  "upstream_error",
+					Message:    "Upstream response too large",
+				})
+			})
 		},
 
 		ClassifyReadError: func(err error) error {

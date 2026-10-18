@@ -34,6 +34,9 @@ import (
 // ImageResponseOptions binds image readers to request-specific output,
 // accounting, and error policy callbacks.
 type ImageResponseOptions struct {
+	// StartKeepalive optionally starts the HTTP SSE controller before a streamed
+	// exchange. Its idempotent cleanup waits for writes and restores the writer.
+	StartKeepalive func() func()
 	// PreserveContentType lets the API-key nonstream reader keep a supplied
 	// upstream content type; otherwise that reader uses its JSON default.
 	PreserveContentType bool
@@ -43,8 +46,8 @@ type ImageResponseOptions struct {
 	// ReadLimit supplies the API-key stream's plain-JSON retention limit in bytes;
 	// SSE line allocation is independent of this value.
 	ReadLimit func() int64
-	// ReadBody consumes a buffered response under the caller's size and error
-	// policy; both nonstream readers require this callback.
+	// ReadBody consumes buffered JSON under the caller's size and error policy.
+	// Nonstream readers and streamed Images JSON conversion require this callback.
 	ReadBody func(io.Reader) ([]byte, error)
 	// ClassifyReadError translates OAuth read failures after pending event
 	// processing; API-key streaming returns its read errors directly.
@@ -55,8 +58,8 @@ type ImageResponseOptions struct {
 	// ObserveError records response failures before return, using status and
 	// message plus an optional caller-provided diagnostic summary.
 	ObserveError func(int, string, string)
-	// WriteHTTPError presents nonretryable OAuth nonstream errors and stream
-	// media-type rejections. Those rejections apply to either credential type.
+	// WriteHTTPError presents nonretryable OAuth nonstream errors and buffered
+	// image-stream failures. JSON validation failures apply to either credential type.
 	WriteHTTPError func(*OpenAIImagesUpstreamError) bool
 	// EmptyOutput classifies OAuth nonstream responses containing neither an image
 	// nor recognizable model text for the executor's retry policy.

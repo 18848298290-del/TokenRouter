@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -25,9 +26,10 @@ import (
 // The prepared request owns transport context, and optional admission stays
 // held through response reading and cleanup. HTTP failures close the original
 // body before replaying redacted bytes into health handling. Successful
-// responses require an SSE media type for requested streams before choosing
-// OAuth/API-key readers. A mismatched success is a terminal image error,
-// preventing requested-image substitution or another generation attempt.
+// streamed responses select OAuth/API-key SSE readers or convert a standard
+// Images JSON document into completion events. A shared waiting heartbeat
+// covers response headers and buffered JSON reads, then stops before output
+// begins. Invalid JSON ends the attempt before requested-count substitution.
 // A synchronous sink wrapper retains commitment, semantic, and write-failure
 // observations across those branches,
 // while OAuth response failure policy also considers whether any completed
@@ -105,8 +107,11 @@ func (t *ImagesTarget) GoString() string { return t.String() }
 // buffered reader, while the sink wrapper records HTTP commitment, retry
 // commitment, attempted semantic output, and write failure separately. Served
 // can therefore be true for progressive semantic output with no completed
-// image. OAuth errors in buffered mode or before a completed streaming image
-// invoke ResponseError after those observations are captured.
+// image. Waiting heartbeats cover headers and buffered JSON reads, then stop
+// before any sink access. OAuth Responses errors before a completed streaming
+// image or in nonstream mode invoke ResponseError; Images JSON failures use
+// terminal image errors after validation. Canceled or expired reads retain their
+// cause for outer stop handling.
 func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, sink upstream.OutputSink) (result upstream.AttemptResult, failure error) {
 	defer func() { result.Finish(ctx, failure) }()
 	t, ok := input.Target.(*ImagesTarget)
@@ -136,8 +141,16 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 			result.FailureClass = "upstream"
 		}
 	}()
+	stopKeepalive := func() {}
+	if input.Stream && t.Options.StartKeepalive != nil {
+		stopKeepalive = t.Options.StartKeepalive()
+	}
+	// Keep the waiting writer alive through buffered bodies, including HTTP
+	// failures. Every presentation path stops it before using the captured sink.
+	defer stopKeepalive()
 	resp, err := t.Do(t.Request)
 	if err != nil {
+		stopKeepalive()
 		return result, t.TransportError(err)
 	}
 	result.CaptureRequestAttempt(resp)
@@ -149,6 +162,7 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	defer func() { result.Duration = time.Since(started) }()
 	if resp.StatusCode >= 400 {
 		body := t.ReadErrorBody(resp)
+		stopKeepalive()
 		// Release the failed transport body before health handling consumes replay
 		// bytes, and redact that replay so its diagnostics receive no provider credentials.
 		_ = resp.Body.Close()
@@ -156,26 +170,21 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		return result, t.HTTPError(resp, body)
 	}
-	if input.Stream {
-		mediaType, _, mediaErr := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-		if mediaErr != nil || mediaType != "text/event-stream" {
-			// The upstream may already have generated a billable image. Return a
-			// terminal protocol error so recovery cannot start another paid generation.
-			protocolErr := &OpenAIImagesUpstreamError{
-				StatusCode:        http.StatusBadGateway,
-				ErrorType:         "upstream_error",
-				Code:              "invalid_upstream_response",
-				Message:           "Upstream image streaming response must use text/event-stream",
-				UpstreamRequestID: resp.Header.Get("x-request-id"),
-			}
-			if t.Options.ObserveError != nil {
-				t.Options.ObserveError(resp.StatusCode, protocolErr.Message, "")
-			}
-			if t.Options.WriteHTTPError != nil {
-				t.Options.WriteHTTPError(protocolErr)
-			}
-			return result, protocolErr
-		}
+	mediaType, _, mediaErr := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	streamJSON := input.Stream && (mediaErr != nil || mediaType != "text/event-stream")
+	var jsonBody []byte
+	if streamJSON {
+		jsonBody, err = t.Options.ReadBody(resp.Body)
+	}
+	// The sink was captured before heartbeat wrapping. Stop and restore the
+	// waiting writer before sink initialization reads headers or presents errors.
+	stopKeepalive()
+	// Cancellation and deadlines stop execution rather than invalidate JSON.
+	// Keep their error chain available to diagnostics and outer cancellation policy.
+	if err != nil &&
+		!errors.Is(err, context.Canceled) &&
+		!errors.Is(err, context.DeadlineExceeded) {
+		err = imagesJSONProtocolError("Failed to read upstream image JSON response: " + logredact.SanitizeUpstreamQueries(err.Error()))
 	}
 	observed := &imagesObservedSink{OutputSink: sink}
 	sink = observed
@@ -198,7 +207,24 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	}
 	if input.Stream {
 		output = upstream.NewOutputContext(sink)
-		if t.OAuth {
+		if streamJSON {
+			eventName := "image_generation.completed"
+			if input.Protocol == protocol.ProtocolImagesEdits {
+				eventName = "image_edit.completed"
+			}
+			if err == nil {
+				usage, result.ObservedImages, result.ImageOutputSizes, err = WriteImagesJSONStreaming(jsonBody, resp, output, t.Options, eventName)
+			}
+			if imageErr, ok := errors.AsType[*OpenAIImagesUpstreamError](err); ok {
+				imageErr.UpstreamRequestID = result.RequestID
+				if t.Options.ObserveError != nil {
+					t.Options.ObserveError(resp.StatusCode, imageErr.Message, "")
+				}
+				if t.Options.WriteHTTPError != nil {
+					t.Options.WriteHTTPError(imageErr)
+				}
+			}
+		} else if t.OAuth {
 			usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesOAuthStreaming(resp, output, t.Options, started, t.ResponseFormat, t.StreamPrefix, input.ResponseModel)
 		} else {
 			usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesStreaming(resp, output, t.Options, started)
@@ -221,9 +247,9 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	if output != nil {
 		result.HTTPCommitted = output.Writer.Written()
 	}
-	// OAuth response policy handles buffered failures and streaming failure before
-	// a completed image; later streaming failures retain the response-reader result for partial output.
-	if err != nil && t.OAuth && (!input.Stream || result.ObservedImages <= 0) {
+	// Responses failure policy may retry before image output. Images JSON failures
+	// remain terminal because a successful HTTP exchange may already have generated images.
+	if err != nil && !streamJSON && t.OAuth && (!input.Stream || result.ObservedImages <= 0) {
 		err = t.ResponseError(resp, before, err)
 	}
 	return result, err

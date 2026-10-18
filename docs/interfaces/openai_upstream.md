@@ -114,9 +114,11 @@ OpenAI 兼容非流式响应的 usage，按 `usage`、`response.usage`、`data.u
 
 图片入口由 `gateway/httpapi.OpenAIImagesExecutor` 组合请求和输出能力，app 把同一个实例直接绑定到媒体运行时。API Key 和 OAuth 两个分支各有协议转换、实际产出计数和失败资格。图片请求在原位置和客户端的取消脱钩，读取完成后才交付已观测的用量；JSON 心跳不算实际的图片输出。结构化的"图片工具不可用"事件，由 `provider/provider.ImageToolCooldown` 写入模型级冷却；模型改用文字回复时，不触发这项写入。
 
-`stream=true` 的图片请求，在每次实际发送上游 HTTP 请求前启动 SSE 注释心跳，覆盖等待响应头的阶段。API Key 和 OAuth 使用同一个 `gateway.image_stream_keepalive_interval`，默认 10 秒，设为 `0` 关闭。首个周期到达前可以直接返回原有 HTTP 错误；取得响应头或发送失败后，前置心跳停止，SSE 响应读取器接续读体阶段的保活。心跳字节和已提交的响应格式跨尝试保留，仅有注释时仍按现有规则决定是否重试。
+`stream=true` 的图片请求，在每次实际发送上游 HTTP 请求前启动 SSE 注释心跳，覆盖等待响应头的阶段。API Key 和 OAuth 使用同一个 `gateway.image_stream_keepalive_interval`，默认 10 秒，设为 `0` 关闭。首个周期到达前可以直接返回原有 HTTP 错误；上游返回 SSE 时，取得响应头后交给 SSE 读取器接续保活。上游返回普通 JSON 或 HTTP 错误时，等待心跳持续到有大小限制的读体结束，再停止并交给输出逻辑。心跳字节和已提交的响应格式跨尝试保留，仅有注释时仍按现有规则决定是否重试。
 
-流式成功响应的 `Content-Type` 必须为 `text/event-stream`，可以携带合法的媒体类型参数。普通 JSON、缺失或无效的媒体类型以 `invalid_upstream_response` 终止：尚未提交响应时返回 HTTP 502，已经发送心跳时返回 SSE 错误，不转换 JSON 结果，也不再发起另一次生成。这类失败不保留成功图片用于结算；错误提交规则见[网关错误响应策略](gateway_error_policy.md#处理位置)。
+流式请求按上游响应选择读取方式：合法的 `text/event-stream`（包括媒体类型参数）使用 SSE 读取器，其余成功响应按标准图片 JSON 解析。完整 JSON 需要非空的 `data[]`，每项包含非空字符串 `b64_json` 或 `url`。生成接口逐项输出 `image_generation.completed`，编辑接口逐项输出 `image_edit.completed`，最后发送 `data: [DONE]`。图片内容、修订提示词、创建时间和图片元数据随完成事件返回；响应级总 usage 只放在最后一个完成事件中。
+
+JSON 转换先验证完整文档，再交付完成事件。实际图片数量和尺寸从原始 `data[]` 观察一次，usage 也只解析一次，转换后的 SSE 不再次参与结算计数。HTTP 200 中的 `error` 对象按失败处理；非取消类的读取失败、无效 JSON、空或异常 `data` 结构以 `invalid_upstream_response` 结束，不再次发起生成，也不保留成功图片用于结算。读取的取消和超时原因传给外层终止处理。图片客户端断开后的用量收集继续使用已读取完整 JSON 中的实际结果。非流式请求继续返回 JSON；错误提交规则见[网关错误响应策略](gateway_error_policy.md#处理位置)。
 
 原生 Images 的 `image_generation.completed` 和 `image_edit.completed` 都按实际图片内容计数，沿用 ID、call ID 和内容摘要的去重规则。部分图片事件与没有图片内容的完成事件不增加完成图片数，完成事件中的尺寸和用量照常保留。
 

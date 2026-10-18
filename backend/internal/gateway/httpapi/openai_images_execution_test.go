@@ -172,6 +172,151 @@ func TestForwardImagesHeartbeatBeforeResponseHeaders(t *testing.T) {
 	}
 }
 
+// TestForwardImagesJSONBodyKeepalive holds headers and then a partial JSON body
+// behind independent gates. Heartbeats flush throughout both waits, while
+// complete success/error bodies determine final framing and accounting once.
+func TestForwardImagesJSONBodyKeepalive(t *testing.T) {
+	for _, kind := range []string{capability.ProviderTypeAPIKey, capability.ProviderTypeOAuth} {
+		for _, interval := range []int{0, 1} {
+			for _, outcome := range []string{"success", "error", "http_error", "read_error", "too_large", "canceled"} {
+				t.Run(fmt.Sprintf("%s/interval_%d/%s", kind, interval, outcome), func(t *testing.T) {
+					synctest.Test(t, func(t *testing.T) {
+						body := []byte(`{"model":"gpt-image-2","prompt":"edit jewelry","stream":true,"n":3,"images":[{"image_url":"https://example.invalid/reference.png"}]}`)
+						rec := httptest.NewRecorder()
+						c, _ := gin.CreateTestContext(rec)
+						ctx, cancel := context.WithCancel(t.Context())
+						defer cancel()
+						c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/images/edits", bytes.NewReader(body))
+						c.Request.Header.Set("Content-Type", "application/json")
+						parsed, err := media.ParseImageRequest(c.Request.URL.Path, "application/json", body, true)
+						require.NoError(t, err)
+						reader, writer := io.Pipe()
+						releaseHeaders := make(chan struct{})
+						var releaseOnce sync.Once
+						// Failed assertions still release both upstream gates so detached work
+						// can finish and stop its heartbeat before the test bubble exits.
+						defer func() {
+							releaseOnce.Do(func() { close(releaseHeaders) })
+							_ = writer.Close()
+							_ = reader.Close()
+						}()
+						transport := &auxiliaryHTTPRecorder{onRequest: func(*http.Request) (*http.Response, error) {
+							<-releaseHeaders
+							status := http.StatusOK
+							if outcome == "http_error" {
+								status = http.StatusUnavailableForLegalReasons
+							}
+							return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: reader}, nil
+						}}
+						svc := newImagesFixture(imagesFixtureInputs{transport: transport, ImageStreamKeepaliveInterval: interval})
+						if outcome == "too_large" {
+							// Keep the first fragment below the bound so overflow occurs only
+							// after the reader has waited through another heartbeat interval.
+							svc.Output.Options.ReadLimit = 128
+						}
+						provider := newOpenAIImagesAPIKeyProvider()
+						provider.Record.Type = kind
+						provider.Record.Credentials["access_token"] = "fixture-access-token"
+						var result *forwardcore.OpenAIResult
+						var forwardErr error
+						finished := make(chan struct{})
+						// Snapshots share the heartbeat mutex so both earlier and later ticks
+						// are ordered with recorder reads, including across pipe-gate releases.
+						snapshot := func() (string, bool) {
+							value, _ := c.Get(openAICompactSSEKeepaliveKey)
+							if keepalive, ok := value.(*openAICompactSSEKeepalive); ok && keepalive != nil {
+								keepalive.mu.Lock()
+								defer keepalive.mu.Unlock()
+							}
+							return rec.Body.String(), rec.Flushed
+						}
+						go func() {
+							result, forwardErr = svc.ForwardImages(ctx, c, provider, body, parsed, "")
+							close(finished)
+						}()
+						// Advance beyond a heartbeat interval while headers remain blocked.
+						// Quiescence lets the timer reach its waiting state before inspection.
+						time.Sleep(2 * time.Second)
+						synctest.Wait()
+						headerBody, flushed := snapshot()
+						headerBytes := len(headerBody)
+						if interval > 0 {
+							require.Positive(t, headerBytes)
+							require.True(t, flushed)
+						} else {
+							require.Zero(t, headerBytes)
+						}
+						releaseOnce.Do(func() { close(releaseHeaders) })
+						responseBody := `{"created":1710000000,"data":[{"url":"https://example.invalid/a.png","size":"512x512"},{"b64_json":"second","size":"1024x1024"}],"usage":{"input_tokens":3,"output_tokens":4}}`
+						if outcome == "error" || outcome == "http_error" {
+							responseBody = `{"error":{"type":"invalid_request_error","code":"content_policy_violation","param":"prompt","message":"fixture policy"}}`
+						}
+						_, err = io.WriteString(writer, responseBody[:len(responseBody)/2])
+						require.NoError(t, err)
+						// Leave JSON incomplete for another timer period, proving raw image
+						// data cannot reach the client before the whole document is validated.
+						time.Sleep(2 * time.Second)
+						synctest.Wait()
+						partialBody, _ := snapshot()
+						if interval > 0 {
+							require.Greater(t, len(partialBody), headerBytes)
+						} else {
+							require.Empty(t, partialBody)
+						}
+						require.NotContains(t, partialBody, "completed")
+						if outcome == "canceled" {
+							cancel()
+							synctest.Wait()
+							beforeCancel, _ := snapshot()
+							time.Sleep(3 * time.Second)
+							synctest.Wait()
+							afterCancel, _ := snapshot()
+							require.Equal(t, beforeCancel, afterCancel, "cancellation stops waiting heartbeats while JSON still drains")
+						}
+						if outcome == "read_error" {
+							require.NoError(t, writer.CloseWithError(errors.New("fixture truncated JSON body")))
+						} else {
+							_, err = io.WriteString(writer, responseBody[len(responseBody)/2:])
+							if outcome == "too_large" {
+								require.ErrorIs(t, err, io.ErrClosedPipe)
+							} else {
+								require.NoError(t, err)
+							}
+							require.NoError(t, writer.Close())
+						}
+						<-finished
+						synctest.Wait()
+						require.Len(t, transport.requests, 1)
+						if outcome == "success" || outcome == "canceled" {
+							require.NoError(t, forwardErr)
+							require.Equal(t, 2, result.ImageCount)
+							require.Equal(t, 3, result.Usage.InputTokens)
+							require.Equal(t, 4, result.Usage.OutputTokens)
+							require.Equal(t, []string{"512x512", "1024x1024"}, result.ImageOutputSizes)
+							require.Equal(t, 2, strings.Count(rec.Body.String(), "event: image_edit.completed\n"))
+							require.Equal(t, 1, strings.Count(rec.Body.String(), `"usage":`))
+						} else {
+							require.Error(t, forwardErr)
+							require.Nil(t, result)
+							require.NotContains(t, rec.Body.String(), ".completed")
+							if interval > 0 {
+								require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error\n"))
+							} else {
+								require.GreaterOrEqual(t, rec.Code, http.StatusBadRequest)
+								require.True(t, gjson.Get(rec.Body.String(), "error").Exists())
+							}
+						}
+						size := rec.Body.Len()
+						time.Sleep(3 * time.Second)
+						synctest.Wait()
+						require.Equal(t, size, rec.Body.Len())
+					})
+				})
+			}
+		}
+	}
+}
+
 // TestForwardImagesHeaderErrorsPreserveFraming delays policy, protocol and
 // transport failures before response headers. Fast failures keep HTTP errors;
 // delayed failures deliver one SSE error without retaining a billable image.
@@ -203,7 +348,7 @@ func TestForwardImagesHeaderErrorsPreserveFraming(t *testing.T) {
 							responseBody := `{"error":{"type":"bad_response_status_code","code":"policy_rejected","param":"prompt","message":"policy rejected"}}`
 							if failure == "protocol" {
 								responseStatus = http.StatusOK
-								responseBody = `{"data":[{"b64_json":"must-not-be-delivered"}]}`
+								responseBody = `{"data":{"b64_json":"must-not-be-delivered"}}`
 							}
 							return &http.Response{StatusCode: responseStatus, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(responseBody))}, nil
 						}}
@@ -277,7 +422,7 @@ func TestForwardImagesAdmissionHeartbeatPreservesErrorFraming(t *testing.T) {
 				require.NoError(t, observer.Heartbeat())
 				before := OpenAIImagesAdjustedWrittenSize(c)
 				status := http.StatusOK
-				responseBody := `{"data":[{"b64_json":"must-not-be-delivered"}]}`
+				responseBody := `{"data":{"b64_json":"must-not-be-delivered"}}`
 				if failure == "policy" {
 					status = http.StatusUnavailableForLegalReasons
 					responseBody = `{"error":{"type":"invalid_request_error","code":"policy_rejected","param":"prompt","message":"fixture policy"}}`
@@ -376,7 +521,7 @@ func TestForwardImagesHeartbeatOnlyRetryKeepsOutputUnstarted(t *testing.T) {
 							return &http.Response{StatusCode: http.StatusUnavailableForLegalReasons, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","code":"policy_rejected","param":"prompt","message":"fixture policy"}}`))}, nil
 						}
 						if terminal == "protocol" {
-							return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"data":[{"b64_json":"must-not-be-delivered"}]}`))}, nil
+							return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"data":{"b64_json":"must-not-be-delivered"}}`))}, nil
 						}
 						return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"image_generation_call\",\"result\":\"final-image\"}]}}\n\n"))}, nil
 					}
@@ -2055,10 +2200,10 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyAccessStateUsesTypedFailover(t 
 	require.False(t, c.Writer.Written())
 }
 
-// TestOpenAIGatewayServiceForwardImages_APIKeyStreamRejectsJSON requests
-// streaming but receives ordinary JSON image data. The exchange terminates
-// with a protocol error instead of retaining images or usage for completion.
-func TestOpenAIGatewayServiceForwardImages_APIKeyStreamRejectsJSON(t *testing.T) {
+// TestOpenAIGatewayServiceForwardImages_APIKeyStreamConvertsJSON requests
+// streaming but receives ordinary JSON image data. One completion event carries
+// the image and usage, while accounting retains the original JSON observation.
+func TestOpenAIGatewayServiceForwardImages_APIKeyStreamConvertsJSON(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","stream":true,"response_format":"b64_json"}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
@@ -2094,13 +2239,17 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyStreamRejectsJSON(t *testing.T)
 	}
 
 	result, err := svc.ForwardImages(context.Background(), c, provider, body, parsed, "")
-	require.Nil(t, result)
-	var imageErr *upstreamopenai.OpenAIImagesUpstreamError
-	require.ErrorAs(t, err, &imageErr)
-	require.Equal(t, "invalid_upstream_response", imageErr.Code)
-	require.Equal(t, http.StatusBadGateway, rec.Code)
-	require.Equal(t, "invalid_upstream_response", gjson.Get(rec.Body.String(), "error.code").String())
-	require.NotContains(t, rec.Body.String(), "aGVsbG8=")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 1, result.ImageCount)
+	require.Equal(t, 12, result.Usage.InputTokens)
+	require.Equal(t, 21, result.Usage.OutputTokens)
+	require.Equal(t, 9, result.Usage.ImageOutputTokens)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
+	require.Equal(t, 1, strings.Count(rec.Body.String(), "event: image_generation.completed\n"))
+	require.Contains(t, rec.Body.String(), `"b64_json":"aGVsbG8="`)
+	require.Contains(t, rec.Body.String(), `"revised_prompt":"draw a cat"`)
 }
 
 // TestOpenAIGatewayServiceForwardImages_APIKeyStreamRawJSONEventStreamFallbackBillsImage
