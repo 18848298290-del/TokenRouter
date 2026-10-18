@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
 // TestImagePriceJSONPreservesFreeAndMissingSizes serializes a quote with two
@@ -67,4 +70,26 @@ func TestMarketplacePricingJSONOmitsAbsentTokenModifiers(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &fields))
 	require.NotContains(t, fields, "max_reasoning_effort_multiplier")
 	require.NotContains(t, fields, "time_pricing")
+}
+
+// TestMarketplaceProtocolAttributesJSON passes display unions through the public
+// DTO mapper. Protocol summaries and explicit empty modalities must survive
+// serialization alongside the overall attributes and legacy modality fields.
+func TestMarketplaceProtocolAttributesJSON(t *testing.T) {
+	text := []string{"text"}
+	empty := []string{}
+	presentation := modelcatalog.Presentation{Attributes: modelcatalog.Attributes{OutputModalities: &text}, RouteDifferences: true, Variants: []modelcatalog.Attributes{{OutputModalities: &text}, {OutputModalities: &empty}}}
+	result := ModelMarketplaceGroupsFromRouting([]routing.ModelMarketplaceGroup{{ID: 1, Models: []routing.ModelMarketplaceModel{{
+		ID: "alias", Attributes: &presentation, OutputModalities: text,
+		ProtocolAttributes: map[protocol.ProtocolID]modelcatalog.Presentation{"openai_responses": {Attributes: modelcatalog.Attributes{OutputModalities: &text}}, "openai_images_generations": {Attributes: modelcatalog.Attributes{OutputModalities: &empty}}},
+	}}}})
+	body, err := json.Marshal(result[0].Models[0])
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(body, &fields))
+	require.JSONEq(t, `["text"]`, string(fields["output_modalities"]))
+	require.JSONEq(t, `{"openai_responses":{"output_modalities":["text"]},"openai_images_generations":{"output_modalities":[]}}`, string(fields["protocol_attributes"]))
+	require.Contains(t, string(fields["attributes"]), `"variants"`)
+	require.NotContains(t, string(body), "base_url")
+	require.NotContains(t, string(body), "provider_type")
 }

@@ -1,5 +1,8 @@
 import type { LocalizedUpdate } from '@/i18n/content'
-// 模型属性由目录、平台和管理员配置解析，缺失字段表示未知或继承。
+// modelAttributes.ts defines catalogue attributes, administrator overrides, and
+// optional display presentations. Missing fields represent unknown information or
+// inherited configuration, while explicit false values and empty arrays retain
+// their meaning when routes are summarized for marketplace consumers.
 export interface ReasoningOption {
   type: 'toggle' | 'effort' | 'budget_tokens'
   values?: (string | null)[]
@@ -56,3 +59,10 @@ export const conditionalCapabilities = ['temperature', 'top_p', 'tool_call'] as 
 export type ConditionalCapability = typeof conditionalCapabilities[number]
 export const mediaListFields = ['image_sizes', 'aspect_ratios', 'qualities', 'background_options', 'output_formats', 'video_operations', 'video_parameters'] as const
 export const mediaLimitFields = ['max_reference_images', 'max_output_count'] as const
+
+// ModelAttributePresentation summarizes route values for public display consumers.
+export interface ModelAttributePresentation extends ModelAttributes {
+  // Variants retain distinct attribute combinations, including unknown route fields,
+  // so display consumers can explain alternatives without inferring universal support.
+  variants?: ModelAttributes[]
+}

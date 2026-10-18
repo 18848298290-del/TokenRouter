@@ -1,3 +1,8 @@
+// misc.ts provides English labels for marketplace discovery and other console pages.
+// Marketplace protocol selectors and available-range explanations share these
+// translation keys so public visitors receive the same wording as authenticated
+// users inspecting model attributes.
+
 export default {
 marketplace: {
     title: 'Model Marketplace',
@@ -37,6 +42,9 @@ marketplace: {
     rateMultiplier: 'Group Multiplier',
     rateMultiplierValue: 'Group Multiplier {multiplier}',
     maxDiscountHint: 'The maximum discount versus official API pricing when calling this group via this site',
+    allProtocols: 'All protocols',
+    attributeVariant: 'Combination {index}',
+    attributeRouteDifferences: 'Available attributes vary by route; limits show the largest known values.',
     protocols: 'Protocols',
     protocolNative: 'Native',
     protocolNativeHint: 'Native: every upstream handles this protocol directly',

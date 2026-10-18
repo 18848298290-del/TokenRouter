@@ -1,3 +1,8 @@
+// misc.ts provides Chinese labels for marketplace discovery and other console pages.
+// Marketplace protocol selectors and available-range explanations share these
+// translation keys so public visitors receive the same wording as authenticated
+// users inspecting model attributes.
+
 export default {
 marketplace: {
     title: '模型广场',
@@ -37,6 +42,9 @@ marketplace: {
     rateMultiplier: '分组倍率',
     rateMultiplierValue: '分组倍率{multiplier}',
     maxDiscountHint: '指相比官方 API 定价，通过本站调用该分组模型可获得的最高优惠',
+    allProtocols: '全部协议',
+    attributeVariant: '组合 {index}',
+    attributeRouteDifferences: '各路线属性有差异，上限显示已知最大值。',
     protocols: '协议',
     protocolNative: '原生支持',
     protocolNativeHint: '原生支持，每个上游都直接处理这个协议',

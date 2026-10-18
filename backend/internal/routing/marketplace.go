@@ -79,7 +79,10 @@ type ModelMarketplaceModel struct {
 	// nested pointers and slices follow that supplied storage, so public consumers
 	// treat the presentation as read-only.
 	Attributes *EffectiveModelAttributes // optional resolved route attribute value
-	ID         string                    // public request model ID
+	// ProtocolAttributes contains available ranges by client protocol. The values
+	// borrow callback storage and remain read-only while the response is encoded.
+	ProtocolAttributes map[capability.ProtocolID]modelcatalog.Presentation // per-protocol display attribute ranges
+	ID                 string                                              // public request model ID
 	// DisplayName uses the resolved attribute's non-nil display-name value,
 	// including an explicitly empty string. Otherwise public assembly retains the
 	// label supplied in the model definition.
@@ -219,7 +222,7 @@ type MarketplaceOptions struct {
 	// target and upstream-model slices. Its presence selects authoritative
 	// attribute modalities, even when an error leaves results unknown.
 	// optional batched route attribute reader
-	Attributes func(context.Context, map[int64][]RequestableModel) (map[int64]map[string]EffectiveModelAttributes, error)
+	Attributes func(context.Context, map[int64][]RequestableModel) (map[int64]map[string]MarketplaceModelAttributes, error)
 	// Timezone is trimmed before probe-summary queries and defaults to UTC when
 	// blank. The history reader decides its response to an invalid nonblank
 	// timezone.
@@ -658,7 +661,7 @@ func (s *Marketplace) BuildPublicModels(ctx context.Context, group *Group, model
 // provider route. The newly allocated input lists borrow those nested slices;
 // callbacks keep them read-only. Price identities are not substituted for those
 // route targets when assembling attribute input.
-func (s *Marketplace) readAttributes(ctx context.Context, definitions map[int64][]MarketplaceModelDef) map[int64]map[string]EffectiveModelAttributes {
+func (s *Marketplace) readAttributes(ctx context.Context, definitions map[int64][]MarketplaceModelDef) map[int64]map[string]MarketplaceModelAttributes {
 	if s.options.Attributes == nil || len(definitions) == 0 {
 		return nil
 	}
@@ -689,9 +692,9 @@ func (s *Marketplace) readAttributes(ctx context.Context, definitions map[int64]
 // An installed attribute reader makes its data authoritative for modalities. A
 // missing or failed result from that reader leaves fields unknown; legacy
 // pricing metadata is consulted only when no attribute reader is installed.
-// Protocol slices and nested attribute storage are passed through rather than
-// cloned, so the returned presentation remains read-only.
-func (s *Marketplace) buildPublicModels(ctx context.Context, group *Group, modelDefs []MarketplaceModelDef, attributes map[string]EffectiveModelAttributes) []ModelMarketplaceModel {
+// Protocol slices, per-protocol attribute maps, and nested attribute storage
+// retain their source allocations. The returned presentation remains read-only.
+func (s *Marketplace) buildPublicModels(ctx context.Context, group *Group, modelDefs []MarketplaceModelDef, attributes map[string]MarketplaceModelAttributes) []ModelMarketplaceModel {
 	models := make([]ModelMarketplaceModel, 0, len(modelDefs))
 	for _, modelDef := range modelDefs {
 		pricing := pricing.UnknownDisplayPricing()
@@ -700,17 +703,20 @@ func (s *Marketplace) buildPublicModels(ctx context.Context, group *Group, model
 		}
 		var inputModalities, outputModalities []string
 		var presentation *EffectiveModelAttributes
+		var protocolAttributes map[capability.ProtocolID]modelcatalog.Presentation
 		if s.options.Attributes != nil {
 			if value, ok := attributes[modelDef.ID]; ok {
-				presentation = &value
-				if value.DisplayName != nil {
-					modelDef.DisplayName = *value.DisplayName
+				presentation = &value.Presentation
+				protocolAttributes = value.Protocols
+				attrs := value.Presentation
+				if attrs.DisplayName != nil {
+					modelDef.DisplayName = *attrs.DisplayName
 				}
-				if value.InputModalities != nil {
-					inputModalities = *value.InputModalities
+				if attrs.InputModalities != nil {
+					inputModalities = *attrs.InputModalities
 				}
-				if value.OutputModalities != nil {
-					outputModalities = *value.OutputModalities
+				if attrs.OutputModalities != nil {
+					outputModalities = *attrs.OutputModalities
 				}
 			}
 		} else {
@@ -721,14 +727,15 @@ func (s *Marketplace) buildPublicModels(ctx context.Context, group *Group, model
 		}
 
 		models = append(models, ModelMarketplaceModel{
-			ID:               modelDef.ID,
-			Attributes:       presentation,
-			DisplayName:      modelDef.DisplayName,
-			Pricing:          pricing,
-			InputModalities:  inputModalities,
-			OutputModalities: outputModalities,
-			Protocols:        modelDef.Protocols,
-			NativeProtocols:  modelDef.NativeProtocols,
+			ID:                 modelDef.ID,
+			Attributes:         presentation,
+			ProtocolAttributes: protocolAttributes,
+			DisplayName:        modelDef.DisplayName,
+			Pricing:            pricing,
+			InputModalities:    inputModalities,
+			OutputModalities:   outputModalities,
+			Protocols:          modelDef.Protocols,
+			NativeProtocols:    modelDef.NativeProtocols,
 		})
 	}
 

@@ -14,6 +14,18 @@
       </span>
     </div>
     <ul class="mt-2 flex flex-wrap gap-1.5">
+      <li v-if="selectable">
+        <button
+          type="button"
+          class="inline-flex items-center gap-1 rounded-compact bg-white/5 px-1.5 py-0.5 text-white transition-colors duration-fast hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-400 dark:bg-dark-800"
+          :aria-pressed="selected === null"
+          data-protocol="all"
+          @click="emit('update:selected', null)"
+        >
+          <Icon v-if="selected === null" name="check" size="xs" />
+          {{ t('marketplace.allProtocols') }}
+        </button>
+      </li>
       <!-- 原生协议用绿色描边和淡绿底标出，经过转换的协议保持中性底色。 -->
       <li
         v-for="protocol in items"
@@ -26,14 +38,23 @@
         :data-native="protocol.native"
         :title="`${protocol.endpoint} · ${t(protocol.native ? 'marketplace.protocolNativeHint' : 'marketplace.protocolConvertedHint')}`"
       >
-        <!-- OpenAI 图标在浅色主题下默认是黑色，这里传 currentColor，让它在深底浮层里跟随白色文字。 -->
-        <ProviderIcon
-          :brand="protocol.brand"
-          size="14px"
-          :color="protocol.brand === 'openai' ? 'currentColor' : ''"
-          class="select-none"
-        />
-        <span class="whitespace-nowrap">{{ t(`marketplace.protocolNames.${protocol.id}`) }}</span>
+        <component
+          :is="selectable ? 'button' : 'span'"
+          :type="selectable ? 'button' : undefined"
+          class="inline-flex items-center gap-1 rounded-compact transition-colors duration-fast focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-400"
+          :aria-pressed="selectable ? selected === protocol.id : undefined"
+          @click="selectable && emit('update:selected', protocol.id)"
+        >
+          <Icon v-if="selectable && selected === protocol.id" name="check" size="xs" />
+          <!-- OpenAI uses the panel text color so its monochrome mark stays visible on both themes. -->
+          <ProviderIcon
+            :brand="protocol.brand"
+            size="14px"
+            :color="protocol.brand === 'openai' ? 'currentColor' : ''"
+            class="select-none"
+          />
+          <span class="whitespace-nowrap">{{ t(`marketplace.protocolNames.${protocol.id}`) }}</span>
+        </component>
       </li>
     </ul>
   </div>
@@ -43,14 +64,26 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
+import Icon from '@/components/icons/Icon.vue'
 import { marketplaceProtocols } from '@/utils/marketplaceProtocols'
 import type { ProtocolID } from '@/types'
 
+// ModelProtocolChips.vue lists public client protocols and their native status.
+// Selectable chips expose a local single-protocol view with an all-protocol reset;
+// static labels remain available when an older API provides no protocol attributes.
+
 const props = defineProps<{
   protocols?: ProtocolID[]
+  // Selectable requires complete per-protocol attributes at the owning panel.
+  selectable?: boolean
+  // Selected is null for the overall union, or one requestable protocol identifier.
+  selected?: ProtocolID | null
   // nativeProtocols 是 protocols 里不经过协议转换的那部分。
   nativeProtocols?: ProtocolID[]
 }>()
+// Protocol controls emit a local selection; catalogue order and native styling
+// remain shared between interactive summaries and legacy static protocol labels.
+const emit = defineEmits<{ 'update:selected': [ProtocolID | null] }>()
 const { t } = useI18n()
 
 const items = computed(() => {

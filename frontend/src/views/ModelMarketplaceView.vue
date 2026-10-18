@@ -224,36 +224,11 @@
                   <div class="flex min-w-0 flex-1 basis-32 items-center">
                     <h3 class="min-w-0 truncate text-base font-semibold text-gray-950 dark:text-white">{{ model.display_name }}</h3>
                     <!-- 模型属性和可用协议收进标题旁的信息图标，悬停或点击后以浮层展示，不占用卡片高度。 -->
-                    <HelpTooltip
+                    <ModelAttributeDetails
                       v-if="model.attributes || marketplaceProtocols(model.protocols).length > 0"
-                      trigger="both"
-                      width-class="w-72"
-                      :closable="false"
+                      :model="model"
                       class="shrink-0"
-                    >
-                      <template #trigger>
-                        <button
-                          type="button"
-                          data-testid="model-attributes-trigger"
-                          class="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition-colors hover:text-gray-700 dark:text-dark-500 dark:hover:text-dark-200"
-                          :aria-label="t('admin.modelAttributes.details')"
-                        >
-                          <Icon name="infoCircle" size="sm" class="h-4 w-4" />
-                        </button>
-                      </template>
-                      <ModelAttributesSummary v-if="model.attributes" :attributes="model.attributes" variant="tooltip">
-                        <ModelProtocolChips
-                          :protocols="model.protocols"
-                          :native-protocols="model.native_protocols"
-                          class="border-t border-white/10 pt-3 dark:border-dark-700"
-                        />
-                      </ModelAttributesSummary>
-                      <ModelProtocolChips
-                        v-else
-                        :protocols="model.protocols"
-                        :native-protocols="model.native_protocols"
-                      />
-                    </HelpTooltip>
+                    />
                   </div>
                   <ModelCapabilityTags :model="model" />
                 </div>
@@ -304,9 +279,8 @@ import ModelMarketplaceSkeleton from '@/components/marketplace/ModelMarketplaceS
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import GroupAvailabilityBar from '@/components/marketplace/GroupAvailabilityBar.vue'
 import ModelCapabilityTags from '@/components/marketplace/ModelCapabilityTags.vue'
-import ModelAttributesSummary from '@/components/common/ModelAttributesSummary.vue'
+import ModelAttributeDetails from '@/components/marketplace/ModelAttributeDetails.vue'
 import ModelPricingPanel from '@/components/marketplace/ModelPricingPanel.vue'
-import ModelProtocolChips from '@/components/marketplace/ModelProtocolChips.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import SearchInput from '@/components/common/SearchInput.vue'

@@ -301,3 +301,38 @@ describe('HelpTooltip', () => {
     wrapper.unmount()
   })
 })
+
+// A protocol switch can change panel height without a viewport event. The
+// interactive panel must remeasure that content and release its observer when
+// removed, while reverse tab navigation returns to the trigger.
+it('repositions interactive content and supports keyboard return to its trigger', async () => {
+  let notify: ResizeObserverCallback | undefined
+  const disconnect = vi.fn()
+  vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(function (callback) {
+    notify = callback
+    return { observe: vi.fn(), unobserve: vi.fn(), disconnect }
+  })
+  const wrapper = mount(HelpTooltip, {
+    attachTo: document.body,
+    props: { trigger: 'both', interactive: true, accessibleLabel: 'Model attributes', closable: false },
+    slots: { trigger: '<button>Details</button>', default: '<button>All protocols</button>' },
+  })
+  const panel = document.body.querySelector<HTMLElement>('[role="dialog"]')!
+  wrapper.get('.group').element.getBoundingClientRect = vi.fn(() => ({ left: 200, right: 220, top: 300, bottom: 320, width: 20, height: 20 } as DOMRect))
+  let height = 40
+  panel.getBoundingClientRect = vi.fn(() => ({ width: 288, height } as DOMRect))
+  await wrapper.get('.group').trigger('keydown', { key: 'ArrowDown' })
+  await nextTick()
+  expect(document.activeElement).toBe(panel.querySelector('button'))
+  expect(panel.style.top).toBe('calc(292px)')
+  height = 400
+  notify!([], {} as ResizeObserver)
+  await nextTick()
+  expect(panel.style.top).not.toBe('calc(292px)')
+  panel.querySelector('button')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }))
+  expect(document.activeElement).toBe(wrapper.get('button').element)
+  wrapper.unmount()
+  expect(disconnect).toHaveBeenCalledOnce()
+  vi.restoreAllMocks()
+  document.body.innerHTML = ''
+})

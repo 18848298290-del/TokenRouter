@@ -78,7 +78,7 @@ func (r *attributeRepoFixture) Save(_ context.Context, value *ModelAttributeConf
 func (r *attributeRepoFixture) Delete(context.Context, int64) error { r.config = nil; return nil }
 
 // TestModelAttributesRequestLanguage reads one localized profile in English and
-// Simplified Chinese. Single-group and batch resolution must choose the same
+// Simplified Chinese. Export and marketplace resolution must choose the same
 // requested-language display name and return equal presentation values.
 func TestModelAttributesRequestLanguage(t *testing.T) {
 	en := "en"
@@ -102,6 +102,9 @@ func TestModelAttributesRequestLanguage(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, want, *single["model"].DisplayName)
 		require.Equal(t, single["model"], batch[1]["model"])
+		marketplace, err := service.ResolveMarketplaceGroups(ctx, map[int64][]RequestableModel{1: models})
+		require.NoError(t, err)
+		require.Equal(t, single["model"], marketplace[1]["model"].Presentation)
 	}
 }
 

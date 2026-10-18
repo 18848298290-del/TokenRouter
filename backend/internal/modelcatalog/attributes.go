@@ -55,6 +55,9 @@ type Attributes struct {
 
 // Presentation contains model metadata for display; it does not authorize gateway requests.
 type Presentation struct {
+	// Variants preserves distinct route attributes for marketplace display. Each
+	// value is a detached attribute combination, containing no provider route identity.
+	Variants               []Attributes       `json:"variants,omitempty"`
 	SearchTerms            []string           `json:"search_terms,omitempty"`            // alternate model search terms
 	LocalizationResolution *locale.Resolution `json:"localization_resolution,omitempty"` // selected display name language
 	Attributes                                // effective model display attributes

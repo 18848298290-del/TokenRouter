@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -127,6 +128,9 @@ type ModelMarketplaceTimePricingPeriod struct {
 // ModelMarketplaceModel combines a requestable ID with display attributes and
 // a public quote.
 type ModelMarketplaceModel struct {
+	// ProtocolAttributes exposes display ranges keyed by requestable client protocol.
+	// Missing data leaves protocol labels available while their attributes remain unknown.
+	ProtocolAttributes map[protocol.ProtocolID]modelcatalog.Presentation `json:"protocol_attributes,omitempty"`
 	// Attributes contains route-aware display information when the attribute
 	// query succeeds; nil leaves capability details unknown while the model and
 	// quote remain available.
@@ -218,7 +222,8 @@ type ModelMarketplaceGroup struct {
 // ModelMarketplaceGroupsFromRouting returns public group DTOs in the supplied
 // order, including an empty nonnil slice for empty input. It allocates group
 // and model records, while attribute pointers, model modality/protocol
-// slices, search texts, and optional scalar pointers can retain routing
+// slices, protocol attribute maps, search texts, and optional scalar pointers
+// can retain routing
 // storage; treat them as read-only during encoding.
 func ModelMarketplaceGroupsFromRouting(groups []routing.ModelMarketplaceGroup) []ModelMarketplaceGroup {
 	out := make([]ModelMarketplaceGroup, 0, len(groups))
@@ -226,14 +231,15 @@ func ModelMarketplaceGroupsFromRouting(groups []routing.ModelMarketplaceGroup) [
 		models := make([]ModelMarketplaceModel, 0, len(group.Models))
 		for _, model := range group.Models {
 			models = append(models, ModelMarketplaceModel{
-				ID:               model.ID,
-				DisplayName:      model.DisplayName,
-				Pricing:          modelMarketplacePricingFromRouting(model.Pricing),
-				InputModalities:  model.InputModalities,
-				Attributes:       model.Attributes,
-				OutputModalities: model.OutputModalities,
-				Protocols:        model.Protocols,
-				NativeProtocols:  model.NativeProtocols,
+				ID:                 model.ID,
+				DisplayName:        model.DisplayName,
+				Pricing:            modelMarketplacePricingFromRouting(model.Pricing),
+				InputModalities:    model.InputModalities,
+				Attributes:         model.Attributes,
+				ProtocolAttributes: model.ProtocolAttributes,
+				OutputModalities:   model.OutputModalities,
+				Protocols:          model.Protocols,
+				NativeProtocols:    model.NativeProtocols,
 			})
 		}
 

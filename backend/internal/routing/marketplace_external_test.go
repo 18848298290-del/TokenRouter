@@ -128,7 +128,7 @@ func TestMarketplaceBatchAttributesAndOptionalCapacity(t *testing.T) {
 			options := routing.MarketplaceOptions{
 				Now:  time.Now,
 				Warn: func(string, ...any) {},
-				Attributes: func(_ context.Context, models map[int64][]routing.RequestableModel) (map[int64]map[string]routing.EffectiveModelAttributes, error) {
+				Attributes: func(_ context.Context, models map[int64][]routing.RequestableModel) (map[int64]map[string]routing.MarketplaceModelAttributes, error) {
 					calls++
 					require.Len(t, models, 2)
 					for _, id := range []int64{1, 2} {
@@ -137,7 +137,7 @@ func TestMarketplaceBatchAttributesAndOptionalCapacity(t *testing.T) {
 					if attributesFail {
 						return nil, errors.New("database unavailable")
 					}
-					return map[int64]map[string]routing.EffectiveModelAttributes{1: {"alias": {Attributes: modelcatalog.Attributes{DisplayName: &name, InputModalities: &modalities}}}}, nil
+					return map[int64]map[string]routing.MarketplaceModelAttributes{1: {"alias": {Presentation: modelcatalog.Presentation{Attributes: modelcatalog.Attributes{DisplayName: &name, InputModalities: &modalities}}}}}, nil
 				},
 			}
 			svc := routing.NewMarketplace(groups, nil, marketplaceLoadingModels{}, routing.RequestableResolver{}, prices, observations, observations, options)
@@ -1056,7 +1056,7 @@ func (s *marketplaceSettingRepoStub) GetMultiple(_ context.Context, keys []strin
 // returns that route's text input and disabled temperature capability.
 func TestMarketplaceUsesRouteAttributes(t *testing.T) {
 	attrs := &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
-	service := routing.NewMarketplace(nil, nil, nil, routing.RequestableResolver{}, nil, nil, nil, routing.MarketplaceOptions{Attributes: attrs.ResolveGroups})
+	service := routing.NewMarketplace(nil, nil, nil, routing.RequestableResolver{}, nil, nil, nil, routing.MarketplaceOptions{Attributes: attrs.ResolveMarketplaceGroups})
 	target := modelcatalog.Target{Model: "gpt-5.3-codex-spark", Platform: "openai", ProviderType: "oauth", ClientProtocol: "openai_responses", UpstreamProtocol: "openai_responses"}
 	result := service.BuildPublicModels(context.Background(), &routing.Group{ID: 1}, []routing.MarketplaceModelDef{{ID: "alias", UpstreamModels: []string{target.Model}, AttributeTargets: []modelcatalog.Target{target}}})
 	require.Len(t, result, 1)

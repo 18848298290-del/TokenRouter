@@ -41,7 +41,7 @@ type marketplaceStats struct {
 // construction; the marketplace retains the supplied timezone and current
 // model-attribute resolver for later queries.
 func provideMarketplace(groups *routingpostgres.GroupStore, store *settings.Store, catalogue *routing.RequestableCatalogue, prices *billing.PriceResolver, calculator *billing.Calculator, capacity *routing.CapacityService, availability routing.GroupAvailabilityProbeRepository, cfg *config.Config, attributes *routing.ModelAttributeService) *routing.Marketplace {
-	options := routing.MarketplaceOptions{Attributes: attributes.ResolveGroups, Timezone: cfg.Timezone, Now: time.Now, Warn: slog.Warn}
+	options := routing.MarketplaceOptions{Attributes: attributes.ResolveMarketplaceGroups, Timezone: cfg.Timezone, Now: time.Now, Warn: slog.Warn}
 	return routing.NewMarketplace(groups, store, catalogue, catalogue.Resolver, marketplacePrices{prices, calculator}, capacity, availability, options)
 }
 

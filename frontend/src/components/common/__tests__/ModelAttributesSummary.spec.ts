@@ -51,3 +51,23 @@ describe('ModelAttributesSummary', () => {
   })
 
 })
+
+// Opposite thinking requirements and disjoint budgets describe separate usable
+// combinations. Rendering must show both original intervals and restrictions
+// rather than an invented continuous range or an unrestricted temperature badge.
+it('keeps incompatible condition and budget combinations separate', () => {
+  const wrapper = mount(ModelAttributesSummary, { props: { attributes: {
+    temperature: true,
+    variants: [
+      { temperature: true, conditions: { temperature: { thinking: true } }, reasoning_options: [{ type: 'budget_tokens', min: 1, max: 10 }] },
+      { temperature: true, conditions: { temperature: { thinking: false } }, reasoning_options: [{ type: 'budget_tokens', min: 100, max: 200 }] },
+    ],
+  } } })
+  const variants = wrapper.get('[data-testid="model-attributes-variants"]')
+  expect(variants.findAll('section')).toHaveLength(2)
+  expect(variants.text()).toContain('1 ~ 10')
+  expect(variants.text()).toContain('100 ~ 200')
+  expect(variants.text()).toContain('admin.modelAttributes.thinkingOn')
+  expect(variants.text()).toContain('admin.modelAttributes.thinkingOff')
+  expect(wrapper.get('[data-capability="temperature"]').attributes('data-state')).toBe('conditional')
+})

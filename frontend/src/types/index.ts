@@ -1,5 +1,5 @@
 import type { LocalizedUpdate } from '@/i18n/content'
-import type { ModelAttributes } from './modelAttributes'
+import type { ModelAttributes, ModelAttributePresentation } from './modelAttributes'
 import type { SubscriptionPlan } from './payment'
 
 // index.ts defines shared frontend API records and their optional observations.
@@ -554,7 +554,10 @@ export interface MarketplaceModelPricing {
 export type ModelModality = 'text' | 'image' | 'audio' | 'video' | 'pdf'
 
 export interface MarketplaceModel {
-  attributes?: ModelAttributes
+  // Attributes describe the available range across all locally eligible routes.
+  attributes?: ModelAttributePresentation
+  // Protocol attributes reuse those resolved routes for each client protocol.
+  protocol_attributes?: Partial<Record<ProtocolID, ModelAttributePresentation>>
   id: string
   display_name: string
   pricing: MarketplaceModelPricing

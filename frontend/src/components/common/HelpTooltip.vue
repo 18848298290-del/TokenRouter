@@ -2,10 +2,24 @@
 import { useFloatingMotion } from '@/composables/useFloatingMotion'
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
+
+// HelpTooltip.vue presents anchored explanations and optional interactive details.
+// Hover and click triggers share a teleported panel and outside-dismiss behavior.
+// Interactive panels expose dialog semantics and keyboard access while ordinary
+// descriptions keep their tooltip role and existing trigger behavior.
+//
+// A pinned click keeps the panel available while controls receive focus. Escape
+// returns focus to the trigger, and focus leaving both regions dismisses an
+// interactive panel. A resize observer updates placement when switching content
+// changes the panel dimensions, so protocol selectors remain inside the viewport.
 
 const props = withDefaults(defineProps<{
   content?: string
+  // Interactive enables a nonmodal dialog with keyboard access to its controls.
+  interactive?: boolean
+  // AccessibleLabel names the interactive panel for assistive technology users.
+  accessibleLabel?: string
   trigger?: 'hover' | 'click' | 'both' | 'manual'
   // 手动提示跟随调用方状态，外部关闭后同步状态以供下次提交打开。
   open?: boolean
@@ -16,13 +30,21 @@ const props = withDefaults(defineProps<{
   closable?: boolean
 }>(), {
   trigger: 'hover',
+  interactive: false,
   placement: 'top',
   widthClass: 'w-64',
   closable: true,
   open: undefined,
 })
 
+// Panel identity connects optional dialog semantics to its trigger while the
+// visibility and placement refs retain the existing controlled or local lifecycle.
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
+const generatedId = useId()
+const panelId = computed(() => props.tooltipId ?? (props.interactive ? generatedId : undefined))
+// panelObserver follows interactive content dimensions and is disconnected on
+// unmount so removed panels cannot retain controls or schedule later positioning.
+let panelObserver: ResizeObserver | undefined
 const internalShow = ref(false)
 const requestedShow = computed(() => props.open ?? internalShow.value)
 const clickPinned = ref(false)
@@ -52,10 +74,15 @@ function openTooltip() {
   nextTick(updatePosition)
 }
 
+// closeTooltip dismisses the panel and restores an interactive control's focus.
+// Pointer dismissals outside the panel follow the browser's ordinary focus change;
+// closing a focused panel returns keyboard users to its trigger button.
 function closeTooltip() {
+  const restoreFocus = props.interactive && tooltipRef.value?.contains(document.activeElement)
   internalShow.value = false
   emit('update:open', false)
   clickPinned.value = false
+  if (restoreFocus) triggerRef.value?.querySelector<HTMLElement>('button, [tabindex]')?.focus()
 }
 
 function onEnter() {
@@ -98,11 +125,42 @@ function onDocumentInteraction(event: Event) {
   closeTooltip()
 }
 
+// onDocumentKeydown handles Escape using the trigger's established dismissal rules.
+// Interactive controls receive focus restoration through closeTooltip, whereas
+// ordinary hover-only explanations retain their existing Escape behavior.
 function onDocumentKeydown(event: KeyboardEvent) {
   if (!clickEnabled() && props.trigger !== 'manual') return
   if (event.key === 'Escape') {
     closeTooltip()
   }
+}
+
+// onTriggerKeydown moves keyboard focus into interactive panel controls.
+// ArrowDown opens the panel directly; Tab enters an already open panel because
+// teleport placement otherwise separates its controls from the trigger's tab order.
+function onTriggerKeydown(event: KeyboardEvent) {
+  if (!props.interactive || event.shiftKey) return
+  if (event.key !== 'ArrowDown' && !(event.key === 'Tab' && show.value)) return
+  event.preventDefault()
+  clickPinned.value = true
+  openTooltip()
+  nextTick(() => tooltipRef.value?.querySelector<HTMLElement>('button:not(:disabled), [href], [tabindex="0"]')?.focus())
+}
+
+// onPanelKeydown returns reverse tab navigation to the panel's trigger button.
+function onPanelKeydown(event: KeyboardEvent) {
+  if (!props.interactive || event.key !== 'Tab' || !event.shiftKey) return
+  const first = tooltipRef.value?.querySelector('button:not(:disabled), [href], [tabindex="0"]')
+  if (document.activeElement === first) {
+    event.preventDefault()
+    triggerRef.value?.querySelector<HTMLElement>('button, [tabindex]')?.focus()
+  }
+}
+
+// onInteractiveFocusout dismisses a panel after focus leaves both owned regions.
+function onInteractiveFocusout(event: FocusEvent) {
+  if (!props.interactive || isInside(triggerRef.value, event.relatedTarget) || isInside(tooltipRef.value, event.relatedTarget)) return
+  closeTooltip()
 }
 
 function onViewportChange() {
@@ -163,6 +221,12 @@ function updatePosition() {
 }
 
 onMounted(() => {
+  // Content switches can change panel height independently of viewport events.
+  // Observe those dimensions so the anchor position is recalculated after layout settles.
+  if (props.interactive && typeof ResizeObserver !== 'undefined' && tooltipRef.value) {
+    panelObserver = new ResizeObserver(onViewportChange)
+    panelObserver.observe(tooltipRef.value)
+  }
   document.addEventListener('click', onDocumentInteraction, true)
   document.addEventListener('pointerdown', onDocumentInteraction, true)
   document.addEventListener('touchstart', onDocumentInteraction, { capture: true, passive: true })
@@ -173,6 +237,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  // Release the element observer with the document listeners so detached panels
+  // cannot retain their controls or schedule placement after the owner is removed.
+  panelObserver?.disconnect()
   document.removeEventListener('click', onDocumentInteraction, true)
   document.removeEventListener('pointerdown', onDocumentInteraction, true)
   document.removeEventListener('touchstart', onDocumentInteraction, true)
@@ -190,9 +257,11 @@ onBeforeUnmount(() => {
     @mouseenter="onEnter"
     @mouseleave="onLeave"
     @click="onClick"
+    @keydown="onTriggerKeydown"
+    @focusout="onInteractiveFocusout"
   >
     <!-- 触发图标 -->
-    <slot name="trigger">
+    <slot name="trigger" :open="show" :panel-id="panelId">
       <Icon
         name="infoCircle"
         size="sm"
@@ -206,9 +275,12 @@ onBeforeUnmount(() => {
       <MotionTransition name="fade" persisted>
         <div
           ref="tooltip"
-          :id="tooltipId"
+          :id="panelId"
           v-show="show" :inert="!(show) || undefined"
-          role="tooltip"
+          :role="interactive ? 'dialog' : 'tooltip'"
+          :aria-label="interactive ? accessibleLabel : undefined"
+          @keydown="onPanelKeydown"
+          @focusout="onInteractiveFocusout"
           :class="[
             'fixed z-help-tooltip max-w-[calc(100vw-1.5rem)] -translate-x-1/2 tooltip-panel rounded-control shadow-xl',
             resolvedPlacement === 'top' ? '-translate-y-full' : 'translate-y-0',

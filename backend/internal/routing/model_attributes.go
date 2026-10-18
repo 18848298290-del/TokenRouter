@@ -12,6 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
+	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
 // model_attributes.go validates and saves group attribute profiles and builds
@@ -26,9 +27,9 @@ import (
 // group associations before persistence. Existing profiles carry an optimistic
 // update timestamp, and affected group authentication caches are invalidated
 // after a successful save. Display queries resolve every retained route with
-// one catalogue View, reuse equivalent attribute identities, and combine route
-// values through modelcatalog.Common so conditional capabilities and differing
-// limits remain represented in presentation.
+// one catalogue View, reuse equivalent attribute identities, and retain localized
+// route values for client-export intersections and marketplace unions. Protocol
+// summaries share these values and the catalogue publication used to resolve them.
 
 // Attribute configuration errors identify missing profiles and conflicting
 // names or group associations returned by the repository's administrative
@@ -157,6 +158,17 @@ type ModelAttributeSnapshot struct {
 // EffectiveModelAttributes aliases the aggregate presentation returned for
 // locally eligible model routes.
 type EffectiveModelAttributes = modelcatalog.Presentation
+
+// resolvedModelAttributes retains localized values shared by overall and protocol
+// summaries within one group profile and catalogue publication.
+type resolvedModelAttributes struct {
+	// values and byProtocol refer to the same resolved attribute values. Consumers
+	// aggregate them into detached presentations before returning data to callers.
+	values      []modelcatalog.Attributes                           // all distinct route attributes
+	byProtocol  map[capability.ProtocolID][]modelcatalog.Attributes // values grouped by client protocol
+	searchTerms []string                                            // translated model search texts
+	resolution  *locale.Resolution                                  // resolved display name language
+}
 
 // ModelAttributeService saves group profiles and resolves their overrides for
 // requests, previews, and display queries.
@@ -400,59 +412,76 @@ func (s *ModelAttributeService) resolveModels(view modelcatalog.View, config *Mo
 	result := map[string]EffectiveModelAttributes{}
 	resolvedTargets := make(map[modelcatalog.TargetKey]modelcatalog.Attributes)
 	for _, model := range models {
-		routes := model.AttributeTargets
-		// Older callers can supply model names without route metadata. Derive
-		// name-only targets so those display queries still resolve their configured
-		// identities.
-		if len(routes) == 0 {
-			names := model.UpstreamModels
-			// A model with no retained upstream names uses its request identity for
-			// display lookup, allowing legacy catalogue inputs to receive known
-			// attributes.
-			if len(names) == 0 {
-				names = []string{model.ID}
-			}
-			for _, name := range names {
-				routes = append(routes, modelcatalog.Target{Model: name})
-			}
-		}
-		values := []modelcatalog.Attributes{}
-		var searchTerms []string
-		var resolution *locale.Resolution
-		seen := make(map[modelcatalog.TargetKey]bool)
-		for _, target := range routes {
-			key := target.Key()
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			// Service identity is already captured in the full key; omitting the raw
-			// address lets equivalent relay routes share attributes while route
-			// deduplication stays exact.
-			attributeKey := key.ForAttributes()
-			base, found := resolvedTargets[attributeKey]
-			if !found {
-				base = s.resolve(view, config, target, candidates).Attributes
-				resolvedTargets[attributeKey] = base
-			}
-			if base.DisplayNameLocalization != nil {
-				searchTerms = append(searchTerms, locale.SearchTexts(base.DisplayNameLocalization.Content, func(text string) []string { return []string{text} })...)
-				value, actual := base.DisplayNameLocalization.Resolve(language)
-				resolution = &actual
-				if value != "" {
-					base.DisplayName = &value
-				}
-				base.DisplayNameLocalization = nil
-			}
-			values = append(values, base)
-		}
-		// Aggregate the route values through their shared capabilities and known
-		// minimum limits so a request alias does not advertise one provider's
-		// stronger attributes universally.
-		attrs, different := modelcatalog.Common(values)
-		result[model.ID] = EffectiveModelAttributes{Attributes: attrs, RouteDifferences: different, SearchTerms: searchTerms, LocalizationResolution: resolution}
+		resolved := s.resolveModelRoutes(view, config, model, language, candidates, resolvedTargets)
+		attrs, different := modelcatalog.Common(resolved.values)
+		result[model.ID] = EffectiveModelAttributes{Attributes: attrs, RouteDifferences: different, SearchTerms: resolved.searchTerms, LocalizationResolution: resolved.resolution}
 	}
 	return result
+}
+
+// resolveModelRoutes resolves final route identities and localizes their display
+// names before either marketplace or client-export aggregation. The supplied
+// cache is scoped to one group profile and catalogue View.
+//
+// Exact target keys suppress duplicate routes, while equivalent attribute keys
+// reuse resolution across relay addresses. Legacy inputs derive name-only targets
+// from upstream names or the request ID. Protocol buckets reference these same
+// localized values so their summaries cannot observe a different metadata version
+// or apply a different administrator override from the overall model summary.
+func (s *ModelAttributeService) resolveModelRoutes(view modelcatalog.View, config *ModelAttributeConfig, model RequestableModel, language string, candidates func(string) []string, resolvedTargets map[modelcatalog.TargetKey]modelcatalog.Attributes) resolvedModelAttributes {
+	routes := model.AttributeTargets
+	// Older callers can supply model names without route metadata. Derive
+	// name-only targets so those display queries still resolve their configured
+	// identities.
+	if len(routes) == 0 {
+		names := model.UpstreamModels
+		// A model with no retained upstream names uses its request identity for
+		// display lookup, allowing legacy catalogue inputs to receive known
+		// attributes.
+		if len(names) == 0 {
+			names = []string{model.ID}
+		}
+		for _, name := range names {
+			routes = append(routes, modelcatalog.Target{Model: name})
+		}
+	}
+	resolved := resolvedModelAttributes{byProtocol: map[capability.ProtocolID][]modelcatalog.Attributes{}}
+	var searchTerms []string
+	var resolution *locale.Resolution
+	seen := make(map[modelcatalog.TargetKey]bool)
+	for _, target := range routes {
+		key := target.Key()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		// Service identity is already captured in the full key; omitting the raw
+		// address lets equivalent relay routes share attributes while route
+		// deduplication stays exact.
+		attributeKey := key.ForAttributes()
+		base, found := resolvedTargets[attributeKey]
+		if !found {
+			base = s.resolve(view, config, target, candidates).Attributes
+			resolvedTargets[attributeKey] = base
+		}
+		if base.DisplayNameLocalization != nil {
+			searchTerms = append(searchTerms, locale.SearchTexts(base.DisplayNameLocalization.Content, func(text string) []string { return []string{text} })...)
+			value, actual := base.DisplayNameLocalization.Resolve(language)
+			resolution = &actual
+			if value != "" {
+				base.DisplayName = &value
+			}
+			base.DisplayNameLocalization = nil
+		}
+		resolved.values = append(resolved.values, base)
+		if target.ClientProtocol != "" {
+			protocol := capability.ProtocolID(target.ClientProtocol)
+			resolved.byProtocol[protocol] = append(resolved.byProtocol[protocol], base)
+		}
+	}
+	resolved.searchTerms = searchTerms
+	resolved.resolution = resolution
+	return resolved
 }
 
 // match returns the first applicable rule's attributes for a model and optional
