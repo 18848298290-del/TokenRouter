@@ -120,10 +120,11 @@ func (c *OpenAIImageOutputCounter) AddJSONResponse(body []byte) {
 // output items participate for the selected item-done and response-completion
 // labels. Callers supply an initialized counter and serialize its observations.
 //
-// An image_generation.completed payload selects the first existing item, then
-// output, then the root object. Presence wins even when that field is null or
-// unusable, so a later candidate cannot rescue it. The selected output field is
-// treated as one object; an array at that position contributes no item.
+// An image_generation.completed or image_edit.completed payload selects the
+// first existing item, then output, then the root object. Presence wins even
+// when that field is null or unusable, so a later candidate cannot rescue it.
+// The selected output field is treated as one object; an array at that position
+// contributes no item.
 func (c *OpenAIImageOutputCounter) AddSSEData(data []byte) {
 	if c == nil || len(data) == 0 || strings.TrimSpace(string(data)) == "[DONE]" || !gjson.ValidBytes(data) {
 		return
@@ -136,7 +137,7 @@ func (c *OpenAIImageOutputCounter) AddSSEData(data []byte) {
 		c.addImageOutputItem(root.Get("item"))
 	case "response.completed", "response.done":
 		c.addOutputArray(root.Get("response.output"))
-	case "image_generation.completed":
+	case "image_generation.completed", "image_edit.completed":
 		// Existing wrapper fields determine which image shape is inspected. Even
 		// null item/output values consume this selection and suppress root evidence.
 		if item := root.Get("item"); item.Exists() {
@@ -235,7 +236,7 @@ func (c *OpenAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		return
 	}
 	itemType := strings.TrimSpace(item.Get("type").String())
-	if itemType != "" && itemType != "image_generation_call" && itemType != "image_generation.completed" {
+	if itemType != "" && itemType != "image_generation_call" && itemType != "image_generation.completed" && itemType != "image_edit.completed" {
 		return
 	}
 	// Exclude payloads carrying the raw partial-image marker before result

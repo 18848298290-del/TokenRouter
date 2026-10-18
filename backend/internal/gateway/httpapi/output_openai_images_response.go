@@ -18,8 +18,8 @@ import (
 // Image response readers need HTTP-specific body limits, error presentation
 // and output observations while parsing stays in the native image
 // implementation. Bound callbacks retain this request's writer and context,
-// including separate heartbeat-adjusted and physical byte counts used to
-// decide response commitment and safe retry.
+// including heartbeat-adjusted byte observations used to decide response
+// commitment and safe retry across header waits and response reading.
 
 // ImageOptions binds image readers to a usable HTTP request and
 // response-output instance. Callbacks retain Gin and its writer, so callers
@@ -69,9 +69,9 @@ func (p *OpenAIResponseOutput) ImageOptions(c *gin.Context) upstreamopenai.Image
 
 		Summary: p.ImageNoOutputSummary,
 
-		AdjustedWrittenSize: func() int { return OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) },
+		AdjustedWrittenSize: func() int { return OpenAIImagesAdjustedWrittenSize(c) },
 
-		WrittenSize: c.Writer.Size,
+		RecordKeepalive: func(n int) { RecordOpenAIStreamKeepaliveBytes(c, n) },
 
 		StreamInterval: p.ImageStreamInterval,
 

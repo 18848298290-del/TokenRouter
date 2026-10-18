@@ -164,6 +164,22 @@ func TestImagesLoopPreservesUserErrorAndSameProviderRetry(t *testing.T) {
 	require.Zero(t, p.switched)
 }
 
+// TestImagesLoopTerminalProtocolErrorDoesNotRegenerate supplies an image error
+// that also carries recovery-looking metadata. The image failure terminates
+// after one released attempt with no completion, retry, or provider switch.
+func TestImagesLoopTerminalProtocolErrorDoesNotRegenerate(t *testing.T) {
+	p := &generationStub{outcomes: []GenerationOutcome{
+		{Err: errors.New("invalid upstream streaming response"), ImageError: true, ImageErrorRetryable: true, Failure: &failover.FailureInfo{RetryableOnSameProvider: true, RetryNext: true}},
+		{Result: &GenerationResult{ImageCount: 1}},
+	}}
+	RunImages(t.Context(), GenerationRequest{Stream: true, MaxSwitches: 3}, p)
+	require.Equal(t, 1, p.selected)
+	require.Equal(t, 1, p.released)
+	require.Zero(t, p.completed)
+	require.Zero(t, p.switched)
+	require.Equal(t, []bool{false}, p.reports)
+}
+
 // TestGrokLoopBoundLookupDoesNotSwitchOrProbeEligibility supplies a
 // mismatched task provider before a matching lookup failure. It checks
 // rejection before activation/admission, then exhausted lookup handling

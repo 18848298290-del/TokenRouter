@@ -28,7 +28,7 @@ import (
 // by HTTP, WebSocket and media execution adapters.
 type OpenAIErrorOutput struct {
 	// stopCompact prevents later Compact beats and waits for an active write.
-	// Its result reports first-beat framing state, including a failed body write.
+	// Its result includes ordinary reader heartbeats and failed controller writes.
 	stopCompact func(*gin.Context) bool
 	// markStream and markFailure receive the intended error status after streaming
 	// begins. WriteStreamingErrorWithCode selects them with countTowardsSLA,

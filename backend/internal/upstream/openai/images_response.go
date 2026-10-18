@@ -52,11 +52,11 @@ type ImageResponseOptions struct {
 	// ResponseHeaders copies approved upstream headers into the client header map
 	// before each reader selects its response content type.
 	ResponseHeaders func(http.Header, http.Header)
-	// ObserveError records OAuth generation failures before return, using status
-	// and message plus an optional caller-provided diagnostic summary.
+	// ObserveError records response failures before return, using status and
+	// message plus an optional caller-provided diagnostic summary.
 	ObserveError func(int, string, string)
-	// WriteHTTPError presents nonretryable OAuth nonstream errors; retryable errors
-	// are returned to the executor before this callback is invoked.
+	// WriteHTTPError presents nonretryable OAuth nonstream errors and stream
+	// media-type rejections. Those rejections apply to either credential type.
 	WriteHTTPError func(*OpenAIImagesUpstreamError) bool
 	// EmptyOutput classifies OAuth nonstream responses containing neither an image
 	// nor recognizable model text for the executor's retry policy.
@@ -64,13 +64,12 @@ type ImageResponseOptions struct {
 	// Summary builds OAuth no-output diagnostics; its caller owns redaction policy
 	// for any upstream text included in that summary.
 	Summary func([]byte) string
-	// AdjustedWrittenSize captures the initial count with JSON keepalive bytes
-	// excluded. WrittenSize later reads physical bytes, and their difference
-	// controls OAuth retryable-error presentation.
-	AdjustedWrittenSize func() int // heartbeat-adjusted initial byte count
-	// WrittenSize supplies the current physical writer size; a difference from the
-	// adjusted baseline permits presenting retryable stream errors.
-	WrittenSize func() int
+	// AdjustedWrittenSize returns current output with JSON or SSE heartbeat bytes
+	// excluded. Both the baseline and later retry checks use this same measure.
+	AdjustedWrittenSize func() int
+	// RecordKeepalive optionally records accepted SSE comment bytes so the HTTP
+	// caller can exclude body heartbeats from request-wide output and retry decisions.
+	RecordKeepalive func(int)
 	// StreamInterval enables idle checks when positive; checks use upstream read
 	// arrival time even while downstream event processing is delayed.
 	StreamInterval func() time.Duration
@@ -258,8 +257,8 @@ func ReadImagesOAuthStreaming(
 	var sseData wire.SSEDataAccumulator
 	var processDataErr error
 	processDataDone := false
-	// Capture the heartbeat-adjusted baseline, then compare physical writes when
-	// deciding whether retryable failure should be shown to the client.
+	// Compare the same heartbeat-adjusted measure before and after reading, so
+	// comments from either the header wait or body wait cannot block safe recovery.
 	writerSizeBeforeResponse := options.AdjustedWrittenSize()
 
 	processData := func(dataBytes []byte) {
@@ -393,7 +392,7 @@ func ReadImagesOAuthStreaming(
 				retryable := IsOpenAIImagesRetryableUpstreamError(upstreamErr)
 				// A retryable failure before recorded writes remains for executor recovery;
 				// after writes, present it through the Images error event.
-				if !clientDisconnected && (!retryable || options.WrittenSize() != writerSizeBeforeResponse) {
+				if !clientDisconnected && (!retryable || options.AdjustedWrittenSize() != writerSizeBeforeResponse) {
 					TryWriteImagesStreamEvent(c, options, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", BuildOpenAIImagesStreamErrorBodyFromUpstream(upstreamErr))
 				}
 				options.ObserveError(upstreamErr.ClientStatusCode(), upstreamErr.ClientMessage(), "")
@@ -608,7 +607,11 @@ func ReadImagesOAuthStreaming(
 			if clientDisconnected || time.Since(lastDownstreamWriteAt) < keepaliveInterval {
 				continue
 			}
-			if _, writeErr := io.WriteString(c.Writer, ":\n\n"); writeErr != nil {
+			n, writeErr := io.WriteString(c.Writer, ":\n\n")
+			if options.RecordKeepalive != nil {
+				options.RecordKeepalive(n)
+			}
+			if writeErr != nil {
 				clientDisconnected = true
 				options.Logf("[OpenAI] Images responses stream client disconnected during keepalive, continue draining upstream for billing")
 				continue

@@ -115,9 +115,6 @@ func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options
 		if len(line) == 0 {
 			return
 		}
-		// A read line can be an SSE comment or separator; this timestamp records
-		// arrival latency before interpreting its payload.
-
 		// Latch a failed sink write while continuing payload observation, so usage
 		// can still be collected from later upstream events.
 		if !clientDisconnected {
@@ -282,7 +279,11 @@ func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options
 			if clientDisconnected || time.Since(lastDownstreamWriteAt) < keepaliveInterval {
 				continue
 			}
-			if _, writeErr := io.WriteString(c.Writer, ":\n\n"); writeErr != nil {
+			n, writeErr := io.WriteString(c.Writer, ":\n\n")
+			if options.RecordKeepalive != nil {
+				options.RecordKeepalive(n)
+			}
+			if writeErr != nil {
 				clientDisconnected = true
 				options.Logf("[OpenAI] Images stream client disconnected during keepalive, continue draining upstream for billing")
 				continue

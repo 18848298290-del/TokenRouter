@@ -907,9 +907,9 @@ type GatewayConfig struct {
 	// seconds. Zero disables that deadline; image generation uses this budget
 	// separately from ordinary text stream timing.
 	ImageStreamDataIntervalTimeout int `mapstructure:"image_stream_data_interval_timeout"`
-	// ImageStreamKeepaliveInterval supplies image streaming keepalive seconds.
-	// Zero disables those pings, while the independent image data-gap timeout
-	// remains a separate stream liveness choice.
+	// ImageStreamKeepaliveInterval supplies heartbeat seconds during image
+	// response-header waits and SSE reads. Zero disables those pings, while the
+	// independent image data-gap timeout remains a separate stream liveness choice.
 	ImageStreamKeepaliveInterval int `mapstructure:"image_stream_keepalive_interval"`
 	// ImageNonstreamKeepaliveInterval supplies keepalive seconds for nonstreaming
 	// image JSON responses. Zero disables that behavior, and the setting remains

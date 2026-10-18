@@ -2,11 +2,17 @@ package mediaentry
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/forward"
@@ -20,6 +26,59 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
+
+// TestEndImagesAfterHeartbeatRecordsFailure exhausts provider selection after
+// an earlier admission, header or body heartbeat committed HTTP 200. Final
+// failure keeps one SSE error and a failed request lifecycle, while cancellation
+// retains its own state.
+func TestEndImagesAfterHeartbeatRecordsFailure(t *testing.T) {
+	for _, heartbeat := range []string{"headers", "body", "admission"} {
+		for _, canceled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/canceled_%t", heartbeat, canceled), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					rec := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(rec)
+					var captured telemetry.RequestRecord
+					ctx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "image-test", State: "running", StartedAt: time.Now()}, func(record telemetry.RequestRecord) { captured = record })
+					ctx, cancel := context.WithCancel(ctx)
+					defer cancel()
+					c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/images/generations", strings.NewReader("{}"))
+					started := false
+					switch heartbeat {
+					case "headers":
+						stop := gatewayhttp.StartOpenAISSEKeepalive(c, time.Second)
+						time.Sleep(2 * time.Second)
+						stop()
+					case "body":
+						stop := gatewayhttp.StartOpenAISSEKeepalive(c, time.Hour)
+						stop()
+						c.Header("Content-Type", "text/event-stream")
+						n, err := c.Writer.Write([]byte(":\n\n"))
+						require.NoError(t, err)
+						gatewayhttp.RecordOpenAIStreamKeepaliveBytes(c, n)
+					case "admission":
+						observer := gatewayhttp.WaitObserver(c, gatewayhttp.SSEPingFormatComment, time.Second, true, &started, true)
+						require.NoError(t, observer.Begin())
+						require.NoError(t, observer.Heartbeat())
+					}
+					if canceled {
+						cancel()
+					}
+					adapter := &generationRequestAdapter{c: c, h: &Runtime{}, apiKey: &apikey.APIKey{}, requestModel: "gpt-image-2", streamStarted: &started, reqLog: zap.NewNop()}
+					adapter.EndGeneration(media.GenerationFailure{Stage: "empty_selection"})
+					require.Equal(t, http.StatusOK, rec.Code)
+					require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error\n"))
+					if canceled {
+						require.Equal(t, "running", captured.State, "request finalization still owns canceled classification")
+					} else {
+						require.Equal(t, "failed", captured.State)
+						require.Equal(t, "stream_error", captured.ErrorCode)
+					}
+				})
+			})
+		}
+	}
+}
 
 // TestImagesRetryKeepsMixedCandidatePool selects Grok and then OpenAI for one
 // ordinary Images request. The second selection sees the excluded first

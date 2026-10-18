@@ -255,6 +255,12 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesOAuth(
 		StreamPrefix:   openAIImagesStreamPrefix(parsed),
 
 		Do: func(req *http.Request) (*http.Response, error) {
+			// Protect the client while this attempt waits for upstream headers. Stop
+			// before response handling takes over, leaving body heartbeats to its reader.
+			if parsed.Stream {
+				stopKeepalive := StartOpenAISSEKeepalive(c, s.Output.ImageKeepaliveInterval())
+				defer stopKeepalive()
+			}
 			upstreamStart := time.Now()
 			resp, err := s.Requests.Transport.DoWithTLS(req, proxyURL, provider.Record.ID, provider.Record.Concurrency, s.Requests.TLSProfile(provider, tlsRouterMatch...))
 			// Ops upstream timing uses whole milliseconds measured around this exchange.
@@ -414,7 +420,7 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesOAuthResponseError(
 	writerSizeBeforeResponse int,
 	err error,
 ) error {
-	responseWritten := c != nil && c.Writer != nil && OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeResponse
+	responseWritten := c != nil && c.Writer != nil && OpenAIImagesAdjustedWrittenSize(c) != writerSizeBeforeResponse
 	if code, message, ok := openai.OpenAIUpstreamStreamReadErrorDetails(err); ok {
 		// A classified body failure supplies status-502 recovery evidence separately
 		// from HTTP success. Clone headers before response cleanup for later diagnostics.

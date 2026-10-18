@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,71 @@ type imagesContractSink struct {
 type imagesCloseRecorder struct {
 	io.ReadCloser               // wrapped acquired image response
 	closed        *atomic.Int32 // acquired response close counter
+	// reads optionally counts body reads so protocol-rejection fixtures can
+	// prove the executor closed an incompatible response without consuming it.
+	reads *atomic.Int32
+}
+
+// Read records optional fixture read observations before delegating body input.
+// A nil counter disables recording; the wrapped reader supplies all bytes and
+// errors without changing response-body ownership.
+func (b *imagesCloseRecorder) Read(data []byte) (int, error) {
+	if b.reads != nil {
+		b.reads.Add(1)
+	}
+	return b.ReadCloser.Read(data)
+}
+
+// TestImagesExecuteRequiresEventStream checks image streaming media types for
+// API-key and OAuth targets. Valid parameterized SSE is consumed, while missing,
+// malformed, or non-SSE types terminate before reading or retaining image usage.
+func TestImagesExecuteRequiresEventStream(t *testing.T) {
+	for _, oauth := range []bool{false, true} {
+		for _, contentType := range []string{"text/event-stream; charset=utf-8", "Text/Event-Stream", "application/json", "", `application/json; note="text/event-stream"`, "text/event-stream; broken"} {
+			t.Run(fmt.Sprintf("oauth=%t/type=%s", oauth, contentType), func(t *testing.T) {
+				var closed, reads atomic.Int32
+				body := "data: {\"type\":\"image_edit.completed\",\"b64_json\":\"image\"}\n\n"
+				if oauth {
+					body = "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"image_generation_call\",\"result\":\"image\"}]}}\n\n"
+				}
+				response := &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": {contentType}},
+					Body:       &imagesCloseRecorder{ReadCloser: io.NopCloser(strings.NewReader(body)), closed: &closed, reads: &reads},
+				}
+				request := httptest.NewRequest(http.MethodPost, "https://example.invalid/images/edits", strings.NewReader("{}"))
+				var presented *OpenAIImagesUpstreamError
+				observedStatus := 0
+				options := imagesTestResponseOptions()
+				options.WriteHTTPError = func(err *OpenAIImagesUpstreamError) bool {
+					presented = err
+					return true
+				}
+				options.ObserveError = func(status int, _, _ string) { observedStatus = status }
+				target := &ImagesTarget{
+					OAuth: oauth, Model: "gpt-image-2", StreamPrefix: "image_edit",
+					Request: request, Options: options,
+					Do: func(*http.Request) (*http.Response, error) { return response, nil },
+				}
+				result, err := (ImagesExecutor{}).Execute(t.Context(), upstream.AttemptInput{Protocol: protocol.ProtocolImagesEdits, Stream: true, Target: target}, &imagesContractSink{})
+				require.EqualValues(t, 1, closed.Load())
+				if contentType == "text/event-stream; charset=utf-8" || contentType == "Text/Event-Stream" {
+					require.NoError(t, err)
+					require.Nil(t, presented)
+					require.Positive(t, reads.Load())
+					require.Equal(t, 1, result.ObservedImages)
+					return
+				}
+				require.ErrorAs(t, err, &presented)
+				require.Equal(t, "invalid_upstream_response", presented.Code)
+				require.Equal(t, http.StatusBadGateway, presented.StatusCode)
+				require.Equal(t, http.StatusOK, observedStatus)
+				require.Zero(t, reads.Load())
+				require.Zero(t, result.ObservedImages)
+				require.False(t, result.HasUsage)
+			})
+		}
+	}
 }
 
 // Begin captures the synchronous image response head for assertions.
@@ -203,6 +269,7 @@ func TestImagesExecuteOAuthProgressBeforeFailure(t *testing.T) {
 	require.NoError(t, err)
 	options := imagesTestResponseOptions()
 	sink := &imagesContractSink{onPartial: func() { close(delivered) }}
+	options.AdjustedWrittenSize = func() int { return len(sink.chunks) }
 	target := &ImagesTarget{
 		OAuth:          true,
 		Request:        request,
@@ -220,6 +287,7 @@ func TestImagesExecuteOAuthProgressBeforeFailure(t *testing.T) {
 	require.True(t, result.Served)
 	require.True(t, result.HTTPCommitted)
 	require.Contains(t, strings.Join(sink.chunks, ""), ".partial_image")
+	require.Contains(t, strings.Join(sink.chunks, ""), "event: error\n")
 	require.Greater(t, sink.flushed, 0)
 }
 
@@ -246,7 +314,6 @@ func imagesTestResponseOptions() ImageResponseOptions {
 		Summary:        SummarizeOpenAIImagesNoOutputBody,
 
 		AdjustedWrittenSize: func() int { return -1 },
-		WrittenSize:         func() int { return 1 },
 
 		StreamInterval:    func() time.Duration { return 0 },
 		KeepaliveInterval: func() time.Duration { return 0 },

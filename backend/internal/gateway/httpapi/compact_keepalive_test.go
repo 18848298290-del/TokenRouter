@@ -1,16 +1,94 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestStartOpenAISSEKeepaliveRetainsAttemptHistory resumes response-header
+// heartbeats after a completed wait. Earlier comments remain excluded from retry
+// decisions, and response commitment survives a later attempt with no new beat.
+func TestStartOpenAISSEKeepaliveRetainsAttemptHistory(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, rec := newPassthroughKeepaliveTestContext(t)
+		original := c.Writer
+		stop := StartOpenAISSEKeepalive(c, time.Second)
+		time.Sleep(2 * time.Second)
+		stop()
+		synctest.Wait()
+		firstSize := rec.Body.Len()
+		require.Positive(t, firstSize)
+		require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c))
+		stop = StartOpenAISSEKeepalive(c, time.Second)
+		time.Sleep(2 * time.Second)
+		stop()
+		synctest.Wait()
+		require.Greater(t, rec.Body.Len(), firstSize)
+		require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c))
+		stop = StartOpenAISSEKeepalive(c, time.Hour)
+		stop()
+		require.True(t, StopOpenAICompactSSEKeepaliveCommitted(c))
+		require.Same(t, original, c.Writer)
+		_, err := c.Writer.Write([]byte("data: completed\n\n"))
+		require.NoError(t, err)
+		require.Equal(t, len("data: completed\n\n"), OpenAICompactKeepaliveAdjustedWrittenSize(c))
+	})
+}
+
+// TestStartOpenAISSEKeepaliveCancellationStopsFutureWaits cancels an active
+// request after its first heartbeat. Later timer windows and another start call
+// produce no client bytes, and cleanup restores the request's original writer.
+func TestStartOpenAISSEKeepaliveCancellationStopsFutureWaits(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, rec := newPassthroughKeepaliveTestContext(t)
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
+		original := c.Writer
+		stop := StartOpenAISSEKeepalive(c, time.Second)
+		time.Sleep(2 * time.Second)
+		cancel()
+		synctest.Wait()
+		stop()
+		size := rec.Body.Len()
+		stop = StartOpenAISSEKeepalive(c, time.Second)
+		time.Sleep(3 * time.Second)
+		synctest.Wait()
+		stop()
+		require.Equal(t, size, rec.Body.Len())
+		require.Same(t, original, c.Writer)
+	})
+}
+
+// TestStartOpenAISSEKeepaliveWriteFailureStopsFutureWaits rejects the first
+// heartbeat write on a live request. Another wait retains failed-delivery state
+// and does not attempt more writes even before request cancellation is observed.
+func TestStartOpenAISSEKeepaliveWriteFailureStopsFutureWaits(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, rec := newPassthroughKeepaliveTestContext(t)
+		writer := &passthroughFlushTestWriter{ResponseWriter: c.Writer, recorder: rec, failAfterWrites: 0}
+		c.Writer = writer
+		stop := StartOpenAISSEKeepalive(c, time.Second)
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		stop()
+		require.Equal(t, 1, writer.failedWrites)
+		stop = StartOpenAISSEKeepalive(c, time.Second)
+		time.Sleep(3 * time.Second)
+		synctest.Wait()
+		stop()
+		require.Equal(t, 1, writer.failedWrites)
+	})
+}
 
 // Keepalive comments commit SSE headers while leaving the model-output retry
 // check unstarted. These cases exercise first-beat timing, response-writer takeover,
@@ -74,7 +152,8 @@ func TestOpenAICompactSSEKeepalive_StopBeforeFirstBeatKeepsWriterUntouched(t *te
 
 // TestOpenAIAdjustedWrittenSizeExcludesResponsesStreamKeepalive records ordinary
 // stream comment bytes before writing data. Adjusted size must report the
-// unwritten sentinel for the comment alone and count the subsequent data bytes exactly.
+// unwritten sentinel for the comment alone while retaining SSE framing, and
+// count the subsequent data bytes exactly.
 func TestOpenAIAdjustedWrittenSizeExcludesResponsesStreamKeepalive(t *testing.T) {
 	c, rec := newCompactBridgeTestContext(t, false)
 	// Record the count returned for this comment before checking output. The
@@ -84,6 +163,7 @@ func TestOpenAIAdjustedWrittenSizeExcludesResponsesStreamKeepalive(t *testing.T)
 	RecordOpenAIStreamKeepaliveBytes(c, n)
 
 	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c))
+	require.True(t, StopOpenAICompactSSEKeepaliveCommitted(c))
 
 	_, err = c.Writer.Write([]byte("data: semantic\n\n"))
 	require.NoError(t, err)

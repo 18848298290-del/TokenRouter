@@ -1,10 +1,34 @@
 package openai
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+// TestOpenAIImageOutputCounterCompletedEventFamilies supplies generation and
+// editing completions with repeated final snapshots. Both event families count
+// payload-bearing images once, preserve sizes, and exclude partial or empty events.
+func TestOpenAIImageOutputCounterCompletedEventFamilies(t *testing.T) {
+	for _, family := range []string{"image_generation", "image_edit"} {
+		t.Run(family, func(t *testing.T) {
+			counter := NewOpenAIImageOutputCounter()
+			counter.AddSSEData([]byte(fmt.Sprintf(`{"type":%q,"b64_json":"partial"}`, family+".partial_image")))
+			counter.AddSSEData([]byte(fmt.Sprintf(`{"type":%q}`, family+".completed")))
+			require.Zero(t, counter.Count())
+			first := []byte(fmt.Sprintf(`{"type":%q,"id":"image-1","b64_json":"first","size":"1536x2048"}`, family+".completed"))
+			counter.AddSSEData(first)
+			counter.AddSSEData(first)
+			counter.AddSSEData([]byte(`{"type":"response.completed","response":{"output":[{"type":"image_generation_call","id":"image-1","result":"first","size":"1536x2048"}]}}`))
+			require.Equal(t, 1, counter.Count())
+			require.Equal(t, []string{"1536x2048"}, counter.Sizes())
+			counter.AddSSEData([]byte(fmt.Sprintf(`{"type":%q,"b64_json":"second","size":"1024x1024"}`, family+".completed")))
+			require.Equal(t, 2, counter.Count())
+			require.Equal(t, []string{"1536x2048", "1024x1024"}, counter.Sizes())
+		})
+	}
+}
 
 // Image observations require output evidence beyond IDs and completion labels.
 // The fixtures cover text-only responses, recognized data entries, repeated final

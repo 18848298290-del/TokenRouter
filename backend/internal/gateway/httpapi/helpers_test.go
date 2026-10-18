@@ -376,6 +376,10 @@ type auxiliaryHTTPRecorder struct {
 	// sequences use resp as the default.
 	responses []*http.Response
 	err       error // configured transport failure result
+	// onRequest optionally runs after recording and configured error selection.
+	// It lets local header-wait fixtures control response timing without sharing
+	// mutable recorder state with the downstream heartbeat goroutine.
+	onRequest func(*http.Request) (*http.Response, error)
 
 	lastTLSProfile *tlsfingerprint.Profile // last retained TLS profile
 }
@@ -1692,9 +1696,9 @@ func newAuxiliaryFixture(v auxiliaryFixtureInputs) *OpenAIAuxiliary {
 //
 // Body read errors are discarded and any bytes returned remain recorded. The
 // original body is closed and replaced with a reader over that captured
-// content, allowing later fixture inspection to reread it. Responses are
-// consumed in order after body capture, so error injection and request evidence
-// stay independently observable. Tests serialize this mutable fixture with
+// content, allowing later fixture inspection to reread it. The optional request
+// callback precedes the configured response sequence, while configured errors
+// still win. Tests serialize this mutable fixture with
 // forwarding and later inspection.
 func (u *auxiliaryHTTPRecorder) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	if u.checkContext && req.Context().Err() != nil {
@@ -1718,6 +1722,9 @@ func (u *auxiliaryHTTPRecorder) Do(req *http.Request, proxyURL string, providerI
 	u.requests = append(u.requests, req)
 	if u.err != nil {
 		return nil, u.err
+	}
+	if u.onRequest != nil {
+		return u.onRequest(req)
 	}
 	if len(u.responses) > 0 {
 		resp := u.responses[0]

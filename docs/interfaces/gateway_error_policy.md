@@ -20,7 +20,9 @@
 
 失败的事实和稳定的 reason 在 `gateway/forward`，HTTP 层使用 `gateway/httpapi` 的展示数据和输出顺序（只有一份实现）。空的 Chat 终态和空的 Responses completed 各有自己的 Ops 消息，对外仍使用内部静默拒绝的编码；是否换号、怎么完成，由请求编排判断。观察输入只带提供商的 ID、名称和平台，凭据不会交给错误输出层。
 
-OpenAI 的同步错误、SSE 终止帧和写失败时的备用输出，只在 `gateway/httpapi.OpenAIErrorOutput` 实现。文本入口使用自己的观测接口，WS、图片和其他执行适配直接使用这个默认输出器。接管 Writer 之前，先停止 compact 和图片的心跳，并区分四种情况：只有保活、已经完成的 JSON、实际的 SSE 输出、已经提交的专用错误。普通的流错误和计入 SLA 的失败，分别按各自的规则观测。
+OpenAI 的同步错误、SSE 终止帧和写失败时的备用输出，由 `gateway/httpapi.OpenAIErrorOutput` 处理。图片专用错误输出使用同一套响应承诺和流失败观测。接管 Writer 之前，先停止 compact 和图片的心跳，并区分四种情况：只有保活、已经完成的 JSON、实际的 SSE 输出、已经提交的专用错误。普通的流错误和计入 SLA 的失败，分别按各自的规则观测。
+
+图片请求首次 SSE 心跳写出前，上游 451 等错误仍保留原有 HTTP 状态和 JSON 错误对象。并发排队、响应头等待或响应读取阶段的首次心跳提交 HTTP 200 后，图片错误改为一个 `event: error`，保留 `type`、`message` 和已有的 `code`、`param`，诊断记录保留实际失败状态。仅有心跳不算实际图片输出，最终网络错误和重试耗尽也按已经建立的 SSE 格式结束响应。非流式图片的 JSON 空白心跳仍以原有 JSON 错误对象结束。
 
 ### 提供商健康分类
 

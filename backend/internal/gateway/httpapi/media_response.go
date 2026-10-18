@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,10 +18,11 @@ import (
 )
 
 // media_response.go writes media HTTP responses and handles image errors after
-// JSON heartbeat commitment.
-// Image JSON errors can arrive after whitespace has already committed HTTP
-// status 200. The image writer consults the heartbeat-adjusted byte count
-// before deciding whether a JSON error can still be appended; a reported
+// JSON or SSE heartbeat commitment.
+// Image errors can arrive after a heartbeat has already committed HTTP status
+// 200. JSON whitespace permits a final error document, while SSE comments need
+// a terminal error event. The image writer consults heartbeat-adjusted bytes
+// before deciding whether an error can still be appended; a reported
 // write means presentation was attempted, while underlying delivery remains
 // the response writer's result.
 //
@@ -31,8 +33,8 @@ import (
 // component. Voice body reads and expected Realtime closure classification
 // serve the same HTTP media entry points.
 
-// ImageErrorResponse carries sanitized image error fields for HTTP JSON
-// presentation.
+// ImageErrorResponse carries sanitized image error fields for HTTP JSON before
+// stream commitment or an SSE error event afterward.
 type ImageErrorResponse struct {
 	// Status is requested when writing the error; a heartbeat may already have
 	// committed status 200, which the underlying writer retains.
@@ -172,23 +174,27 @@ func IsExpectedGrokRealtimeClose(err error) bool {
 	}
 }
 
-// WriteImageError attempts image error JSON when actual response content has
-// not already been written. Missing context, writer or value returns false.
+// WriteImageError attempts a final image error in JSON or SSE when actual
+// response content has not been written. Missing context, writer or value
+// returns false.
 // Callers provide usable adjustedWritten and stopKeepalive callbacks; true
 // reports attempted presentation, because Gin does not return the underlying
 // write error.
 //
-// Heartbeat whitespace can commit HTTP status while leaving adjusted output
-// negative. That case stops further padding and writes the error object
-// within the committed response. A response with nonnegative adjusted output
-// is left intact. Code and Param are trimmed and included only when
-// populated; Type and Message retain their supplied values.
+// Heartbeats can commit HTTP status while leaving adjusted output negative.
+// That case stops further activity and writes the error in the selected JSON
+// or SSE format. A response with nonnegative adjusted output is left intact.
+// Code and Param are trimmed and included only when populated; Type and Message
+// retain their supplied values.
 func WriteImageError(c *gin.Context, value *ImageErrorResponse, adjustedWritten func() int, stopKeepalive func()) bool {
 	if c == nil || c.Writer == nil || value == nil {
 		return false
 	}
-	// Commitment from JSON padding still permits one final error document. The
-	// adjusted count prevents adding another document after actual media output.
+	// Stop the shared SSE controller before inspecting bytes or writing errors;
+	// a pending beat must not race the decision between HTTP JSON and SSE framing.
+	streamCommitted := StopOpenAICompactSSEKeepaliveCommitted(c) || StreamHasOnlyHeartbeats(c)
+	// Heartbeat-only commitment still permits one final error. The adjusted count
+	// prevents appending another terminal response after actual media output.
 	if c.Writer.Written() && adjustedWritten() >= 0 {
 		return false
 	}
@@ -199,6 +205,28 @@ func WriteImageError(c *gin.Context, value *ImageErrorResponse, adjustedWritten 
 	}
 	if param := strings.TrimSpace(value.Param); param != "" {
 		object["param"] = param
+	}
+	if streamCommitted {
+		payload, err := json.Marshal(gin.H{"error": object})
+		if err != nil {
+			_ = c.Error(err)
+			return false
+		}
+		// The wire status is already 200. Keep the intended upstream failure in
+		// observations and mark terminal presentation before attempting its only frame.
+		if c.Request != nil && c.Request.Context().Err() != nil {
+			// Upstream work can finish after client departure. Retain its error
+			// evidence while letting request finalization keep the canceled lifecycle.
+			markOpsStreamError(c, OpsStreamError{ErrType: value.Type, Code: value.Code, Message: value.Message, IntendedStatus: value.Status})
+		} else {
+			MarkOpsStreamFailure(c, value.Type, value.Code, value.Message, value.Status)
+		}
+		MarkResponseCommitted(c)
+		if _, err := fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", payload); err != nil {
+			_ = c.Error(err)
+		}
+		c.Writer.Flush()
+		return true
 	}
 	c.JSON(value.Status, gin.H{"error": object})
 	return true

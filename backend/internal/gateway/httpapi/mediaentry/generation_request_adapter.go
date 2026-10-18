@@ -189,9 +189,9 @@ func (p *generationRequestAdapter) ForwardGeneration(ctx context.Context, _ gate
 	if p.usesGrok() {
 		result, err = p.h.bindings.Platform.GrokMedia(ctx, p.c, provider, p.endpoint, p.requestID, body, p.contentType)
 	} else {
-		// JSON padding can commit HTTP status before any image content is emitted.
-		// Compare its adjusted count so those bytes do not close the retry window.
-		p.writerBefore = gatewayhttp.OpenAIImagesJSONKeepaliveAdjustedWrittenSize(p.c)
+		// JSON padding or SSE comments can commit HTTP before image content exists.
+		// Exclude either heartbeat format so those bytes do not close the retry window.
+		p.writerBefore = gatewayhttp.OpenAIImagesAdjustedWrittenSize(p.c)
 		match := p.h.bindings.Common.Forward.MatchOpenAITLSFingerprintRouterForRequest(p.c, provider)
 		err = p.h.bindings.Common.Forward.EnforceOpenAIClientPolicyForRequest(ctx, p.c, provider, body, match)
 		if err == nil {
@@ -200,7 +200,7 @@ func (p *generationRequestAdapter) ForwardGeneration(ctx context.Context, _ gate
 	}
 	after := p.c.Writer.Size()
 	if !p.usesGrok() {
-		after = gatewayhttp.OpenAIImagesJSONKeepaliveAdjustedWrittenSize(p.c)
+		after = gatewayhttp.OpenAIImagesAdjustedWrittenSize(p.c)
 	}
 	outcome := gatewaymedia.GenerationOutcome{Result: generationResultView(result), Err: err, OutputChanged: after != p.writerBefore}
 	if failure, ok := errors.AsType[*forwardcore.UpstreamFailoverError](err); ok {
@@ -334,8 +334,25 @@ func (p *generationRequestAdapter) ObserveGeneration(e gatewaymedia.GenerationEv
 // EndGeneration presents terminal stage evidence using current target,
 // saved-video owner and writer baseline. A usable shared stream flag is
 // required; absent selection yields provider ID zero while failure-specific
-// output remains in WriteGenerationFailure.
+// output remains in WriteGenerationFailure. A committed image SSE heartbeat
+// keeps terminal failures marked failed despite wire HTTP 200, while canceled
+// requests retain their existing lifecycle classification.
+// Call after provider recovery ends; successfully retained image results use
+// CompleteGeneration, including partial output with a tail error.
 func (p *generationRequestAdapter) EndGeneration(f gatewaymedia.GenerationFailure) {
+	if !p.usesGrok() &&
+		p.c.Request.Context().Err() == nil &&
+		(gatewayhttp.StopOpenAICompactSSEKeepaliveCommitted(p.c) || *p.streamStarted) {
+		// Terminal error output cannot change a heartbeat's HTTP status. Mark
+		// request failure here after recovery ends so earlier failed attempts do
+		// not overwrite a later successful generation or a client cancellation.
+		telemetry.UpdateRequest(p.c.Request.Context(), func(record *telemetry.RequestRecord) {
+			record.State = "failed"
+			if record.ErrorCode == "" {
+				record.ErrorCode = "stream_error"
+			}
+		})
+	}
 	id := int64(0)
 	if p.selection != nil && p.selection.Provider != nil {
 		id = p.selection.Provider.Record.ID

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"time"
 
@@ -24,9 +25,11 @@ import (
 // The prepared request owns transport context, and optional admission stays
 // held through response reading and cleanup. HTTP failures close the original
 // body before replaying redacted bytes into health handling. Successful
-// responses choose OAuth/API-key and streaming/buffered readers from the
-// prepared mode and content type. A synchronous sink wrapper retains
-// commitment, semantic, and write-failure observations across those branches,
+// responses require an SSE media type for requested streams before choosing
+// OAuth/API-key readers. A mismatched success is a terminal image error,
+// preventing requested-image substitution or another generation attempt.
+// A synchronous sink wrapper retains commitment, semantic, and write-failure
+// observations across those branches,
 // while OAuth response failure policy also considers whether any completed
 // image was observed before the error.
 
@@ -153,6 +156,27 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		return result, t.HTTPError(resp, body)
 	}
+	if input.Stream {
+		mediaType, _, mediaErr := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+		if mediaErr != nil || mediaType != "text/event-stream" {
+			// The upstream may already have generated a billable image. Return a
+			// terminal protocol error so recovery cannot start another paid generation.
+			protocolErr := &OpenAIImagesUpstreamError{
+				StatusCode:        http.StatusBadGateway,
+				ErrorType:         "upstream_error",
+				Code:              "invalid_upstream_response",
+				Message:           "Upstream image streaming response must use text/event-stream",
+				UpstreamRequestID: resp.Header.Get("x-request-id"),
+			}
+			if t.Options.ObserveError != nil {
+				t.Options.ObserveError(resp.StatusCode, protocolErr.Message, "")
+			}
+			if t.Options.WriteHTTPError != nil {
+				t.Options.WriteHTTPError(protocolErr)
+			}
+			return result, protocolErr
+		}
+	}
 	observed := &imagesObservedSink{OutputSink: sink}
 	sink = observed
 	defer func() {
@@ -172,7 +196,7 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	if t.OAuth {
 		before = t.Options.AdjustedWrittenSize()
 	}
-	if input.Stream && (t.OAuth || IsEventStreamResponse(resp.Header)) {
+	if input.Stream {
 		output = upstream.NewOutputContext(sink)
 		if t.OAuth {
 			usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesOAuthStreaming(resp, output, t.Options, started, t.ResponseFormat, t.StreamPrefix, input.ResponseModel)
