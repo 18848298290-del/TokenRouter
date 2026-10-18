@@ -57,6 +57,8 @@ describe('UserDashboardAnnouncements', () => {
     vi.restoreAllMocks()
   })
 
+  // The server list mixes read state and publication order with formatted content.
+  // The timeline shows the latest five announcements and extracts sanitized opening prose.
   it('按发布时间倒序展示最近五条并生成安全纯文本摘要', () => {
     const store = useAnnouncementStore()
     store.announcements = [2, 6, 1, 5, 3, 4].map((id) =>
@@ -94,10 +96,43 @@ describe('UserDashboardAnnouncements', () => {
     expect(pulses).toHaveLength(3)
     expect(pulses[0].classes()).toContain('animate-ping')
     expect(pulses[0].classes()).toContain('motion-reduce:animate-none')
-    expect(items[0].text()).toContain('Release ready More details')
+    expect(items[0].text()).toContain('More details')
+    expect(items[0].text()).not.toContain('Release ready')
     expect(items[0].text()).not.toContain('unsafe()')
     expect(wrapper.html()).not.toContain('<script')
 
+    wrapper.unmount()
+  })
+
+  // Markdown and HTML tables depend on row structure to explain their values.
+  // Summaries show the opening paragraph and keep subsequent details in the dialog.
+  it('uses opening prose instead of tables and code in announcement previews', () => {
+    const store = useAnnouncementStore()
+    store.announcements = [createAnnouncement(1, {
+      content: 'Prices have changed.\n\n| Size | Price |\n| --- | --- |\n| 1K | 2 credits |\n\n```sh\nsecret-example-command\n```\n\nSee the announcement for details.\n\n<table><tr><td>hidden-table-value</td></tr></table><script>unsafe()</script>',
+    })]
+    const wrapper = mount(UserDashboardAnnouncements)
+    const item = wrapper.find('[data-testid="announcement-timeline-item"]')
+
+    expect(item.text()).toContain('Prices have changed.')
+    expect(item.text()).not.toContain('See the announcement for details.')
+    expect(item.text()).not.toContain('2 credits')
+    expect(item.text()).not.toContain('hidden-table-value')
+    expect(item.text()).not.toContain('secret-example-command')
+    expect(item.text()).not.toContain('unsafe()')
+    wrapper.unmount()
+  })
+
+  // An announcement may consist entirely of structured content without introductory prose.
+  // Its preview uses the existing detail prompt and keeps the announcement available.
+  it('uses the detail prompt when an announcement contains only a table', () => {
+    const store = useAnnouncementStore()
+    store.announcements = [createAnnouncement(1, {
+      content: '| Size | Price |\n| --- | --- |\n| 1K | 2 credits |',
+    })]
+    const wrapper = mount(UserDashboardAnnouncements)
+
+    expect(wrapper.find('[data-testid="announcement-timeline-item"]').text()).toContain('dashboard.announcementNoSummary')
     wrapper.unmount()
   })
 

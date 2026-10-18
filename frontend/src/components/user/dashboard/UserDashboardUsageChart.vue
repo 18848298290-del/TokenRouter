@@ -14,7 +14,7 @@
         role="tab"
         :data-testid="`usage-metric-${item.key}`"
         :aria-selected="metric === item.key"
-        class="metric-card card flex min-w-0 flex-col gap-3 overflow-hidden p-4 text-left transition-colors duration-fast"
+        class="metric-card card flex min-w-0 flex-col gap-1 overflow-hidden p-4 text-left transition-colors duration-fast sm:gap-3"
         :class="metric === item.key
           ? 'border-primary-600 dark:border-primary-500/70'
           : 'hover:border-black/20 dark:hover:border-dark-500'"
@@ -22,7 +22,7 @@
       >
         <div class="flex min-w-0 items-center gap-2">
           <span
-            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-compact"
+            class="flex h-5 w-5 shrink-0 items-center justify-center rounded-compact sm:h-7 sm:w-7"
             :class="[METRIC_TONES[item.key].tile, METRIC_TONES[item.key].icon]"
           >
             <Icon :name="item.icon" size="sm" />
@@ -46,16 +46,17 @@
           />
         </div>
         <Skeleton v-if="!loaded" :width="120" :height="20" />
-        <span v-else class="flex min-w-0 items-center gap-2 text-xs text-gray-500 dark:text-dark-400" :data-testid="`usage-delta-${item.key}`">
+        <span v-else class="flex min-w-0 flex-wrap items-center gap-1 text-xs text-gray-500 dark:text-dark-400 sm:gap-2" :data-testid="`usage-delta-${item.key}`">
           <template v-if="item.delta">
             <span
               class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-medium tabular-nums"
-              :class="deltaToneClasses[item.delta.tone]"
+              :class="deltaToneClasses[item.key === 'cacheHitRate' ? item.delta.tone : 'flat']"
             >
               <Icon :name="deltaIcons[item.delta.tone]" size="xs" :animate-on-hover="false" />
               {{ item.delta.text }}
             </span>
-            <span class="metric-delta-label truncate">{{ t('dashboard.usageChart.vsPrevious') }}</span>
+            <span class="sm:hidden">{{ t('dashboard.usageChart.vsPreviousShort') }}</span>
+            <span class="hidden sm:inline">{{ t('dashboard.usageChart.vsPrevious') }}</span>
           </template>
           <span v-else class="truncate">{{ t('dashboard.usageChart.noPrevious') }}</span>
         </span>
@@ -178,6 +179,18 @@ import { cacheHitRateOf } from './usageChartData'
 import { CHART_REVEAL_MS, COUNT_UP_MS } from './dashboardMotion'
 import { METRIC_TONES } from './metricTones'
 import { injectUsageChartState, type UsageMetric } from './usageChartState'
+
+// UserDashboardUsageChart.vue renders selectable usage totals and their time
+// series from the dashboard's shared query state. Each card presents the selected
+// period alongside its previous period comparison. Request, token, and cost
+// changes use neutral colors because increases alone do not establish a better
+// result; cache hit rate changes retain directional status colors.
+//
+// Selecting a metric changes the chart and model ranking together. Token series
+// can be hidden independently, while other metrics support a previous period
+// overlay. Incomplete time buckets use dashed segments and an animated endpoint,
+// with custom drawing plugins positioning peak and average annotations relative
+// to the chart scales.
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip)
 
@@ -683,14 +696,12 @@ defineExpose({ chartCardRef })
   container-type: inline-size;
 }
 
-.metric-sparkline,
-.metric-delta-label {
+.metric-sparkline {
   display: none;
 }
 
 @container (min-width: 200px) {
-  .metric-sparkline,
-  .metric-delta-label {
+  .metric-sparkline {
     display: block;
   }
 }

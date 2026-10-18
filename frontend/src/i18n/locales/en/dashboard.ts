@@ -1,8 +1,10 @@
+// dashboard.ts supplies English labels for dashboard metrics, chart controls,
+// announcements, and account shortcuts. Compact comparison labels retain the
+// previous-period context on narrow cards, while wider cards display the full
+// comparison phrase beside the same values.
 export default {
-// Dashboard
   dashboard: {
     title: 'Dashboard',
-    welcomeMessage: "Welcome back! Here's an overview of your account.",
     usageChart: {
       metricsLabel: 'Usage metrics',
       metrics: {
@@ -24,6 +26,7 @@ export default {
       peak: 'Peak',
       average: 'Avg',
       vsPrevious: 'vs previous period',
+      vsPreviousShort: 'vs prior', // compact comparison label
       noPrevious: 'No data for previous period',
       byHour: 'Hourly',
       byDay: 'Daily',

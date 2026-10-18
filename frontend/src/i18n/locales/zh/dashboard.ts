@@ -1,8 +1,10 @@
+// dashboard.ts supplies Simplified Chinese labels for metrics, chart controls,
+// announcements, and account shortcuts. Compact comparison labels retain the
+// previous-period context on narrow cards, while wider cards display the full
+// comparison phrase beside the same values.
 export default {
-// Dashboard
   dashboard: {
     title: '仪表盘',
-    welcomeMessage: '欢迎回来！这是您账户的概览。',
     usageChart: {
       metricsLabel: '用量指标',
       metrics: {
@@ -24,6 +26,7 @@ export default {
       peak: '峰值',
       average: '均值',
       vsPrevious: '较上一周期',
+      vsPreviousShort: '较上期', // compact comparison label
       noPrevious: '上一周期无数据',
       byHour: '按小时',
       byDay: '按天',

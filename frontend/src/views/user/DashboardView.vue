@@ -20,8 +20,8 @@
         <UserDashboardHeatmap ref="heatmapRef" @select-day="revealChart" />
       </div>
       <div class="dash-rise-item grid grid-cols-1 gap-4 lg:grid-cols-3" :style="{ '--rise-i': 3 }" data-rise-last="true">
-        <div class="lg:col-span-2"><UserDashboardAnnouncements /></div>
-        <div class="lg:col-span-1"><UserDashboardQuickActions /></div>
+        <div class="lg:order-2 lg:col-span-1"><UserDashboardQuickActions /></div>
+        <div class="lg:order-1 lg:col-span-2"><UserDashboardAnnouncements /></div>
       </div>
     </div>
   </AppLayout>
@@ -41,6 +41,18 @@ import { dashboardMotionVars } from '@/components/user/dashboard/dashboardMotion
 import UserDashboardHeatmap from '@/components/user/dashboard/UserDashboardHeatmap.vue'
 import UserDashboardAnnouncements from '@/components/user/dashboard/UserDashboardAnnouncements.vue'
 import UserDashboardQuickActions from '@/components/user/dashboard/UserDashboardQuickActions.vue'
+
+// DashboardView.vue arranges usage analysis, activity, and account shortcuts in
+// the user dashboard. The page provides the shared usage selection consumed by
+// its heading toolbar and trend chart, while live statistics and the heatmap
+// retain their own refresh lifecycles. Manual refresh waits for those independent
+// sections before restoring the refresh control, and each section handles its
+// own request failures.
+//
+// Quick actions precede announcements in document order so narrow screens and
+// keyboard navigation reach account tasks first. The desktop grid places the
+// announcements beside those actions, and initial section animations share the
+// timing variables supplied by the page root.
 
 const authStore = useAuthStore()
 const announcementStore = useAnnouncementStore()

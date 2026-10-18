@@ -87,7 +87,7 @@
           >
             <div class="min-w-0 flex-1">
               <h3
-                class="line-clamp-1 break-words text-sm font-semibold text-gray-900 group-hover:text-primary-700 dark:text-white dark:group-hover:text-primary-300"
+                class="line-clamp-2 break-words text-sm font-semibold leading-5 text-gray-900 group-hover:text-primary-700 dark:text-white dark:group-hover:text-primary-300"
               >
                 {{ item.announcement.title }}
               </h3>
@@ -138,6 +138,12 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import Skeleton from '@/components/common/Skeleton.vue'
 import Icon from '@/components/icons/Icon.vue'
 
+// UserDashboardAnnouncements.vue displays recent announcements in publication
+// order and opens their complete content in a detail dialog. List summaries
+// extract sanitized prose for quick scanning. Tables and code remain available
+// with their original structure in the dialog, where rows and formatting explain
+// how their individual values relate to each other.
+
 const MAX_ANNOUNCEMENTS = 5
 
 const { t } = useI18n()
@@ -166,13 +172,18 @@ function formatAnnouncementDate(createdAt: string): string {
   return formatDate(date, options)
 }
 
-// 公告正文支持 Markdown 和 HTML，先走项目现有的安全解析链路，再提取纯文本摘要。
+// createSummary extracts the first prose paragraph from sanitized Markdown or HTML.
+// Tables and code blocks remain in the detail dialog because their meaning
+// depends on layout. Content without paragraphs uses the remaining plain text;
+// content containing only structured blocks returns an empty summary.
 function createSummary(content: string): string {
   if (!content) return ''
 
   const html = DOMPurify.sanitize(marked.parse(content, { breaks: true, gfm: true }) as string)
   const parsed = new DOMParser().parseFromString(html, 'text/html')
-  return (parsed.body.textContent || '').replace(/\s+/g, ' ').trim()
+  parsed.body.querySelectorAll('table, pre').forEach((element) => element.replaceWith(' '))
+  const paragraph = [...parsed.body.querySelectorAll('p')].find((element) => element.textContent?.trim())
+  return (paragraph?.textContent || parsed.body.textContent || '').replace(/\s+/g, ' ').trim()
 }
 
 // 服务端列表优先展示未读公告，时间线需要独立恢复为严格的发布时间倒序。
