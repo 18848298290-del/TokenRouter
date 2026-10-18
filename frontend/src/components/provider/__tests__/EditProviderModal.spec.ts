@@ -353,6 +353,48 @@ describe('EditProviderModal', () => {
     getBalanceAlertStatusMock.mockReset().mockResolvedValue({ provider_id: 1 })
   })
 
+  // An existing monthly-only quota enables the shared quota editor on reopen.
+  // Editing its limit retains usage and the fixed reset schedule in the
+  // submitted payload.
+  it('round-trips a monthly quota and clears its schedule when disabled', async () => {
+    const provider = buildProvider()
+    provider.extra = {
+      quota_monthly_limit: 100,
+      quota_monthly_used: 25,
+      quota_monthly_start: '2026-10-01T00:00:00Z',
+      quota_monthly_reset_mode: 'fixed',
+      quota_monthly_reset_day: 31,
+      quota_monthly_reset_hour: 9,
+      quota_reset_timezone: 'Asia/Shanghai',
+      quota_notify_monthly_enabled: true,
+      quota_notify_monthly_threshold: 10,
+      quota_notify_monthly_threshold_type: 'percentage',
+    }
+    updateProviderMock.mockResolvedValue(provider)
+    const wrapper = mountModal(provider)
+    await flushPromises()
+    await wrapper.get('[data-settings-tab-button="quota"]').trigger('click')
+    const monthlyRow = wrapper.findAllComponents({ name: 'QuotaDimensionRow' })
+      .find(row => row.props('dim') === 'monthly')!
+    expect(monthlyRow.exists()).toBe(true)
+    expect(monthlyRow.props('limit')).toBe(100)
+    await monthlyRow.get('input[type="number"]').setValue('150')
+    await wrapper.get('form#edit-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateProviderMock.mock.calls[0][1].extra).toMatchObject({
+      ...provider.extra,
+      quota_monthly_limit: 150,
+    })
+    await setSwitch(wrapper.get('[data-testid="quota-limit-toggle"]'), false)
+    await wrapper.get('form#edit-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    const cleared = updateProviderMock.mock.calls[1][1].extra
+    expect(cleared).not.toHaveProperty('quota_monthly_limit')
+    expect(cleared).not.toHaveProperty('quota_monthly_reset_mode')
+    expect(cleared).not.toHaveProperty('quota_monthly_reset_day')
+    wrapper.unmount()
+  })
+
   // Editing an Anthropic Account Key provider restores the derouter selection and override.
   // Saving and reopening retain that configuration independently of the forwarding URL.
   it('round-trips derouter query settings independently of the Anthropic forwarding URL', async () => {

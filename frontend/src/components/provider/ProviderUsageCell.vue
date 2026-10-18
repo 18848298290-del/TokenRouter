@@ -656,6 +656,13 @@
         color="emerald"
       />
       <UsageProgressBar
+        v-if="quotaMonthlyBar"
+        :label="provider.quota_monthly_reset_mode === 'fixed' ? 'M' : '30d'"
+        :utilization="quotaMonthlyBar.utilization"
+        :resets-at="quotaMonthlyBar.resetsAt"
+        color="emerald"
+      />
+      <UsageProgressBar
         v-if="quotaTotalBar"
         label="total"
         :utilization="quotaTotalBar.utilization"
@@ -707,6 +714,17 @@ import OllamaCloudUsageCell from './OllamaCloudUsageCell.vue'
 import ProviderUpstreamUsageCell from './ProviderUpstreamUsageCell.vue'
 import ProviderUsageStatsChips from './ProviderUsageStatsChips.vue'
 import ProviderUpstreamUsageQueryButton from './ProviderUpstreamUsageQueryButton.vue'
+
+// ProviderUsageCell.vue presents provider usage snapshots and local quota progress.
+// Platform and authentication type select upstream measurements, billing details,
+// refresh actions, and quota views. The local spending controls use the limits
+// and effective usage supplied by the administration API, keeping their progress
+// separate from upstream account observations. Each periodic quota has its own
+// reset timestamp and can be displayed when the other dimensions are disabled.
+//
+// Fixed local quotas use the server's published reset time. Elapsed-time quotas
+// derive their deadline from the stored start and their configured period;
+// monthly quotas use thirty days so the displayed countdown matches billing.
 
 // 模块级缓存供所有 ProviderUsageCell 实例共享
 const _usageCache = new Map<number, { data: ProviderUsageInfo; ts: number }>()
@@ -1579,11 +1597,19 @@ const handleGrokProbed = async () => {
 
 // ===== API Key quota progress bars =====
 
+// QuotaBarInfo describes local spending utilization and its optional reset
+// timestamp.
 interface QuotaBarInfo {
   utilization: number
   resetsAt: string | null
 }
 
+// makeQuotaBar calculates progress and the deadline for one local spending quota.
+// Fixed schedules use server metadata; rolling windows use the stored start plus
+// elapsed days, with a thirty-day duration for monthly limits. Missing starts
+// leave the reset timestamp empty until accounting initializes a period.
+// Progress uses the effective amount returned by the API, which already treats
+// expired usage as zero; deriving a deadline here does not mutate that amount.
 const makeQuotaBar = (
   used: number,
   limit: number,
@@ -1593,21 +1619,21 @@ const makeQuotaBar = (
   let resetsAt: string | null = null
   if (startKey) {
     const extra = props.provider.extra as Record<string, unknown> | undefined
-    const isDaily = startKey.includes('daily')
-    const mode = isDaily
-      ? (extra?.quota_daily_reset_mode as string) || 'rolling'
-      : (extra?.quota_weekly_reset_mode as string) || 'rolling'
+    const prefix = startKey.replace(/_start$/, '')
+    const mode = (extra?.[`${prefix}_reset_mode`] as string) || 'rolling'
 
     if (mode === 'fixed') {
       // Use pre-computed next reset time for fixed mode
-      const resetAtKey = isDaily ? 'quota_daily_reset_at' : 'quota_weekly_reset_at'
+      const resetAtKey = `${prefix}_reset_at`
       resetsAt = (extra?.[resetAtKey] as string) || null
     } else {
       // Rolling mode: compute from start + period
       const startStr = extra?.[startKey] as string | undefined
       if (startStr) {
         const startDate = new Date(startStr)
-        const periodMs = isDaily ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
+        // Rolling windows use elapsed days, matching the backend quota expiry rules.
+        const days = prefix === 'quota_daily' ? 1 : prefix === 'quota_weekly' ? 7 : 30
+        const periodMs = days * 24 * 60 * 60 * 1000
         resetsAt = new Date(startDate.getTime() + periodMs).toISOString()
       }
     }
@@ -1615,11 +1641,13 @@ const makeQuotaBar = (
   return { utilization, resetsAt }
 }
 
+// hasApiKeyQuota reports whether an API Key or Bedrock provider has any positive local spending limit, including monthly-only limits.
 const hasApiKeyQuota = computed(() => {
   if (props.provider.type !== 'apikey' && props.provider.type !== 'bedrock') return false
   return (
     (props.provider.quota_daily_limit ?? 0) > 0 ||
     (props.provider.quota_weekly_limit ?? 0) > 0 ||
+    (props.provider.quota_monthly_limit ?? 0) > 0 ||
     (props.provider.quota_limit ?? 0) > 0
   )
 })
@@ -1634,6 +1662,14 @@ const quotaWeeklyBar = computed((): QuotaBarInfo | null => {
   const limit = props.provider.quota_weekly_limit ?? 0
   if (limit <= 0) return null
   return makeQuotaBar(props.provider.quota_weekly_used ?? 0, limit, 'quota_weekly_start')
+})
+
+// quotaMonthlyBar exposes monthly progress when its configured USD ceiling is
+// positive.
+const quotaMonthlyBar = computed((): QuotaBarInfo | null => {
+  const limit = props.provider.quota_monthly_limit ?? 0
+  if (limit <= 0) return null
+  return makeQuotaBar(props.provider.quota_monthly_used ?? 0, limit, 'quota_monthly_start')
 })
 
 const quotaTotalBar = computed((): QuotaBarInfo | null => {

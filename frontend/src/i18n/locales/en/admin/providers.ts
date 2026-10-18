@@ -1,3 +1,9 @@
+
+
+// providers.ts supplies English text for provider administration controls.
+// Quota descriptions distinguish elapsed-time windows from fixed local calendar
+// resets, including the monthly rule for dates absent from shorter months.
+// Interpolation parameters carry the configured reset clock and timezone.
 // providers.ts supplies localized labels and guidance for provider administration.
 // Query configuration explains the authentication and destination expected by
 // each supported adapter, while shared message keys let creation, editing, and
@@ -616,13 +622,17 @@ export default {
       resetQuota: 'Reset Quota',
       quotaLimit: 'Quota Limit',
       quotaLimitPlaceholder: '0 means unlimited',
-      quotaLimitHint: 'Set daily/weekly/total spending limits. Anthropic API key providers can also configure client affinity. Changing limits won\'t reset usage.',
+      quotaLimitHint: 'Set daily/weekly/monthly/total spending limits. Anthropic API key providers can also configure client affinity. Changing limits won\'t reset usage.',
       quotaLimitToggle: 'Enable Quota Limit',
       quotaLimitToggleHint: 'When enabled, provider will be paused when usage reaches the set limit',
       quotaDailyLimit: 'Daily Limit',
       quotaDailyLimitHint: 'Automatically resets every 24 hours from first usage.',
       quotaWeeklyLimit: 'Weekly Limit',
       quotaWeeklyLimitHint: 'Automatically resets every 7 days from first usage.',
+      quotaMonthlyLimit: 'Monthly Limit',
+      quotaMonthlyLimitHint: 'Automatically resets every 30 days from first usage.',
+      quotaMonthlyResetDay: 'Reset Date',
+      quotaMonthlyLimitHintFixed: 'Resets on day {day} each month at {hour}:00 ({timezone}), or on the final date of shorter months.',
       quotaTotalLimit: 'Total Limit',
       quotaTotalLimitHint: 'Cumulative spending limit. Does not auto-reset — use "Reset Quota" to clear.',
       quotaResetMode: 'Reset Mode',

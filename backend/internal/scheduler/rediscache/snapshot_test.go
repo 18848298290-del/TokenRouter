@@ -521,15 +521,20 @@ func TestSchedulerCacheSetSnapshotByProviderIDsDoesNotResurrectDeletedProvider(t
 }
 
 // TestBuildSchedulerMetadataProvider_KeepsQuotaStateForCachedProviders
-// serializes total-quota exhaustion and active/expired daily and weekly
+// serializes total-quota exhaustion and active/expired daily, weekly, and monthly
 // observations across provider types. It checks retained quota extras,
 // filtered unrelated data and the resulting quota/schedulability decisions.
+// Fixed monthly cases retain their reset date, hour, and timezone across encoding
+// and reject or admit the cached provider using the captured observation time.
 func TestBuildSchedulerMetadataProvider_KeepsQuotaStateForCachedProviders(t *testing.T) {
 	now := time.Now().UTC()
 	activeStart := now.Add(-time.Hour).Format(time.RFC3339)
 	expiredDailyStart := now.Add(-25 * time.Hour).Format(time.RFC3339)
 	expiredWeeklyStart := now.Add(-8 * 24 * time.Hour).Format(time.RFC3339)
 	weeklyResetDay := float64(now.AddDate(0, 0, 1).Weekday())
+	monthlyTimezone, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	monthlyReset := billing.LastFixedMonthlyReset(15, 9, monthlyTimezone, now)
 
 	cases := []struct {
 		// name, platform, typ, extra and quotaExceeded form one cached-eligibility
@@ -575,6 +580,37 @@ func TestBuildSchedulerMetadataProvider_KeepsQuotaStateForCachedProviders(t *tes
 				"quota_weekly_reset_hour": 0.0, "quota_reset_timezone": "UTC",
 			},
 		},
+		{
+			name: "monthly quota exhausted", platform: capability.PlatformOpenAI, typ: capability.ProviderTypeAPIKey,
+			extra: map[string]any{
+				"quota_monthly_limit": 100.0, "quota_monthly_used": 100.0, "quota_monthly_start": activeStart,
+			}, quotaExceeded: true,
+		},
+		{
+			name: "expired monthly quota", platform: capability.PlatformOpenAI, typ: capability.ProviderTypeAPIKey,
+			extra: map[string]any{
+				"quota_monthly_limit": 100.0, "quota_monthly_used": 100.0,
+				"quota_monthly_start": time.Now().Add(-31 * 24 * time.Hour).UTC().Format(time.RFC3339),
+			},
+		},
+		{
+			name: "fixed monthly quota exhausted", platform: capability.PlatformOpenAI, typ: capability.ProviderTypeAPIKey,
+			extra: map[string]any{
+				"quota_monthly_limit": 100.0, "quota_monthly_used": 100.0,
+				"quota_monthly_start":      monthlyReset.UTC().Format(time.RFC3339),
+				"quota_monthly_reset_mode": "fixed", "quota_monthly_reset_day": 15.0,
+				"quota_monthly_reset_hour": 9.0, "quota_reset_timezone": "Asia/Shanghai",
+			}, quotaExceeded: true,
+		},
+		{
+			name: "expired fixed monthly quota", platform: capability.PlatformOpenAI, typ: capability.ProviderTypeAPIKey,
+			extra: map[string]any{
+				"quota_monthly_limit": 100.0, "quota_monthly_used": 100.0,
+				"quota_monthly_start":      monthlyReset.Add(-time.Hour).UTC().Format(time.RFC3339),
+				"quota_monthly_reset_mode": "fixed", "quota_monthly_reset_day": 15.0,
+				"quota_monthly_reset_hour": 9.0, "quota_reset_timezone": "Asia/Shanghai",
+			},
+		},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -597,6 +633,9 @@ func TestBuildSchedulerMetadataProvider_KeepsQuotaStateForCachedProviders(t *tes
 			require.True(t, hit)
 			require.Len(t, snapshot, 1)
 			cached := snapshot[0]
+			// Fixed schedules use the captured observation time so a calendar reset
+			// during serialization cannot change this fixture's expected admission result.
+			cached.Now = func() time.Time { return now }
 			require.Equal(t, tc.extra, cached.Extra)
 			require.NotContains(t, cached.Extra, "unrelated")
 			require.Equal(t, tc.quotaExceeded, cached.IsQuotaExceeded())

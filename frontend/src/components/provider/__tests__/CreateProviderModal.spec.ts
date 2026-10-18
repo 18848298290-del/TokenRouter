@@ -205,6 +205,37 @@ describe('CreateProviderModal OpenAI provider options', () => {
   })
 
   // 切换到 Antigravity 后，API Key 控件和静态地址输入应消失。
+  // Shared monthly controls contribute limits and fixed reset fields to creation.
+  // The submission includes the chosen local schedule and the monthly
+  // notification threshold.
+  it('creates a provider with a fixed monthly spending limit', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('form#create-provider-form input[type="text"]').setValue('Monthly provider')
+    await wrapper.get('form#create-provider-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('[data-settings-tab-button="quota"]').trigger('click')
+    const card = wrapper.findComponent({ name: 'QuotaLimitCard' })
+    card.vm.$emit('update:monthlyLimit', 100)
+    card.vm.$emit('update:monthlyResetMode', 'fixed')
+    card.vm.$emit('update:monthlyResetDay', 31)
+    card.vm.$emit('update:monthlyResetHour', 9)
+    card.vm.$emit('update:resetTimezone', 'Asia/Shanghai')
+    card.vm.$emit('update:quotaNotifyMonthlyEnabled', true)
+    card.vm.$emit('update:quotaNotifyMonthlyThreshold', 10)
+    await wrapper.get('form#create-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createProviderMock).toHaveBeenCalledWith(expect.objectContaining({
+      extra: expect.objectContaining({
+        quota_monthly_limit: 100, quota_monthly_reset_mode: 'fixed',
+        quota_monthly_reset_day: 31, quota_monthly_reset_hour: 9,
+        quota_reset_timezone: 'Asia/Shanghai', quota_notify_monthly_enabled: true,
+        quota_notify_monthly_threshold: 10,
+      }),
+    }))
+    wrapper.unmount()
+  })
+
   it('shows only OAuth credentials for Antigravity after switching from API Key', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')

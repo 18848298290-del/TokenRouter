@@ -2160,7 +2160,7 @@ func incrementUsageBillingAPIKeyRateLimit(ctx context.Context, tx *sql.Tx, apiKe
 }
 
 // incrementUsageBillingProviderQuota increments an undeleted provider's total
-// usage and configured positive daily/weekly counters using their stored
+// usage and configured positive daily/weekly/monthly counters using their stored
 // expiration rules. It returns the post-update quota state or
 // ErrProviderNotFound for no row. The caller supplies the normalized provider
 // cost and owns the transaction containing this update.
@@ -2206,6 +2206,23 @@ func incrementUsageBillingProviderQuota(ctx context.Context, tx *sql.Tx, provide
 				   THEN jsonb_build_object('quota_weekly_reset_at', `+NextWeeklyResetAtExpr+`)
 				   ELSE '{}'::jsonb END
 			ELSE '{}'::jsonb END
+			-- Monthly counters share the same update so accounting cannot commit
+			-- total consumption while losing the corresponding monthly charge.
+			|| CASE WHEN COALESCE((extra->>'quota_monthly_limit')::numeric, 0) > 0 THEN
+				jsonb_build_object(
+					'quota_monthly_used',
+					CASE WHEN `+MonthlyExpiredExpr+`
+					THEN $1
+					ELSE COALESCE((extra->>'quota_monthly_used')::numeric, 0) + $1 END,
+					'quota_monthly_start',
+					CASE WHEN `+MonthlyExpiredExpr+`
+					THEN `+NowUTC+`
+					ELSE COALESCE(extra->>'quota_monthly_start', `+NowUTC+`) END
+				)
+				|| CASE WHEN `+MonthlyExpiredExpr+` AND `+NextMonthlyResetAtExpr+` IS NOT NULL
+				   THEN jsonb_build_object('quota_monthly_reset_at', `+NextMonthlyResetAtExpr+`)
+				   ELSE '{}'::jsonb END
+			ELSE '{}'::jsonb END
 		), updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
 		RETURNING
@@ -2214,7 +2231,9 @@ func incrementUsageBillingProviderQuota(ctx context.Context, tx *sql.Tx, provide
 			COALESCE((extra->>'quota_daily_used')::numeric, 0),
 			COALESCE((extra->>'quota_daily_limit')::numeric, 0),
 			COALESCE((extra->>'quota_weekly_used')::numeric, 0),
-			COALESCE((extra->>'quota_weekly_limit')::numeric, 0)`,
+			COALESCE((extra->>'quota_weekly_limit')::numeric, 0),
+			COALESCE((extra->>'quota_monthly_used')::numeric, 0),
+			COALESCE((extra->>'quota_monthly_limit')::numeric, 0)`,
 		amount, providerID)
 	if err != nil {
 		return nil, err
@@ -2229,6 +2248,7 @@ func incrementUsageBillingProviderQuota(ctx context.Context, tx *sql.Tx, provide
 			&state.TotalUsed, &state.TotalLimit,
 			&state.DailyUsed, &state.DailyLimit,
 			&state.WeeklyUsed, &state.WeeklyLimit,
+			&state.MonthlyUsed, &state.MonthlyLimit,
 		); err != nil {
 			_ = rows.Close()
 			return nil, err
@@ -2252,13 +2272,14 @@ func incrementUsageBillingProviderQuota(ctx context.Context, tx *sql.Tx, provide
 		return nil, err
 	}
 	// Enqueue a same-transaction scheduling event when a positive limit moves
-	// from below to at least its threshold. For a daily or weekly reset,
+	// from below to at least its threshold. For a periodic reset,
 	// post-usage equals this amount, so the prior comparison starts at zero.
 
 	crossedTotal := state.TotalLimit > 0 && state.TotalUsed >= state.TotalLimit && (state.TotalUsed-amount) < state.TotalLimit
 	crossedDaily := state.DailyLimit > 0 && state.DailyUsed >= state.DailyLimit && (state.DailyUsed-amount) < state.DailyLimit
 	crossedWeekly := state.WeeklyLimit > 0 && state.WeeklyUsed >= state.WeeklyLimit && (state.WeeklyUsed-amount) < state.WeeklyLimit
-	if crossedTotal || crossedDaily || crossedWeekly {
+	crossedMonthly := state.MonthlyLimit > 0 && state.MonthlyUsed >= state.MonthlyLimit && (state.MonthlyUsed-amount) < state.MonthlyLimit
+	if crossedTotal || crossedDaily || crossedWeekly || crossedMonthly {
 		if outbox == nil {
 			return nil, errors.New("provider quota outbox is not configured")
 		}

@@ -397,7 +397,7 @@ func TestCheckQuotaDimCrossings_MultipleDims_MixedResults(t *testing.T) {
 }
 
 // TestBuildQuotaDimsFromState_UsesStateValues supplies provider alert settings
-// alongside committed daily, weekly and total usage. It checks returned
+// alongside committed daily, weekly, monthly, and total usage. It checks returned
 // usage/limits come from the transaction state while the asserted daily
 // settings remain configured.
 func TestBuildQuotaDimsFromState_UsesStateValues(t *testing.T) {
@@ -405,27 +405,32 @@ func TestBuildQuotaDimsFromState_UsesStateValues(t *testing.T) {
 		Dimensions: []QuotaNotifyDimension{
 			{Name: "daily", Enabled: true, Threshold: 100, ThresholdType: "fixed", CurrentUsed: 999, Limit: 999},
 			{Name: "weekly"},
+			{Name: "monthly"},
 			{Name: "total"},
 		},
 	}
 	state := &ProviderQuotaState{
-		DailyUsed:   77.0,
-		DailyLimit:  500.0,
-		WeeklyUsed:  88.0,
-		WeeklyLimit: 2000.0,
-		TotalUsed:   99.0,
-		TotalLimit:  10000.0,
+		DailyUsed:    77.0,
+		DailyLimit:   500.0,
+		WeeklyUsed:   88.0,
+		WeeklyLimit:  2000.0,
+		MonthlyUsed:  90.0,
+		MonthlyLimit: 5000.0,
+		TotalUsed:    99.0,
+		TotalLimit:   10000.0,
 	}
 	dims := quotaDimsFromCommitted(a, state)
-	require.Len(t, dims, 3)
+	require.Len(t, dims, 4)
 	require.True(t, dims[0].Enabled)
 	require.Equal(t, 100.0, dims[0].Threshold)
 	require.Equal(t, 77.0, dims[0].CurrentUsed)
 	require.Equal(t, 500.0, dims[0].Limit)
 	require.Equal(t, 88.0, dims[1].CurrentUsed)
 	require.Equal(t, 2000.0, dims[1].Limit)
-	require.Equal(t, 99.0, dims[2].CurrentUsed)
-	require.Equal(t, 10000.0, dims[2].Limit)
+	require.Equal(t, 90.0, dims[2].CurrentUsed)
+	require.Equal(t, 5000.0, dims[2].Limit)
+	require.Equal(t, 99.0, dims[3].CurrentUsed)
+	require.Equal(t, 10000.0, dims[3].Limit)
 }
 
 // TestCollectBalanceNotifyRecipients_Empty supplies no saved extra contacts

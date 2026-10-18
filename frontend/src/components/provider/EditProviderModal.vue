@@ -1415,21 +1415,35 @@ loadQuotaNotifyGlobal()
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
 const editQuotaWeeklyLimit = ref<number | null>(null)
+// Monthly quota drafts use USD amounts and default to rolling reset mode until
+// fixed scheduling is selected.
+// They belong to this dialog and are submitted with its shared quota settings.
+const editQuotaMonthlyLimit = ref<number | null>(null)
 const editDailyResetMode = ref<'rolling' | 'fixed' | null>(null)
 const editDailyResetHour = ref<number | null>(null)
 const editWeeklyResetMode = ref<'rolling' | 'fixed' | null>(null)
+// editMonthlyResetMode selects elapsed thirty-day windows or a local monthly date.
+const editMonthlyResetMode = ref<'rolling' | 'fixed' | null>(null)
 const editWeeklyResetDay = ref<number | null>(null)
+// editMonthlyResetDay selects a calendar date from one through thirty-one.
+const editMonthlyResetDay = ref<number | null>(null)
 const editWeeklyResetHour = ref<number | null>(null)
+// editMonthlyResetHour selects the hour in the shared quota timezone.
+const editMonthlyResetHour = ref<number | null>(null)
 const editResetTimezone = ref<string | null>(null)
 const { limits: quotaLimits, setLimit: setQuotaLimit } = bindQuotaLimits({
   totalLimit: editQuotaLimit,
   dailyLimit: editQuotaDailyLimit,
   weeklyLimit: editQuotaWeeklyLimit,
+  monthlyLimit: editQuotaMonthlyLimit,
   dailyResetMode: editDailyResetMode,
   dailyResetHour: editDailyResetHour,
   weeklyResetMode: editWeeklyResetMode,
+  monthlyResetMode: editMonthlyResetMode,
   weeklyResetDay: editWeeklyResetDay,
+  monthlyResetDay: editMonthlyResetDay,
   weeklyResetHour: editWeeklyResetHour,
+  monthlyResetHour: editMonthlyResetHour,
   resetTimezone: editResetTimezone
 })
 const codexFingerprintModeOptions = useCodexFingerprintModeOptions()
@@ -1753,13 +1767,18 @@ const syncFormFromProvider = (newProvider: Provider | null) => {
     const dailyVal = extra?.quota_daily_limit as number | undefined
     editQuotaDailyLimit.value = (dailyVal && dailyVal > 0) ? dailyVal : null
     const weeklyVal = extra?.quota_weekly_limit as number | undefined
+    const monthlyVal = extra?.quota_monthly_limit as number | undefined
     editQuotaWeeklyLimit.value = (weeklyVal && weeklyVal > 0) ? weeklyVal : null
+    editQuotaMonthlyLimit.value = (monthlyVal && monthlyVal > 0) ? monthlyVal : null
     // Load quota reset mode config
     editDailyResetMode.value = (extra?.quota_daily_reset_mode as 'rolling' | 'fixed') || null
     editDailyResetHour.value = (extra?.quota_daily_reset_hour as number) ?? null
     editWeeklyResetMode.value = (extra?.quota_weekly_reset_mode as 'rolling' | 'fixed') || null
+    editMonthlyResetMode.value = (extra?.quota_monthly_reset_mode as 'rolling' | 'fixed') || null
     editWeeklyResetDay.value = (extra?.quota_weekly_reset_day as number) ?? null
+    editMonthlyResetDay.value = (extra?.quota_monthly_reset_day as number) ?? null
     editWeeklyResetHour.value = (extra?.quota_weekly_reset_hour as number) ?? null
+    editMonthlyResetHour.value = (extra?.quota_monthly_reset_hour as number) ?? null
     editResetTimezone.value = (extra?.quota_reset_timezone as string) || null
     // Load quota notify config
     loadQuotaNotifyFromExtra(extra)
@@ -1767,11 +1786,15 @@ const syncFormFromProvider = (newProvider: Provider | null) => {
     editQuotaLimit.value = null
     editQuotaDailyLimit.value = null
     editQuotaWeeklyLimit.value = null
+    editQuotaMonthlyLimit.value = null
     editDailyResetMode.value = null
     editDailyResetHour.value = null
     editWeeklyResetMode.value = null
+    editMonthlyResetMode.value = null
     editWeeklyResetDay.value = null
+    editMonthlyResetDay.value = null
     editWeeklyResetHour.value = null
+    editMonthlyResetHour.value = null
     editResetTimezone.value = null
     resetQuotaNotify()
   }
@@ -1968,6 +1991,7 @@ const syncFormFromProvider = (newProvider: Provider | null) => {
     editQuotaLimit.value = typeof bedrockExtra.quota_limit === 'number' ? bedrockExtra.quota_limit : null
     editQuotaDailyLimit.value = typeof bedrockExtra.quota_daily_limit === 'number' ? bedrockExtra.quota_daily_limit : null
     editQuotaWeeklyLimit.value = typeof bedrockExtra.quota_weekly_limit === 'number' ? bedrockExtra.quota_weekly_limit : null
+    editQuotaMonthlyLimit.value = typeof bedrockExtra.quota_monthly_limit === 'number' ? bedrockExtra.quota_monthly_limit : null
     // Load quota notify for bedrock
     loadQuotaNotifyFromExtra(bedrockExtra)
 
@@ -2418,6 +2442,15 @@ const submitUpdateProvider = async (providerID: number, updatePayload: Record<st
   }
 }
 
+// handleSubmit validates provider drafts and prepares the administration update.
+// Credential fields follow the provider's authentication type, while quota
+// amounts and reset schedules apply to API Key and Bedrock providers. Local
+// quota values replace their settings in the saved Extra object, and a cleared
+// amount removes its form-owned usage fields from the submitted copy.
+//
+// Enabled fixed schedules share a timezone; notification drafts are serialized
+// with the same update. Backend configuration merging retains the latest managed
+// usage, and the submission helper reports completion or failure to the dialog.
 const handleSubmit = async () => {
   if (!props.provider) return
   const providerID = props.provider.id
@@ -3069,6 +3102,14 @@ const handleSubmit = async () => {
         delete newExtra.quota_weekly_used
         delete newExtra.quota_weekly_start
       }
+      // Monthly quota
+      if (editQuotaMonthlyLimit.value != null && editQuotaMonthlyLimit.value > 0) {
+        newExtra.quota_monthly_limit = editQuotaMonthlyLimit.value
+      } else {
+        delete newExtra.quota_monthly_limit
+        delete newExtra.quota_monthly_used
+        delete newExtra.quota_monthly_start
+      }
       // Quota reset mode config
       if (editDailyResetMode.value === 'fixed') {
         newExtra.quota_daily_reset_mode = 'fixed'
@@ -3086,7 +3127,20 @@ const handleSubmit = async () => {
         delete newExtra.quota_weekly_reset_day
         delete newExtra.quota_weekly_reset_hour
       }
-      if (editDailyResetMode.value === 'fixed' || editWeeklyResetMode.value === 'fixed') {
+      if (editMonthlyResetMode.value === 'fixed') {
+        newExtra.quota_monthly_reset_mode = 'fixed'
+        newExtra.quota_monthly_reset_day = editMonthlyResetDay.value ?? 1
+        newExtra.quota_monthly_reset_hour = editMonthlyResetHour.value ?? 0
+      } else {
+        delete newExtra.quota_monthly_reset_mode
+        delete newExtra.quota_monthly_reset_day
+        delete newExtra.quota_monthly_reset_hour
+      }
+      if (
+        editDailyResetMode.value === 'fixed' ||
+        editWeeklyResetMode.value === 'fixed' ||
+        editMonthlyResetMode.value === 'fixed'
+      ) {
         newExtra.quota_reset_timezone = editResetTimezone.value || 'UTC'
       } else {
         delete newExtra.quota_reset_timezone

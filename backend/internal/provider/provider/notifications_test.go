@@ -9,33 +9,38 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestBuildQuotaDims_AllDimensionsReturned configures daily and weekly
+// TestBuildQuotaDims_AllDimensionsReturned configures daily, weekly, and monthly
 // notifications while disabling the total dimension. The adapter must retain
-// all three dimensions in order with their thresholds, limits, and usage.
+// all four dimensions in order with their thresholds, limits, and usage.
 func TestBuildQuotaDims_AllDimensionsReturned(t *testing.T) {
-	// Configure all three dimensions, including a disabled total-quota notification.
+	// Configure all four dimensions, including a disabled total-quota notification.
 	a := &provider.Record{
 		Platform: capability.PlatformAnthropic,
 		Type:     capability.ProviderTypeAPIKey,
 		Extra: map[string]any{
-			"quota_notify_daily_enabled":         true,
-			"quota_notify_daily_threshold":       100.0,
-			"quota_notify_daily_threshold_type":  "fixed",
-			"quota_notify_weekly_enabled":        true,
-			"quota_notify_weekly_threshold":      20.0,
-			"quota_notify_weekly_threshold_type": "percentage",
-			"quota_notify_total_enabled":         false,
-			"quota_daily_limit":                  500.0,
-			"quota_weekly_limit":                 2000.0,
-			"quota_limit":                        10000.0,
-			"quota_daily_used":                   50.0,
-			"quota_weekly_used":                  300.0,
-			"quota_used":                         1000.0,
+			"quota_notify_daily_enabled":          true,
+			"quota_notify_daily_threshold":        100.0,
+			"quota_notify_daily_threshold_type":   "fixed",
+			"quota_notify_weekly_enabled":         true,
+			"quota_notify_weekly_threshold":       20.0,
+			"quota_notify_weekly_threshold_type":  "percentage",
+			"quota_notify_monthly_enabled":        true,
+			"quota_notify_monthly_threshold":      10.0,
+			"quota_notify_monthly_threshold_type": "percentage",
+			"quota_monthly_limit":                 5000.0,
+			"quota_monthly_used":                  4000.0,
+			"quota_notify_total_enabled":          false,
+			"quota_daily_limit":                   500.0,
+			"quota_weekly_limit":                  2000.0,
+			"quota_limit":                         10000.0,
+			"quota_daily_used":                    50.0,
+			"quota_weekly_used":                   300.0,
+			"quota_used":                          1000.0,
 		},
 	}
 
 	dims := QuotaNotification(a).Dimensions
-	require.Len(t, dims, 3)
+	require.Len(t, dims, 4)
 
 	require.Equal(t, "daily", dims[0].Name)
 	require.True(t, dims[0].Enabled)
@@ -50,14 +55,22 @@ func TestBuildQuotaDims_AllDimensionsReturned(t *testing.T) {
 	require.Equal(t, "percentage", dims[1].ThresholdType)
 	require.Equal(t, 2000.0, dims[1].Limit)
 
-	require.Equal(t, "total", dims[2].Name)
-	require.False(t, dims[2].Enabled)
-	require.Equal(t, 10000.0, dims[2].Limit)
-	require.Equal(t, 1000.0, dims[2].CurrentUsed)
+	require.Equal(t, "monthly", dims[2].Name)
+	require.True(t, dims[2].Enabled)
+	require.Equal(t, 10.0, dims[2].Threshold)
+	require.Equal(t, "percentage", dims[2].ThresholdType)
+	require.Equal(t, 5000.0, dims[2].Limit)
+	require.Equal(t, 4000.0, dims[2].CurrentUsed)
+
+	require.Equal(t, "total", dims[3].Name)
+	require.False(t, dims[3].Enabled)
+	require.Equal(t, 10000.0, dims[3].Limit)
+	require.Equal(t, 1000.0, dims[3].CurrentUsed)
 }
 
 // TestBuildQuotaDims_EmptyExtra supplies a record with no quota settings. The
-// result must still contain daily, weekly, and total dimensions with disabled
+// result must still contain daily, weekly, monthly, and total dimensions with
+// disabled
 // flags and zero thresholds and limits.
 func TestBuildQuotaDims_EmptyExtra(t *testing.T) {
 	// Missing fields default to zero/disabled.
@@ -67,7 +80,7 @@ func TestBuildQuotaDims_EmptyExtra(t *testing.T) {
 		Extra:    map[string]any{},
 	}
 	dims := QuotaNotification(a).Dimensions
-	require.Len(t, dims, 3)
+	require.Len(t, dims, 4)
 	for _, d := range dims {
 		require.False(t, d.Enabled)
 		require.Equal(t, 0.0, d.Threshold)

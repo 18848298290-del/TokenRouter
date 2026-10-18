@@ -49,13 +49,16 @@ var duplicateProviderDiscardedExtraKeys = map[string]struct{}{
 	"crs_kind":       {},
 	"crs_synced_at":  {},
 	// Start local usage counters and derived quota windows empty.
-	"quota_used":            {},
-	"quota_daily_used":      {},
-	"quota_weekly_used":     {},
-	"quota_daily_start":     {},
-	"quota_weekly_start":    {},
-	"quota_daily_reset_at":  {},
-	"quota_weekly_reset_at": {},
+	"quota_used":             {},
+	"quota_daily_used":       {},
+	"quota_weekly_used":      {},
+	"quota_monthly_used":     {},
+	"quota_daily_start":      {},
+	"quota_weekly_start":     {},
+	"quota_monthly_start":    {},
+	"quota_daily_reset_at":   {},
+	"quota_weekly_reset_at":  {},
+	"quota_monthly_reset_at": {},
 	// Generate a fresh provider-specific Codex fingerprint seed for the duplicate.
 	CodexFingerprintSeedExtraKey: {},
 	// Upstream observations, capability probes, and temporary scheduling state

@@ -96,3 +96,22 @@ func TestConfigurationDoesNotRestoreTemporaryCredentials(t *testing.T) {
 		require.Contains(t, current.Credentials, key)
 	}
 }
+
+// TestConfigurationRetainsCurrentMonthlyUsage submits stale monthly usage while
+// editing its ceiling. The locked current counter and start survive replacement,
+// so an administrative limit edit cannot restore a prior consumption value.
+func TestConfigurationRetainsCurrentMonthlyUsage(t *testing.T) {
+	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	current := &Record{LoadLocation: time.LoadLocation, Extra: map[string]any{
+		"quota_monthly_used": 70.0, "quota_monthly_start": now.Format(time.RFC3339),
+	}}
+	desired := &Record{Extra: map[string]any{
+		"quota_monthly_limit": 200.0, "quota_monthly_used": 5.0,
+		"quota_monthly_start": now.Add(-time.Hour).Format(time.RFC3339),
+	}}
+	out, err := ApplyConfigurationChange(current, desired, ConfigurationChange{Fields: ConfigExtra})
+	require.NoError(t, err)
+	require.Equal(t, 70.0, out.Extra["quota_monthly_used"])
+	require.Equal(t, now.Format(time.RFC3339), out.Extra["quota_monthly_start"])
+	require.Equal(t, 200.0, out.Extra["quota_monthly_limit"])
+}

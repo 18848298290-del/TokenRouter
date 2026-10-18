@@ -23,6 +23,7 @@
     <!-- API Key 提供商配额限制 -->
     <QuotaBadge v-if="showDailyQuota" :used="provider.quota_daily_used ?? 0" :limit="provider.quota_daily_limit!" label="D" />
     <QuotaBadge v-if="showWeeklyQuota" :used="provider.quota_weekly_used ?? 0" :limit="provider.quota_weekly_limit!" label="W" />
+    <QuotaBadge v-if="showMonthlyQuota" :used="provider.quota_monthly_used ?? 0" :limit="provider.quota_monthly_limit!" label="M" />
     <QuotaBadge v-if="showTotalQuota" :used="provider.quota_used ?? 0" :limit="provider.quota_limit!" />
   </div>
 </template>
@@ -34,6 +35,11 @@ import { useI18n } from 'vue-i18n'
 import type { Provider } from '@/types'
 import CapacityBadge from '@/components/provider/CapacityBadge.vue'
 import QuotaBadge from '@/components/provider/QuotaBadge.vue'
+
+// ProviderCapacityCell.vue displays provider request capacity and local quotas.
+// Platform and authentication eligibility determine which controls are meaningful;
+// enabled daily, weekly, monthly, and total spending limits appear as compact
+// badges alongside the provider's configured capacity information.
 
 const props = defineProps<{
   provider: Provider
@@ -176,6 +182,11 @@ const showDailyQuota = computed(() =>
 )
 const showWeeklyQuota = computed(() =>
   isQuotaEligible.value && props.provider.quota_weekly_limit != null && props.provider.quota_weekly_limit > 0
+)
+// showMonthlyQuota reports whether the provider has an eligible positive
+// monthly spending limit.
+const showMonthlyQuota = computed(() =>
+  isQuotaEligible.value && props.provider.quota_monthly_limit != null && props.provider.quota_monthly_limit > 0
 )
 const showTotalQuota = computed(() =>
   isQuotaEligible.value && props.provider.quota_limit != null && props.provider.quota_limit > 0

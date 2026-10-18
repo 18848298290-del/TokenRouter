@@ -53,6 +53,7 @@ const (
 // current record and removes a desired value when the current record lacks it.
 var managedConfigurationExtraKeys = []string{
 	"quota_used", "quota_daily_used", "quota_daily_start", "quota_weekly_used", "quota_weekly_start",
+	"quota_monthly_used", "quota_monthly_start",
 	"grok_billing_snapshot", "grok_usage_snapshot", "grok_observed_models",
 	"qoder_quota_snapshot", "qoder_quota_updated_at",
 	"ollama_cloud_usage_session", "ollama_cloud_usage_auto_refresh", "ollama_cloud_usage_snapshot",
