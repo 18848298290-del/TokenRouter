@@ -65,6 +65,7 @@ func provideMessageHTTPBindings(
 	ping := time.Duration(0)
 	if cfg != nil {
 		options.MaxBodyBytes = cfg.Gateway.MaxBodySize
+		options.ForceCodexCLI = cfg.Gateway.ForceCodexCLI
 		// Waiting handlers emit pings using the configured interval in seconds.
 		ping = time.Duration(cfg.Concurrency.PingInterval) * time.Second
 		if cfg.Gateway.MaxProviderSwitches > 0 {

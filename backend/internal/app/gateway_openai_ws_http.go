@@ -64,6 +64,7 @@ func responsesWSOptions(cfg *config.Config) wshttp.ResponsesWSOptions {
 	}
 	if cfg != nil {
 		options.MaxIngressConnectionsPerAPIKey = cfg.Gateway.OpenAIWS.MaxIngressConnectionsPerAPIKey
+		options.ForceCodexCLI = cfg.Gateway.ForceCodexCLI
 		if cfg.Gateway.MaxProviderSwitches > 0 {
 			options.MaxProviderSwitches = cfg.Gateway.MaxProviderSwitches
 		}

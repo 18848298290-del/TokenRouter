@@ -203,9 +203,10 @@ func (q *creativeModelQuery) resolveModels(ctx context.Context, models []string)
 //
 // Group mapping precedes provider mapping and staged restrictions. Each
 // provider operation must pass its protocol route before attribute resolution,
-// and final output modalities must explicitly include image. In
-// display mode an attribute error becomes an empty resolution; submission mode
-// returns the error. Shared capabilities are computed across matching
+// and final output modalities must explicitly include image. Attribute loading
+// failures stop both discovery and submission. Display mode omits routes whose
+// loaded attributes lack image output; submission reports their capability
+// rejection. Shared capabilities are computed across matching
 // providers and per operation, with OpenAI, Gemini, then Grok defining
 // platform precedence.
 func (q *creativeModelQuery) resolve(ctx context.Context, model string, display bool) (creativeModelRoute, bool, error) {
@@ -246,16 +247,7 @@ func (q *creativeModelQuery) resolve(ctx context.Context, model string, display 
 				target.UpstreamProtocol = target.ClientProtocol
 				resolved, err := q.attributes.Resolve(ctx, q.group.ID, target)
 				if err != nil {
-					if !display {
-						return creativeModelRoute{}, false, err
-					}
-					// Display requests keep name-recognized
-					// image routes visible when attributes
-					// cannot load. Submission returns the
-					// same resolution error above instead
-					// of accepting a task with unavailable
-					// route attributes.
-					resolved = modelcatalog.Resolution{}
+					return creativeModelRoute{}, false, err
 				}
 				if err := routing.RequireImageOutput(resolved.Attributes); err != nil {
 					capabilityErr = err

@@ -73,6 +73,7 @@ type EntryInput struct {
 	FirstTurnStartedAt     time.Time       // first frame acceptance time
 	ClientIP               string          // resolved client IP address
 	UserAgent              string          // client User-Agent header value
+	Codex                  bool            // client uses Codex preparation
 	MaxProviderSwitches    int             // allowed provider replacement count
 }
 

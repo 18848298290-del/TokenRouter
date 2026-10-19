@@ -1,6 +1,7 @@
 package media
 
 import (
+	"context"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -39,6 +40,18 @@ const (
 	// when the selected group disables image generation permission.
 	ImageGenerationPermissionMessage = "Image generation is not enabled for this group" // group image permission denial message
 )
+
+// ResponsesImageSelection carries the tool identities used for provider eligibility.
+// Models is immutable after context publication; empty identities retain an
+// unspecified tool model until the route chooses conversion or the hosted default.
+// Codex enables provider tool stripping.
+type ResponsesImageSelection struct {
+	Models []string // declared image tool models
+	Codex  bool     // client uses Codex preparation
+}
+
+// responsesImageSelectionKey identifies one request or turn's image tool requirements.
+type responsesImageSelectionKey struct{}
 
 // ImageToolRules supplies platform predicates and string extraction for
 // image intent decisions.
@@ -80,6 +93,40 @@ type OpenAIResponsesImageBillingConfig struct {
 	Model     string // selected image billing model
 	SizeTier  string // normalized image billing size tier
 	InputSize string // trimmed selected raw size evidence
+}
+
+// WithResponsesImageSelection captures image tool identities for candidate checks.
+// Each call replaces the previous turn's requirements, including an empty list;
+// callers supply the client classification used by their forwarding preparation.
+func WithResponsesImageSelection(ctx context.Context, body []byte, codex bool) context.Context {
+	return context.WithValue(ctx, responsesImageSelectionKey{}, ResponsesImageSelection{Models: ResponsesImageModels(body), Codex: codex})
+}
+
+// ResponsesImageSelectionFromContext returns the request's immutable image requirements.
+// Missing contexts or values return an empty selection. Consumers may read the
+// Models slice during selection but must leave its contents unchanged.
+func ResponsesImageSelectionFromContext(ctx context.Context) ResponsesImageSelection {
+	if ctx == nil {
+		return ResponsesImageSelection{}
+	}
+	value, _ := ctx.Value(responsesImageSelectionKey{}).(ResponsesImageSelection)
+	return value
+}
+
+// ResponsesImageModels reads every native image tool's selected model.
+// An omitted model stays empty until route preparation selects the hosted default
+// or moves an image-only request into its tool. The surrounding model name is
+// never used as evidence of output capability.
+func ResponsesImageModels(body []byte) []string {
+	var models []string
+	for _, tool := range gjson.GetBytes(body, "tools").Array() {
+		if tool.Get("type").String() != "image_generation" {
+			continue
+		}
+		model := strings.TrimSpace(tool.Get("model").String())
+		models = append(models, model)
+	}
+	return models
 }
 
 // NewImageIntentPolicy retains the supplied platform rule functions in a

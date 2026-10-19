@@ -624,11 +624,11 @@ func (p *openAIWSEntryAdapter) RemovePrevious(body []byte) []byte {
 	return openai.RemovePreviousResponseIDFromBody(body)
 }
 
-// LocalPolicyError recognizes a reasoning-effort ceiling violation in the
-// supplied error chain.
+// LocalPolicyError recognizes reasoning ceiling and model capability rejections
+// in the supplied error chain, including failures returned before upstream execution.
 func (p *openAIWSEntryAdapter) LocalPolicyError(err error) bool {
 	var policy *routing.ReasoningEffortOverLimitError
-	return errors.As(err, &policy)
+	return routing.IsModelAttributeError(err) || errors.As(err, &policy)
 }
 
 // ReportFailure reports whether gateway entry treats the error as provider

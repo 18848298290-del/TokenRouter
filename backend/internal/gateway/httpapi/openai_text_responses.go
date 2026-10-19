@@ -11,12 +11,14 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/execution"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	textflow "github.com/TokenFlux/TokenRouter/internal/gateway/text"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
+	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
 // openai_text_responses.go admits Responses requests while retaining canonical
@@ -239,7 +241,7 @@ func (h *OpenAITextHandler) Responses(c *gin.Context) {
 	// Client-declared image intent controls permissions, concurrency, and provider capability; broader intent
 	// guides tools and billing.
 	imageIntent := h.backend.ExplicitImageIntent("/v1/responses", routingModel, forwardBody)
-	selectionCtx := c.Request.Context()
+	selectionCtx := media.WithResponsesImageSelection(c.Request.Context(), forwardBody, openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) || h.options.ForceCodexCLI)
 	if imageIntent {
 		// Use group-mapped client image intent for the image-family concurrency marker.
 		selectionCtx = h.backend.ImageContext(selectionCtx)

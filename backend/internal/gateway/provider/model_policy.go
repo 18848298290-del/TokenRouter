@@ -416,8 +416,11 @@ func (p ModelPolicy) LimitKeys(ctx context.Context, requested string) []string {
 		if !images {
 			// Mixed-output models can serve ordinary text requests. Apply the shared
 			// image cooldown only to an image-only target or explicit image intent.
-			resolution, err := ResolveModelAttributes(ctx, &ExecutionProvider{Record: *value, Route: p.Route}, key, nil)
-			images = err == nil && resolution.Attributes.OutputOnly("image")
+			target, err := ProviderForProtocolAttempt(ctx, &ExecutionProvider{Record: *value, Route: p.Route})
+			if err == nil {
+				resolution, err := ResolveModelAttributes(ctx, target, ExecutionModelPolicy(target).UpstreamModel(ctx, requested), nil)
+				images = err == nil && resolution.Attributes.OutputOnly("image")
+			}
 		}
 		if images && key != provider.OpenAIImageGenerationRateLimitKey {
 			keys = append(keys, provider.OpenAIImageGenerationRateLimitKey)

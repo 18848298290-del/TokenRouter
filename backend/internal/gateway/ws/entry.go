@@ -12,6 +12,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/modeltrace"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
@@ -347,12 +348,22 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 			return
 		}
 		reqLog.Debug("openai.websocket_provider_selecting", EntryInt("excluded_provider_count", len(failedProviderIDs)))
-		selection, scheduleDecision, err := p.Select(initialSchedulingCtx, previousResponseID, sessionHash, reqModel, failedProviderIDs, requiredCapability, previousResponseCanMove, requestPlatform)
+		// Selection and forwarding belong to the same logical turn. Reuse its
+		// attribute session before inspecting candidates, including after provider failover.
+		attemptRecords := requestRecords.attempt()
+		selectionCtx := attemptRecords.context(initialSchedulingCtx, 1)
+		selectionCtx = media.WithResponsesImageSelection(selectionCtx, wsAttemptMessage, in.Codex)
+		selection, scheduleDecision, err := p.Select(selectionCtx, previousResponseID, sessionHash, reqModel, failedProviderIDs, requiredCapability, previousResponseCanMove, requestPlatform)
 		if err != nil {
 			reqLog.Warn("openai.websocket_provider_select_failed",
 				EntryError(p.SelectionLogError(err, requestPlatform)),
 				EntryInt("excluded_provider_count", len(failedProviderIDs)),
 			)
+			if local := EntryModelAttributeClose(err); local.Present {
+				p.PolicyDenied()
+				p.Close(local.Status, local.Reason)
+				return
+			}
 			if lastFailoverErr != nil {
 				p.CloseFailover(lastFailoverErr)
 			} else {
@@ -449,7 +460,6 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 			maxReasoningEffortOverLimit = apiKey.Group.MaxReasoningEffortOverLimit
 			reasoningEffortMappings = apiKey.Group.ReasoningEffortMappings
 		}
-		attemptRecords := requestRecords.attempt()
 		// Bind diagnostic selection to this provider while retaining the current
 		// execution cancellation context used by the existing turn callbacks.
 		contextForAttempt := func() context.Context {
@@ -479,18 +489,19 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				currentFastModePolicy.Store(policy)
 				return policy
 			},
-			ResolveRoutingModel: func(_ int, requestedModel string, payload []byte) (string, error) {
+			ResolveRoutingModel: func(turn int, requestedModel string, payload []byte) (string, error) {
 				requestedModel = strings.TrimSpace(requestedModel)
 				if requestedModel == "" {
 					requestedModel = clientReqModel
 				}
-				turnCtx, redirectedModel := p.Redirect(ctx, requestedModel)
+				turnCtx, redirectedModel := p.Redirect(attemptRecords.context(ctx, turn), requestedModel)
 				// Build this turn's route plan after Key redirection, so image intent and
 				// selected-provider eligibility use the current group model while the
 				// client identifier remains separate.
 				turnCtx, turnMapping := p.Plan(turnCtx, redirectedModel)
 				mappedPayload, turnRoutingModel, _ := p.ImageIntent(redirectedModel, payload, turnMapping)
 				turnImageIntent := p.ExplicitImage(turnRoutingModel, mappedPayload)
+				turnCtx = media.WithResponsesImageSelection(turnCtx, mappedPayload, in.Codex)
 
 				if turnImageIntent && !p.ImagesAllowed() {
 					p.FeatureDenied()
@@ -768,6 +779,11 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				return
 			}
 
+			if local := EntryModelAttributeClose(err); local.Present {
+				p.PolicyDenied()
+				p.Close(local.Status, local.Reason)
+				return
+			}
 			closeErr := p.CloseInfo(err)
 			hasClientCloseErr := closeErr.Present
 			if p.LocalPolicyError(err) {

@@ -17,6 +17,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
+	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
 // responses_ws.go upgrades authenticated Responses requests and hands
@@ -37,6 +38,7 @@ import (
 // ResponsesWSOptions supplies entry limits and the provider-switch budget.
 // Runtime, when supplied, replaces connection and first-frame values at upgrade.
 type ResponsesWSOptions struct {
+	ForceCodexCLI bool // configured Codex client preparation
 	// Runtime is optional; its snapshot overrides MaxIngressConnectionsPerAPIKey,
 	// ReadLimit, and FirstMessageTimeout before capacity acquisition. The static
 	// MaxProviderSwitches value continues into RunEntry independently of Runtime.
@@ -246,5 +248,5 @@ func (h *ResponsesWSHandler) ResponsesWebSocket(c *gin.Context) {
 
 	subjectView := gatewayws.EntrySubject{UserID: subject.UserID, Concurrency: subject.Concurrency}
 	ports := h.backend.Entry(c, ResponsesWSCall{Key: apiKey, Subject: subjectView, Conn: wsConn, Logger: reqLog, ClientIP: clientIP, UserAgent: userAgent})
-	gatewayws.RunEntry(ctx, ports, gatewayws.EntryInput{Key: apiKey, Subject: subjectView, ClientLifecycleContext: clientLifecycleCtx, FirstTurnStartedAt: firstTurnStartedAt, ClientIP: clientIP, UserAgent: userAgent, MaxProviderSwitches: h.options.MaxProviderSwitches}, gatewayhttp.WSClientFrames{Conn: wsConn}, firstMessage)
+	gatewayws.RunEntry(ctx, ports, gatewayws.EntryInput{Key: apiKey, Subject: subjectView, ClientLifecycleContext: clientLifecycleCtx, FirstTurnStartedAt: firstTurnStartedAt, ClientIP: clientIP, UserAgent: userAgent, Codex: openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) || h.options.ForceCodexCLI, MaxProviderSwitches: h.options.MaxProviderSwitches}, gatewayhttp.WSClientFrames{Conn: wsConn}, firstMessage)
 }

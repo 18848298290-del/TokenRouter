@@ -228,9 +228,13 @@ func (b *responsesAttemptBridge) Select(excluded map[int64]struct{}) (textflow.R
 // SelectionFailure writes terminal Responses selection output unless the client
 // is gone. An initial Compact capacity error receives its specific response;
 // other initial errors use group-model diagnosis and scheduler refinement.
-// After provider exclusions, the last classified upstream failure takes
+// Local capability failures retain their own status and reason. After provider
+// exclusions, the last classified upstream failure takes
 // precedence over a simple 502 fallback.
 func (b *responsesAttemptBridge) SelectionFailure(err error, excludedCount int, last *textflow.AttemptFailure) {
+	if gatewayhttp.WriteOpenAIModelAttributeError(b.c, err, *b.streamStarted) {
+		return
+	}
 	var lastFailoverErr *forwardcore.UpstreamFailoverError
 	if last != nil {
 		errors.As(last.Cause, &lastFailoverErr)
@@ -479,8 +483,9 @@ func (b *responsesAttemptBridge) Switching(failure *textflow.AttemptFailure, swi
 	b.reqLog.Warn("openai.upstream_failover_switching", failoverSwitchFields...)
 }
 
-// OtherFailure records Cyber warnings and scheduling failure, then supplies
-// missing Responses error output. It prefers warning evidence carried by the
+// OtherFailure presents local capability errors before recording any upstream
+// failure feedback. For other errors it records Cyber warnings and scheduling
+// failure, then supplies missing Responses error output. It prefers warning evidence carried by the
 // error chain; absent evidence sends the error text to the warning recorder.
 //
 // After warning handling, communicated-error evidence and adjusted output size
@@ -489,6 +494,12 @@ func (b *responsesAttemptBridge) Switching(failure *textflow.AttemptFailure, swi
 // communicated error suppresses fallback. The selected output state is retained
 // for Failed to choose log severity.
 func (b *responsesAttemptBridge) OtherFailure(err error) {
+	// Attribute admission can fail before transport. Present it once and stop
+	// here so a local configuration rejection cannot reduce provider health scores.
+	if routing.IsModelAttributeError(err) {
+		b.wroteFallback = b.binding().ensureOpenAIForwardErrorResponse(b.c, *b.streamStarted, err)
+		return
+	}
 	statusCode := 0
 	if v, ok := GetContextInt64(b.c, gatewayhttp.OpsUpstreamStatusCodeKey); ok {
 		statusCode = int(v)

@@ -15,6 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/execution"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
@@ -24,6 +25,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
+	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
 // compatible_text.go prepares generic Responses and Chat requests for
@@ -272,7 +274,7 @@ func (h *CompatibleTextHandler) Responses(c *gin.Context) {
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)
 	forwardBody, imageIntent := h.backend.ImageIntent(apiKey, reqModel, body, groupMapping)
-	requestCtx := c.Request.Context()
+	requestCtx := media.WithResponsesImageSelection(c.Request.Context(), forwardBody, openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) || h.options.ForceCodexCLI)
 	if imageIntent {
 		requestCtx = h.backend.ImageContext(requestCtx)
 	}

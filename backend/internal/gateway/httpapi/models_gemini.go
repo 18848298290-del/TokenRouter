@@ -34,8 +34,8 @@ import (
 // @project-doc docs/domains/api_key_model_redirects.md#model_list_projection
 // GeminiV1BetaListModels writes locally requestable Gemini model resources
 // for the authenticated Key. It uses Google-shaped errors for missing
-// authentication or denied ordinary-group protocol permission; an unavailable
-// catalogue or uncovered composite subscription yields an empty list.
+// authentication or denied ordinary-group protocol permission. Catalogue read
+// failures return unavailable; uncovered composite subscriptions yield an empty list.
 func (h *ModelsHandler) GeminiV1BetaListModels(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "google")
 	if !accepted {
@@ -155,7 +155,8 @@ func (h *ModelsHandler) GeminiV1BetaGetModel(c *gin.Context) {
 
 // requestableGeminiModels builds the authenticated Key's ordered Gemini
 // resource list and reports whether presentation may continue. Denied
-// ordinary-group protocol permission writes a Google error and returns false.
+// ordinary-group protocol permission or failed catalogue loading writes a Google
+// error and returns false.
 // Missing catalogue support returns an allocated empty list and true;
 // uncovered composite subscription also leaves that list empty.
 //
@@ -177,12 +178,15 @@ func (h *ModelsHandler) requestableGeminiModels(c *gin.Context, key *apikey.APIK
 	forced, _ := h.backend.ForcedPlatform(c)
 	forced = strings.TrimSpace(forced)
 	seen := make(map[string]bool)
-	appendGroup := func(group *routing.Group, prefix string) {
+	appendGroup := func(group *routing.Group, prefix string) error {
 		if group == nil || !group.AllowsClientProtocol(protocol.ProtocolGeminiGenerateContent) {
-			return
+			return nil
 		}
 		id := group.ID
 		resolved := h.backend.Resolve(c.Request.Context(), &id, forced)
+		if resolved.Err != nil {
+			return resolved.Err
+		}
 		available := make([]string, 0, len(resolved.Models))
 		for _, model := range resolved.Models {
 			if slices.Contains(model.Protocols, protocol.ProtocolGeminiGenerateContent) && !strings.ContainsAny(model.ID, "*?") {
@@ -215,6 +219,7 @@ func (h *ModelsHandler) requestableGeminiModels(c *gin.Context, key *apikey.APIK
 			}
 			models = append(models, model)
 		}
+		return nil
 	}
 	if key.IsComposite {
 		subscription, ready := h.CompositePreferredSubscription(c, key)
@@ -223,11 +228,17 @@ func (h *ModelsHandler) requestableGeminiModels(c *gin.Context, key *apikey.APIK
 		}
 		for _, binding := range key.CompositeGroups {
 			if CompositeGroupAvailableToUser(key, subscription, binding.Group) {
-				appendGroup(binding.Group, binding.Prefix)
+				if err := appendGroup(binding.Group, binding.Prefix); err != nil {
+					WriteGoogleError(c, http.StatusServiceUnavailable, err.Error())
+					return nil, false
+				}
 			}
 		}
 	} else {
-		appendGroup(key.Group, "")
+		if err := appendGroup(key.Group, ""); err != nil {
+			WriteGoogleError(c, http.StatusServiceUnavailable, err.Error())
+			return nil, false
+		}
 	}
 	return models, true
 }

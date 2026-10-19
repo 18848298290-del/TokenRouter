@@ -122,3 +122,13 @@ func TestGeminiModelsCompositePermissionsAndForcedPlatform(t *testing.T) {
 	handler.GeminiV1BetaListModels(c)
 	require.Equal(t, 403, w.Code, "强制提供商平台不能绕过分组协议权限")
 }
+
+// TestGeminiListPropagatesAttributeError supplies failed catalogue resolution.
+// The list endpoint returns unavailable so clients cannot mistake a configuration
+// outage for a successfully resolved empty model list.
+func TestGeminiListPropagatesAttributeError(t *testing.T) {
+	p := &modelsBackendStub{key: prefaceKey(), result: routing.RequestableModelsResult{Restricted: true, Err: errors.New("attribute configuration unavailable")}}
+	c, w := modelsContext()
+	NewModelsHandler(p, &modelsCatalogStub{}).GeminiV1BetaListModels(c)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+}

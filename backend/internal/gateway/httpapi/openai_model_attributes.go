@@ -94,7 +94,8 @@ func (s *OpenAIImagesExecutor) resolveModelAttributes(ctx context.Context, value
 // WriteOpenAIModelAttributeError presents known capability failures with their
 // structured reason and HTTP status. It records a local policy denial and
 // returns false for unrelated errors, leaving upstream failure classification
-// and presentation to their existing callers.
+// and presentation to their existing callers. An already committed response
+// counts as handled, so outer failure processing cannot append a duplicate error.
 func WriteOpenAIModelAttributeError(c *gin.Context, err error, stream bool) bool {
 	if c == nil {
 		return false
@@ -102,9 +103,13 @@ func WriteOpenAIModelAttributeError(c *gin.Context, err error, stream bool) bool
 	reason := apperror.Reason(err)
 	switch reason {
 	case "MODEL_CAPABILITY_UNKNOWN", "MODEL_CAPABILITY_UNSUPPORTED", "MODEL_ATTRIBUTES_UNAVAILABLE":
+		if IsResponseCommitted(c) {
+			return true
+		}
 		failure := apperror.FromError(err)
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
 		DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, int(failure.Code), "invalid_request_error", reason, failure.Message, stream, false)
+		MarkResponseCommitted(c)
 		return true
 	default:
 		return false

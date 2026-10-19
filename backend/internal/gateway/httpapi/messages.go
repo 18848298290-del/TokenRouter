@@ -42,9 +42,10 @@ import (
 // Gemini attempt body remain separate fields so conversion and completion can
 // interpret each representation after provider selection.
 
-// MessagesHTTPOptions retains body normalization and configured
-// provider-switch settings.
+// MessagesHTTPOptions retains body normalization, provider-switch limits, and
+// the client preparation settings used when selecting compatible Responses routes.
 type MessagesHTTPOptions struct {
+	ForceCodexCLI bool // configured Codex client preparation
 	// MaxBodyBytes limits lenient JSON normalization output, after the shared
 	// body reader runs. Nonpositive selects the protocol normalizer's 64 MiB default.
 	MaxBodyBytes int64

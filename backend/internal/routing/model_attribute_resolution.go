@@ -287,6 +287,18 @@ func (s *ModelAttributeService) Preview(ctx context.Context, groupID int64, targ
 	return result, nil
 }
 
+// IsModelAttributeError identifies local capability or attribute configuration failures.
+// Callers present these errors through their client protocol and exclude them
+// from upstream health feedback because no failed upstream exchange is established.
+func IsModelAttributeError(err error) bool {
+	switch apperror.Reason(err) {
+	case "MODEL_CAPABILITY_UNKNOWN", "MODEL_CAPABILITY_UNSUPPORTED", "MODEL_ATTRIBUTES_UNAVAILABLE":
+		return true
+	default:
+		return false
+	}
+}
+
 // RequireImageOutput validates declared image output before an image operation.
 // Missing declarations and explicit rejection use separate local errors, so
 // callers can distinguish incomplete configuration from a known unsupported route.

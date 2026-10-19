@@ -7197,3 +7197,29 @@ func newTLSFingerprintRouterTestService(routers ...*egress.TLSFingerprintRouter)
 	service.Start()
 	return service
 }
+
+// TestSecondImageToolErrorPresentation gives a valid first tool and an unknown second tool.
+// Managed and passthrough forwarding must reject locally with a structured capability
+// error before invoking transport, including when outer error presentation runs.
+func TestSecondImageToolErrorPresentation(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		t.Run(fmt.Sprint(passthrough), func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.4","stream":false,"tools":[{"type":"image_generation","model":"gpt-image-2"},{"type":"image_generation","model":"unknown-second-tool"}],"input":"draw"}`)
+			upstream := &auxiliaryHTTPRecorder{}
+			svc := newOpenAIImageGenerationControlTestService(upstream)
+			c, w := newOpenAIImageGenerationControlTestContext(true, "curl/8.0")
+			provider := newOpenAIImageGenerationControlTestProvider()
+			provider.Record.Extra = map[string]any{"openai_passthrough": passthrough}
+			result, err := svc.Forward(c.Request.Context(), c, provider, body)
+			require.ErrorContains(t, err, "MODEL_CAPABILITY_UNKNOWN")
+			require.Nil(t, result)
+			require.Nil(t, upstream.lastReq)
+			firstError := w.Body.String()
+			require.True(t, WriteOpenAIModelAttributeError(c, err, false))
+			require.Equal(t, firstError, w.Body.String())
+			DefaultOpenAIErrorOutput().EnsureResponse(c, false, err)
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			require.Equal(t, "MODEL_CAPABILITY_UNKNOWN", gjson.GetBytes(w.Body.Bytes(), "error.code").String())
+		})
+	}
+}

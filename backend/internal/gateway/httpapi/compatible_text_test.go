@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
@@ -107,5 +108,21 @@ func TestCompatiblePrefacePassesRequestLeaseAndOriginalModel(t *testing.T) {
 		require.Equal(t, "mapped-model", p.call.Mapping.MappedModel)
 		require.NotNil(t, scheduler.RequestLease(p.call.RequestContext))
 		require.Equal(t, []string{"eligibility", "execution"}, p.events[len(p.events)-2:])
+	}
+}
+
+// TestCompatibleImageSelectionUsesClientPreparation captures an admitted image
+// tool under ordinary and forced Codex configuration. Selection must receive
+// both the tool identity and the client policy that forwarding will apply.
+func TestCompatibleImageSelectionUsesClientPreparation(t *testing.T) {
+	for _, forced := range []bool{false, true} {
+		p := &prefaceBackend{key: prefaceKey()}
+		h := NewCompatibleTextHandler(MessagesHTTPOptions{MaxBodyBytes: 1024, ForceCodexCLI: forced}, p, p, prefaceConcurrency(), p)
+		c, w := prefaceContext(`{"model":"original","input":"draw","tools":[{"type":"image_generation","model":"canvas"}]}`)
+		h.Responses(c)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		selected := media.ResponsesImageSelectionFromContext(p.call.RequestContext)
+		require.Equal(t, []string{"canvas"}, selected.Models)
+		require.Equal(t, forced, selected.Codex)
 	}
 }

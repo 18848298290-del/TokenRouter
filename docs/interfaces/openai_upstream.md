@@ -289,6 +289,8 @@ Responses 生图有一个明确的协议适配例外：请求的图片模型进�
 
 图片模型识别使用最终路线的输出模态。图片接口与 Responses 的原生图片工具在发送前检查能力：未知返回 `MODEL_CAPABILITY_UNKNOWN`，明确不支持返回 `MODEL_CAPABILITY_UNSUPPORTED`。型号名称中的 image 不参与判断。工具明确型号优先于转换过程中确认的图片型号，未指定型号的原生图片工具使用其既定默认型号，并执行相同校验。HTTP、透传与 WebSocket 使用相同规则；本地拒绝不计作上游故障。
 
+Responses 图片工具的型号在候选提供商阶段逐条校验，使用该候选的最终协议和模型属性。同组其他路线具备能力时继续选择；全部路线不满足时返回能力错误。转发前还会检查最终工具列表，工具被策略移除时不参与图片能力校验。
+
 客户端的模型名依次经过 Key、分组和提供商手动配置的映射。调度、模型列表、健康冷却、管理测试和请求转发使用同一个完整的模型身份；原生能力和传输资格继续限制提供商选择，相似的模型名绕不过这些限制。
 
 Messages、Chat、Responses 和 WebSocket 按最终的完整型号查询[统一模型属性](model_catalog_and_marketplace.md#model_attributes)。推理档位来自目录与管理员覆盖，未知型号保留客户端的明确参数。GPT-5.6 Sol/Terra/Luna 的普通请求支持 max，OAuth Compact 使用平台的 max 到 xhigh 转换。GPT-5.2/5.4 的采样能力带 effort=none 条件，GPT-6 的 Chat 工具能力按具体型号与 effort 区分。Codex OAuth 禁用 temperature、top_p 和输出参数字段，目录中的输出容量仍保留。

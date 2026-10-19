@@ -7,6 +7,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/admission"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
@@ -138,13 +139,27 @@ func EntryLocalRoutingCause(err error) error {
 }
 
 // EntryShouldReportFailure excludes nil, local routing, session preemption, and
-// reasoning-cap failures from provider feedback. Other errors return true;
+// reasoning-cap or model-attribute failures from provider feedback. Other errors return true;
 // RunEntry combines this classification with its separate clean-client-close
 // handling.
 func EntryShouldReportFailure(err error) bool {
-	if err == nil || errors.Is(err, ErrEntryLocalRoutingRejected) || IsSessionPreemptedError(err) {
+	if err == nil || routing.IsModelAttributeError(err) || errors.Is(err, ErrEntryLocalRoutingRejected) || IsSessionPreemptedError(err) {
 		return false
 	}
 	var policy *routing.ReasoningEffortOverLimitError
 	return !errors.As(err, &policy)
+}
+
+// EntryModelAttributeClose translates local attribute errors into a client close.
+// Unsupported or unknown capabilities require a changed request; unavailable
+// configuration permits a later retry. Unrelated errors return an absent close.
+func EntryModelAttributeClose(err error) EntryClose {
+	if !routing.IsModelAttributeError(err) {
+		return EntryClose{}
+	}
+	status := 1008
+	if apperror.Reason(err) == "MODEL_ATTRIBUTES_UNAVAILABLE" {
+		status = 1013
+	}
+	return EntryClose{Present: true, Status: status, Reason: err.Error()}
 }

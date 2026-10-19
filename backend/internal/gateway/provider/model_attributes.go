@@ -312,7 +312,7 @@ func PrepareModelAttributeParameters(ctx context.Context, value *ExecutionProvid
 		if tool.Get("type").String() != "image_generation" {
 			continue
 		}
-		toolModel := tool.Get("model").String()
+		toolModel := strings.TrimSpace(tool.Get("model").String())
 		if toolModel == "" {
 			toolModel = "gpt-image-2"
 		}
@@ -352,11 +352,43 @@ func PrepareGrokResponses(ctx context.Context, provider *ExecutionProvider, mode
 	return codec.PatchGrokResponsesBody(body, model)
 }
 
+// ValidateResponsesImageModels checks every selected hosted image model on one route.
+// Empty identities select the hosted default. Callers retain a request
+// attribute session so candidate filtering and outgoing preparation share overrides.
+func ValidateResponsesImageModels(ctx context.Context, value *ExecutionProvider, models []string, service *routing.ModelAttributeService, protocols ...string) error {
+	if routing.ModelAttributesFromContext(ctx) == nil {
+		ctx = routing.WithModelAttributes(ctx, service)
+	}
+	for _, model := range models {
+		if model == "" {
+			model = "gpt-image-2"
+		}
+		resolution, err := ResolveModelAttributes(ctx, value, model, service, protocols...)
+		if err != nil {
+			return err
+		}
+		if err := routing.RequireImageOutput(resolution.Attributes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ResolveResponsesImageBilling selects the hosted tool or confirmed converted
 // image identity and validates its output capability. Text-driver names never
 // supply a billing hint; a native tool without a model uses its registered
 // default, which undergoes the same route attribute validation.
 func ResolveResponsesImageBilling(ctx context.Context, value *ExecutionProvider, body []byte, service *routing.ModelAttributeService) (media.OpenAIResponsesImageBillingConfig, error) {
+	if routing.ModelAttributesFromContext(ctx) == nil {
+		ctx = routing.WithModelAttributes(ctx, service)
+	}
+	protocol := "openai_responses"
+	if value != nil && value.Route.Protocol() != "" {
+		protocol = string(value.Route.Protocol())
+	}
+	if err := ValidateResponsesImageModels(ctx, value, media.ResponsesImageModels(body), service, protocol); err != nil {
+		return media.OpenAIResponsesImageBillingConfig{}, err
+	}
 	confirmed := ""
 	if value != nil && value.Capabilities != nil && value.Capabilities.Attributes.OutputOnly("image") {
 		confirmed = value.Capabilities.Target.Model
@@ -365,7 +397,7 @@ func ResolveResponsesImageBilling(ctx context.Context, value *ExecutionProvider,
 	if err != nil || config.Model == "" {
 		return config, err
 	}
-	resolution, err := ResolveModelAttributes(ctx, value, config.Model, service, "openai_responses")
+	resolution, err := ResolveModelAttributes(ctx, value, config.Model, service, protocol)
 	if err != nil {
 		return config, err
 	}

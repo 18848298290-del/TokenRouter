@@ -34,9 +34,10 @@ import (
 // and Compact content from keepalive-only commitment. Existing meaningful
 // committed output suppresses this fallback; padding can still receive JSON
 // and Compact keepalives can receive a terminal event. Cyber-warning evidence
-// supplies a request error and valid upstream status, while other failures use
-// the generic 502 message. True reports that StreamError was invoked, not
-// successful network delivery.
+// supplies a request error and valid upstream status. Model-attribute failures
+// retain their structured status and reason; remaining errors receive the
+// generic 502 message. True reports attempted presentation,
+// not successful network delivery.
 func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, err error) bool {
 	if c == nil || c.Writer == nil {
 		return false
@@ -62,6 +63,9 @@ func (h OpenAIErrorOutput) EnsureResponse(c *gin.Context, streamStarted bool, er
 	if (IsResponseCommitted(c) && (!compactKeepaliveCommitted || compactKeepaliveHasMeaningfulOutput)) ||
 		(!compactKeepaliveCommitted && imageKeepaliveResponseWritten) {
 		return false
+	}
+	if WriteOpenAIModelAttributeError(c, err, streamStarted) {
+		return true
 	}
 	errType := "upstream_error"
 	message := "Upstream request failed"

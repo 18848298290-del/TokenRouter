@@ -3,6 +3,7 @@ package creative_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -53,6 +54,11 @@ type creativePricingConfigFixture struct {
 	// those values stable while the shared price-config resolver reads them.
 	cards    []routing.ModelPricingEntry // retained configured model price cards
 	platform string                      // fixed fixture group platform
+}
+
+// creativeAttributeFailureRepo returns a configuration failure during discovery.
+type creativeAttributeFailureRepo struct {
+	routing.ModelAttributeRepository
 }
 
 // TestCreativeCatalogueIncludesGroupMappingTargets combines exact or wildcard
@@ -1262,4 +1268,21 @@ func BenchmarkCreativeConfiguredValidation(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+// ForGroup returns the read failure used to exercise catalogue error propagation.
+func (creativeAttributeFailureRepo) ForGroup(context.Context, int64) (*routing.ModelAttributeConfig, error) {
+	return nil, errors.New("attribute store unavailable")
+}
+
+// TestCreativeCatalogueReturnsAttributeFailure supplies configured image candidates
+// while the attribute repository fails. Discovery must return unavailable rather
+// than present a successfully resolved empty model list to the user.
+func TestCreativeCatalogueReturnsAttributeFailure(t *testing.T) {
+	value := &providercore.Record{Platform: creative.PlatformOpenAI, Type: "apikey", Status: "active", Schedulable: true, Credentials: map[string]any{"model_whitelist": []string{"gpt-image-2"}}}
+	service := &creative.Public{Attributes: &routing.ModelAttributeService{Repo: creativeAttributeFailureRepo{}, Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}, ProviderRepo: creativeCatalogTestProviders{[]creative.CatalogProvider{creativeprovider.CatalogProvider(value)}}}
+	group := &creative.GroupView{ID: 1, Operations: map[string][]string{creative.PlatformOpenAI: {creative.CreativeOperationGenerate}}}
+	models, err := service.CreativeModelsForGroup(context.Background(), group)
+	require.ErrorContains(t, err, "MODEL_ATTRIBUTES_UNAVAILABLE")
+	require.Empty(t, models)
 }

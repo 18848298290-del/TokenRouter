@@ -71,6 +71,9 @@ func (b *genericResponsesAttemptBridge) Select(excluded map[int64]struct{}) (tex
 // routing capacity limitation. Concrete rate evidence refines the diagnosed
 // fallback.
 func (b *genericResponsesAttemptBridge) FirstSelectionFailure(err error, _ bool) {
+	if gatewayhttp.WriteOpenAIModelAttributeError(b.c, err, *b.streamStarted) {
+		return
+	}
 	cls := classifyNoProviderErrorFromGin(b.c, b.binding().diagnoser, b.apiKey, b.reqModel, b.reqModel, gatewayhttp.EffectiveAPIKeyPlatform(b.c, b.apiKey))
 	cls = gatewayhttp.RefineSelectionError(err, cls)
 	if !cls.ModelNotFound {
@@ -171,7 +174,11 @@ func (b *genericResponsesAttemptBridge) Forward(_ textflow.AttemptState) textflo
 	if b.providerReleaseFunc != nil {
 		b.providerReleaseFunc()
 	}
-	b.binding().reportSchedule(b.selection, b.provider.Record.ID, err == nil, b.result)
+	// Attribute validation can stop this attempt before dispatch, so these
+	// errors carry no provider outcome to record in scheduling feedback.
+	if !routing.IsModelAttributeError(err) {
+		b.binding().reportSchedule(b.selection, b.provider.Record.ID, err == nil, b.result)
+	}
 
 	out := textflow.Outcome{Attempt: messageObservedAttempt(b.result, err), Err: err, HasResult: b.result != nil, OutputChanged: b.c.Writer.Size() != b.writerSizeBeforeForward}
 	out.Attempt.HTTPCommitted = b.c.Writer.Written()
@@ -192,6 +199,9 @@ func (b *genericResponsesAttemptBridge) Forward(_ textflow.AttemptState) textflo
 // duplicate client output; otherwise the shared error helper decides whether a
 // final envelope can be written.
 func (b *genericResponsesAttemptBridge) OtherFailure(err error) {
+	if gatewayhttp.WriteOpenAIModelAttributeError(b.c, err, *b.streamStarted) {
+		return
+	}
 	upstreamErrorAlreadyCommunicated := gatewayhttp.ForwardErrorAlreadyCommunicated(b.c, b.writerSizeBeforeForward, err)
 	wroteFallback := false
 	// Fill an error only when the platform did not communicate this failure,

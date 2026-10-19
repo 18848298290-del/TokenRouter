@@ -11,6 +11,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
@@ -56,6 +57,18 @@ type keyLimitTarget struct {
 	// exposes missing fixture support.
 	EntryTarget                // unused selected-provider dependency stubs
 	root        *keyLimitEntry // owning entry resource fixture
+}
+
+// imageSelectionEntry captures the attribute snapshot seen during provider choice.
+type imageSelectionEntry struct {
+	*keyLimitEntry                                // shared admission fixture operations
+	selected       *routing.ModelAttributeSession // selection attribute snapshot identity
+}
+
+// imageSelectionTarget compares execution with the captured selection context.
+type imageSelectionTarget struct {
+	*keyLimitTarget                      // shared provider fixture operations
+	entry           *imageSelectionEntry // captured selection fixture state
 }
 
 // With discards supplied diagnostic fields and returns the fixture's quiet
@@ -411,4 +424,38 @@ func TestEntryClientDisconnectKeepsUpstream(t *testing.T) {
 		RunEntry(ctx, p, EntryInput{Key: &EntryKey{ID: 1}}, nil, []byte(`{"model":"test","type":"response.create"}`))
 		require.Zero(t, p.active)
 	})
+}
+
+// Select records image requirements and exposes a target that checks snapshot reuse.
+// The returned slot is acquired with a no-op cleanup, matching the base fixture's
+// admission behavior while capturing the actual selection context.
+func (p *imageSelectionEntry) Select(ctx context.Context, _ string, _ string, _ string, _ map[int64]struct{}, _ bool, _ bool, _ string) (*EntrySelection, EntryDecision, error) {
+	requirements := media.ResponsesImageSelectionFromContext(ctx)
+	require.Equal(p.t, []string{"canvas"}, requirements.Models)
+	require.True(p.t, requirements.Codex)
+	p.selected = routing.ModelAttributesFromContext(ctx)
+	target := &imageSelectionTarget{keyLimitTarget: p.target, entry: p}
+	return &EntrySelection{Provider: &EntryProvider{ProviderSnapshot: provider.ProviderSnapshot{ID: 1, Concurrency: 1, Type: "apikey"}}, Acquired: true, ReleaseFunc: func() {}, Target: target}, EntryDecision{}, nil
+}
+
+// Run verifies the selected turn snapshot before ending the fixture connection.
+// No upstream operation occurs; RunEntry retains responsibility for releasing
+// the request and provider reservations acquired before invoking this method.
+func (p *imageSelectionTarget) Run(ctx context.Context, _ ClientSocket, _ []byte, hooks *EntryHooks) error {
+	require.Same(p.root.t, p.entry.selected, routing.ModelAttributesFromContext(hooks.ContextForTurn(1)))
+	return nil
+}
+
+// TestEntryImageSelectionSharesTurnAttributes supplies a hosted image request
+// and a connection-level attribute session. Selection and forwarding must share
+// the renewed turn snapshot, and connection cleanup releases every held slot.
+func TestEntryImageSelectionSharesTurnAttributes(t *testing.T) {
+	root := routing.WithModelAttributes(context.Background(), nil)
+	base := &keyLimitEntry{t: t}
+	base.target = &keyLimitTarget{root: base}
+	entry := &imageSelectionEntry{keyLimitEntry: base}
+	RunEntry(root, entry, EntryInput{Key: &EntryKey{ID: 1}, Codex: true}, nil, []byte(`{"model":"driver","type":"response.create","tools":[{"type":"image_generation","model":"canvas"}]}`))
+	require.NotNil(t, entry.selected)
+	require.NotSame(t, routing.ModelAttributesFromContext(root), entry.selected)
+	require.Zero(t, base.active)
 }

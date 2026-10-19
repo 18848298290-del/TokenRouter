@@ -422,8 +422,8 @@ func (s *Compatible) SelectProviderWithSchedulerForImages(
 	excludedIDs map[int64]struct{},
 	requiredCapability providercore.OpenAIImagesCapability,
 ) (*gatewayprovider.SelectionResult, schedulercore.PlatformDecision, error) {
-	imageState := &imageSelectionState{}
-	ctx = context.WithValue(ctx, imageModelRequiredKey{}, imageState)
+	ctx, imageState := withCapabilitySelection(ctx)
+	ctx = context.WithValue(ctx, imageModelRequiredKey{}, true)
 	selection, decision, err := s.selectProviderWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, egress.OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, false, "", false)
 	if err == nil && selection != nil && selection.Provider != nil {
 		return selection, decision, nil
@@ -489,7 +489,17 @@ func (s *Compatible) selectProviderWithSchedulerForRouting(
 	requireCompact bool,
 	platform string,
 	previousResponseCanMove bool,
-) (*gatewayprovider.SelectionResult, schedulercore.PlatformDecision, error) {
+) (selection *gatewayprovider.SelectionResult, decision schedulercore.PlatformDecision, err error) {
+	ctx, capabilities := withCapabilitySelection(ctx)
+	// Retain typed admission failures until candidate selection has exhausted the
+	// pool; a supported route leaves capacity errors under scheduler control.
+	defer func() {
+		if err != nil {
+			if local := capabilities.failure(); local != nil {
+				err = local
+			}
+		}
+	}()
 	if forced, ok := apikey.ForcePlatformFromContext(ctx); ok && strings.TrimSpace(forced) != "" {
 		platform = forced
 	}
@@ -521,8 +531,6 @@ func (s *Compatible) selectProviderWithSchedulerForRouting(
 		}
 	}
 	excludedIDs = cloneExcludedProviderIDs(excludedIDs)
-	var selection *gatewayprovider.SelectionResult
-	var decision schedulercore.PlatformDecision
 	for {
 		selection, decision, err = s.selectProviderWithSchedulerForRoutingOnce(ctx, groupID, previousResponseID, sessionHash, requestedModel, routingModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove)
 		if err != nil || selection == nil || selection.Provider == nil || s.generic == nil || s.generic.checkAndRegisterSession(ctx, selection.Provider, sessionHash) {
@@ -835,12 +843,16 @@ func (s *Compatible) isOpenAIProviderTransportCompatible(provider *gatewayprovid
 // IDs return false; callers supply a constructed selector for feedback and
 // recovery state.
 //
+// Local model-attribute errors return before health or performance feedback.
 // A successful observation resets credential retry tracking and clears this
 // model's transient state. A target can also update the bound API Key health
 // observer from the first supplied error, then report picker feedback when a
 // health observer exists. Integer-only reporting uses the basic feedback path,
 // which clears successful model state but does not publish advanced statistics.
 func (s *Compatible) ReportOpenAIProviderScheduleResult(providerOrID any, model string, success bool, ttftMs *int, observedErr ...error) bool {
+	if !success && len(observedErr) > 0 && routing.IsModelAttributeError(observedErr[0]) {
+		return false
+	}
 	var provider *gatewayprovider.ExecutionProvider
 	var providerID int64
 	switch value := providerOrID.(type) {

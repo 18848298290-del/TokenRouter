@@ -1,9 +1,12 @@
 package ws
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
 // TestOpenAIWSNextAttemptMessageUsesCurrentTurnPayload supplies distinct first
@@ -42,4 +45,22 @@ func TestOpenAIWSNextAttemptMessageKeepsInitialMessageForFirstTurnFailover(t *te
 
 	require.True(t, ok)
 	require.Equal(t, firstMessage, next)
+}
+
+// TestEntryCapabilityErrorsDoNotPenalizeProviders wraps local capability failures
+// as they leave turn preparation. Neither missing declarations nor configuration
+// outages establish an upstream failure for scheduler feedback.
+func TestEntryCapabilityErrorsDoNotPenalizeProviders(t *testing.T) {
+	for _, reason := range []string{"MODEL_CAPABILITY_UNKNOWN", "MODEL_CAPABILITY_UNSUPPORTED", "MODEL_ATTRIBUTES_UNAVAILABLE"} {
+		err := fmt.Errorf("prepare websocket turn: %w", apperror.BadRequest(reason, "capability rejected"))
+		require.False(t, EntryShouldReportFailure(err), reason)
+		closed := EntryModelAttributeClose(err)
+		require.True(t, closed.Present)
+		require.Contains(t, closed.Reason, reason)
+		if reason == "MODEL_ATTRIBUTES_UNAVAILABLE" {
+			require.Equal(t, 1013, closed.Status)
+		} else {
+			require.Equal(t, 1008, closed.Status)
+		}
+	}
 }

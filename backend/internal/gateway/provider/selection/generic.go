@@ -74,8 +74,14 @@ func (s *Generic) SelectProviderForModel(ctx context.Context, groupID *int64, se
 // unoccupied.
 func (s *Generic) SelectProviderForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*gatewayprovider.ExecutionProvider, error) {
 	ctx = withSelectionRequest(ctx, groupID, requestedModel)
+	ctx, capabilities := withCapabilitySelection(ctx)
 	core, scope := s.genericSelector()
 	selected, err := core.SelectOnly(ctx, schedulercore.SelectionInput{GroupID: groupID, SessionHash: sessionHash, RequestedModel: requestedModel, ExcludedIDs: excludedIDs})
+	if err != nil {
+		if local := capabilities.failure(); local != nil {
+			err = local
+		}
+	}
 	return scope.oldProvider(selected), err
 }
 
@@ -86,9 +92,15 @@ func (s *Generic) SelectProviderForModelWithExclusions(ctx context.Context, grou
 // @project-doc docs/architecture/gateway_request_lifecycle.md#account_selection_and_failover
 func (s *Generic) SelectProviderWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, tokenRouterUserID int64) (*gatewayprovider.SelectionResult, error) {
 	ctx = withSelectionRequest(ctx, groupID, requestedModel)
+	ctx, capabilities := withCapabilitySelection(ctx)
 	core, scope := s.genericSelector()
 	plan, _ := requeststate.RoutePlanFromContext(ctx)
 	result, err := core.Select(ctx, schedulercore.SelectionInput{RoutePlan: plan, GroupID: groupID, SessionHash: sessionHash, RequestedModel: requestedModel, ExcludedIDs: excludedIDs})
+	if err != nil {
+		if local := capabilities.failure(); local != nil {
+			err = local
+		}
+	}
 	return scope.restore(result), err
 }
 
@@ -875,12 +887,12 @@ func (s *Generic) isModelSupportedByProviderWithContext(ctx context.Context, pro
 	return s.isRoutingModelSupportedByProviderWithContext(ctx, provider, routingModel)
 }
 
-// isRoutingModelSupportedByProviderWithContext delegates provider support for
-// an already group-mapped model. Callers supply the intermediate name and
-// matching request context so the provider policy can resolve its own final
-// model and protocol.
+// isRoutingModelSupportedByProviderWithContext checks configured model support
+// and final output capabilities for an already group-mapped model. Callers supply
+// the intermediate identity and request requirements; protocol resolution and
+// provider mapping precede attribute lookup for each candidate.
 func (s *Generic) isRoutingModelSupportedByProviderWithContext(ctx context.Context, provider *gatewayprovider.ExecutionProvider, routingModel string) bool {
-	return gatewayprovider.ExecutionModelPolicy(provider).Supports(ctx, routingModel)
+	return gatewayprovider.ExecutionModelPolicy(provider).Supports(ctx, routingModel) && candidateOutputEligibility(ctx, provider, routingModel) == ""
 }
 
 // groupMappedModelForProviderLayer maps the client name using a valid request
