@@ -33,6 +33,11 @@
 
 普通 Key 的 `user_id` 是付款用户。团队 Key 同时带有 `team_id` 和创建者或行为成员的信息，结算命令里的 `UserID` 和 `ActorUserID` 分别表示付款的 owner 和实际调用者。Key 自身还有状态、过期时间、总配额、滚动金额限额、IP 规则和模型重定向。
 
+<a id="api_key_group_filter"></a>
+### API Key 分组筛选
+
+分组采用软删除，普通 Key 保留原分组 ID，供鉴权判断分组是否可用。Key 列表加载关联时隐藏已删除分组，界面显示“无分组”。`group_id=0` 筛选普通 Key 中没有未删除分组的记录，包含未绑定分组和原分组已删除的 Key；复合 Key 按自身的分组映射展示，不进入此筛选。
+
 <a id="api_key_request_limits"></a>
 ### API Key 请求上限
 

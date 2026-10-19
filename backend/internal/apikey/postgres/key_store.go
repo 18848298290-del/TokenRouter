@@ -43,7 +43,9 @@ import (
 // tombstones the unique credential while retaining its row ID, and usage
 // sorting loads all filtered candidates before choosing the page. The store
 // shares its SQL and Ent dependencies and delegates billing counter operations
-// to the separate KeyUsageStore.
+// to the separate KeyUsageStore. Console ungrouped filters include ordinary
+// Keys whose referenced group is soft-deleted, matching their missing group
+// view while retaining the stored binding used by authentication.
 
 // KeyStore persists credential configuration, bindings and selected console or
 // authentication views.
@@ -782,9 +784,11 @@ func (r *KeyStore) KeyDeleteWithTombstone(ctx context.Context, exec *dbent.Clien
 
 // KeyApiKeyListByUserIDQuery builds a creator-scoped nondeleted query excluding
 // managed credentials. Text matches name or secret without case, zero group
-// selects unbound ordinary Keys, and nonzero group selects ordinary or
-// composite bindings. Personal and team scope narrow membership; other scope
-// text leaves both eligible.
+// selects ordinary Keys without an undeleted group, and nonzero group selects
+// ordinary or composite bindings. Personal and team scope narrow membership;
+// other scope text leaves both eligible.
+//
+// @project-doc docs/domains/routing_and_billing.md#api_key_group_filter
 func (r *KeyStore) KeyApiKeyListByUserIDQuery(userID int64, filters keycore.APIKeyListFilters) *dbent.APIKeyQuery {
 	q := r.KeyActiveQuery().Where(apikey.UserIDEQ(userID))
 	// Hide server-managed keys, including creative execution keys, from ordinary key lists.
@@ -801,7 +805,12 @@ func (r *KeyStore) KeyApiKeyListByUserIDQuery(userID int64, filters keycore.APIK
 	}
 	if filters.GroupID != nil {
 		if *filters.GroupID == 0 {
-			q = q.Where(apikey.GroupIDIsNil(), apikey.IsCompositeEQ(false))
+			// Soft-deleted groups disappear from loaded views but leave stored IDs,
+			// so match the missing live relationship shown as ungrouped in the console.
+			q = q.Where(
+				apikey.Not(apikey.HasGroupWith(group.DeletedAtIsNil())),
+				apikey.IsCompositeEQ(false),
+			)
 		} else {
 			q = q.Where(apikey.Or(
 				apikey.GroupIDEQ(*filters.GroupID),
