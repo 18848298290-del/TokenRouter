@@ -169,12 +169,13 @@ const (
 	OpenAIImagesCapabilityNative OpenAIImagesCapability = "images-native" // native image capability label
 
 	// Notification labels construct dimension-specific Extra keys and supply the
-	// missing threshold interpretation used by daily, weekly, and total quota
+	// missing threshold interpretation used by daily, weekly, monthly, and total quota
 	// readers.
-	thresholdTypeFixed = "fixed"  // fixed quota notification threshold
-	quotaDimDaily      = "daily"  // daily quota notification dimension
-	quotaDimWeekly     = "weekly" // weekly quota notification dimension
-	quotaDimTotal      = "total"  // total quota notification dimension
+	thresholdTypeFixed = "fixed"   // fixed quota notification threshold
+	quotaDimDaily      = "daily"   // daily quota notification dimension
+	quotaDimWeekly     = "weekly"  // weekly quota notification dimension
+	quotaDimMonthly    = "monthly" // monthly quota notification dimension
+	quotaDimTotal      = "total"   // total quota notification dimension
 )
 
 // DefaultPoolModeRetryableStatusCodes supplies the shared membership list for
@@ -2133,8 +2134,8 @@ func (r *Record) GetCacheTTLOverrideTarget() string {
 }
 
 // GetQuotaLimit reads the total provider quota limit in USD. Nonpositive limits
-// leave the total dimension inactive in IsQuotaExceeded, while daily and weekly
-// limits are evaluated independently against their own usage.
+// leave the total dimension inactive in IsQuotaExceeded, while periodic limits
+// are evaluated independently against their own usage.
 func (r *Record) GetQuotaLimit() float64 {
 	return r.GetExtraFloat64("quota_limit")
 }
@@ -2164,10 +2165,23 @@ func (r *Record) GetQuotaWeeklyLimit() float64 {
 	return r.GetExtraFloat64("quota_weekly_limit")
 }
 
+// GetQuotaMonthlyLimit reads the provider's monthly quota limit in USD.
+// Nonpositive limits leave that dimension inactive; a positive limit applies to
+// the stored consumption only while its monthly period remains current.
+func (r *Record) GetQuotaMonthlyLimit() float64 {
+	return r.GetExtraFloat64("quota_monthly_limit")
+}
+
 // GetQuotaWeeklyUsed reads stored weekly provider consumption in USD before
 // expiration handling.
 func (r *Record) GetQuotaWeeklyUsed() float64 {
 	return r.GetExtraFloat64("quota_weekly_used")
+}
+
+// GetQuotaMonthlyUsed reads stored monthly provider consumption in USD before
+// expiration handling.
+func (r *Record) GetQuotaMonthlyUsed() float64 {
+	return r.GetExtraFloat64("quota_monthly_used")
 }
 
 // GetExtraFloat64 parses a provider Extra number through ParseExtraFloat64.
@@ -2264,6 +2278,16 @@ func (r *Record) GetQuotaWeeklyResetMode() string {
 	return "rolling"
 }
 
+// GetQuotaMonthlyResetMode returns fixed for the exact saved reset-mode label.
+// Missing, invalid, or differently cased values select rolling, allowing monthly
+// consumers to use their duration-based default calculation.
+func (r *Record) GetQuotaMonthlyResetMode() string {
+	if m := r.GetExtraString("quota_monthly_reset_mode"); m == "fixed" {
+		return "fixed"
+	}
+	return "rolling"
+}
+
 // GetQuotaWeeklyResetDay reads the configured Sunday-zero weekday for fixed
 // weekly resets. A missing key selects Monday, while a present unusable value
 // can parse to zero and is left to validation.
@@ -2277,11 +2301,32 @@ func (r *Record) GetQuotaWeeklyResetDay() int {
 	return r.GetExtraInt("quota_weekly_reset_day")
 }
 
+// GetQuotaMonthlyResetDay reads the configured day of month for fixed
+// monthly resets. A missing key selects the first day, while a present unusable
+// value
+// can parse to zero and is left to validation.
+func (r *Record) GetQuotaMonthlyResetDay() int {
+	if r.Extra == nil {
+		return 1
+	}
+	if _, ok := r.Extra["quota_monthly_reset_day"]; !ok {
+		return 1
+	}
+	return r.GetExtraInt("quota_monthly_reset_day")
+}
+
 // GetQuotaWeeklyResetHour reads the configured local weekly reset hour as an
 // integer. Missing values return zero; range checks belong to configuration
 // validation or the billing wrapper before calendar calculations.
 func (r *Record) GetQuotaWeeklyResetHour() int {
 	return r.GetExtraInt("quota_weekly_reset_hour")
+}
+
+// GetQuotaMonthlyResetHour reads the configured local monthly reset hour as an
+// integer. Missing values return zero; range checks belong to configuration
+// validation or the billing wrapper before calendar calculations.
+func (r *Record) GetQuotaMonthlyResetHour() int {
+	return r.GetExtraInt("quota_monthly_reset_hour")
 }
 
 // GetQuotaResetTimezone returns the saved nonempty timezone text, defaulting to
@@ -2295,7 +2340,7 @@ func (r *Record) GetQuotaResetTimezone() string {
 }
 
 // QuotaNotifyConfig reads the enabled flag, threshold, and threshold type for a
-// daily, weekly, or total dimension. Missing values select false, zero, and
+// daily, weekly, monthly, or total dimension. Missing values select false, zero, and
 // fixed; supplied nonempty threshold-type text is returned for the notification
 // consumer to interpret.
 func (r *Record) QuotaNotifyConfig(dim string) (enabled bool, threshold float64, thresholdType string) {
@@ -2335,10 +2380,24 @@ func (r *Record) GetQuotaNotifyWeeklyEnabled() bool {
 	return e
 }
 
+// GetQuotaNotifyMonthlyEnabled reads the monthly quota notification switch from
+// Extra.
+func (r *Record) GetQuotaNotifyMonthlyEnabled() bool {
+	e, _, _ := r.QuotaNotifyConfig(quotaDimMonthly)
+	return e
+}
+
 // GetQuotaNotifyWeeklyThreshold reads the configured weekly quota notification
 // threshold value.
 func (r *Record) GetQuotaNotifyWeeklyThreshold() float64 {
 	_, t, _ := r.QuotaNotifyConfig(quotaDimWeekly)
+	return t
+}
+
+// GetQuotaNotifyMonthlyThreshold reads the configured monthly quota notification
+// threshold value.
+func (r *Record) GetQuotaNotifyMonthlyThreshold() float64 {
+	_, t, _ := r.QuotaNotifyConfig(quotaDimMonthly)
 	return t
 }
 
@@ -2348,6 +2407,15 @@ func (r *Record) GetQuotaNotifyWeeklyThreshold() float64 {
 // handling.
 func (r *Record) GetQuotaNotifyWeeklyThresholdType() string {
 	_, _, tt := r.QuotaNotifyConfig(quotaDimWeekly)
+	return tt
+}
+
+// GetQuotaNotifyMonthlyThresholdType returns the monthly threshold interpretation
+// from QuotaNotifyConfig. Missing or empty text selects fixed; other nonempty
+// saved strings are returned for the notification consumer's own threshold
+// handling.
+func (r *Record) GetQuotaNotifyMonthlyThresholdType() string {
+	_, _, tt := r.QuotaNotifyConfig(quotaDimMonthly)
 	return tt
 }
 
@@ -2429,11 +2497,10 @@ func (r *Record) IsFixedWeeklyPeriodExpired(periodStart time.Time) bool {
 // nonempty string timezone names. Nil and empty Extra succeed; a loader is
 // needed when timezone validation is active.
 //
-// Mode checks apply to strings, while numeric fields use ParseExtraFloat64 and
-// integer conversion before their hour or weekday bounds are tested.
-// Consequently this helper validates the converted integer range rather than
-// rejecting every unsupported representation or fraction. Storage helpers
-// separately apply their documented defaults when reading configuration for
+// Mode checks apply to strings. Daily and weekly numeric fields use
+// ParseExtraFloat64 and integer conversion before their bounds are tested.
+// Monthly dates and hours reject fractional values before persistence. Storage
+// helpers apply their documented defaults when reading saved configuration for
 // reset calculations.
 func ValidateQuotaResetConfig(extra map[string]any, loadLocation func(string) (*time.Location, error)) error {
 	if extra == nil {
@@ -2476,13 +2543,32 @@ func ValidateQuotaResetConfig(extra map[string]any, loadLocation func(string) (*
 			return errors.New("quota_weekly_reset_hour must be between 0 and 23")
 		}
 	}
+	if mode, ok := extra["quota_monthly_reset_mode"].(string); ok && mode != "rolling" && mode != "fixed" {
+		return errors.New("quota_monthly_reset_mode must be 'rolling' or 'fixed'")
+	}
+	if v, ok := extra["quota_monthly_reset_hour"]; ok {
+		hour := ParseExtraFloat64(v)
+		if hour < 0 || hour > 23 || hour != float64(int(hour)) {
+			return errors.New("quota_monthly_reset_hour must be an integer between 0 and 23")
+		}
+	}
+	if v, ok := extra["quota_monthly_reset_day"]; ok {
+		day := ParseExtraFloat64(v)
+		if day < 1 || day > 31 || day != float64(int(day)) {
+			return errors.New("quota_monthly_reset_day must be an integer between 1 and 31")
+		}
+	}
 	return nil
 }
 
-// HasAnyQuotaLimit reports whether total, daily, or weekly provider quota is
+// HasAnyQuotaLimit reports whether total, daily, weekly, or monthly provider
+// quota is
 // positive.
 func (r *Record) HasAnyQuotaLimit() bool {
-	return r.GetQuotaLimit() > 0 || r.GetQuotaDailyLimit() > 0 || r.GetQuotaWeeklyLimit() > 0
+	return r.GetQuotaLimit() > 0 ||
+		r.GetQuotaDailyLimit() > 0 ||
+		r.GetQuotaWeeklyLimit() > 0 ||
+		r.GetQuotaMonthlyLimit() > 0
 }
 
 // IsPeriodExpired compares real elapsed time since periodStart with dur. A zero
@@ -2521,11 +2607,40 @@ func (r *Record) IsWeeklyQuotaPeriodExpired() bool {
 	return IsPeriodExpired(start, 7*24*time.Hour)
 }
 
-// IsQuotaExceeded combines the provider's total, daily, and weekly consumption
+// IsMonthlyQuotaPeriodExpired reports whether monthly consumption has expired.
+// Fixed mode follows the configured local date, clamping short months to their
+// final date. Rolling mode expires thirty elapsed days after its recorded start;
+// missing starts expire immediately so the next increment initializes usage.
+// Fixed mode requires LoadLocation for a nonzero start, uses UTC after a loader
+// failure, and uses the record clock when selecting the current calendar date.
+func (r *Record) IsMonthlyQuotaPeriodExpired() bool {
+	start := r.GetExtraTime("quota_monthly_start")
+	if r.GetQuotaMonthlyResetMode() == "fixed" {
+		if start.IsZero() {
+			return true
+		}
+		tz, err := r.LoadLocation(r.GetQuotaResetTimezone())
+		if err != nil {
+			// Invalid saved timezone names use UTC so admission can still evaluate
+			// the configured calendar window consistently with provider configuration
+			// reconciliation.
+			tz = time.UTC
+		}
+		last := billing.LastFixedMonthlyReset(r.GetQuotaMonthlyResetDay(), r.GetQuotaMonthlyResetHour(), tz, r.now())
+		return start.Before(last)
+	}
+	// Thirty elapsed days match the monthly duration used by billing SQL,
+	// including when local clock transitions shorten or lengthen calendar days.
+	return IsPeriodExpired(start, 30*24*time.Hour)
+}
+
+// IsQuotaExceeded combines the provider's total, daily, weekly, and monthly
+// consumption
 // limits. A positive limit is exhausted at equality or above; total consumption
 // has no expiration window.
 //
-// Daily and weekly consumption count only while their stored periods remain
+// Daily, weekly, and monthly consumption count only while their stored periods
+// remain
 // current. Fixed periods compare against local calendar resets, while rolling
 // periods use real elapsed durations. An expired or missing start makes the
 // periodic amount irrelevant to admission until the usage writer initializes
@@ -2568,6 +2683,12 @@ func (r *Record) IsQuotaExceeded() bool {
 		if !expired && r.GetQuotaWeeklyUsed() >= limit {
 			return true
 		}
+	}
+	// Monthly consumption remains an independent restriction when shorter quota
+	// periods expire; this read leaves counter rollover to the next billing increment.
+	if limit := r.GetQuotaMonthlyLimit(); limit > 0 &&
+		!r.IsMonthlyQuotaPeriodExpired() && r.GetQuotaMonthlyUsed() >= limit {
+		return true
 	}
 	return false
 }

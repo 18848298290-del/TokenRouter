@@ -101,6 +101,8 @@ func (s *duplicateProviderRepoStub) FindByExtraField(_ context.Context, key stri
 // static credentials carrying configuration and historical runtime state. The
 // copy retains groups and configured values, starts unschedulable with clean
 // observations, and isolates tested nested JSON containers from the source.
+// Monthly limits survive copying while usage and reset observations start empty;
+// the source retains its recorded consumption and timestamps.
 func TestDuplicateProviderCopiesConfigurationAndResetsRuntimeState(t *testing.T) {
 	ctx := context.Background()
 	repo := newDuplicateProviderRepoStub()
@@ -148,6 +150,10 @@ func TestDuplicateProviderCopiesConfigurationAndResetsRuntimeState(t *testing.T)
 			"quota_used":                              450,
 			"quota_daily_used":                        25,
 			"quota_daily_start":                       "2026-07-15T00:00:00Z",
+			"quota_monthly_limit":                     500,
+			"quota_monthly_used":                      120,
+			"quota_monthly_start":                     "2026-07-01T00:00:00Z",
+			"quota_monthly_reset_at":                  "2026-08-01T00:00:00Z",
 			"model_rate_limits":                       map[string]any{"gpt-5": "2099-01-01T00:00:00Z"},
 			"codex_5h_used_percent":                   80,
 			"codex_cli_only":                          true,
@@ -207,6 +213,7 @@ func TestDuplicateProviderCopiesConfigurationAndResetsRuntimeState(t *testing.T)
 		"items":                        []any{map[string]any{"enabled": true}},
 		"responses_ws_connection_mode": "pooled",
 		"quota_limit":                  float64(1000),
+		"quota_monthly_limit":          float64(500),
 		"codex_cli_only":               true,
 		"openai_compact_mode":          "force_on",
 		"openai_responses_continuation_supported": true,
@@ -245,6 +252,9 @@ func TestDuplicateProviderCopiesConfigurationAndResetsRuntimeState(t *testing.T)
 	require.Equal(t, "us-east-1", assertion.MustType[map[string]any](storedSource.Extra["config"])["region"])
 	require.Equal(t, true, assertion.MustType[map[string]any](assertion.MustType[[]any](storedSource.Extra["items"])[0])["enabled"])
 	require.Equal(t, "remote-42", storedSource.Extra["crs_account_id"])
+	require.Equal(t, 120, storedSource.Extra["quota_monthly_used"])
+	require.Equal(t, "2026-07-01T00:00:00Z", storedSource.Extra["quota_monthly_start"])
+	require.Equal(t, "2026-08-01T00:00:00Z", storedSource.Extra["quota_monthly_reset_at"])
 }
 
 // TestDuplicateProviderRejectsCredentialShadow attempts duplication of a linked

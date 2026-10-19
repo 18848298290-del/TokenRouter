@@ -137,9 +137,10 @@ type ExecutionProviderStore interface {
 	// to provider storage, which can mutate the supplied update map.
 	UpdateExtra(ctx context.Context, id int64, updates map[string]any) error
 
-	// IncrementQuotaUsed atomically increments the provider's total, daily, and
-	// weekly quota counters. The app binding uses the billing usage store, and
-	// its executor determines transaction completion before later consumers read.
+	// IncrementQuotaUsed atomically increments the provider's total, daily,
+	// weekly, and monthly quota counters. The app binding uses the billing usage
+	// store, and its executor determines transaction completion before later
+	// consumers read.
 	IncrementQuotaUsed(ctx context.Context, id int64, amount float64) error
 	// BulkUpdate applies a provider-field patch to selected IDs and returns the
 	// affected record count. Empty ID input succeeds; callers supply the

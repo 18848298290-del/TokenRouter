@@ -2,20 +2,41 @@ import { reactive, ref } from 'vue'
 import { adminAPI } from '@/api/admin'
 import { QUOTA_THRESHOLD_TYPE_FIXED, type QuotaThresholdType } from '@/constants/provider'
 
-export const QUOTA_NOTIFY_DIMS = ['daily', 'weekly', 'total'] as const
+// useQuotaNotifyState.ts manages provider quota notification drafts and encoding.
+// Daily, weekly, monthly, and total dimensions each carry an enabled flag, a
+// threshold, and its interpretation. Null draft values represent omitted saved
+// configuration, while an enabled draft uses the fixed threshold mode when its
+// mode is absent. The global setting controls whether forms offer notification
+// controls and is read separately from provider-specific values.
+//
+// Loading and saving iterate the same dimension list so newly enabled monthly
+// notices survive an edit round trip. Update serialization removes disabled
+// notification keys, while create serialization emits configured enabled values.
+
+// QUOTA_NOTIFY_DIMS determines the shared iteration order for loading, saving,
+// and resetting quota notification drafts.
+export const QUOTA_NOTIFY_DIMS = ['daily', 'weekly', 'monthly', 'total'] as const
+// QuotaNotifyDim identifies one supported local spending notification dimension.
 export type QuotaNotifyDim = (typeof QUOTA_NOTIFY_DIMS)[number]
 
+// QuotaNotifyDimState represents nullable notification settings in provider
+// form drafts.
 export interface QuotaNotifyDimState {
-  enabled: boolean | null
-  threshold: number | null
-  thresholdType: QuotaThresholdType | null
+  enabled: boolean | null // quota alert enablement flag
+  threshold: number | null // configured alert threshold value
+  thresholdType: QuotaThresholdType | null // alert threshold interpretation selector
 }
 
+// useQuotaNotifyState creates dialog-local notification drafts and their
+// serializers.
+// Callers load provider Extra when opening the dialog and write its drafts into
+// the appropriate create or update payload before submission.
 export function useQuotaNotifyState() {
   const globalEnabled = ref(false)
   const state = reactive<Record<QuotaNotifyDim, QuotaNotifyDimState>>({
     daily: { enabled: null, threshold: null, thresholdType: null },
     weekly: { enabled: null, threshold: null, thresholdType: null },
+    monthly: { enabled: null, threshold: null, thresholdType: null },
     total: { enabled: null, threshold: null, thresholdType: null },
   })
 

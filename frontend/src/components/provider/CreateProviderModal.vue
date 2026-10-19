@@ -2006,21 +2006,35 @@ const syncPreviewCredentials = computed(() => {
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
 const editQuotaWeeklyLimit = ref<number | null>(null)
+// Monthly quota drafts use USD amounts and default to rolling reset mode until
+// fixed scheduling is selected.
+// They belong to this dialog and are submitted with its shared quota settings.
+const editQuotaMonthlyLimit = ref<number | null>(null)
 const editDailyResetMode = ref<'rolling' | 'fixed' | null>(null)
 const editDailyResetHour = ref<number | null>(null)
 const editWeeklyResetMode = ref<'rolling' | 'fixed' | null>(null)
+// editMonthlyResetMode selects elapsed thirty-day windows or a local monthly date.
+const editMonthlyResetMode = ref<'rolling' | 'fixed' | null>(null)
 const editWeeklyResetDay = ref<number | null>(null)
+// editMonthlyResetDay selects a calendar date from one through thirty-one.
+const editMonthlyResetDay = ref<number | null>(null)
 const editWeeklyResetHour = ref<number | null>(null)
+// editMonthlyResetHour selects the hour in the shared quota timezone.
+const editMonthlyResetHour = ref<number | null>(null)
 const editResetTimezone = ref<string | null>(null)
 const { limits: quotaLimits, setLimit: setQuotaLimit } = bindQuotaLimits({
   totalLimit: editQuotaLimit,
   dailyLimit: editQuotaDailyLimit,
   weeklyLimit: editQuotaWeeklyLimit,
+  monthlyLimit: editQuotaMonthlyLimit,
   dailyResetMode: editDailyResetMode,
   dailyResetHour: editDailyResetHour,
   weeklyResetMode: editWeeklyResetMode,
+  monthlyResetMode: editMonthlyResetMode,
   weeklyResetDay: editWeeklyResetDay,
+  monthlyResetDay: editMonthlyResetDay,
   weeklyResetHour: editWeeklyResetHour,
+  monthlyResetHour: editMonthlyResetHour,
   resetTimezone: editResetTimezone
 })
 const modelMappings = ref<ModelMappingRow[]>([])
@@ -2796,7 +2810,9 @@ const submitCreateProvider = async (
   }
 }
 
-// Methods
+// resetForm clears dialog drafts and selects the initial creation step.
+// It also removes quota amounts and schedules so reopening the dialog starts
+// with unconfigured local spending limits.
 const resetForm = () => {
   stopQoderPolling()
   closeQoderAuthPopup()
@@ -2834,11 +2850,15 @@ const resetForm = () => {
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
   editQuotaWeeklyLimit.value = null
+  editQuotaMonthlyLimit.value = null
   editDailyResetMode.value = null
   editDailyResetHour.value = null
   editWeeklyResetMode.value = null
+  editMonthlyResetMode.value = null
   editWeeklyResetDay.value = null
+  editMonthlyResetDay.value = null
   editWeeklyResetHour.value = null
+  editMonthlyResetHour.value = null
   editResetTimezone.value = null
   modelMappings.value = []
   openAICompactModelMappings.value = []
@@ -3620,7 +3640,13 @@ const handleValidateSessionToken = (_sessionToken: string) => {
 const formatDateTimeLocal = formatDateTimeLocalInput
 const parseDateTimeLocal = parseDateTimeLocalInput
 
-// Create provider and handle success/failure
+// createProviderAndFinish builds and submits one provider creation payload.
+// API Key and Bedrock inputs merge local spending limits and reset schedules
+// into Extra, while enabled notification drafts contribute their thresholds.
+// Fixed schedules share a timezone and default missing clock fields before
+// serialization. Other platform configuration is added before the guarded call.
+// The supplied creation guard is checked before submission so an obsolete
+// authorization flow cannot complete a dialog that has moved on.
 const createProviderAndFinish = async (
   platform: ProviderPlatform,
   type: ProviderType,
@@ -3644,6 +3670,9 @@ const createProviderAndFinish = async (
     if (editQuotaWeeklyLimit.value != null && editQuotaWeeklyLimit.value > 0) {
       quotaExtra.quota_weekly_limit = editQuotaWeeklyLimit.value
     }
+    if (editQuotaMonthlyLimit.value != null && editQuotaMonthlyLimit.value > 0) {
+      quotaExtra.quota_monthly_limit = editQuotaMonthlyLimit.value
+    }
     // Quota reset mode config
     if (editDailyResetMode.value === 'fixed') {
       quotaExtra.quota_daily_reset_mode = 'fixed'
@@ -3654,7 +3683,16 @@ const createProviderAndFinish = async (
       quotaExtra.quota_weekly_reset_day = editWeeklyResetDay.value ?? 1
       quotaExtra.quota_weekly_reset_hour = editWeeklyResetHour.value ?? 0
     }
-    if (editDailyResetMode.value === 'fixed' || editWeeklyResetMode.value === 'fixed') {
+    if (editMonthlyResetMode.value === 'fixed') {
+      quotaExtra.quota_monthly_reset_mode = 'fixed'
+      quotaExtra.quota_monthly_reset_day = editMonthlyResetDay.value ?? 1
+      quotaExtra.quota_monthly_reset_hour = editMonthlyResetHour.value ?? 0
+    }
+    if (
+      editDailyResetMode.value === 'fixed' ||
+      editWeeklyResetMode.value === 'fixed' ||
+      editMonthlyResetMode.value === 'fixed'
+    ) {
       quotaExtra.quota_reset_timezone = editResetTimezone.value || 'UTC'
     }
     // Quota notify config

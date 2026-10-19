@@ -10,7 +10,7 @@ import (
 // provider_usage.go increments provider quotas and clears quota and cooldown
 // state.
 // Provider quota increments update total usage and each enabled finite
-// daily/weekly period together in JSONB. Stored expiry expressions decide
+// daily/weekly/monthly period together in JSONB. Stored expiry expressions decide
 // whether a period receives just this increment or adds it to its previous
 // usage, and fixed resets also advance their next configured timestamp.
 //
@@ -38,7 +38,7 @@ func ProviderUsageInTx(exec postgresinfra.Executor) ProviderUsageParticipant {
 	return ProviderUsageParticipant{exec: exec}
 }
 
-// Increment adds amount to total usage and positive daily/weekly quota
+// Increment adds amount to total usage and positive daily/weekly/monthly quota
 // periods, returning a total-ceiling crossing flag. The caller supplies finite
 // stored quota values and amount; absent non-deleted rows return false with no
 // error after an empty successful result.
@@ -90,6 +90,25 @@ func (p ProviderUsageParticipant) Increment(ctx context.Context, id int64, amoun
 				   THEN jsonb_build_object('quota_weekly_reset_at', `+NextWeeklyResetAtExpr+`)
 				   ELSE '{}'::jsonb END
 			ELSE '{}'::jsonb END
+			-- Monthly counters share the same update so accounting cannot commit
+			-- total consumption while losing the corresponding monthly charge.
+			|| CASE WHEN COALESCE((extra->>'quota_monthly_limit')::numeric, 0) > 0 THEN
+				jsonb_build_object(
+					'quota_monthly_used',
+					CASE WHEN `+MonthlyExpiredExpr+`
+					THEN $1
+					ELSE COALESCE((extra->>'quota_monthly_used')::numeric, 0) + $1 END,
+					'quota_monthly_start',
+					CASE WHEN `+MonthlyExpiredExpr+`
+					THEN `+NowUTC+`
+					ELSE COALESCE(extra->>'quota_monthly_start', `+NowUTC+`) END
+				)
+				-- Expired fixed windows advance their reset deadline with the counter
+				-- so the next increment stays in the newly initialized monthly period.
+				|| CASE WHEN `+MonthlyExpiredExpr+` AND `+NextMonthlyResetAtExpr+` IS NOT NULL
+				   THEN jsonb_build_object('quota_monthly_reset_at', `+NextMonthlyResetAtExpr+`)
+				   ELSE '{}'::jsonb END
+			ELSE '{}'::jsonb END
 		), updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
 		RETURNING
@@ -127,8 +146,8 @@ func (p ProviderUsageParticipant) ResetAndClearRateLimitCooldown(ctx context.Con
 	result, err := p.exec.ExecContext(ctx,
 		`UPDATE providers SET extra = (
 			COALESCE(extra, '{}'::jsonb)
-			|| '{"quota_used": 0, "quota_daily_used": 0, "quota_weekly_used": 0}'::jsonb
-		) - 'quota_daily_start' - 'quota_weekly_start' - 'quota_daily_reset_at' - 'quota_weekly_reset_at',
+			|| '{"quota_used": 0, "quota_daily_used": 0, "quota_weekly_used": 0, "quota_monthly_used": 0}'::jsonb
+		) - 'quota_daily_start' - 'quota_weekly_start' - 'quota_daily_reset_at' - 'quota_weekly_reset_at' - 'quota_monthly_start' - 'quota_monthly_reset_at',
 		rate_limited_at = NULL, rate_limit_reset_at = NULL, updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL`,
 		id)

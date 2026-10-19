@@ -1984,3 +1984,55 @@ func TestProvider_GetCredentialAsInt64_NilProvider(t *testing.T) {
 	result := provider.GetCredentialAsInt64("_token_version")
 	require.Equal(t, int64(0), result)
 }
+
+// TestMonthlyQuotaAdmission exercises monthly exhaustion alongside an expired daily
+// allowance. Expired and missing monthly starts release the monthly restriction,
+// while an active exhausted total allowance still rejects the same provider.
+func TestMonthlyQuotaAdmission(t *testing.T) {
+	now := time.Now().UTC()
+	r := &Record{LoadLocation: time.LoadLocation, Now: func() time.Time { return now }, Extra: map[string]any{
+		"quota_monthly_limit": 100.0, "quota_monthly_used": 100.0,
+		"quota_monthly_start": now.Add(-24 * time.Hour).Format(time.RFC3339),
+		"quota_daily_limit":   1.0, "quota_daily_used": 1.0,
+		"quota_daily_start": now.Add(-48 * time.Hour).Format(time.RFC3339),
+	}}
+	require.True(t, r.HasAnyQuotaLimit())
+	require.True(t, r.IsQuotaExceeded())
+	r.Extra["quota_monthly_start"] = now.Add(-31 * 24 * time.Hour).Format(time.RFC3339)
+	require.False(t, r.IsQuotaExceeded())
+	delete(r.Extra, "quota_monthly_start")
+	require.False(t, r.IsQuotaExceeded())
+	r.Extra["quota_limit"], r.Extra["quota_used"] = 10.0, 10.0
+	require.True(t, r.IsQuotaExceeded())
+}
+
+// TestMonthlyQuotaConfigurationRejectsInvalidDates exercises monthly clock
+// validation.
+// Fractions and out-of-range dates fail before persistence, while valid month-end
+// schedules remain accepted for billing's short-month clamping rule.
+func TestMonthlyQuotaConfigurationRejectsInvalidDates(t *testing.T) {
+	for _, day := range []float64{0, -1, 32, 1.5} {
+		require.Error(t, ValidateQuotaResetConfig(map[string]any{"quota_monthly_reset_day": day}, time.LoadLocation))
+	}
+	for _, hour := range []float64{-1, 24, 1.5} {
+		require.Error(t, ValidateQuotaResetConfig(map[string]any{"quota_monthly_reset_hour": hour}, time.LoadLocation))
+	}
+	require.Error(t, ValidateQuotaResetConfig(map[string]any{"quota_monthly_reset_mode": "invalid"}, time.LoadLocation))
+	require.NoError(t, ValidateQuotaResetConfig(map[string]any{"quota_monthly_reset_day": 31, "quota_monthly_reset_hour": 23}, time.LoadLocation))
+}
+
+// TestMonthlyFixedQuotaAdmission checks equality and the monthly calendar rollover.
+// A month-end schedule exhausts at its recorded current boundary and becomes
+// available after the next month's clamped reset, independently of rolling time.
+func TestMonthlyFixedQuotaAdmission(t *testing.T) {
+	now := time.Date(2026, 2, 28, 9, 0, 0, 0, time.UTC)
+	r := &Record{LoadLocation: time.LoadLocation, Now: func() time.Time { return now }, Extra: map[string]any{
+		"quota_monthly_limit": 100.0, "quota_monthly_used": 100.0,
+		"quota_monthly_reset_mode": "fixed", "quota_monthly_reset_day": 31,
+		"quota_monthly_reset_hour": 9, "quota_reset_timezone": "UTC",
+		"quota_monthly_start": now.Format(time.RFC3339),
+	}}
+	require.True(t, r.IsQuotaExceeded())
+	now = time.Date(2026, 3, 31, 9, 0, 0, 0, time.UTC)
+	require.False(t, r.IsQuotaExceeded())
+}

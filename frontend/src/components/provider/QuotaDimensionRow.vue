@@ -6,21 +6,26 @@ import QuotaNotifyToggle from './QuotaNotifyToggle.vue'
 import type { QuotaThresholdType, QuotaResetMode } from '@/constants/provider'
 import Select from '@/components/common/Select.vue'
 
+// QuotaDimensionRow.vue edits one provider quota amount and its reset policy.
+// Periodic dimensions expose fixed or elapsed-time resets, with weekdays for
+// weekly limits and calendar dates for monthly limits. Total limits retain
+// cumulative usage until an administrator resets the provider's counters.
+
 const { t } = useI18n()
 const { usdUnitSymbol } = useBalanceDisplay()
 
 const props = defineProps<{
-  dim: 'daily' | 'weekly' | 'total'
+  dim: 'daily' | 'weekly' | 'monthly' | 'total' // spending quota dimension selector
   label: string
   limit: number | null
   quotaNotifyGlobalEnabled: boolean
   notifyEnabled: boolean | null
   notifyThreshold: number | null
   notifyThresholdType: QuotaThresholdType | null
-  // Reset mode (only for daily/weekly, null for total)
+  // Reset modes apply to periodic quota dimensions; total uses null.
   resetMode: QuotaResetMode | null
   resetHour: number | null
-  resetDay: number | null  // weekly only
+  resetDay: number | null // weekday or monthly date
   resetTimezone: string | null
   hintRolling: string
   hintFixed: string
@@ -48,12 +53,16 @@ const onLimitInput = (e: Event) => {
   emit('update:limit', Number.isNaN(raw) ? null : raw)
 }
 
+// onModeChange changes the reset policy and initializes required fixed schedule
+// fields.
+// Missing weekday or monthly date selects day one, missing hour selects midnight,
+// and an empty timezone selects UTC before the parent receives those defaults.
 const onModeChange = (value: string | number | boolean | null) => {
   const val = value as QuotaResetMode
   emit('update:resetMode', val)
   if (val === 'fixed') {
     if (props.resetHour == null) emit('update:resetHour', 0)
-    if (props.dim === 'weekly' && props.resetDay == null) emit('update:resetDay', 1)
+    if ((props.dim === 'weekly' || props.dim === 'monthly') && props.resetDay == null) emit('update:resetDay', 1)
     if (!props.resetTimezone) emit('update:resetTimezone', 'UTC')
   }
 }
@@ -69,6 +78,13 @@ const weeklyResetDayOptions = computed(() =>
     label: t('admin.providers.dayOfWeek.' + day.key)
   }))
 )
+
+// monthlyResetDayOptions supplies every monthly reset date for the calendar
+// selector; billing clamps dates beyond a target month to its final day.
+const monthlyResetDayOptions = Array.from({ length: 31 }, (_, index) => ({
+  value: index + 1,
+  label: String(index + 1),
+}))
 
 const resetHourOptions = computed(() =>
   props.hourOptions.map((hour) => ({
@@ -119,7 +135,7 @@ function getTimezoneOffsetLabel(tz: string): string {
       />
     </div>
 
-    <!-- Reset mode row (daily/weekly only) -->
+    <!-- Reset settings for periodic quotas -->
     <div v-if="hasResetMode" class="mt-2 flex flex-wrap items-center gap-2">
       <label class="input-hint mt-0 whitespace-nowrap">{{ t('admin.providers.quotaResetMode') }}</label>
       <Select :model-value="resetMode || 'rolling'" :options="resetModeOptions" class="w-28 text-xs" @change="onModeChange" />
@@ -128,6 +144,10 @@ function getTimezoneOffsetLabel(tz: string): string {
         <template v-if="dim === 'weekly'">
           <label class="input-hint mt-0 whitespace-nowrap">{{ t('admin.providers.quotaWeeklyResetDay') }}</label>
           <Select :model-value="resetDay ?? 1" :options="weeklyResetDayOptions" class="w-28 text-xs" @change="emit('update:resetDay', Number($event))" />
+        </template>
+        <template v-if="dim === 'monthly'">
+          <label class="input-hint mt-0 whitespace-nowrap">{{ t('admin.providers.quotaMonthlyResetDay') }}</label>
+          <Select :model-value="resetDay ?? 1" :options="monthlyResetDayOptions" class="w-28 text-xs" @change="emit('update:resetDay', Number($event))" />
         </template>
         <label class="input-hint mt-0 whitespace-nowrap">{{ t('admin.providers.quotaResetHour') }}</label>
         <Select :model-value="resetHour ?? 0" :options="resetHourOptions" class="w-24 text-xs" @change="emit('update:resetHour', Number($event))" />

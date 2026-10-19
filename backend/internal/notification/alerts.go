@@ -114,17 +114,19 @@ const (
 
 	// Canonical quota dimensions select display labels for alert content;
 	// unknown dimension names keep their caller-provided spelling through the rendering path.
-	quotaDimDaily  = "daily"  // daily quota window
-	quotaDimWeekly = "weekly" // weekly quota window
-	quotaDimTotal  = "total"  // cumulative quota total
+	quotaDimDaily   = "daily"   // daily quota window
+	quotaDimWeekly  = "weekly"  // weekly quota window
+	quotaDimMonthly = "monthly" // monthly quota window
+	quotaDimTotal   = "total"   // cumulative quota total
 )
 
 // quotaDimLabels supplies bilingual labels for canonical provider quota
 // dimensions while SendQuotaAlertEmails retains unknown caller-supplied dimension names.
 var quotaDimLabels = map[string]string{
-	quotaDimDaily:  "日限额 / Daily",
-	quotaDimWeekly: "周限额 / Weekly",
-	quotaDimTotal:  "总限额 / Total",
+	quotaDimDaily:   "日限额 / Daily",
+	quotaDimWeekly:  "周限额 / Weekly",
+	quotaDimMonthly: "月限额 / Monthly",
+	quotaDimTotal:   "总限额 / Total",
 }
 
 // AlertDelivery selects shared event sending or standalone alert bodies for business-provided recipients.

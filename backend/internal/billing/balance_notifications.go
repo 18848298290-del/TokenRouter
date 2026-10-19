@@ -372,7 +372,8 @@ func (s *BalanceNotifyService) CollectBalanceNotifyRecipients(user *UserSummary)
 }
 
 // quotaDimsFromCommitted copies the provider dimensions and replaces daily,
-// weekly and total usage/limits with committed transaction values. Both inputs
+// weekly, monthly, and total usage/limits with committed transaction values.
+// Both inputs
 // must be non-nil; unknown dimension names retain their supplied values. Alert
 // enablement, remaining threshold and threshold kind stay attached to each
 // provider dimension.
@@ -389,6 +390,8 @@ func quotaDimsFromCommitted(provider *QuotaNotifyProvider, state *ProviderQuotaS
 			dims[i].CurrentUsed, dims[i].Limit = state.DailyUsed, state.DailyLimit
 		case "weekly":
 			dims[i].CurrentUsed, dims[i].Limit = state.WeeklyUsed, state.WeeklyLimit
+		case "monthly":
+			dims[i].CurrentUsed, dims[i].Limit = state.MonthlyUsed, state.MonthlyLimit
 		case "total":
 			dims[i].CurrentUsed, dims[i].Limit = state.TotalUsed, state.TotalLimit
 		}

@@ -2,7 +2,8 @@ package postgres
 
 // provider_quota_expressions.go defines SQL expressions for provider quota
 // expiry and reset scheduling.
-// Provider daily and weekly quota periods can roll from their recorded starts
+// Provider daily, weekly, and monthly quota periods can roll from their
+// recorded starts
 // or reset at configured local calendar points. Expiry expressions treat only
 // fixed mode as calendar scheduling; other or absent modes use the rolling
 // duration. Missing start/reset timestamps use the epoch, making an enabled
@@ -42,6 +43,18 @@ const (
 	THEN NOW() >= COALESCE((extra->>'quota_weekly_reset_at')::timestamptz, '1970-01-01'::timestamptz)
 	ELSE COALESCE((extra->>'quota_weekly_start')::timestamptz, '1970-01-01'::timestamptz)
 		+ '168 hours'::interval <= NOW()
+	END
+)`
+
+	// MonthlyExpiredExpr selects whether the provider monthly period is due at
+	// transaction time. Fixed mode compares its saved reset timestamp; other
+	// modes compare start plus seven hundred twenty hours, and absent
+	// timestamps select the epoch.
+	MonthlyExpiredExpr = `(
+	CASE WHEN COALESCE(extra->>'quota_monthly_reset_mode', 'rolling') = 'fixed'
+	THEN NOW() >= COALESCE((extra->>'quota_monthly_reset_at')::timestamptz, '1970-01-01'::timestamptz)
+	ELSE COALESCE((extra->>'quota_monthly_start')::timestamptz, '1970-01-01'::timestamptz)
+		+ '720 hours'::interval <= NOW()
 	END
 )`
 
@@ -114,6 +127,34 @@ const (
 		) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC')
 		END
 	) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+	ELSE NULL END
+)`
+
+	// NextMonthlyResetAtExpr returns the next fixed monthly reset as UTC text.
+	// The configured day is clamped independently in each target month so a
+	// January thirty-first schedule resets in February and returns to March
+	// thirty-first. Inactive schedules return SQL NULL.
+	NextMonthlyResetAtExpr = `(
+	CASE WHEN COALESCE(extra->>'quota_monthly_reset_mode', 'rolling') = 'fixed'
+	THEN (
+		SELECT to_char(
+			MIN(reset_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+		)
+		FROM (
+			SELECT (
+				month_start
+				+ (LEAST(COALESCE((extra->>'quota_monthly_reset_day')::int, 1),
+					EXTRACT(DAY FROM month_start + interval '1 month - 1 day')::int) - 1) * interval '1 day'
+				+ COALESCE((extra->>'quota_monthly_reset_hour')::int, 0) * interval '1 hour'
+			) AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC') AS reset_at
+			FROM (
+				SELECT date_trunc('month', NOW() AT TIME ZONE COALESCE(extra->>'quota_reset_timezone', 'UTC'))
+					+ month_offset * interval '1 month' AS month_start
+				FROM generate_series(0, 1) AS month_offset
+			) months
+		) resets
+		WHERE reset_at > NOW()
+	)
 	ELSE NULL END
 )`
 )

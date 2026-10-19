@@ -1,4 +1,7 @@
-// providers.ts supplies localized labels and guidance for provider administration.
+// providers.ts supplies Chinese text for provider administration controls.
+// Quota descriptions distinguish elapsed-time windows from fixed local calendar
+// resets, including the monthly rule for dates absent from shorter months.
+// Interpolation parameters carry the configured reset clock and timezone.
 // Query configuration explains the authentication and destination expected by
 // each supported adapter, while shared message keys let creation, editing, and
 // list views present consistent provider terminology.
@@ -466,13 +469,17 @@ export default {
       resetQuota: '重置配额',
       quotaLimit: '配额限制',
       quotaLimitPlaceholder: '0 表示不限制',
-      quotaLimitHint: '设置日/周/总使用额度，任一维度达到限额后提供商暂停调度。Anthropic API Key 提供商还可配置客户端亲和。修改限额不会重置已用额度。',
+      quotaLimitHint: '设置日/周/月/总使用额度，任一维度达到限额后提供商暂停调度。Anthropic API Key 提供商还可配置客户端亲和。修改限额不会重置已用额度。',
       quotaLimitToggle: '启用配额限制',
       quotaLimitToggleHint: '开启后，当提供商用量达到设定额度时自动暂停调度',
       quotaDailyLimit: '日限额',
       quotaDailyLimitHint: '从首次使用起每 24 小时自动重置。',
       quotaWeeklyLimit: '周限额',
       quotaWeeklyLimitHint: '从首次使用起每 7 天自动重置。',
+      quotaMonthlyLimit: '月限额',
+      quotaMonthlyLimitHint: '从首次使用起每 30 天自动重置。',
+      quotaMonthlyResetDay: '重置日期',
+      quotaMonthlyLimitHintFixed: '每月 {day} 日 {hour}:00（{timezone}）重置；当月无该日期时按月末重置。',
       quotaTotalLimit: '总限额',
       quotaTotalLimitHint: '累计消费上限，不会自动重置 — 使用「重置配额」手动清零。',
       quotaResetMode: '重置方式',

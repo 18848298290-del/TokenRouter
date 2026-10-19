@@ -40,22 +40,22 @@ func quotaWindowLocation(extra map[string]any, load func(string) (*time.Location
 }
 
 // providerWindowConfig builds billing's fixed-window input from one Extra key
-// prefix. Missing reset_day selects Monday, while other numeric fields use
+// prefix. Missing reset_day selects day one, while other numeric fields use
 // ParseExtraFloat64 and integer conversion; billing's wrapper performs
 // clock-range normalization.
 func providerWindowConfig(extra map[string]any, prefix string, period billing.ProviderWindowPeriod) billing.FixedProviderWindow {
 	mode, _ := extra[prefix+"_reset_mode"].(string)
 	day := 1
 	if raw, ok := extra[prefix+"_reset_day"]; ok {
-		// Reset weekdays use whole indices; fractional JSON values truncate here.
+		// Calendar reset days use whole indices after configuration input validation.
 		day = int(ParseExtraFloat64(raw))
 	}
-	// Reset hours use the same whole-number interpretation as weekday input,
+	// Reset hours use the same whole-number interpretation as calendar day input,
 	// and billing then normalizes out-of-range values before calendar calculation.
 	return billing.FixedProviderWindow{Period: period, Mode: mode, Limit: ParseExtraFloat64(extra[prefix+"_limit"]), Hour: int(ParseExtraFloat64(extra[prefix+"_reset_hour"])), Day: day}
 }
 
-// ComputeQuotaResetAt updates daily and weekly next-reset metadata in the
+// ComputeQuotaResetAt updates daily, weekly, and monthly next-reset metadata in the
 // caller's Extra map. The supplied loader resolves the configured timezone, and
 // fixed-mode dates are encoded in UTC RFC3339.
 //
@@ -69,7 +69,11 @@ func ComputeQuotaResetAt(extra map[string]any, now time.Time, load func(string) 
 	for _, dimension := range []struct {
 		prefix string                       // quota Extra key prefix
 		period billing.ProviderWindowPeriod // billing reset period selector
-	}{{"quota_daily", billing.ProviderDailyWindow}, {"quota_weekly", billing.ProviderWeeklyWindow}} {
+	}{
+		{"quota_daily", billing.ProviderDailyWindow},
+		{"quota_weekly", billing.ProviderWeeklyWindow},
+		{"quota_monthly", billing.ProviderMonthlyWindow},
+	} {
 		reset, ok := billing.NextProviderFixedReset(providerWindowConfig(extra, dimension.prefix, dimension.period), location, now)
 		// A disabled fixed schedule must lose its prior publication timestamp;
 		// retaining it would show a date belonging to configuration that is gone.
@@ -81,14 +85,15 @@ func ComputeQuotaResetAt(extra map[string]any, now time.Time, load func(string) 
 	}
 }
 
-// NormalizeFixedQuotaWindows reconciles daily and weekly stored usage against
+// NormalizeFixedQuotaWindows reconciles daily, weekly, and monthly stored usage
+// against
 // the supplied calculation time. Nil Extra is ignored; the timezone loader
 // supplies local calendar rules for active fixed windows.
 //
 // Billing requests a reset only for a positive fixed-window limit whose stored
 // start is zero or predates the current reset. A requested reset writes zero
 // usage and the current window start together, retaining total usage and
-// already current daily or weekly consumption. The caller persists the modified
+// already current periodic consumption. The caller persists the modified
 // map with its configuration change.
 func NormalizeFixedQuotaWindows(extra map[string]any, now time.Time, load func(string) (*time.Location, error)) {
 	if extra == nil {
@@ -98,7 +103,11 @@ func NormalizeFixedQuotaWindows(extra map[string]any, now time.Time, load func(s
 	for _, dimension := range []struct {
 		prefix string                       // quota Extra key prefix
 		period billing.ProviderWindowPeriod // billing reset period selector
-	}{{"quota_daily", billing.ProviderDailyWindow}, {"quota_weekly", billing.ProviderWeeklyWindow}} {
+	}{
+		{"quota_daily", billing.ProviderDailyWindow},
+		{"quota_weekly", billing.ProviderWeeklyWindow},
+		{"quota_monthly", billing.ProviderMonthlyWindow},
+	} {
 		last, reset := billing.ReconcileProviderFixedWindow(providerWindowConfig(extra, dimension.prefix, dimension.period), ParseExtraTime(extra[dimension.prefix+"_start"]), location, now)
 		// Store the new start with zero usage so the next billing increment
 		// belongs to the computed window instead of the expired consumption period.

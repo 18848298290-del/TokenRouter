@@ -1234,17 +1234,23 @@ export interface Provider {
   quota_daily_limit?: number | null
   quota_daily_used?: number | null
   quota_weekly_limit?: number | null
+  quota_monthly_limit?: number | null // monthly spending ceiling in USD
   quota_weekly_used?: number | null
+  quota_monthly_used?: number | null // effective monthly usage in USD
 
   // 配额固定时间重置配置
   quota_daily_reset_mode?: 'rolling' | 'fixed' | null
   quota_daily_reset_hour?: number | null
   quota_weekly_reset_mode?: 'rolling' | 'fixed' | null
+  quota_monthly_reset_mode?: 'rolling' | 'fixed' | null // monthly reset policy selector
   quota_weekly_reset_day?: number | null
+  quota_monthly_reset_day?: number | null // monthly reset calendar date
   quota_weekly_reset_hour?: number | null
+  quota_monthly_reset_hour?: number | null // monthly local reset hour
   quota_reset_timezone?: string | null
   quota_daily_reset_at?: string | null
   quota_weekly_reset_at?: string | null
+  quota_monthly_reset_at?: string | null // next fixed reset timestamp
 
   // 运行时状态（仅当启用对应限制时返回）
   current_window_cost?: number | null // 当前窗口费用

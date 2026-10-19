@@ -72,6 +72,32 @@ describe('ProviderUsageCell', () => {
     })
   })
 
+  // Monthly-only limits display the provider's usage and their own reset schedule.
+  // Rolling mode uses thirty elapsed days; fixed mode uses the server's
+  // published timestamp.
+  it.each(['rolling', 'fixed'] as const)('renders monthly quota usage in %s mode', async (mode) => {
+    const wrapper = mount(ProviderUsageCell, {
+      props: {
+        provider: makeProvider({
+          platform: 'openai', type: 'apikey',
+          quota_monthly_limit: 100, quota_monthly_used: 25,
+          quota_monthly_reset_mode: mode,
+          extra: {
+            quota_monthly_reset_mode: mode,
+            quota_monthly_start: '2026-10-01T00:00:00Z',
+            quota_monthly_reset_at: '2026-11-01T00:00:00Z',
+          },
+        }),
+      },
+      global: { stubs: { UsageProgressBar: true, UpstreamUsageBadge: true } },
+    })
+    const bar = wrapper.findComponent({ name: 'UsageProgressBar' })
+    expect(bar.props('utilization')).toBe(25)
+    expect(bar.props('label')).toBe(mode === 'fixed' ? 'M' : '30d')
+    expect(bar.props('resetsAt')).toBe(mode === 'fixed' ? '2026-11-01T00:00:00Z' : '2026-10-31T00:00:00.000Z')
+    wrapper.unmount()
+  })
+
   it('renders eligible Ollama Cloud state and forwards query updates', async () => {
     const wrapper = mount(ProviderUsageCell, {
       props: {

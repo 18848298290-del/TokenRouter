@@ -86,6 +86,18 @@ import { useI18n } from 'vue-i18n'
 import { Icon } from '@/components/icons'
 import type { Provider } from '@/types'
 
+// ProviderActionMenu.vue offers administration actions for one selected provider.
+// Provider platform, authentication type, credential presence, and shadow status
+// determine which maintenance operations apply. Quota reset is available for
+// API Key and Bedrock providers when any local spending limit is enabled,
+// including a monthly-only configuration. Actions emit the selected provider to
+// the parent view, which performs the corresponding administration request.
+//
+// The floating menu owns dismissal through its backdrop and Escape handler.
+// Eligibility remains a presentation decision here; backend operations validate
+// the target and carry out credential refresh, quota resets, or configuration
+// changes.
+
 const props = defineProps<{ show: boolean; provider: Provider | null; position: { top: number; left: number } | null }>()
 const emit = defineEmits(['close', 'test', 'stats', 'advanced-scheduler-score', 'schedule', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'invite-reset', 'create-spark-shadow', 'delete'])
 const { t } = useI18n()
@@ -129,11 +141,15 @@ const supportsTokenRefresh = computed(() =>
 // OpenAI OAuth 母提供商指自身不是影子提供商(parent_provider_id == null)的提供商。
 const isOpenAIOAuthParent = computed(() => isOpenAIOAuth.value && !isShadow.value)
 const supportsPrivacy = computed(() => (isAntigravityOAuth.value || isOpenAIOAuth.value) && !isShadow.value)
+// hasQuotaLimit reports whether quota reset applies to this provider.
+// API Key and Bedrock providers qualify when any configured local spending
+// dimension has a positive limit, including monthly-only configurations.
 const hasQuotaLimit = computed(() => {
   return (props.provider?.type === 'apikey' || props.provider?.type === 'bedrock') && (
     (props.provider?.quota_limit ?? 0) > 0 ||
     (props.provider?.quota_daily_limit ?? 0) > 0 ||
-    (props.provider?.quota_weekly_limit ?? 0) > 0
+    (props.provider?.quota_weekly_limit ?? 0) > 0 ||
+    (props.provider?.quota_monthly_limit ?? 0) > 0
   )
 })
 

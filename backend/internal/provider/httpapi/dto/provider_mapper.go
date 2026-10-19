@@ -23,7 +23,8 @@ import (
 //
 // Shallow mapping stops before proxy and group relationships, and membership
 // mapping uses that form to bound recursion. Optional usage totals follow
-// positive-limit rules; expired daily or weekly quota usage is displayed as
+// positive-limit rules; expired daily, weekly, or monthly quota usage is
+// displayed as
 // zero without updating storage. CloneValues handles its listed JSON
 // containers, while unsupported mutable values can remain shared and need
 // immutable use during serialization.
@@ -35,7 +36,8 @@ import (
 // can remain shared.
 //
 // Effective getters choose optional controls, including reserve and
-// idle-timeout defaults. Expired daily and weekly quota usage is shown as zero,
+// idle-timeout defaults. Expired daily, weekly, and monthly quota usage is
+// shown as zero,
 // while stored accounting remains unchanged. Proxy and group relationships are
 // left for the full mapper, and parent account display fields are filled by
 // RuntimePresenter.
@@ -186,6 +188,16 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 			}
 			out.QuotaWeeklyUsed = &used
 		}
+		if limit := a.GetQuotaMonthlyLimit(); limit > 0 {
+			out.QuotaMonthlyLimit = &limit
+			used := a.GetQuotaMonthlyUsed()
+			// An expired monthly period represents a fresh display allowance. Zero this
+			// response value while leaving stored accounting to the quota-maintenance path.
+			if a.IsMonthlyQuotaPeriodExpired() {
+				used = 0
+			}
+			out.QuotaMonthlyUsed = &used
+		}
 
 		if mode := a.GetQuotaDailyResetMode(); mode == "fixed" {
 			out.QuotaDailyResetMode = &mode
@@ -199,7 +211,14 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 			hour := a.GetQuotaWeeklyResetHour()
 			out.QuotaWeeklyResetHour = &hour
 		}
-		if a.GetQuotaDailyResetMode() == "fixed" || a.GetQuotaWeeklyResetMode() == "fixed" {
+		if mode := a.GetQuotaMonthlyResetMode(); mode == "fixed" {
+			out.QuotaMonthlyResetMode = &mode
+			day := a.GetQuotaMonthlyResetDay()
+			out.QuotaMonthlyResetDay = &day
+			hour := a.GetQuotaMonthlyResetHour()
+			out.QuotaMonthlyResetHour = &hour
+		}
+		if a.GetQuotaDailyResetMode() == "fixed" || a.GetQuotaWeeklyResetMode() == "fixed" || a.GetQuotaMonthlyResetMode() == "fixed" {
 			tz := a.GetQuotaResetTimezone()
 			out.QuotaResetTimezone = &tz
 		}
@@ -209,6 +228,9 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 			}
 			if v, ok := a.Extra["quota_weekly_reset_at"].(string); ok && v != "" {
 				out.QuotaWeeklyResetAt = &v
+			}
+			if v, ok := a.Extra["quota_monthly_reset_at"].(string); ok && v != "" {
+				out.QuotaMonthlyResetAt = &v
 			}
 		}
 
@@ -223,6 +245,12 @@ func ProviderFromRecordShallow(a *provider.Record) *Provider {
 		}
 		if threshold := a.GetQuotaNotifyWeeklyThreshold(); threshold > 0 {
 			out.QuotaNotifyWeeklyThreshold = &threshold
+		}
+		if enabled := a.GetQuotaNotifyMonthlyEnabled(); enabled {
+			out.QuotaNotifyMonthlyEnabled = &enabled
+		}
+		if threshold := a.GetQuotaNotifyMonthlyThreshold(); threshold > 0 {
+			out.QuotaNotifyMonthlyThreshold = &threshold
 		}
 		if enabled := a.GetQuotaNotifyTotalEnabled(); enabled {
 			out.QuotaNotifyTotalEnabled = &enabled

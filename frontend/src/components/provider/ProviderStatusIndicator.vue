@@ -157,6 +157,18 @@ import Icon from '@/components/icons/Icon.vue'
 import type { Provider } from '@/types'
 import { formatCountdown, formatDateTime, formatDateTimeToMinute, formatCountdownWithSuffix, formatTime } from '@/utils/format'
 
+// ProviderStatusIndicator.vue displays provider availability and recovery details.
+// Stored health, scheduling eligibility, expiration, temporary suspension, and
+// rate limits supply distinct reasons for an unavailable provider. Local quota
+// exhaustion uses the effective amounts returned by the administration API;
+// expired windows therefore contribute zero consumption to the displayed state.
+// Each enabled dimension independently participates in that comparison, including
+// monthly-only limits and cumulative limits that remain active across rollovers.
+//
+// The component combines these observations into status text, styling, and
+// countdowns. Reading the provider updates the presentation while the owning
+// backend services remain responsible for accounting, recovery, and persistence.
+
 const { t } = useI18n()
 
 const props = defineProps<{
@@ -274,13 +286,17 @@ const hasError = computed(() => {
   return props.provider.status === 'error'
 })
 
+// isQuotaExceeded reports exhaustion of any positive local spending limit.
+// The API supplies effective usage for expired windows, allowing each active
+// daily, weekly, monthly, or total amount to be compared independently.
 const isQuotaExceeded = computed(() => {
   const exceeded = (used?: number | null, limit?: number | null) =>
     typeof limit === 'number' && limit > 0 && typeof used === 'number' && used >= limit
   return (
     exceeded(props.provider.quota_used, props.provider.quota_limit) ||
     exceeded(props.provider.quota_daily_used, props.provider.quota_daily_limit) ||
-    exceeded(props.provider.quota_weekly_used, props.provider.quota_weekly_limit)
+    exceeded(props.provider.quota_weekly_used, props.provider.quota_weekly_limit) ||
+    exceeded(props.provider.quota_monthly_used, props.provider.quota_monthly_limit)
   )
 })
 

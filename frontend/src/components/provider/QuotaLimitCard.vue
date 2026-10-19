@@ -8,6 +8,16 @@ import { useI18n } from 'vue-i18n'
 import QuotaDimensionRow from './QuotaDimensionRow.vue'
 import type { QuotaThresholdType, QuotaResetMode } from '@/constants/provider'
 
+// QuotaLimitCard.vue edits provider spending limits, reset schedules, and alerts.
+// Daily, weekly, monthly, and total limits share an enable switch while each
+// dimension keeps its own amount and notification threshold. Periodic limits
+// also retain an independent reset policy and clock configuration. A single
+// timezone applies to every fixed schedule and is passed through row events.
+//
+// The enable switch reflects any positive limit restored by the caller. Turning
+// it off clears every limit and reset draft together so a monthly-only provider
+// can be enabled, edited, and disabled through the same controls as other quotas.
+
 const { t } = useI18n()
 const uid = useId()
 
@@ -15,19 +25,26 @@ const props = withDefaults(defineProps<{
   totalLimit: number | null
   dailyLimit: number | null
   weeklyLimit: number | null
+  monthlyLimit: number | null // monthly spending ceiling in USD
   dailyResetMode: QuotaResetMode | null
   dailyResetHour: number | null
   weeklyResetMode: QuotaResetMode | null
+  monthlyResetMode: QuotaResetMode | null // monthly reset policy selector
   weeklyResetDay: number | null
+  monthlyResetDay: number | null // monthly reset calendar date
   weeklyResetHour: number | null
+  monthlyResetHour: number | null // monthly local reset hour
   resetTimezone: string | null
   quotaNotifyGlobalEnabled?: boolean
   quotaNotifyDailyEnabled?: boolean | null
   quotaNotifyDailyThreshold?: number | null
   quotaNotifyDailyThresholdType?: QuotaThresholdType | null
   quotaNotifyWeeklyEnabled?: boolean | null
+  quotaNotifyMonthlyEnabled?: boolean | null // monthly quota alert switch
   quotaNotifyWeeklyThreshold?: number | null
+  quotaNotifyMonthlyThreshold?: number | null // monthly quota alert threshold
   quotaNotifyWeeklyThresholdType?: QuotaThresholdType | null
+  quotaNotifyMonthlyThresholdType?: QuotaThresholdType | null // monthly alert threshold interpretation
   quotaNotifyTotalEnabled?: boolean | null
   quotaNotifyTotalThreshold?: number | null
   quotaNotifyTotalThresholdType?: QuotaThresholdType | null
@@ -37,8 +54,11 @@ const props = withDefaults(defineProps<{
   quotaNotifyDailyThreshold: null,
   quotaNotifyDailyThresholdType: null,
   quotaNotifyWeeklyEnabled: null,
+  quotaNotifyMonthlyEnabled: null,
   quotaNotifyWeeklyThreshold: null,
+  quotaNotifyMonthlyThreshold: null,
   quotaNotifyWeeklyThresholdType: null,
+  quotaNotifyMonthlyThresholdType: null,
   quotaNotifyTotalEnabled: null,
   quotaNotifyTotalThreshold: null,
   quotaNotifyTotalThresholdType: null,
@@ -48,27 +68,36 @@ const emit = defineEmits<{
   'update:totalLimit': [value: number | null]
   'update:dailyLimit': [value: number | null]
   'update:weeklyLimit': [value: number | null]
+  'update:monthlyLimit': [value: number | null]
   'update:dailyResetMode': [value: QuotaResetMode | null]
   'update:dailyResetHour': [value: number | null]
   'update:weeklyResetMode': [value: QuotaResetMode | null]
+  'update:monthlyResetMode': [value: QuotaResetMode | null]
   'update:weeklyResetDay': [value: number | null]
+  'update:monthlyResetDay': [value: number | null]
   'update:weeklyResetHour': [value: number | null]
+  'update:monthlyResetHour': [value: number | null]
   'update:resetTimezone': [value: string | null]
   'update:quotaNotifyDailyEnabled': [value: boolean | null]
   'update:quotaNotifyDailyThreshold': [value: number | null]
   'update:quotaNotifyDailyThresholdType': [value: QuotaThresholdType | null]
   'update:quotaNotifyWeeklyEnabled': [value: boolean | null]
+  'update:quotaNotifyMonthlyEnabled': [value: boolean | null]
   'update:quotaNotifyWeeklyThreshold': [value: number | null]
+  'update:quotaNotifyMonthlyThreshold': [value: number | null]
   'update:quotaNotifyWeeklyThresholdType': [value: QuotaThresholdType | null]
+  'update:quotaNotifyMonthlyThresholdType': [value: QuotaThresholdType | null]
   'update:quotaNotifyTotalEnabled': [value: boolean | null]
   'update:quotaNotifyTotalThreshold': [value: number | null]
   'update:quotaNotifyTotalThresholdType': [value: QuotaThresholdType | null]
 }>()
 
+// enabled reports whether any positive spending limit activates the quota controls.
 const enabled = computed(() =>
   (props.totalLimit != null && props.totalLimit > 0) ||
   (props.dailyLimit != null && props.dailyLimit > 0) ||
-  (props.weeklyLimit != null && props.weeklyLimit > 0)
+  (props.weeklyLimit != null && props.weeklyLimit > 0) ||
+  (props.monthlyLimit != null && props.monthlyLimit > 0)
 )
 
 const localEnabled = ref(enabled.value)
@@ -84,11 +113,15 @@ watch(localEnabled, (val) => {
     emit('update:totalLimit', null)
     emit('update:dailyLimit', null)
     emit('update:weeklyLimit', null)
+    emit('update:monthlyLimit', null)
     emit('update:dailyResetMode', null)
     emit('update:dailyResetHour', null)
     emit('update:weeklyResetMode', null)
+    emit('update:monthlyResetMode', null)
     emit('update:weeklyResetDay', null)
+    emit('update:monthlyResetDay', null)
     emit('update:weeklyResetHour', null)
+    emit('update:monthlyResetHour', null)
     emit('update:resetTimezone', null)
   }
 })
@@ -124,6 +157,15 @@ const weeklyFixedHint = computed(() => {
     timezone: props.resetTimezone || 'UTC',
   })
 })
+
+// monthlyFixedHint formats the monthly reset date, local clock, timezone, and short-month rule for the quota row.
+const monthlyFixedHint = computed(() =>
+  t('admin.providers.quotaMonthlyLimitHintFixed', {
+    day: props.monthlyResetDay ?? 1,
+    hour: String(props.monthlyResetHour ?? 0).padStart(2, '0'),
+    timezone: props.resetTimezone || 'UTC',
+  })
+)
 
 const dailyFixedHint = computed(() =>
   t('admin.providers.quotaDailyLimitHintFixed', {
@@ -198,6 +240,34 @@ const dailyFixedHint = computed(() =>
             @update:reset-mode="emit('update:weeklyResetMode', $event)"
             @update:reset-hour="emit('update:weeklyResetHour', $event)"
             @update:reset-day="emit('update:weeklyResetDay', $event)"
+            @update:reset-timezone="emit('update:resetTimezone', $event)"
+          />
+
+          <!-- Monthly quota -->
+          <QuotaDimensionRow
+            dim="monthly"
+            :label="t('admin.providers.quotaMonthlyLimit')"
+            :limit="monthlyLimit"
+            :quota-notify-global-enabled="quotaNotifyGlobalEnabled"
+            :notify-enabled="props.quotaNotifyMonthlyEnabled"
+            :notify-threshold="props.quotaNotifyMonthlyThreshold"
+            :notify-threshold-type="props.quotaNotifyMonthlyThresholdType"
+            :reset-mode="monthlyResetMode"
+            :reset-hour="monthlyResetHour"
+            :reset-day="monthlyResetDay"
+            :reset-timezone="resetTimezone"
+            :hint-rolling="t('admin.providers.quotaMonthlyLimitHint')"
+            :hint-fixed="monthlyFixedHint"
+            :hour-options="hourOptions"
+            :day-options="dayOptions"
+            :timezone-options="timezoneOptions"
+            @update:limit="emit('update:monthlyLimit', $event)"
+            @update:notify-enabled="emit('update:quotaNotifyMonthlyEnabled', $event)"
+            @update:notify-threshold="emit('update:quotaNotifyMonthlyThreshold', $event)"
+            @update:notify-threshold-type="emit('update:quotaNotifyMonthlyThresholdType', $event)"
+            @update:reset-mode="emit('update:monthlyResetMode', $event)"
+            @update:reset-hour="emit('update:monthlyResetHour', $event)"
+            @update:reset-day="emit('update:monthlyResetDay', $event)"
             @update:reset-timezone="emit('update:resetTimezone', $event)"
           />
 

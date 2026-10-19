@@ -1398,6 +1398,24 @@ func TestUsageBillingRepositoryApply_EnqueuesSchedulerOutboxOnQuotaCrossing(t *t
 		require.NoError(t, err)
 		require.Equal(t, 1, outboxCountFor(t, providerID), "single-shot crossing weekly limit should enqueue once")
 	})
+
+	// Monthly exhaustion publishes one scheduling event, and request replay
+	// retains the committed counter instead of applying the provider cost twice.
+	t.Run("monthly_first_crossing_enqueues", func(t *testing.T) {
+		apiKeyID, providerID := newFixture(t, map[string]any{"quota_monthly_limit": 10.0})
+		cmd := &billing.UsageBillingCommand{
+			RequestID: uuid.NewString(), APIKeyID: apiKeyID, ProviderID: providerID,
+			ProviderType: capability.ProviderTypeAPIKey, ProviderQuotaCost: 15,
+		}
+		result, err := repo.Apply(ctx, cmd)
+		require.NoError(t, err)
+		require.Equal(t, 15.0, result.QuotaState.MonthlyUsed)
+		require.Equal(t, 10.0, result.QuotaState.MonthlyLimit)
+		replayed, err := repo.Apply(ctx, cmd)
+		require.NoError(t, err)
+		require.False(t, replayed.Applied)
+		require.Equal(t, 1, outboxCountFor(t, providerID))
+	})
 }
 
 // TestDashboardAggregationRepositoryCleanupUsageBillingDedup_BatchDeletesOldRows

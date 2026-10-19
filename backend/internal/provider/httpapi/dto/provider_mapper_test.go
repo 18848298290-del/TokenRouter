@@ -225,3 +225,40 @@ func TestProviderFromRecordShallowDerouterRoundTrip(t *testing.T) {
 	require.Equal(t, "https://forward.example.test", got.Credentials["base_url"])
 	require.NotContains(t, got.Credentials, "api_key")
 }
+
+// TestProviderMonthlyQuotaResponse exposes monthly configuration for API Key and
+// Bedrock providers. Expired consumption displays as zero while the stored amount
+// remains available for accounting, and fixed reset metadata retains its timezone.
+func TestProviderMonthlyQuotaResponse(t *testing.T) {
+	now := time.Date(2026, 3, 31, 9, 0, 0, 0, time.UTC)
+	for _, typ := range []string{capability.ProviderTypeAPIKey, capability.ProviderTypeBedrock} {
+		for _, expired := range []bool{false, true} {
+			src := &provider.Record{
+				Type: typ, LoadLocation: time.LoadLocation, Now: func() time.Time { return now },
+				Extra: map[string]any{
+					"quota_monthly_limit": 100.0, "quota_monthly_used": 90.0,
+					"quota_monthly_reset_mode": "fixed", "quota_monthly_reset_day": 31,
+					"quota_monthly_reset_hour": 9, "quota_reset_timezone": "UTC",
+					"quota_monthly_start":    now.Format(time.RFC3339),
+					"quota_monthly_reset_at": "2026-04-30T09:00:00Z",
+				},
+			}
+			wantUsed := 90.0
+			if expired {
+				src.Extra["quota_monthly_start"] = "2026-02-28T09:00:00Z"
+				wantUsed = 0
+			}
+			got := ProviderFromRecordShallow(src)
+			require.NotNil(t, got.QuotaMonthlyLimit)
+			require.Equal(t, 100.0, *got.QuotaMonthlyLimit)
+			require.NotNil(t, got.QuotaMonthlyUsed)
+			require.Equal(t, wantUsed, *got.QuotaMonthlyUsed)
+			require.Equal(t, 90.0, src.Extra["quota_monthly_used"])
+			require.Equal(t, "fixed", *got.QuotaMonthlyResetMode)
+			require.Equal(t, 31, *got.QuotaMonthlyResetDay)
+			require.Equal(t, 9, *got.QuotaMonthlyResetHour)
+			require.Equal(t, "UTC", *got.QuotaResetTimezone)
+			require.Equal(t, "2026-04-30T09:00:00Z", *got.QuotaMonthlyResetAt)
+		}
+	}
+}

@@ -337,3 +337,28 @@ func TestComputeQuotaResetAt_InvalidHour_ClampedToZero(t *testing.T) {
 	// Publication normalizes an invalid clock hour to midnight before calculation.
 	assert.Equal(t, 0, resetAt.UTC().Hour())
 }
+
+// TestMonthlyQuotaConfigurationReconcilesFixedWindow edits a month-end schedule
+// after February's reset in a non-UTC timezone. Reconciliation clears stale usage,
+// retains current usage, and rolling mode removes the published fixed reset date.
+func TestMonthlyQuotaConfigurationReconcilesFixedWindow(t *testing.T) {
+	now := time.Date(2026, 2, 28, 2, 0, 0, 0, time.UTC)
+	extra := map[string]any{
+		"quota_monthly_limit": 100.0, "quota_monthly_used": 90.0,
+		"quota_monthly_reset_mode": "fixed", "quota_monthly_reset_day": 31,
+		"quota_monthly_reset_hour": 9, "quota_reset_timezone": "Asia/Shanghai",
+		"quota_monthly_start": "2026-01-31T01:00:00Z", "quota_used": 500.0,
+	}
+	ComputeQuotaResetAt(extra, now, time.LoadLocation)
+	require.Equal(t, "2026-03-31T01:00:00Z", extra["quota_monthly_reset_at"])
+	NormalizeFixedQuotaWindows(extra, now, time.LoadLocation)
+	require.Equal(t, 0.0, extra["quota_monthly_used"])
+	require.Equal(t, "2026-02-28T01:00:00Z", extra["quota_monthly_start"])
+	require.Equal(t, 500.0, extra["quota_used"])
+	extra["quota_monthly_used"] = 12.0
+	NormalizeFixedQuotaWindows(extra, now, time.LoadLocation)
+	require.Equal(t, 12.0, extra["quota_monthly_used"])
+	extra["quota_monthly_reset_mode"] = "rolling"
+	ComputeQuotaResetAt(extra, now, time.LoadLocation)
+	require.NotContains(t, extra, "quota_monthly_reset_at")
+}

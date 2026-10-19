@@ -174,8 +174,9 @@ type Provider struct {
 	// configured upstream relay URL
 	CustomBaseURL *string `json:"custom_base_url,omitempty"`
 
-	// QuotaLimit, QuotaUsed, QuotaDailyLimit, QuotaDailyUsed, QuotaWeeklyLimit and
-	// QuotaWeeklyUsed are populated for API Key or Bedrock providers. Each
+	// QuotaLimit, QuotaUsed, QuotaDailyLimit, QuotaDailyUsed, QuotaWeeklyLimit,
+	// QuotaWeeklyUsed, QuotaMonthlyLimit and QuotaMonthlyUsed are populated for
+	// API Key or Bedrock providers. Each
 	// positive limit admits its corresponding usage value into the response.
 	// total provider cost limit
 	QuotaLimit *float64 `json:"quota_limit,omitempty"`
@@ -195,10 +196,19 @@ type Provider struct {
 	// maintenance to its owning use case.
 	// displayed weekly provider consumption
 	QuotaWeeklyUsed *float64 `json:"quota_weekly_used,omitempty"`
+	// monthly provider cost limit
+	QuotaMonthlyLimit *float64 `json:"quota_monthly_limit,omitempty"`
+	// QuotaMonthlyUsed displays zero when the record's monthly period is expired.
+	// This mapper performs no quota storage reset and leaves persisted usage
+	// maintenance to its owning use case.
+	// displayed monthly provider consumption
+	QuotaMonthlyUsed *float64 `json:"quota_monthly_used,omitempty"`
 
 	// QuotaDailyResetMode and QuotaDailyResetHour appear for fixed daily resets;
 	// QuotaWeeklyResetMode, QuotaWeeklyResetDay and QuotaWeeklyResetHour appear
-	// for fixed weekly resets. Either fixed mode admits QuotaResetTimezone.
+	// for fixed weekly resets. QuotaMonthlyResetMode, QuotaMonthlyResetDay and
+	// QuotaMonthlyResetHour describe monthly scheduling. Any fixed mode admits
+	// QuotaResetTimezone.
 	// fixed daily reset selector
 	QuotaDailyResetMode *string `json:"quota_daily_reset_mode,omitempty"`
 	// daily reset clock hour
@@ -209,16 +219,25 @@ type Provider struct {
 	QuotaWeeklyResetDay *int `json:"quota_weekly_reset_day,omitempty"`
 	// weekly reset clock hour
 	QuotaWeeklyResetHour *int `json:"quota_weekly_reset_hour,omitempty"`
+	// fixed monthly reset selector
+	QuotaMonthlyResetMode *string `json:"quota_monthly_reset_mode,omitempty"`
+	// monthly reset calendar date
+	QuotaMonthlyResetDay *int `json:"quota_monthly_reset_day,omitempty"`
+	// monthly reset clock hour
+	QuotaMonthlyResetHour *int `json:"quota_monthly_reset_hour,omitempty"`
 	// quota reset timezone name
 	QuotaResetTimezone *string `json:"quota_reset_timezone,omitempty"`
 	// stored daily reset timestamp text
 	QuotaDailyResetAt *string `json:"quota_daily_reset_at,omitempty"`
 	// stored weekly reset timestamp text
 	QuotaWeeklyResetAt *string `json:"quota_weekly_reset_at,omitempty"`
+	// stored monthly reset timestamp text
+	QuotaMonthlyResetAt *string `json:"quota_monthly_reset_at,omitempty"`
 
-	// QuotaNotifyDailyEnabled, QuotaNotifyWeeklyEnabled and
+	// QuotaNotifyDailyEnabled, QuotaNotifyWeeklyEnabled, QuotaNotifyMonthlyEnabled and
 	// QuotaNotifyTotalEnabled appear only when their getters report true. Their
-	// QuotaNotifyDailyThreshold, QuotaNotifyWeeklyThreshold and
+	// QuotaNotifyDailyThreshold, QuotaNotifyWeeklyThreshold,
+	// QuotaNotifyMonthlyThreshold and
 	// QuotaNotifyTotalThreshold are independently included for positive values,
 	// including disabled notification configurations.
 	// daily notification enablement flag
@@ -229,6 +248,10 @@ type Provider struct {
 	QuotaNotifyWeeklyEnabled *bool `json:"quota_notify_weekly_enabled,omitempty"`
 	// weekly notification threshold value
 	QuotaNotifyWeeklyThreshold *float64 `json:"quota_notify_weekly_threshold,omitempty"`
+	// monthly notification enablement flag
+	QuotaNotifyMonthlyEnabled *bool `json:"quota_notify_monthly_enabled,omitempty"`
+	// monthly notification threshold value
+	QuotaNotifyMonthlyThreshold *float64 `json:"quota_notify_monthly_threshold,omitempty"`
 	// total notification enablement flag
 	QuotaNotifyTotalEnabled *bool `json:"quota_notify_total_enabled,omitempty"`
 	// total notification threshold value

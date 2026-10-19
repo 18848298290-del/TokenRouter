@@ -137,14 +137,17 @@ type UsageBillingCommand struct {
 type ProviderQuotaState struct {
 	// TotalUsed and TotalLimit describe cumulative quota, DailyUsed and
 	// DailyLimit the daily window, and WeeklyUsed and WeeklyLimit the weekly
-	// window. Positive limits govern threshold-crossing notifications against
+	// window, and MonthlyUsed and MonthlyLimit the monthly window. Positive
+	// limits govern threshold-crossing notifications against
 	// these post-update observations.
-	TotalUsed   float64 // USD
-	TotalLimit  float64 // USD
-	DailyUsed   float64 // USD
-	DailyLimit  float64 // USD
-	WeeklyUsed  float64 // USD
-	WeeklyLimit float64 // USD
+	TotalUsed    float64 // USD
+	TotalLimit   float64 // USD
+	DailyUsed    float64 // USD
+	DailyLimit   float64 // USD
+	WeeklyUsed   float64 // USD
+	WeeklyLimit  float64 // USD
+	MonthlyUsed  float64 // USD
+	MonthlyLimit float64 // USD
 }
 
 // UsageBillingApplyResult reports whether request funding was newly applied
