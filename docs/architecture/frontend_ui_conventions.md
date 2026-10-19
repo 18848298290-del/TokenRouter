@@ -167,6 +167,8 @@
 
 页面底色引用 `--page-bg`：浅色 `#FCFCFE`，深色在 `html.dark` 里覆盖为 `#0A0A0B`。`html`、`body`、主题外壳和背景层都用这个纯色背景，深色页面的滚动条轨道也引用它；页面背景没有渐变。
 
+Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`，由编译器给组件选择器添加作用域属性。`:global(.dark) .component-class` 会被编译成单独的 `.dark`，使组件背景、边框或阴影作用到页面根元素；滚动条伪元素也要保留组件选择器。
+
 深色模式下，侧栏和顶栏同样使用不透明的 `--page-bg`，和页面同色。控制台、首页和公开模型广场的顶栏共用 `.site-header`；深色模式关闭顶栏的背景模糊，滚动内容和移动端侧栏遮罩都不会改变它的底色。浅色模式下，顶栏是 80% 透明度的白色并带背景模糊，侧栏是白色。
 
 深色模式的层次靠接近底色的表面和低透明度的边线区分。`borderColor.dark`、`divideColor.dark`、`ringColor.dark` 共用 `darkEdges`，和 `colors.dark` 的实色分开，调整边框时文字和背景不受影响。

@@ -102,6 +102,11 @@ import type { Announcement, UserAnnouncement } from '@/types'
 import Icon from '@/components/icons/Icon.vue'
 import '@/styles/announcement-markdown.css'
 
+// AnnouncementPopup.vue renders queued announcements and controlled previews in
+// a shared dialog. Markdown content is sanitized before display, and dismissal
+// either advances the store queue after the exit transition or notifies the
+// parent that owns the preview.
+
 type PopupAnnouncement = Pick<Announcement | UserAnnouncement, 'title' | 'content' | 'created_at'> & {
   read_at?: string | null
 }
@@ -214,7 +219,8 @@ onBeforeUnmount(() => {
   background-clip: padding-box;
 }
 
-:global(.dark) .announcement-popup-scrollbar::-webkit-scrollbar-thumb {
+/* Keep the thumb scoped; a standalone :global(.dark) targets the page root. */
+.dark .announcement-popup-scrollbar::-webkit-scrollbar-thumb {
   background: rgb(82 82 91 / 0.7);
   border: 2px solid transparent;
   background-clip: padding-box;

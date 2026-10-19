@@ -127,6 +127,16 @@ import { formatDateLocalInput, formatNumberLocaleString as formatNumber, formatT
 import { HEATMAP_WAVE_MAX_MS, HEATMAP_WAVE_STEP_MS } from './dashboardMotion'
 import { injectUsageChartState } from './usageChartState'
 
+// UserDashboardHeatmap.vue displays daily usage and lets users select a date for
+// the dashboard trend. The API returns dates with recorded usage, so the grid
+// fills missing dates with zero usage and adds inactive future cells to complete
+// the final week. Container width determines how many recent weeks are visible.
+//
+// Keyboard focus follows visible dates, preferring a manually focused date over
+// the selected date and today. Hover details use card-relative coordinates and
+// measured text dimensions to stay within the card. Dark-theme outlines belong
+// to individual date cells, including their selected and keyboard-focus states.
+
 const CELL_SIZE = '12px'
 const CELL_GAP = '3px'
 // 自适应列数计算用的像素常量；LABEL_COL_PX 是星期标签列的近似宽度
@@ -504,8 +514,8 @@ defineExpose({ reload: load })
   box-shadow: 0 0 0 1px theme('colors.gray.400');
 }
 
-:global(.dark) .heatmap-cell-interactive:hover,
-:global(.dark) .heatmap-cell-interactive:focus-visible {
+.dark .heatmap-cell-interactive:hover,
+.dark .heatmap-cell-interactive:focus-visible {
   box-shadow: 0 0 0 1px theme('colors.dark.300');
 }
 
@@ -520,11 +530,11 @@ defineExpose({ reload: load })
   outline-offset: 1px;
 }
 
-:global(.dark) .heatmap-cell-today {
+.dark .heatmap-cell-today {
   outline-color: theme('colors.dark.400');
 }
 
-:global(.dark) .heatmap-cell-selected {
+.dark .heatmap-cell-selected {
   outline-color: theme('colors.dark.50');
 }
 

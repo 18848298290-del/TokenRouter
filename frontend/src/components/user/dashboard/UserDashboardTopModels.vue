@@ -101,6 +101,11 @@ import { TOP_MODEL_BAR_STEP_MS } from './dashboardMotion'
 import { injectUsageChartState } from './usageChartState'
 import { rankModels } from './topModels'
 
+// UserDashboardTopModels.vue displays model rankings for the selected dashboard
+// metric. Shared chart state supplies usage data and the active model filter;
+// selecting a row updates that filter, while refreshed data restarts the share
+// bar animation.
+
 // 排行展示的模型数量。
 const TOP_COUNT = 5
 
@@ -164,7 +169,7 @@ const barOpacity = (index: number): number => 1 - index * 0.15
   animation: top-model-bar var(--dash-top-model-bar-ms, 600ms) var(--motion-ease) var(--bar-delay) both;
 }
 
-:global(.dark) .top-model-bar {
+.dark .top-model-bar {
   background-color: theme('colors.primary.500');
 }
 

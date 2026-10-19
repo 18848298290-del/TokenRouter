@@ -442,6 +442,11 @@ import { buildGatewayUrl } from '@/api/client'
 import { formatDateLocalInput } from '@/utils/format'
 import { sanitizeUrl } from '@/utils/url'
 
+// KeyUsageView.vue displays API-key usage, billing status, and quota information
+// for a selected date range. The query controls supply relative or custom dates,
+// and result cards format the returned usage according to the available billing
+// information. Loading placeholders use component-scoped theme colors.
+
 const { t, locale } = useI18n()
 const appStore = useAppStore()
 const { formatBalanceAmount } = useBalanceDisplay()
@@ -1032,7 +1037,7 @@ onUnmounted(() => {
   animation: shimmer-kv 1.8s ease-in-out infinite;
   border-radius: var(--radius-surface);
 }
-:global(.dark) .skeleton {
+.dark .skeleton {
   background: linear-gradient(90deg, #17171A 25%, #0F0F10 50%, #17171A 75%);
   background-size: 200% 100%;
 }

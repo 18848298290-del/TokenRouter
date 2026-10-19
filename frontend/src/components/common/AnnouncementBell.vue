@@ -184,6 +184,11 @@ import type { UserAnnouncement } from '@/types'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import Icon from '@/components/icons/Icon.vue'
 
+// AnnouncementBell.vue provides the header announcement list and its detail
+// dialog. The announcement store supplies unread state and read actions, while
+// this component selects the open item and coordinates scrolling across the
+// list, detail, and queued popup.
+
 const props = withDefaults(defineProps<{
   variant?: 'default' | 'status'
 }>(), {
@@ -291,7 +296,7 @@ watch(
   background-clip: padding-box;
 }
 
-:global(.dark) .announcement-list-scrollbar::-webkit-scrollbar-thumb {
+.dark .announcement-list-scrollbar::-webkit-scrollbar-thumb {
   background: rgb(82 82 91 / 0.7);
   border: 2px solid transparent;
   background-clip: padding-box;
