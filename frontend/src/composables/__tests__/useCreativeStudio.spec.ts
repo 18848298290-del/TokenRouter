@@ -4,8 +4,16 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+
+// refreshUser observes account reads independently of the mocked task and image
+// APIs, allowing tests to delay or reject balance updates during generation.
+const { refreshUser } = vi.hoisted(() => ({ refreshUser: vi.fn() }))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ refreshUser }),
+}))
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -103,6 +111,7 @@ describe('useCreativeStudio', () => {
     setActivePinia(createPinia())
     vi.useFakeTimers()
     localStorage.clear()
+    refreshUser.mockResolvedValue(undefined)
 
     mockedApi.getCreativeModels.mockResolvedValue([{ ...MODEL }])
     mockedApi.getCreativeCapabilities.mockResolvedValue({
@@ -890,6 +899,145 @@ describe('useCreativeStudio', () => {
 
       expect(studio.runHistory.value.map((run) => run.id)).toEqual(['new-workspace-run'])
       expect(mockedApi.getCreativeRuns).toHaveBeenLastCalledWith(nextWorkspaceId, 1, 20)
+    })
+  })
+
+  describe('balance refresh', () => {
+    // Creating a task reserves funds before polling begins. Refresh the shared
+    // user immediately so the header can show the new reservation.
+    it('refreshes the user after a successful submission', async () => {
+      const { studio, wrapper } = await setupStudio()
+      studio.prompt.value = 'An illustrated city'
+
+      expect(await studio.createRun({ sourceBlobs: [], maskBlob: null })).toBe(true)
+      await flushPromises()
+
+      expect(refreshUser).toHaveBeenCalledTimes(1)
+      wrapper.unmount()
+    })
+
+    // Each terminal status completes a funding path. Repeated history snapshots
+    // must keep the refreshed account without issuing more identical account reads.
+    it.each(['succeeded', 'failed', 'cancelled', 'result_lost'] as const)(
+      'refreshes the user when a tracked task becomes %s',
+      async (status) => {
+        const { studio, wrapper } = await setupStudio()
+        mockedApi.getCreativeRuns.mockResolvedValue({
+          items: [makeRun({ id: 'balance-run', status: 'running' })], total: 1,
+        })
+        await studio.refreshHistory()
+        await flushPromises()
+        refreshUser.mockClear()
+
+        mockedApi.getCreativeRuns.mockResolvedValue({
+          items: [makeRun({ id: 'balance-run', status })], total: 1,
+        })
+        await studio.refreshHistory()
+        await flushPromises()
+        expect(refreshUser).toHaveBeenCalledTimes(1)
+
+        await studio.refreshHistory()
+        await flushPromises()
+        expect(refreshUser).toHaveBeenCalledTimes(1)
+        wrapper.unmount()
+      },
+    )
+
+    // Older tasks can finish outside the latest history page. Their removal
+    // from the complete active list must still refresh funds shown in the header.
+    it('refreshes when an older active task disappears', async () => {
+      const { studio, wrapper } = await setupStudio()
+      mockedApi.getCreativeActiveRuns.mockResolvedValueOnce({
+        items: [makeRun({ id: 'older-run', status: 'release_pending' })],
+        next_cursor: '',
+        has_more: false,
+      })
+      await studio.refreshHistory()
+      await flushPromises()
+      refreshUser.mockClear()
+
+      await studio.refreshHistory()
+      await flushPromises()
+
+      expect(refreshUser).toHaveBeenCalledTimes(1)
+      expect(studio.polling.value).toBe(false)
+      wrapper.unmount()
+    })
+
+    // Settlement can finish while an earlier account read is pending. Start the
+    // next read after that request completes so its stale result cannot win.
+    it('serializes a settlement refresh behind a pending reservation refresh', async () => {
+      const { studio, wrapper } = await setupStudio()
+      let resolveReservation!: () => void
+      refreshUser.mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveReservation = resolve
+      }))
+      studio.prompt.value = 'An illustrated city'
+      await studio.createRun({ sourceBlobs: [], maskBlob: null })
+      await flushPromises()
+      mockedApi.getCreativeRuns.mockResolvedValue({
+        items: [makeRun({ id: 'run-1', status: 'succeeded' })], total: 1,
+      })
+
+      await studio.refreshHistory()
+      await flushPromises()
+      expect(refreshUser).toHaveBeenCalledTimes(1)
+      resolveReservation()
+      await flushPromises()
+
+      expect(refreshUser).toHaveBeenCalledTimes(2)
+      wrapper.unmount()
+    })
+
+    // Image content may arrive long after settlement. The account refresh must
+    // start while the download is pending so frozen funds do not linger.
+    it('refreshes settled funds before the output download completes', async () => {
+      const { studio, wrapper } = await setupStudio()
+      let resolveOutput!: (blob: Blob) => void
+      mockedApi.getCreativeRunOutputContent.mockImplementationOnce(() => new Promise<Blob>((resolve) => {
+        resolveOutput = resolve
+      }))
+      mockedApi.getCreativeRuns.mockResolvedValue({
+        items: [makeRun({
+          id: 'download-run', status: 'succeeded',
+          outputs: [{ output_index: 0, status: 'succeeded' }],
+        })],
+        total: 1,
+      })
+
+      const historyRefresh = studio.refreshHistory()
+      await flushPromises()
+
+      expect(refreshUser).toHaveBeenCalledTimes(1)
+      expect(mockedStore.saveAsset).not.toHaveBeenCalled()
+      resolveOutput(new Blob(['image'], { type: 'image/png' }))
+      await historyRefresh
+      expect(mockedApi.ackCreativeRunOutput).toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    // An account read can fail after task creation succeeds. Generation remains
+    // accepted, and the next task status change can refresh the account again.
+    it('continues generation and later refreshes after an account read fails', async () => {
+      const { studio, wrapper } = await setupStudio()
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      refreshUser.mockRejectedValueOnce(new Error('Network unavailable'))
+      studio.prompt.value = 'An illustrated city'
+
+      expect(await studio.createRun({ sourceBlobs: [], maskBlob: null })).toBe(true)
+      await flushPromises()
+      expect(studio.error.value).toBe('')
+      expect(consoleError).toHaveBeenCalledWith('Failed to refresh creative balance:', expect.any(Error))
+
+      mockedApi.getCreativeRuns.mockResolvedValue({
+        items: [makeRun({ id: 'run-1', status: 'failed' })], total: 1,
+      })
+      await studio.refreshHistory()
+      await flushPromises()
+
+      expect(refreshUser).toHaveBeenCalledTimes(2)
+      expect(studio.polling.value).toBe(false)
+      wrapper.unmount()
     })
   })
 

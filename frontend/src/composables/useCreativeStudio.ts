@@ -1,13 +1,6 @@
-/**
- * 创作台任务与素材状态
- * 管理模型目录和参数选择，保存并恢复参数，创建 run（支持幂等重试）。
- * 轮询任务输出，将历史记录关联到本地素材和提交参数，并调用视图提供的画布操作。
- * 点击生成时，视图从画布收集源图和 mask（选中的图片与画笔 mask）。
- * 轮询定时器在 composable 内注册 onBeforeUnmount 清理。
- */
-
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAuthStore } from '@/stores/auth'
 import {
   CREATIVE_RUN_TERMINAL_STATUSES,
   createCreativeRun,
@@ -39,6 +32,21 @@ import {
   type LocalAsset,
   type LocalRunParams,
 } from '@/utils/creativeLocalStore'
+
+/**
+ * useCreativeStudio.ts manages image generation settings, task polling, and
+ * browser-local output recovery. Submissions retain an idempotency key until
+ * accepted, while each history refresh merges recent tasks with the complete
+ * active list. Workspace and refresh generations prevent obsolete requests
+ * from replacing current task state. Task membership and status changes also
+ * initiate shared user refreshes independently of output downloads, allowing
+ * the header to reflect reserved or settled funds as account reads complete.
+ *
+ * Output recovery runs through a shared queue, saving each image locally before
+ * acknowledging it to the server. The view supplies canvas placement through a
+ * bridge. Settings writes and user refreshes each run in order, preventing an
+ * older operation from overwriting a later result within this studio instance.
+ */
 
 // 生成参数来源：视图在点击生成时从画布收集（选中的源图 + 画笔 mask）
 export interface CreativeExportInput {
@@ -93,8 +101,20 @@ export function creativeOptionKey(option: Pick<CreativeModelOption, 'group_id' |
   return `${option.group_id}::${option.model}`
 }
 
+/**
+ * useCreativeStudio provides reactive generation controls, task history, and
+ * local image recovery for a mounted studio view. Call it during component setup
+ * so its watchers and polling timer follow the view lifecycle. The view registers
+ * a canvas bridge for automatic placement and supplies source images on submit.
+ *
+ * Task snapshots drive shared user refreshes independently of output downloads.
+ * These refreshes execute serially; failures are logged and later task changes
+ * can refresh again. Account refresh failures leave generation and recovery
+ * running, with the auth store's periodic refresh still available.
+ */
 export function useCreativeStudio() {
   const { t } = useI18n()
+  const authStore = useAuthStore()
 
   // ==================== 状态 ====================
 
@@ -136,6 +156,30 @@ export function useCreativeStudio() {
   let settingsDirty = false
   // 设置写入串行化，保证快速输入时最后一次快照不会被旧写入覆盖
   let settingsWriteChain: Promise<void> = Promise.resolve()
+
+  // userRefreshQueue orders account reads triggered by task changes so a pending
+  // reservation refresh completes before the subsequent settlement refresh starts.
+  let userRefreshQueue: Promise<void> = Promise.resolve()
+
+  watch(
+    () => runHistory.value
+      .map((run) => `${run.id}:${run.status}`)
+      .sort()
+      .join(','),
+    () => {
+      // Compare task identities and statuses so unchanged polls and output ack
+      // updates do not repeatedly fetch the user record. Queue account reads
+      // separately from downloads, which may take minutes or fail after settlement.
+      userRefreshQueue = userRefreshQueue
+        .then(() => authStore.refreshUser())
+        .then(() => undefined)
+        .catch((cause) => {
+          // Keep task submission and output recovery usable when account reads
+          // fail; the auth store's periodic refresh can update the displayed balance.
+          console.error('Failed to refresh creative balance:', cause)
+        })
+    },
+  )
 
   // 本地身份不可用时，清除当前工作区的页面状态并停止轮询。
   function resetWorkspaceState(): void {

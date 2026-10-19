@@ -1,8 +1,8 @@
 <template>
   <AppLayout full-viewport>
     <!-- 整个内容区即无限画布背景:fullViewport 模式下 app-main 无内边距,画布经 flex 链铺满全幅(含顶部,点阵直达 header 边界) -->
-    <!-- --creative-history-w 是历史侧栏在 md 起的宽度；侧栏展开时 --creative-history-reserve 记下侧栏占用的右侧宽度，
-         顶部工具条和输入框据此在左侧剩余区域居中。窄屏侧栏盖在画布上，这个变量保持未设置。 -->
+    <!-- Reserve the desktop history panel's width for the toolbar, empty guide,
+         and composer. On narrow screens the panel overlays the full canvas. -->
     <div
       ref="stageRef"
       class="relative h-full min-h-0"
@@ -57,7 +57,7 @@
       <MotionTransition name="fade">
         <div
           v-if="showEmptyGuide"
-          class="pointer-events-none absolute inset-x-4 top-1/3 z-10 flex flex-col items-center gap-4 text-center"
+          class="creative-empty-guide pointer-events-none absolute left-4 top-1/3 z-10 flex flex-col items-center gap-4 text-center"
           data-testid="creative-empty-guide"
         >
           <div class="space-y-1">
@@ -116,16 +116,6 @@
 </template>
 
 <script setup lang="ts">
-/**
- * 创作台主视图：全幅无限画布 + 聊天式输入框。
- * - 输入框固定底部居中（跟随选中图片在缩放场景下位置不稳定）；生成状态和画布引导显示在输入框顶部的状态行
- * - 生成时从画布收集输入：edit/inpaint 取当前选中图片的原始 blob，inpaint 另取画笔 mask 导出
- * - 注册画布桥接：收割成功的输出自动上板；历史里的输出可一键导入画布
- * - 左上角设置（清空画布 / 清空本机创作数据）、右上角历史、顶部工具栏（上传 / 下载 / 局部重绘画笔组 / 删除），三块浮层同高
- * - 历史从右侧拉开侧栏：md 起停靠右侧，工具条和输入框移到侧栏左侧区域居中；窄屏侧栏带遮罩盖住画布
- * - 画布没有图片时，中央显示上传入口和示例提示词
- * 图片本体只存当前浏览器（IndexedDB），生成时才把所选素材发给模型供应商。
- */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onClickOutside } from '@vueuse/core'
@@ -140,6 +130,20 @@ import { CREATIVE_RUN_TERMINAL_STATUSES } from '@/api/creative'
 import { useCreativeStudio } from '@/composables/useCreativeStudio'
 import { useAppStore } from '@/stores'
 
+/**
+ * CreativeStudioView.vue connects the image canvas, generation form, and task
+ * history within a full viewport workspace. Generating an image collects the
+ * selected source images and any painted mask from the canvas. The registered
+ * canvas bridge places retrieved outputs and images imported from history.
+ * Image data is stored in this browser and sent to the provider on submission.
+ *
+ * The empty guide appears after scene restoration confirms there are no images.
+ * Desktop history reserves space on the right, keeping the toolbar, guide, and
+ * composer centered in the remaining area. On narrow screens history overlays
+ * the canvas. Submission feedback uses the current button positions so its
+ * animation follows the layout as the panel opens and closes.
+ */
+
 const { t } = useI18n()
 const appStore = useAppStore()
 const studio = useCreativeStudio()
@@ -152,7 +156,8 @@ const settingsRef = ref<HTMLDivElement | null>(null)
 const showClearConfirm = ref(false)
 // 设置菜单开关（齿轮在画布左上角，菜单向下展开）
 const settingsOpen = ref(false)
-// 历史侧栏开关，决定工具条和输入框是否给侧栏让位
+// historyOpen reserves desktop canvas space for history and recenters the toolbar,
+// empty guide, and composer together when the panel opens or closes.
 const historyOpen = ref(false)
 const submissionAnimationVisible = ref(false)
 const submissionAnimationStyle = ref<Record<string, string>>({})
@@ -333,7 +338,13 @@ async function onClearLocalData(): Promise<void> {
     max-width var(--motion-layout) var(--motion-ease);
 }
 
-/* 空画布引导里的上传和示例提示词按钮 */
+/* Match the toolbar's available width as desktop history opens and closes. */
+.creative-empty-guide {
+  right: calc(var(--creative-history-reserve, 0px) + 1rem);
+  transition: right var(--motion-layout) var(--motion-ease);
+}
+
+/* Upload and example actions share the empty guide's centered content area. */
 .empty-guide-chip {
   @apply inline-flex h-9 items-center gap-2 rounded-full px-4 text-sm text-gray-700 transition-colors hover:text-gray-900;
   @apply dark:text-dark-100 dark:hover:text-white;

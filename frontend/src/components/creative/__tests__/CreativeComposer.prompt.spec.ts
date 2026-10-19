@@ -1,5 +1,6 @@
 import { defineComponent, h, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 import CreativeComposer from '@/components/creative/CreativeComposer.vue'
 import { useCreativeStudio } from '@/composables/useCreativeStudio'
@@ -21,6 +22,8 @@ vi.mock('@/composables/useBalanceDisplay', () => ({
 }))
 
 describe('CreativeComposer 提示词高度', () => {
+  // Reusing saved prompts changes their length without native input events.
+  // The mounted composer must resize after reactive updates and subsequent manual edits.
   it('复用历史提示词后按内容伸缩，手动输入继续调整高度', async () => {
     let studio!: ReturnType<typeof useCreativeStudio>
     const wrapper = mount(defineComponent({
@@ -29,7 +32,10 @@ describe('CreativeComposer 提示词高度', () => {
         return () => h(CreativeComposer, { studio })
       },
     }), {
-      global: { stubs: { Icon: true, ModelIcon: true, Collapse: true, 'i18n-t': true } },
+      global: {
+        plugins: [createPinia()],
+        stubs: { Icon: true, ModelIcon: true, Collapse: true, 'i18n-t': true },
+      },
     })
     try {
       const textarea = wrapper.get('textarea')
