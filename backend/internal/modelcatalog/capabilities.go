@@ -146,6 +146,23 @@ func (v *Interleaved) UnmarshalJSON(body []byte) error {
 	return nil
 }
 
+// OutputSupport reports declared support for one output modality. Nil means
+// the catalog and overrides supplied no output declaration; an explicit empty
+// list rejects every modality and remains distinct from missing information.
+func (a Attributes) OutputSupport(modality string) *bool {
+	if a.OutputModalities == nil {
+		return nil
+	}
+	return valuePointer(slices.Contains(*a.OutputModalities, modality))
+}
+
+// OutputOnly reports whether the complete declared output set contains only
+// the supplied modality. Unknown and empty declarations return false, keeping
+// mixed text and image models eligible for ordinary text protocol handling.
+func (a Attributes) OutputOnly(modality string) bool {
+	return a.OutputModalities != nil && len(*a.OutputModalities) == 1 && (*a.OutputModalities)[0] == modality
+}
+
 // EffortSupport reports declared support for an effort level using the
 // reasoning flag and available control options together. An explicit false
 // reasoning flag rejects every effort, including choices still present in the

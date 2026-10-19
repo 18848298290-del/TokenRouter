@@ -27,8 +27,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	upstreamcore "github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
@@ -77,7 +80,7 @@ type grokPoolPolicyProviderRepo struct {
 // usable API credentials.
 func grokMediaFixture(transport httpclient.UpstreamTransport) *GrokExecutor {
 	// Use the shared 128 MiB bounded-read cap for scripted media response bodies.
-	return &GrokExecutor{Credentials: gatewaytestkit.RequestCredentials(nil, nil, nil, nil), Transport: transport, Output: &OpenAIResponseOutput{Options: OpenAIResponseOptions{ReadLimit: 128 * 1024 * 1024}}, Health: &provideradapter.GrokHealth{}, Routes: gatewayprovider.GrokRoutes{Validate: (egress.OperatorURLPolicy{}).Validate}, Failure: &UpstreamTransportFailure{}}
+	return &GrokExecutor{Attributes: grokMediaFixtureAttributes(), Credentials: gatewaytestkit.RequestCredentials(nil, nil, nil, nil), Transport: transport, Output: &OpenAIResponseOutput{Options: OpenAIResponseOptions{ReadLimit: 128 * 1024 * 1024}}, Health: &provideradapter.GrokHealth{}, Routes: gatewayprovider.GrokRoutes{Validate: (egress.OperatorURLPolicy{}).Validate}, Failure: &UpstreamTransportFailure{}}
 }
 
 // Do retains the submitted request pointer, then consumes the first queued
@@ -463,6 +466,8 @@ func TestRewriteGrokMediaVideoContentURLsRewritesSignedVideoURL(t *testing.T) {
 // objects for this serial call.
 func mediaErrorResponseFixture(executor *GrokExecutor, ctx context.Context, resp *http.Response, c *gin.Context, target *gatewayprovider.ExecutionProvider, requestID, model string) (*forwardcore.OpenAIResult, error) {
 	local := *executor
+	image := []string{"image"}
+	local.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{Lookup: func(string) modelcatalog.Attributes { return modelcatalog.Attributes{OutputModalities: &image} }}}
 	local.Transport = &auxiliaryHTTPRecorder{resp: resp}
 	local.Credentials = gatewaytestkit.RequestCredentials(nil, &providercore.OpenAIExecutionCredentials{Grok: func(context.Context, *providercore.Record) (string, error) { return "fixture-token", nil }}, nil, nil)
 	local.Credentials.HasGrokTokenSource = true
@@ -779,6 +784,7 @@ func TestForwardGrokMediaImagesGenerationNormalizesImagineAlias(t *testing.T) {
 		Body: io.NopCloser(strings.NewReader(`{"data":[{"url":"https://images.test/cat.png"}]}`)),
 	}}
 	svc := newResponsesFixture(responsesFixtureInputs{transport: upstream})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 	result, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, grok.GrokMediaEndpointImagesGenerations, "", body, "application/json")
 	require.NoError(t, err)
@@ -829,6 +835,7 @@ func TestForwardGrokMediaImagesGenerationRejectsEmptySuccessfulResponse(t *testi
 		Body:       io.NopCloser(strings.NewReader(`{"data":[]}`)),
 	}}
 	svc := newResponsesFixture(responsesFixtureInputs{transport: upstream})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 	result, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, grok.GrokMediaEndpointImagesGenerations, "", body, "application/json")
 	require.Nil(t, result)
@@ -959,6 +966,7 @@ func TestForwardGrokMediaAppliesProviderModelMappingAfterEndpointNormalization(t
 				Body:       io.NopCloser(strings.NewReader(tt.responseBody)),
 			}}
 			svc := newResponsesFixture(responsesFixtureInputs{transport: upstream})
+			svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 			result, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, tt.endpoint, "", []byte(tt.body), "application/json")
 
@@ -1006,6 +1014,7 @@ func TestForwardGrokMediaImagesGenerationStripsUnsupportedSize(t *testing.T) {
 		Body: io.NopCloser(strings.NewReader(`{"data":[{"url":"https://images.test/cat.png"}]}`)),
 	}}
 	svc := newResponsesFixture(responsesFixtureInputs{transport: upstream})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 	result, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, grok.GrokMediaEndpointImagesGenerations, "", body, "application/json")
 	require.NoError(t, err)
@@ -1062,6 +1071,7 @@ func TestForwardGrokMediaImagesEditMultipartConvertsToJSON(t *testing.T) {
 		Body: io.NopCloser(strings.NewReader(`{"data":[{"url":"https://images.test/edited.png"}]}`)),
 	}}
 	svc := newResponsesFixture(responsesFixtureInputs{transport: upstream})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 	result, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, grok.GrokMediaEndpointImagesEdits, "", buf.Bytes(), writer.FormDataContentType())
 	require.NoError(t, err)
@@ -1111,6 +1121,7 @@ func TestForwardGrokMediaVideoGenerationReturnsUsageAndResponseID(t *testing.T) 
 		Body: io.NopCloser(strings.NewReader(`{"request_id":"video-request-123","usage":{"prompt_tokens":3,"completion_tokens":4}}`)),
 	}}
 	svc := newResponsesFixture(responsesFixtureInputs{transport: upstream})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 	result, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, grok.GrokMediaEndpointVideosGenerations, "", body, "application/json")
 	require.NoError(t, err)
@@ -1160,6 +1171,7 @@ func TestForwardGrokMediaVideoGenerationReturnsTaskIDAsResponseID(t *testing.T) 
 		Body:       io.NopCloser(strings.NewReader(`{"task_id":"video-task-123"}`)),
 	}}
 	svc := newResponsesFixture(responsesFixtureInputs{transport: upstream})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 	result, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, grok.GrokMediaEndpointVideosGenerations, "", body, "application/json")
 	require.NoError(t, err)
@@ -1200,6 +1212,7 @@ func TestForwardGrokMediaVideoGenerationPreservesImageToVideoModel(t *testing.T)
 		Body: io.NopCloser(strings.NewReader(`{"request_id":"video-request-456"}`)),
 	}}
 	svc := newResponsesFixture(responsesFixtureInputs{transport: upstream})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 	result, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, grok.GrokMediaEndpointVideosGenerations, "", body, "application/json")
 	require.NoError(t, err)
@@ -1248,6 +1261,7 @@ func TestForwardGrokMediaOAuthImageToVideoUsesOfficialAPIForLargeBody(t *testing
 		Body: io.NopCloser(strings.NewReader(`{"request_id":"video-request-oauth"}`)),
 	}}
 	svc := newResponsesFixture(responsesFixtureInputs{grokTokens: newHTTPGrokTokenFixture(nil, nil), transport: upstream})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 	_, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, grok.GrokMediaEndpointVideosGenerations, "", body, "application/json")
 	require.NoError(t, err)
@@ -1290,6 +1304,7 @@ func TestForwardGrokMediaVideoStatusUsesGETWithoutBody(t *testing.T) {
 		Body: io.NopCloser(strings.NewReader(`{"id":"request-123","status":"completed"}`)),
 	}}
 	svc := newResponsesFixture(responsesFixtureInputs{transport: upstream})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 	result, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, grok.GrokMediaEndpointVideoStatus, "request-123", nil, "")
 	require.NoError(t, err)
@@ -1343,6 +1358,7 @@ func TestForwardGrokMediaVideoMutationEndpoints(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(`{"request_id":"video-mutation-123"}`)),
 			}}
 			svc := newResponsesFixture(responsesFixtureInputs{transport: upstream})
+			svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 			result, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, tt.endpoint, "", body, "application/json")
 			require.NoError(t, err)
@@ -1397,6 +1413,7 @@ func TestForwardGrokMedia429ReconcilesRateLimitBeforeCustomErrorBypass(t *testin
 	}}
 	repo := &grokQuotaProviderRepo{}
 	svc := newResponsesFixture(responsesFixtureInputs{transport: upstream, providers: repo})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 
 	result, err := svc.Grok.ForwardGrokMedia(context.Background(), c, provider, grok.GrokMediaEndpointImagesGenerations, "", body, "application/json")
 	require.Error(t, err)
@@ -1429,6 +1446,7 @@ func TestGrokMedia429FailoverPreservesRetryAfter(t *testing.T) {
 	}
 	repo := &grokQuotaProviderRepo{}
 	svc := newResponsesFixture(responsesFixtureInputs{providers: repo})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 	resp := &http.Response{
 		StatusCode: http.StatusTooManyRequests,
 		Header:     http.Header{"Retry-After": []string{"45"}},
@@ -1488,6 +1506,7 @@ func newGrokPoolPolicyGateway(provider *gatewayprovider.ExecutionProvider) (*Ope
 	}}, nil)
 
 	svc = newResponsesFixture(responsesFixtureInputs{providers: repo, health: healthObserver, options: cfg})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
 	healthObserver.Limits.RetryOpenAI = func(v *providercore.Record, h http.Header, body []byte) bool {
 		return provideradapter.CanRetryOpenAI429(svc.Output.Health.Runtime, v, h, body)
 	}
@@ -1667,4 +1686,19 @@ func TestVideoContentKeepsDispatchAndTerminalOutcomes(t *testing.T) {
 			require.Equal(t, "status-id", saved.Attempts[0].RequestID)
 		})
 	}
+}
+
+// grokMediaFixtureAttributes declares private image targets used by the media
+// transport scenarios. Other identities use the embedded catalog, keeping text
+// and video capability data separate from these explicitly configured deployments.
+func grokMediaFixtureAttributes() *routing.ModelAttributeService {
+	return &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{Lookup: func(model string) modelcatalog.Attributes {
+		switch model {
+		case "grok-imagine", "grok-imagine-edit", "vendor-image-model", "vendor-image-edit", "grok-imagine-image-quality", "grok-build", "image-alias":
+			image := []string{"image"}
+			return modelcatalog.Attributes{OutputModalities: &image}
+		default:
+			return testkit.OfflineView().Resolve(modelcatalog.Target{Platform: "grok", Model: model}, modelcatalog.Attributes{}).Attributes
+		}
+	}}}
 }

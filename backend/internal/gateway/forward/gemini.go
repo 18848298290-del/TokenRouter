@@ -276,12 +276,8 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 	if err != nil {
 		return nil, err
 	}
-	imageCount := 0
-	// This wrapper assigns one image billing unit from the selected model's
-	// image classification; it does not count generated objects in the response.
-	if p.IsImageModel(mappedModel) {
-		imageCount = 1
-	}
+	imageCount := result.ObservedImages
+
 	return &Result{
 		RequestID:             result.RequestID,
 		UpstreamHeaders:       result.UpstreamHeaders,

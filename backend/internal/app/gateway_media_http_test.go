@@ -35,6 +35,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	catalogtestkit "github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
@@ -222,11 +223,6 @@ func TestOpenAIGatewayHandlerResponses_ImagePermissionHardSignalsStillRejected(t
 			name:     "OpenAI native image_generation tool",
 			platform: capability.PlatformOpenAI,
 			body:     `{"model":"gpt-5.5","tools":[{"type":"image_generation","model":"gpt-image-2"}],"input":"draw a cat"}`,
-		},
-		{
-			name:     "OpenAI image model",
-			platform: capability.PlatformOpenAI,
-			body:     `{"model":"gpt-image-2","input":"draw a cat"}`,
 		},
 	}
 
@@ -568,7 +564,7 @@ func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhen
 
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","quality":"high","size":"1536x1024"}`)
 	core, observedLogs := observer.New(zap.DebugLevel)
-	requestCtx := logging.IntoContext(context.Background(), zap.New(core))
+	requestCtx := routing.WithModelAttributes(logging.IntoContext(context.Background(), zap.New(core)), &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: catalogtestkit.OfflineView}})
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body)).WithContext(requestCtx)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

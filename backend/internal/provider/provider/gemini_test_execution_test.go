@@ -21,7 +21,7 @@ import (
 func TestCreateGeminiTestPayload_ImageModel(t *testing.T) {
 	t.Parallel()
 
-	payload := geminiTestPayload("gemini-2.5-flash-image", "draw a tiny robot")
+	payload := geminiTestPayload("gemini-2.5-flash-image", "draw a tiny robot", provider.ProviderTestTypeImage)
 
 	var parsed struct {
 		Contents []struct { // probe conversation messages

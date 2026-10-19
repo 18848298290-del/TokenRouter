@@ -61,7 +61,7 @@ func TestNativeProviderTestAssembly(t *testing.T) {
 	store := providerpostgres.NewProviderStore(f.client, f.db, providerpostgres.ProviderStoreOptions{})
 	transport := &nativeProviderTestTransport{}
 	manager := lifecycle.New()
-	core := NewProviderTestsForTest(store, nil, nil, nil, nil, transport, &config.Config{}, nil, nil, nil, nil, manager, nil)
+	core := NewProviderTestsForTest(store, nil, nil, nil, nil, transport, &config.Config{}, nil, nil, nil, nil, manager, nil, nil)
 	require.Empty(t, transport.requests, "构造不请求供应商")
 	for _, test := range []struct {
 		platform, model, path, body string // platform: tested provider platform; model: requested test model; path: expected upstream path; body: supplied protocol stream

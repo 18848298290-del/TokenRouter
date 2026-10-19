@@ -1268,10 +1268,6 @@ func (s *ResponseAdapter) ExtractImageInputSize(body []byte) string {
 	return ""
 }
 
-// IsImageGenerationModel delegates Gemini image-model recognition to the
-// shared upstream predicate.
-func IsImageGenerationModel(model string) bool { return upstream.IsGeminiImageGenerationModel(model) }
-
 // observeRaw forwards data synchronously to the optional callback without
 // copying bytes. A missing callback has no effect; retaining callbacks follow
 // supplied storage ownership and synchronize their own shared state. Callbacks

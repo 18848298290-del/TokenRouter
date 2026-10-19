@@ -1,11 +1,14 @@
 package googleforward
 
 import (
+	"strings"
+
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
 // model_attributes.go applies resolved sampling, thinking, and output-limit
@@ -53,6 +56,15 @@ func applyGeminiModelParameters(body, controls []byte, resolution modelcatalog.R
 	// route marks unsupported.
 	for _, configName := range []string{"generationConfig", "generation_config"} {
 		config := gjson.GetBytes(body, configName)
+		for _, field := range []string{"responseModalities", "response_modalities"} {
+			for _, modality := range config.Get(field).Array() {
+				if strings.EqualFold(modality.String(), "image") {
+					if err := routing.RequireImageOutput(result.Attributes); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
 		for key, support := range map[string]*bool{"temperature": result.Attributes.Temperature, "topP": result.Attributes.TopP, "top_p": result.Attributes.TopP} {
 			if support == nil || *support || !config.Get(key).Exists() {
 				continue

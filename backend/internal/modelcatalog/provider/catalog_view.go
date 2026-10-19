@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"iter"
 	"slices"
-	"strings"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
@@ -26,8 +25,8 @@ import (
 // PriceModel identifies a listed model's service and billing classification.
 type PriceModel struct {
 	// Model and Provider identify the listed record. Mode uses price metadata
-	// when present, with the grok-imagine-video marker overriding it to video.
-	// BillingMode combines that mode, model name, and known price dimensions
+	// when present; absent pricing metadata retains an unknown operation mode.
+	// BillingMode combines that mode and known price dimensions
 	// for the administrative listing.
 	Model, Provider, Mode, BillingMode string // complete query identity, catalog provider identity, declared pricing mode, derived billing classification
 }
@@ -96,10 +95,9 @@ func (v PricingView) ForceUpdate() error {
 // remain available for classification.
 //
 // Missing exact prices try the pricing package's identity candidates before
-// billing mode is derived. Listed identities containing grok-imagine-video
-// receive video mode. This keeps model enumeration distinct from
-// token price availability, so media and attribute-only records can appear in
-// the same fixed price listing.
+// billing mode is derived from explicit modes and price dimensions. Model
+// enumeration is independent of token price availability, allowing media and
+// attribute-only records to appear in the same fixed price listing.
 func buildPriceModels(catalog *modelcatalog.Catalog, prices map[string]*CatalogModelPricing) []PriceModel {
 	entries := map[string]PriceModel{}
 	if catalog != nil {
@@ -120,9 +118,6 @@ func buildPriceModels(catalog *modelcatalog.Catalog, prices map[string]*CatalogM
 	models := make([]PriceModel, 0, len(names))
 	for _, name := range names {
 		item := entries[name]
-		if strings.Contains(item.Model, "grok-imagine-video") {
-			item.Mode = "video"
-		}
 		raw := prices[name]
 		if raw == nil {
 			// Pricing candidate rules can reduce resource-shaped spellings.

@@ -184,7 +184,11 @@ func (p *wsRequestAdapter) StripSparkImages(body []byte, model string) ([]byte, 
 // provider model only for inspection; callers keep the actual upstream request
 // body separately.
 func (p *wsRequestAdapter) ImageIntent(routing, upstream string, body []byte) ([]byte, bool, bool) {
-	return openAIWSImageIntentForRoutingModel(routing, upstream, body, p.provider.Record.Platform)
+	inspection, intent, explicit := openAIWSImageIntentForRoutingModel(routing, upstream, body, p.provider.Record.Platform)
+	if gatewayprovider.ExecutionModelAttributes(p.provider, upstream).OutputOnly("image") {
+		intent, explicit = true, true
+	}
+	return inspection, intent, explicit
 }
 
 // FeatureDenied marks a local Responses image-feature denial in the request's
@@ -204,7 +208,15 @@ func (p *wsRequestAdapter) ImageDeniedMessage() string {
 // successful labels are retained separately from the actual upstream text
 // model for result accounting.
 func (p *wsRequestAdapter) ImageBilling(body []byte, model string) (gatewayws.ImageBilling, error) {
-	result, err := gatewayprovider.ImageIntent().ResolveOpenAIResponsesImageBillingConfigDetailedFromBody(body, model)
+	ctx := p.attributeContext
+	if ctx == nil {
+		ctx = p.request.Request.Context()
+	}
+	var service *routing.ModelAttributeService
+	if p.service.Requests != nil && p.service.Requests.Readers != nil {
+		service = p.service.Requests.Readers.Attributes
+	}
+	result, err := gatewayprovider.ResolveResponsesImageBilling(ctx, p.provider, body, service)
 	if err != nil {
 		return gatewayws.ImageBilling{}, err
 	}
@@ -226,3 +238,22 @@ func (p *wsRequestAdapter) WriteBlocked(ctx context.Context, body []byte) {
 // Log writes provider-specific request-normalization diagnostics to the WS
 // information logger.
 func (p *wsRequestAdapter) Log(message string) { gatewayprovider.LogOpenAIWSModeInfo("%s", message) }
+
+// ModelAttributes applies turn attributes after stripping tools excluded by
+// explicit policy or Spark encoding. This ordering keeps removed declarations
+// from requiring capabilities and leaves final injected tools to billing validation.
+func (p *wsRequestAdapter) ModelAttributes(ctx context.Context, turn int, model string, body []byte) ([]byte, error) {
+	policy := p.ImagePolicy(ctx, body)
+	var err error
+	if policy.Explicit == "strip" {
+		body, _, err = p.StripImages(body)
+		if err != nil {
+			return nil, err
+		}
+	}
+	body, _, err = p.StripSparkImages(body, model)
+	if err != nil {
+		return nil, err
+	}
+	return p.wsPassthroughAdapter.ModelAttributes(ctx, turn, model, body)
+}

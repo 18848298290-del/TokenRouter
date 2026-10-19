@@ -16,6 +16,7 @@ import (
 	forward "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -263,10 +264,13 @@ func (p *openAIPassthroughExecutionAdapter) ImagePermissionMessage() string {
 
 // ImageBilling resolves image model and size metadata from prepared Responses
 // bytes. It translates the provider helper's detailed result into runner
-// fields, and validation errors stop passthrough preparation before the
-// upstream exchange.
+// fields. Capability failures receive a local protocol error with their
+// structured reason before passthrough stops the upstream exchange.
 func (p *openAIPassthroughExecutionAdapter) ImageBilling(body []byte, model string) (forward.ImageBilling, error) {
-	v, err := gatewayadapter.ImageIntent().ResolveOpenAIResponsesImageBillingConfigDetailedFromBody(body, model)
+	v, err := gatewayadapter.ResolveResponsesImageBilling(p.c.Request.Context(), p.provider, body, p.s.modelAttributes())
+	if err != nil {
+		WriteOpenAIModelAttributeError(p.c, err, p.c.Writer.Written())
+	}
 	return forward.ImageBilling{Model: v.Model, SizeTier: v.SizeTier, InputSize: v.InputSize}, err
 }
 
@@ -530,4 +534,17 @@ func openAIResponsesRejectedFieldRetryStateForRequest(c *gin.Context, initialBod
 		}
 	}
 	return openai.NewOpenAIResponsesRejectedFieldRetryStateWithBudget(initialBody, budget)
+}
+
+// ModelAttributes resolves final passthrough capabilities before permission
+// checks and billing. The selected provider retains the resolution for later
+// image-tool identity selection within the same request snapshot.
+func (p *openAIPassthroughExecutionAdapter) ModelAttributes(ctx context.Context, model string) (modelcatalog.Resolution, error) {
+	result, err := gatewayadapter.ResolveModelAttributes(ctx, p.provider, model, p.s.modelAttributes(), "openai_responses")
+	if err == nil {
+		p.provider.Capabilities = &result
+	} else {
+		WriteOpenAIModelAttributeError(p.c, err, p.c.Writer.Written())
+	}
+	return result, err
 }

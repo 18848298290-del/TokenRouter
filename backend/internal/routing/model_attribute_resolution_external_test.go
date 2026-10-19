@@ -12,6 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
+	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
 // Gemini resource IDs can carry a models/ prefix while an administrator's
@@ -45,8 +46,11 @@ func TestModelAttributePreviewMatchesRuntimeForResourceID(t *testing.T) {
 	providers := gatewayprovider.CatalogueProviders([]provider.Record{record})
 	temperature := false
 	config := &routing.ModelAttributeConfig{Status: "active", Rules: []routing.ModelAttributeRule{{Models: []string{"gemini-2.5-flash"}, Attributes: modelcatalog.Attributes{Temperature: &temperature}}}}
-	svc := &routing.ModelAttributeService{Repo: previewAttributeRepo{config: config}, Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView, Candidates: func() func(string) []string { return pricing.BuildModelIdentityCandidates }}, Catalogue: &routing.RequestableCatalogue{Read: func(context.Context, *int64) ([]routing.CatalogueProvider, error) { return providers, nil }}}
-	preview, err := svc.Preview(ctx, 1, "alias", "", config)
+	svc := &routing.ModelAttributeService{Repo: previewAttributeRepo{config: config}, Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView, Candidates: func() func(string) []string { return pricing.BuildModelIdentityCandidates }}}
+	catalogue := &routing.RequestableCatalogue{Read: func(context.Context, *int64) ([]routing.CatalogueProvider, error) { return providers, nil }}
+	targets, err := catalogue.AttributeTargets(ctx, 1, "alias", "")
+	require.NoError(t, err)
+	preview, err := svc.Preview(ctx, 1, targets, config)
 	require.NoError(t, err)
 	require.Len(t, preview, 1)
 	target := preview[0].Target
@@ -54,4 +58,33 @@ func TestModelAttributePreviewMatchesRuntimeForResourceID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, &temperature, runtime.Attributes.Temperature)
 	require.Equal(t, runtime.Attributes.Temperature, preview[0].Attributes.Temperature)
+}
+
+// TestPreviewDeclaresUnknownImageBeforeCatalogueAdmission supplies a draft for
+// an unknown configured image route. Preview must enumerate that route before
+// capability filtering; saving the same declaration admits the next query.
+func TestPreviewDeclaresUnknownImageBeforeCatalogueAdmission(t *testing.T) {
+	groupID := int64(1)
+	group := &routing.Group{ID: groupID, AllowedProtocols: []capability.ProtocolID{capability.ProtocolImagesGenerations}}
+	policies := &countedCataloguePolicies{PricingConfigService: routing.NewPricingConfigService(nil, nil, routing.PricingConfigOptions{ReadGroup: func(context.Context, int64) (*routing.Group, error) { return group, nil }})}
+	record := provider.Record{Platform: "openai", Type: "apikey", Credentials: map[string]any{"model_whitelist": []string{"canvas"}}}
+	providers := gatewayprovider.CatalogueProviders([]provider.Record{record})
+	repo := &previewAttributeRepo{}
+	service := &routing.ModelAttributeService{Repo: repo, Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
+	catalogue := &routing.RequestableCatalogue{Read: func(context.Context, *int64) ([]routing.CatalogueProvider, error) { return providers, nil }, Resolver: routing.RequestableResolver{GroupPolicies: policies, Attributes: service}}
+	before := catalogue.ResolveRequestableModels(context.Background(), &groupID, "")
+	require.NoError(t, before.Err)
+	require.Empty(t, before.Models)
+	image := []string{"image"}
+	draft := &routing.ModelAttributeConfig{Status: "active", Rules: []routing.ModelAttributeRule{{Models: []string{"canvas"}, Attributes: modelcatalog.Attributes{OutputModalities: &image}}}}
+	targets, err := catalogue.AttributeTargets(context.Background(), groupID, "canvas", string(capability.ProtocolImagesGenerations))
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	preview, err := service.Preview(context.Background(), groupID, targets, draft)
+	require.NoError(t, err)
+	require.NoError(t, routing.RequireImageOutput(preview[0].Attributes))
+	repo.config = draft
+	after := catalogue.ResolveRequestableModels(context.Background(), &groupID, "")
+	require.NoError(t, after.Err)
+	require.Equal(t, []string{"canvas"}, routing.RequestableModelIDs(after.Models))
 }

@@ -64,7 +64,7 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 			return modelcatalog.Attributes{}
 		}
 	}
-	if p.ImageModel(upstreamModel) {
+	if o.Codec.Attributes != nil && o.Codec.Attributes(upstreamModel).OutputOnly("image") {
 		err := fmt.Errorf("model %s is an image model and is not available on the Responses endpoint; use /v1/images/generations instead", upstreamModel)
 		// Report the endpoint mismatch as 400 before the handler can convert it to a generic 502.
 		if in.HTTPPresent {

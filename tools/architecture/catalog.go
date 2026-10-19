@@ -141,7 +141,7 @@ internal/server/httpx`, Tests: "internal/identity internal/infra/postgres/..."},
 internal/billing internal/gateway/httpapi internal/infra/postgres/... internal/infra/telemetry/...
 internal/pkg/ internal/protocol internal/routing internal/routing/capability
 internal/routing/modelmap internal/server/httpx internal/upstream internal/upstream/gemini
-internal/upstream/vertex internal/usage`, Tests: `internal/billing/pricing internal/billing/provider internal/billing/testkit internal/config internal/gateway/completion
+internal/upstream/vertex internal/usage`, Tests: `internal/modelcatalog/testkit internal/billing/pricing internal/billing/provider internal/billing/testkit internal/config internal/gateway/completion
 internal/gateway/modeltrace internal/gateway/provider/modelidentity internal/testutil/assertion
 internal/testutil/postgrescontainer internal/testutil/rediscontainer`},
 		"internal/billing": {Production: `internal/modelcatalog internal/modelcatalog/provider ent/... internal/billing/... internal/egress internal/gateway/provider
@@ -165,7 +165,7 @@ internal/testutil/assertion`},
 		"internal/egress": {Production: `ent/... internal/provider/transfer internal/egress/... internal/idempotency/httpapi
 internal/infra/httpclient/... internal/infra/postgres/... internal/infra/telemetry/... internal/pkg/
 internal/server/httpx`, Tests: "internal/billing"},
-		"internal/gateway": {Production: `internal/modelcatalog ent/... internal/provider internal/provider/provider internal/apikey internal/apikey/httpapi
+		"internal/gateway": {Production: `internal/modelcatalog internal/modelcatalog/testkit ent/... internal/provider internal/provider/provider internal/apikey internal/apikey/httpapi
 internal/billing internal/billing/pricing internal/billing/testkit internal/creative
 internal/creative/provider internal/egress internal/egress/provider internal/gateway/...
 internal/identity internal/identity/httpapi/authctx internal/infra/httpclient/...
@@ -402,12 +402,13 @@ internal/upstream/zhipu/...`, Tests: ""},
 
 	// 窄权限属于指定文件，不能由相邻文件或目标子包继承。
 	filePermissions = []filePermission{
+		{Scope: "internal/gateway", Imports: "internal/modelcatalog/testkit", Files: "httpapi/grok_media_execution_test.go httpapi/helpers_test.go provider/creative_catalog_test.go provider/googleforward/gemini_attempts_external_test.go provider/googleforward/gemini_openai_external_test.go provider/googleforward/helpers_external_test.go provider/grok_codec_test.go provider/model_attributes_test.go provider/model_qualification_test.go provider/selection/candidate_policy_test.go testkit/runtime_settings.go ws/httpapi/openai_ws_http_bridge_test.go"},
 		// Protocol-event inspection is confined to the performance observer and its existing HTTP fixture.
 		{Scope: "internal/infra", Imports: "github.com/tidwall/gjson", Files: "telemetry/timing/events.go telemetry/timing/performance.go httpclient/upstream_pool_test.go"},
 		// 目录读取与测试数据构造按实际调用文件登记。
-		{Scope: "internal/gateway/provider", Imports: "internal/modelcatalog", Files: "model_display.go model_attributes.go model_catalogue.go creative_catalog.go execution_provider.go qoder_runtime.go responses_effort.go grok_codec_test.go model_attributes_test.go googleforward/antigravity_openai.go googleforward/model_attributes.go googleforward/gemini_attempts_external_test.go googleforward/gemini_openai_external_test.go grokforward/contracts.go grokforward/responses.go openaiforward/transform_ports.go messageforward/bedrock.go modelidentity/thinking.go"},
-		{Scope: "internal/gateway/provider", Imports: "internal/modelcatalog/testkit", Files: "grok_codec_test.go model_attributes_test.go googleforward/gemini_openai_external_test.go googleforward/gemini_attempts_external_test.go"},
-		{Scope: "internal/provider/httpapi", Imports: "internal/modelcatalog/testkit", Files: "management_catalog_test.go"},
+		{Scope: "internal/gateway/provider", Imports: "internal/modelcatalog", Files: "model_qualification_test.go model_display.go model_attributes.go model_catalogue.go creative_catalog.go execution_provider.go qoder_runtime.go responses_effort.go grok_codec_test.go model_attributes_test.go googleforward/antigravity_openai.go googleforward/model_attributes.go googleforward/gemini_attempts_external_test.go googleforward/gemini_openai_external_test.go grokforward/contracts.go grokforward/responses.go openaiforward/transform_ports.go openaiforward/passthrough_ports.go messageforward/bedrock.go modelidentity/thinking.go"},
+		{Scope: "internal/gateway/provider", Imports: "internal/modelcatalog/testkit", Files: "grok_codec_test.go model_attributes_test.go creative_catalog_test.go model_qualification_test.go selection/candidate_policy_test.go googleforward/gemini_openai_external_test.go googleforward/gemini_attempts_external_test.go googleforward/helpers_external_test.go"},
+		{Scope: "internal/provider/httpapi", Imports: "internal/modelcatalog/testkit", Files: "management_catalog_test.go provider_probe_scenario_test.go"},
 		// 容器启动等待由共用测试入口提供，许可限定到接入该入口的文件。
 		{Scope: "internal/infra/redis", Imports: "internal/testutil/rediscontainer", Files: "helpers_integration_test.go"},
 		{Scope: "internal/ops/postgres", Imports: "internal/testutil/rediscontainer", Files: "main_integration_test.go"},

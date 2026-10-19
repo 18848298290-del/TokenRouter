@@ -1,9 +1,12 @@
 package googleforward
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
+
+	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 	"github.com/TokenFlux/TokenRouter/internal/gateway"
@@ -18,7 +21,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
-	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
@@ -27,8 +29,8 @@ import (
 // Google forwarding can observe the same images in several cumulative response
 // payloads. The attempt counter retains the largest single-payload count so
 // repeated cumulative chunks do not become additional images in completion
-// metadata, and recognized model names provide an estimate when no inline image
-// count is available.
+// metadata. Missing image observations remain zero, regardless of the request
+// or upstream model name.
 //
 // The request-local counter and tool restoration map travel with one attempt
 // and synchronous HTTP output. Injected Gemini and Antigravity services remain
@@ -241,8 +243,8 @@ type attempt struct {
 	// response tool restoration mapping
 	ToolNames *anthropic.ToolNameRewrite
 	// Images starts at zero for each attempt; observeImages retains the
-	// maximum payload count, and imageCount consults model-name inference
-	// when no count was observed.
+	// maximum payload count, and imageCount retains zero when no output was
+	// observed for this attempt.
 	Images int // largest observed image count
 }
 
@@ -284,31 +286,20 @@ func (a *attempt) reverseTools(body []byte) []byte {
 // trailing usage or text payloads therefore keep the existing image observation
 // for imageCount.
 func (a *attempt) observeImages(body []byte) {
+	body = bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(body), []byte("data:")))
+	if response := gjson.GetBytes(body, "response"); response.IsObject() {
+		body = []byte(response.Raw)
+	}
 	if n := gemini.CountGeminiInlineImageOutputs(body); n > a.Images {
 		a.Images = n
 	}
 }
 
-// imageCount selects the completion image count from observation or model-name
-// inference. A positive payload observation wins, including outputs under
-// custom aliases that name matching cannot identify.
-//
-// When the counter remains zero, a recognized original or mapped image-model
-// name selects one image. Otherwise the result is zero, so text models with no
-// observed inline image remain unclassified as image output. Callers create
-// attempt state for each provider so a prior failed attempt count cannot enter
-// another provider result.
-func (a *attempt) imageCount(original, mapped string) int {
-	if a.Images > 0 {
-		return a.Images
-	}
-	if antigravity.IsImageGenerationModel(original) || antigravity.IsImageGenerationModel(mapped) {
-		// When no payload image was observed, recognized request or
-		// mapped names supply the legacy single-image estimate used by
-		// Messages and native Gemini results.
-		return 1
-	}
-	return 0
+// imageCount returns the largest observed image count for this attempt.
+// Zero observations remain zero for every model identity, so model capability
+// and request names cannot fabricate billable output when a response contains none.
+func (a *attempt) imageCount(_, _ string) int {
+	return a.Images
 }
 
 // messagesResult returns a new outer MessagesResult when forwarding

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
@@ -126,6 +127,10 @@ type PassthroughPorts interface {
 	// preparation. Its changed result replaces outgoing bytes so late
 	// compatibility cleanup cannot lose the Lite-required controls.
 	NormalizeLite(body []byte) ([]byte, bool, error)
+	// ModelAttributes resolves the final passthrough route and retains its
+	// capabilities for image billing. Lookup failures stop this attempt before
+	// permission checks or transport can use incomplete model information.
+	ModelAttributes(context.Context, string) (modelcatalog.Resolution, error)
 	// ApplyFastPass applies provider fast-tier policy to the prepared outgoing
 	// body and model.
 	ApplyFastPass(ctx context.Context, model string, body []byte) ([]byte, error)
@@ -145,7 +150,8 @@ type PassthroughPorts interface {
 	// generation admission.
 	ImagePermissionMessage() string
 	// ImageBilling resolves image charge identity and size tiers from request
-	// bytes and model.
+	// bytes and model. Known capability errors are presented locally before the
+	// callback returns, so the runner can stop without upstream error reporting.
 	ImageBilling(body []byte, model string) (ImageBilling, error)
 	// UpstreamError records status and message for image configuration failure
 	// diagnostics.

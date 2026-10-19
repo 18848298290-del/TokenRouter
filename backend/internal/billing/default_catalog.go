@@ -80,7 +80,7 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 		return result
 	}
 	knownImage := raw != nil && len(raw.ImagePrices) > 0
-	imageModel := mode == "image" || pricing.HasExplicitImageGenerationPricing(raw) || pricing.LooksLikeImageModel(model)
+	imageModel := mode == "image" || pricing.HasExplicitImageGenerationPricing(raw)
 	// Chat metadata can mention a per-image amount while retaining token pricing;
 	// select image display units when catalog media tables or image/token-absence
 	// classification establish that path.

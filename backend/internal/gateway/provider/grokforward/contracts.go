@@ -99,8 +99,6 @@ type Ports interface {
 	BillingModel(string) string
 	// UpstreamModel selects the vendor model for a mapped billing model.
 	UpstreamModel(string) string
-	// ImageModel reports whether a model requires the image-generation endpoint.
-	ImageModel(string) bool
 	// InvalidRequest writes an HTTP request rejection with its offending
 	// parameter.
 	InvalidRequest(string, string)

@@ -32,14 +32,15 @@ import (
 // ModelAttributeHandler serves profile administration, route previews, and
 // default attribute queries.
 type ModelAttributeHandler struct {
-	service *routing.ModelAttributeService // attribute profile and catalog service
+	service   *routing.ModelAttributeService // attribute profile and catalog service
+	catalogue *routing.RequestableCatalogue  // configured preview route reader
 }
 
 // NewModelAttributeHandler binds the attribute profile service to its HTTP
 // endpoints. Callers supply a nonnil service and configure the repository and
 // catalog callbacks invoked by the routes they serve.
-func NewModelAttributeHandler(service *routing.ModelAttributeService) *ModelAttributeHandler {
-	return &ModelAttributeHandler{service: service}
+func NewModelAttributeHandler(service *routing.ModelAttributeService, catalogue *routing.RequestableCatalogue) *ModelAttributeHandler {
+	return &ModelAttributeHandler{service: service, catalogue: catalogue}
 }
 
 // RegisterModelAttributeRoutes binds profile CRUD, catalog queries, manual
@@ -93,7 +94,12 @@ func (h *ModelAttributeHandler) Preview(c *gin.Context) {
 			}
 		}
 	}
-	result, err := h.service.Preview(c.Request.Context(), input.GroupID, input.Model, input.ClientProtocol, input.Config)
+	targets, err := h.catalogue.AttributeTargets(c.Request.Context(), input.GroupID, input.Model, input.ClientProtocol)
+	if err != nil {
+		httpx.ErrorFrom(c, err)
+		return
+	}
+	result, err := h.service.Preview(c.Request.Context(), input.GroupID, targets, input.Config)
 	if err != nil {
 		httpx.ErrorFrom(c, err)
 		return

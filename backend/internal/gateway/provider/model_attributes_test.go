@@ -100,6 +100,8 @@ func (r *mediaAttributeRepo) ForGroup(context.Context, int64) (*routing.ModelAtt
 func TestPrepareModelAttributeParametersImageToolOverrides(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		repo := &mediaAttributeRepo{config: &routing.ModelAttributeConfig{Status: "active", Rules: []routing.ModelAttributeRule{{Models: []string{"gpt-image-2"}, Attributes: modelcatalog.Attributes{Media: &modelcatalog.MediaCapabilities{InputFidelity: &enabled}}}}}}
+		image := []string{"image"}
+		repo.config.Rules = append(repo.config.Rules, routing.ModelAttributeRule{Models: []string{"private-image"}, Attributes: modelcatalog.Attributes{OutputModalities: &image}})
 		service := &routing.ModelAttributeService{Repo: repo, Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
 		ctx := requeststate.WithGroup(context.Background(), &routing.Group{ID: 1})
 		provider := &ExecutionProvider{Record: providercore.Record{Platform: "openai", Type: "apikey"}}
@@ -280,6 +282,66 @@ func BenchmarkModelRequestState(b *testing.B) {
 					b.Fatal("missing reasoning effort")
 				}
 			}
+		})
+	}
+}
+
+// TestComposerControlsFollowResolvedOverride exercises the complete Grok
+// preparation pass with platform defaults and an administrator effort override.
+// The final payload must retain configured controls even for Composer identities.
+func TestComposerControlsFollowResolvedOverride(t *testing.T) {
+	ctx := requeststate.WithGroup(context.Background(), &routing.Group{ID: 1})
+	high := "max"
+	options := []modelcatalog.ReasoningOption{{Type: "effort", Values: []*string{&high}}}
+	repo := &mediaAttributeRepo{config: &routing.ModelAttributeConfig{Status: routing.StatusActive, Rules: []routing.ModelAttributeRule{{Models: []string{"grok-composer"}, Attributes: modelcatalog.Attributes{ReasoningOptions: &options}}}}}
+	service := &routing.ModelAttributeService{Repo: repo, Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
+	provider := &ExecutionProvider{Record: providercore.Record{Platform: "grok", Type: "apikey"}}
+	body, err := PrepareGrokResponses(ctx, provider, "grok-composer", []byte(`{"model":"grok-composer","input":"hello","reasoning":{"effort":"max"}}`), service)
+	require.NoError(t, err)
+	require.Equal(t, "max", gjson.GetBytes(body, "reasoning.effort").String())
+	service.Repo = nil
+	body, err = PrepareGrokResponses(context.Background(), provider, "grok-composer", body, service)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(body, "reasoning").Exists())
+}
+
+// TestImageToolRequiresDeclaredOutput validates hosted image tools against
+// configured output modalities. Unknown and explicitly unsupported identities
+// fail before encoding, while an arbitrary configured image name is accepted.
+func TestImageToolRequiresDeclaredOutput(t *testing.T) {
+	image := []string{"image"}
+	text := []string{"text"}
+	service := &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{Lookup: func(model string) modelcatalog.Attributes {
+		switch model {
+		case "canvas":
+			return modelcatalog.Attributes{OutputModalities: &image}
+		case "gpt-image-text":
+			return modelcatalog.Attributes{OutputModalities: &text}
+		default:
+			return modelcatalog.Attributes{}
+		}
+	}}}
+	provider := &ExecutionProvider{Record: providercore.Record{Platform: "openai", Type: "apikey"}}
+	for _, tc := range []struct {
+		model  string // requested tool model identity
+		reason string // expected local capability failure
+	}{{"canvas", ""}, {"gpt-image-unknown", "MODEL_CAPABILITY_UNKNOWN"}, {"gpt-image-text", "MODEL_CAPABILITY_UNSUPPORTED"}} {
+		t.Run(tc.model, func(t *testing.T) {
+			body := []byte(fmt.Sprintf(`{"model":"driver","tools":[{"type":"image_generation","model":%q}]}`, tc.model))
+			_, err := PrepareModelAttributeParameters(context.Background(), provider, "driver", body, service, "openai_responses")
+			if tc.reason == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.reason)
+			}
+		})
+	}
+	for _, platform := range []string{"openai", "grok", "zhipu"} {
+		t.Run(platform+"/all-tools", func(t *testing.T) {
+			provider.Record.Platform = platform
+			body := []byte(`{"model":"driver","tools":[{"type":"image_generation","model":"canvas"},{"type":"image_generation","model":"unknown-second-tool"}]}`)
+			_, err := PrepareModelAttributeParameters(context.Background(), provider, "driver", body, service, "openai_responses")
+			require.ErrorContains(t, err, "MODEL_CAPABILITY_UNKNOWN")
 		})
 	}
 }

@@ -113,6 +113,9 @@ type MediaFailurePorts interface {
 // handling has not changed the writer in the relevant case. Logs distinguish
 // an attempted fallback from an existing upstream response.
 func WriteGenerationFailure(f media.GenerationFailure, state MediaFailureContext, p MediaFailurePorts) {
+	if WriteOpenAIModelAttributeError(state.Context, f.Err, state.StreamStarted) {
+		return
+	}
 	if state.Grok {
 		writeGrokGenerationFailure(f, state, p)
 		return

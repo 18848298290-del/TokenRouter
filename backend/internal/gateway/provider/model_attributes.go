@@ -8,10 +8,12 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
+	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
@@ -285,7 +287,9 @@ func ModelRequestState(body []byte) modelcatalog.RequestState {
 // An image tool can name a different model from its text driver. Resolve that
 // tool's own media attributes before removing input_fidelity, so the driver's
 // restrictions cannot be mistaken for the image model's capabilities. Image
-// lookup or field-edit failures return nil and stop preparation.
+// lookup or field-edit failures return nil and stop preparation. The provider
+// retains the main model's resolution; named and default image tool models are
+// validated independently against the same request attribute session.
 func PrepareModelAttributeParameters(ctx context.Context, value *ExecutionProvider, model string, body []byte, service *routing.ModelAttributeService, protocols ...string) ([]byte, error) {
 	if routing.ModelAttributesFromContext(ctx) == nil {
 		ctx = routing.WithModelAttributes(ctx, service)
@@ -294,22 +298,29 @@ func PrepareModelAttributeParameters(ctx context.Context, value *ExecutionProvid
 	if err != nil {
 		return nil, err
 	}
+	if value != nil {
+		value.Capabilities = &result
+	}
 	body, err = ApplyModelAttributeParameters(body, result)
-	if err != nil || result.Target.Platform != "openai" {
+	if err != nil {
 		return body, err
 	}
 	// Hosted image tools can target a different model from the text driver.
-	// Resolve each named tool before dropping a fidelity field its own route rejects.
+	// Validate each tool's selected or default image model before removing a
+	// fidelity field rejected by that tool route's media declaration.
 	for index, tool := range gjson.GetBytes(body, "tools").Array() {
-		if tool.Get("type").String() != "image_generation" || !tool.Get("input_fidelity").Exists() {
+		if tool.Get("type").String() != "image_generation" {
 			continue
 		}
 		toolModel := tool.Get("model").String()
 		if toolModel == "" {
-			continue
+			toolModel = "gpt-image-2"
 		}
 		image, err := ResolveModelAttributes(ctx, value, toolModel, service, protocols...)
 		if err != nil {
+			return nil, err
+		}
+		if err := routing.RequireImageOutput(image.Attributes); err != nil {
 			return nil, err
 		}
 		media := image.Attributes.Media
@@ -339,4 +350,48 @@ func PrepareGrokResponses(ctx context.Context, provider *ExecutionProvider, mode
 	codec := GrokBodyCodec()
 	codec.Attributes = func(string) modelcatalog.Attributes { return resolution.Attributes }
 	return codec.PatchGrokResponsesBody(body, model)
+}
+
+// ResolveResponsesImageBilling selects the hosted tool or confirmed converted
+// image identity and validates its output capability. Text-driver names never
+// supply a billing hint; a native tool without a model uses its registered
+// default, which undergoes the same route attribute validation.
+func ResolveResponsesImageBilling(ctx context.Context, value *ExecutionProvider, body []byte, service *routing.ModelAttributeService) (media.OpenAIResponsesImageBillingConfig, error) {
+	confirmed := ""
+	if value != nil && value.Capabilities != nil && value.Capabilities.Attributes.OutputOnly("image") {
+		confirmed = value.Capabilities.Target.Model
+	}
+	config, err := ImageIntent().ResolveOpenAIResponsesImageBillingConfigDetailedFromBody(body, confirmed)
+	if err != nil || config.Model == "" {
+		return config, err
+	}
+	resolution, err := ResolveModelAttributes(ctx, value, config.Model, service, "openai_responses")
+	if err != nil {
+		return config, err
+	}
+	return config, routing.RequireImageOutput(resolution.Attributes)
+}
+
+// ResolvedImageOutput supplies image classification for cooldown observations.
+// It uses the retained request session and final provider identity. Failed
+// metadata reads provide no classification evidence; request admission separately
+// propagates those errors before any upstream image operation.
+func ResolvedImageOutput(ctx context.Context, record *providercore.Record, model string) bool {
+	if record == nil {
+		return false
+	}
+	target, err := ProviderForProtocolAttempt(ctx, &ExecutionProvider{Record: *record})
+	if err != nil {
+		// Cooldown classification has no output evidence for an unresolved route.
+		// The selector and forwarding preparation report that route error independently.
+		return false
+	}
+	resolution, err := ResolveModelAttributes(ctx, target, model, nil)
+	if err != nil {
+		// Failed metadata cannot classify a diagnostic as an image failure. Request
+		// admission separately returns the retained profile error before upstream execution.
+		return false
+	}
+	supported := resolution.Attributes.OutputSupport("image")
+	return supported != nil && *supported
 }

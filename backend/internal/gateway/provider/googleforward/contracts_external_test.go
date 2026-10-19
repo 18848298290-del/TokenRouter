@@ -5,7 +5,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
@@ -168,24 +167,23 @@ func TestResolveGeminiImageCount(t *testing.T) {
 		c.Images = 0
 		c.ObserveImagesForTest(oneImage)
 
-		require.False(t, antigravity.IsImageGenerationModel("nana-banana-2"), "前置条件：白名单判不出自定义名")
 		require.Equal(t, 1, c.ImageCountForTest("nana-banana-2", "nana-banana-2"))
 	})
 
-	t.Run("falls back to requested model name", func(t *testing.T) {
+	t.Run("requested model names do not fabricate output", func(t *testing.T) {
 		c := newGeminiImageTestContext(t)
 		c.Images = 0
 		c.ObserveImagesForTest(textOnly)
 
-		require.Equal(t, 1, c.ImageCountForTest("gemini-3-pro-image-preview", "gemini-3-pro-image-preview"))
+		require.Equal(t, 0, c.ImageCountForTest("gemini-3-pro-image-preview", "gemini-3-pro-image-preview"))
 	})
 
-	t.Run("falls back to mapped upstream model name", func(t *testing.T) {
+	t.Run("mapped model names do not fabricate output", func(t *testing.T) {
 		c := newGeminiImageTestContext(t)
 		c.Images = 0
 		c.ObserveImagesForTest(textOnly)
 
-		require.Equal(t, 1, c.ImageCountForTest("my-image-alias", "gemini-2.5-flash-image"))
+		require.Equal(t, 0, c.ImageCountForTest("my-image-alias", "gemini-2.5-flash-image"))
 	})
 
 	t.Run("text model stays unbilled", func(t *testing.T) {
@@ -196,9 +194,9 @@ func TestResolveGeminiImageCount(t *testing.T) {
 		require.Equal(t, 0, c.ImageCountForTest("gemini-2.5-pro", "gemini-2.5-pro"))
 	})
 
-	t.Run("no counter on context degrades to name heuristic", func(t *testing.T) {
+	t.Run("missing observations remain zero", func(t *testing.T) {
 		c := newGeminiImageTestContext(t)
 		require.Equal(t, 0, c.ImageCountForTest("nana-banana-2", "nana-banana-2"))
-		require.Equal(t, 1, c.ImageCountForTest("gemini-3-pro-image", "gemini-3-pro-image"))
+		require.Equal(t, 0, c.ImageCountForTest("gemini-3-pro-image", "gemini-3-pro-image"))
 	})
 }

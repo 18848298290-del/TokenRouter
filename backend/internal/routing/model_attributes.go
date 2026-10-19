@@ -180,10 +180,6 @@ type ModelAttributeService struct {
 	Repo        ModelAttributeRepository // profile and association repository
 	Catalog     ModelAttributeCatalog    // catalogue resolution and refresh callbacks
 	Invalidator GroupAuthInvalidator     // optional group authentication invalidator
-	// Catalogue supplies provider routes to Preview. Nil returns configuration
-	// unavailability; a populated catalogue requires its Read callback to be
-	// configured before preview reads begin.
-	Catalogue *RequestableCatalogue // saved provider route catalogue
 }
 
 // Save validates and normalizes a mutable profile, retains supplied rule

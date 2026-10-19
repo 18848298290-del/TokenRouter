@@ -8,7 +8,6 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/execution"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
@@ -53,11 +52,6 @@ func (p compatibleTextHTTPBackend) ImageIntent(key *apikey.APIKey, model string,
 // ImageContext adds the image-generation hint to the supplied execution context.
 func (p compatibleTextHTTPBackend) ImageContext(ctx context.Context) context.Context {
 	return requeststate.WithOpenAIImageGenerationIntent(ctx)
-}
-
-// ChatImageModel recognizes image-generation models after the group's mapping is applied.
-func (p compatibleTextHTTPBackend) ChatImageModel(model string, mapping routing.GroupMappingResult) bool {
-	return media.IsGPTImageGenerationModel(requeststate.GroupMappedModel(model, mapping))
 }
 
 // Moderate submits the supplied entry protocol and prepared body to gateway moderation.

@@ -22,6 +22,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/modeltrace"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -85,6 +86,13 @@ func TestBatchImageCatalogueIncludesGroupMappingTargets(t *testing.T) {
 			policy := makePublicPricingConfigFixture(routing.PricingConfig{ID: 1, Status: "active", GroupIDs: []int64{*owner.GroupID}}, nil, routing.GroupRoutingPolicy{Enabled: true, ModelMapping: map[string]string{source: "custom-image"}})
 			service.PricingConfigService = newPublicPricingConfigFixture(policy)
 			service.Pricing = &fakeBatchImagePricingResolver{unitPrice: 0.1}
+			service.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{Lookup: func(model string) modelcatalog.Attributes {
+				image := []string{"image"}
+				if model == "custom-image" {
+					return modelcatalog.Attributes{OutputModalities: &image}
+				}
+				return modelcatalog.Attributes{}
+			}}}
 			result, err := service.ListModels(context.Background(), owner)
 			require.NoError(t, err)
 			var ids []string
@@ -147,7 +155,7 @@ func TestBatchImageCatalogueResolvesBeforeModalities(t *testing.T) {
 		{name: "provider wildcard", providerMapping: map[string]any{"gpt-*": "catalog-image"}, whitelist: []string{"catalog-image"}, final: "catalog-image", visible: true},
 		{name: "group wildcard", groupMapping: map[string]string{"gpt-*": "catalog-image"}, whitelist: []string{"catalog-image"}, final: "catalog-image", visible: true},
 		{name: "two mapping stages", groupMapping: map[string]string{"gpt-*": "route-model"}, providerMapping: map[string]any{"route-*": "catalog-image"}, whitelist: []string{"catalog-image"}, final: "catalog-image", visible: true},
-		{name: "unknown configured final", providerMapping: map[string]any{"gpt-*": "nano-banana-pro"}, whitelist: []string{"nano-banana-pro"}, final: "nano-banana-pro", visible: true},
+		{name: "unknown configured final", providerMapping: map[string]any{"gpt-*": "nano-banana-pro"}, whitelist: []string{"nano-banana-pro"}, final: "nano-banana-pro", visible: false},
 		{name: "mapped text final", providerMapping: map[string]any{"gpt-*": "catalog-text"}, whitelist: []string{"catalog-text"}, final: "catalog-text"},
 		{name: "provider restriction", providerMapping: map[string]any{"gpt-*": "catalog-image"}, whitelist: []string{"catalog-text"}, final: "catalog-image"},
 	} {
@@ -159,6 +167,7 @@ func TestBatchImageCatalogueResolvesBeforeModalities(t *testing.T) {
 			value.Credentials["model_whitelist"] = tc.whitelist
 			svc.ProviderRepo = rebindBatchFixtureProviders(svc, &publicBatchImageProviderRepo{providers: []providercore.Record{value}})
 			image, text := []string{"image"}, []string{"text"}
+			svc.Attributes = nil
 			svc.ModelOutputModalities = func(id string) *[]string {
 				switch id {
 				case "catalog-image":
@@ -209,6 +218,7 @@ func TestBatchImageCatalogueUsesOnePolicySnapshot(t *testing.T) {
 			svc.ProviderRepo = rebindBatchFixtureProviders(svc, &publicBatchImageProviderRepo{providers: []providercore.Record{value}})
 
 			image, text := []string{"image"}, []string{"text"}
+			svc.Attributes = nil
 			svc.ModelOutputModalities = func(id string) *[]string {
 				if id == "catalog-image" {
 					return &image
@@ -239,6 +249,7 @@ func TestBatchImageCatalogueRejectsMissingPrice(t *testing.T) {
 	value := testBatchImageMappedProvider(303, "apikey", map[string]any{"gpt-*": "catalog-image"})
 	svc.ProviderRepo = rebindBatchFixtureProviders(svc, &publicBatchImageProviderRepo{providers: []providercore.Record{value}})
 	image := []string{"image"}
+	svc.Attributes = nil
 	svc.ModelOutputModalities = func(string) *[]string { return &image }
 	svc.Pricing = &fakeBatchImagePricingResolver{err: batchimage.ErrBatchImageSettlementPricingMissing}
 	result, err := svc.ListModels(context.Background(), testBatchImageOwner())
@@ -255,6 +266,7 @@ func TestBatchImageAutomaticCandidates(t *testing.T) {
 	value := testBatchImageMappedProvider(303, "apikey", map[string]any{"source-image": "final-text"})
 	svc.ProviderRepo = rebindBatchFixtureProviders(svc, &publicBatchImageProviderRepo{providers: []providercore.Record{value}})
 	image, text := []string{"image"}, []string{"text"}
+	svc.Attributes = nil
 	svc.ModelOutputModalities = func(id string) *[]string {
 		switch id {
 		case "catalog-image", "source-image":
@@ -412,6 +424,13 @@ func TestBatchImagePublicService_Submit(t *testing.T) {
 				"group-image-model": "upstream-image-model",
 			}),
 		}})
+		svc.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{Lookup: func(model string) modelcatalog.Attributes {
+			image := []string{"image"}
+			if model == "upstream-image-model" {
+				return modelcatalog.Attributes{OutputModalities: &image}
+			}
+			return modelcatalog.Attributes{}
+		}}}
 		trace := modeltrace.NewAPIKeyModelRedirectTrace("image-alias", "image-alias", "gemini-2.5-flash-image")
 		requestCtx := modeltrace.WithContext(ctx, trace)
 		requestCtx = context.WithValue(requestCtx, telemetry.ClientModel, "image-alias")
@@ -1215,6 +1234,13 @@ func TestBatchImageConfiguredAlias(t *testing.T) {
 			}
 			repo.providers = []providercore.Record{value}
 			svc.Pricing = &fakeBatchImagePricingResolver{unitPrice: 0.1}
+			svc.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{Lookup: func(model string) modelcatalog.Attributes {
+				image := []string{"image"}
+				if model == "nano-banana-pro" {
+					return modelcatalog.Attributes{OutputModalities: &image}
+				}
+				return modelcatalog.Attributes{}
+			}}}
 			result, err := svc.ListModels(context.Background(), testBatchImageOwner())
 			require.NoError(t, err)
 			ids := []string{}
@@ -1435,8 +1461,5 @@ func TestBatchImageCustomListDeclaresUnknownModality(t *testing.T) {
 	service.Pricing = &fakeBatchImagePricingResolver{unitPrice: 0.1}
 	result, err := service.ListModels(context.Background(), owner)
 	require.NoError(t, err)
-	require.NotEmpty(t, result.Data)
-	for _, model := range result.Data {
-		require.Equal(t, "custom-image", model.ID)
-	}
+	require.Empty(t, result.Data)
 }

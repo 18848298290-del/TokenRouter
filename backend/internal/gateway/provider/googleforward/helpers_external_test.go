@@ -25,9 +25,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
@@ -365,6 +367,7 @@ func newGeminiFixture(d geminiDependencies) *googleforward.Gemini {
 		health.SetRateLimited = d.providerRepo.SetRateLimited
 	}
 	return &googleforward.Gemini{
+		Attributes:   &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}},
 		Options:      fixtureOptions(d.cfg),
 		Tokens:       d.tokenProvider,
 		Health:       d.healthObserver,
@@ -424,13 +427,14 @@ func newAntigravityFixture(d antigravityDependencies) *googleforward.Antigravity
 		observer.SetRateLimited = d.providerRepo.SetRateLimited
 	}
 	r := &googleforward.Antigravity{
-		Options:   o,
-		Tokens:    d.tokenProvider,
-		Retry:     retry,
-		Errors:    observer,
-		Store:     d.providerRepo,
-		Transport: d.httpUpstream,
-		Sticky:    d.cache,
+		Attributes: &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}},
+		Options:    o,
+		Tokens:     d.tokenProvider,
+		Retry:      retry,
+		Errors:     observer,
+		Store:      d.providerRepo,
+		Transport:  d.httpUpstream,
+		Sticky:     d.cache,
 	}
 	if d.settingService != nil {
 		r.Gateway = d.settingService.Gateway

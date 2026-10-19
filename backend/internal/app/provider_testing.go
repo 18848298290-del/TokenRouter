@@ -22,6 +22,7 @@ import (
 	providerhttp "github.com/TokenFlux/TokenRouter/internal/provider/httpapi"
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 	openaiws "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
@@ -92,11 +93,15 @@ func provideScheduledTestRunner(plans provider.ScheduledTestPlanRepository, sche
 // operator URL policy. cfg and manager are required; a nonnil catalog supplies
 // capability snapshots, while Qoder tests receive a separate session provider
 // with its own registered stop.
-func provideProviderTests(store *providerpostgres.ProviderStore, geminiToken *provider.GeminiTokenSource, claudeToken *provider.ClaudeTokenSource, grokToken *provider.GrokTokenSource, ag *provideradapter.AntigravityProbe, transport httpclient.UpstreamTransport, cfg *config.Config, profiles *egressprovider.TLSProfiles, routers *egress.TLSFingerprintRouterService, settings *gateway.RuntimeSettings, tasks *provideradapter.ProbeTasks, manager *lifecycle.Manager, catalog *catalogprovider.Service) *provider.TestService {
+func provideProviderTests(store *providerpostgres.ProviderStore, geminiToken *provider.GeminiTokenSource, claudeToken *provider.ClaudeTokenSource, grokToken *provider.GrokTokenSource, ag *provideradapter.AntigravityProbe, transport httpclient.UpstreamTransport, cfg *config.Config, profiles *egressprovider.TLSProfiles, routers *egress.TLSFingerprintRouterService, settings *gateway.RuntimeSettings, tasks *provideradapter.ProbeTasks, manager *lifecycle.Manager, catalog *catalogprovider.Service, modelAttributes *routing.ModelAttributeService) *provider.TestService {
 	urlPolicy := egress.OperatorURLPolicy{Enabled: cfg.Security.URLAllowlist.Enabled, AllowInsecureHTTP: cfg.Security.URLAllowlist.AllowInsecureHTTP, AllowPrivateHosts: cfg.Security.URLAllowlist.AllowPrivateHosts, UpstreamHosts: slices.Clone(cfg.Security.URLAllowlist.UpstreamHosts)}
 	probePolicy := &provideradapter.OpenAIProbePolicy{Available: true, ForceCLI: cfg.Gateway.ForceCodexCLI, Read: store.GetByID, AllowClaudeCode: settings.IsOpenAIAllowClaudeCodeCodexPluginEnabled, BrowserUserAgent: settings.GetOpenAICodexUserAgent, DefaultBrowserUserAgent: gateway.DefaultOpenAICodexUserAgent, Routers: routers, Profiles: profiles, ManualProfiles: profiles}
-	openaiTest := &provideradapter.OpenAIProviderTest{Store: store, Transport: transport, ValidateURL: urlPolicy.Validate, Prepare: probePolicy.Prepare, ApplyRouting: probePolicy.ApplyTestRouting, ResolveTLS: probePolicy.ResolveTestTLS, EnsureTask: tasks.Ensure}
-	geminiTest := &provideradapter.GeminiProviderTest{Tokens: geminiToken, Transport: transport, Profiles: profiles, ValidateURL: urlPolicy.Validate}
+	probeAttributes := func(ctx context.Context, value *provider.Record, model, protocol string) (modelcatalog.Attributes, error) {
+		resolved, err := gatewayprovider.ResolveModelAttributes(ctx, &gatewayprovider.ExecutionProvider{Record: *value}, model, modelAttributes, protocol)
+		return resolved.Attributes, err
+	}
+	openaiTest := &provideradapter.OpenAIProviderTest{Attributes: probeAttributes, Store: store, Transport: transport, ValidateURL: urlPolicy.Validate, Prepare: probePolicy.Prepare, ApplyRouting: probePolicy.ApplyTestRouting, ResolveTLS: probePolicy.ResolveTestTLS, EnsureTask: tasks.Ensure}
+	geminiTest := &provideradapter.GeminiProviderTest{Attributes: probeAttributes, Tokens: geminiToken, Transport: transport, Profiles: profiles, ValidateURL: urlPolicy.Validate}
 	var attributes func() modelcatalog.View
 	if catalog != nil {
 		attributes = catalog.CapabilityView

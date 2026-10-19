@@ -120,6 +120,10 @@ func (h *ModelsHandler) GeminiV1BetaGetModel(c *gin.Context) {
 			selected = append(selected, target)
 		}
 		resolved := h.backend.ResolveSelected(c.Request.Context(), &group.ID, forced, selected)
+		if resolved.Err != nil {
+			WriteGoogleError(c, http.StatusServiceUnavailable, resolved.Err.Error())
+			return
+		}
 		visible := make(map[string]bool, len(resolved.Models))
 		for _, model := range resolved.Models {
 			if !slices.Contains(model.Protocols, protocol.ProtocolGeminiGenerateContent) {

@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -204,4 +206,61 @@ func TestRequestableCompactAttributesUseFinalModel(t *testing.T) {
 	_, runtimeModel := (gatewayprovider.ModelPolicy{Record: &record}).ForwardMappedModels("gpt-5.4", true)
 	require.Equal(t, "gpt-5.6-sol", runtimeModel)
 	require.Equal(t, runtimeModel, result.Models[0].AttributeTargets[0].Model)
+}
+
+// TestCatalogueUsesFinalRouteOutput combines an unknown provider route with a
+// configured image route behind the same alias. Image eligibility must follow
+// each final model, retain the supported route, and keep mixed outputs on Chat.
+func TestCatalogueUsesFinalRouteOutput(t *testing.T) {
+	groupID := int64(1)
+	group := &routing.Group{ID: groupID, AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolImagesGenerations, protocol.ProtocolOpenAIChatCompletions}}
+	policies := &countedCataloguePolicies{PricingConfigService: routing.NewPricingConfigService(nil, nil, routing.PricingConfigOptions{ReadGroup: func(context.Context, int64) (*routing.Group, error) { return group, nil }})}
+	image, text, mixed := []string{"image"}, []string{"text"}, []string{"text", "image"}
+	attributes := &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{Lookup: func(model string) modelcatalog.Attributes {
+		switch model {
+		case "canvas":
+			return modelcatalog.Attributes{OutputModalities: &image}
+		case "image-named-text":
+			return modelcatalog.Attributes{OutputModalities: &text}
+		case "mixed":
+			return modelcatalog.Attributes{OutputModalities: &mixed}
+		default:
+			return modelcatalog.Attributes{}
+		}
+	}}}
+	records := []provider.Record{
+		{Platform: "openai", Type: "apikey", Credentials: map[string]any{"model_mapping": map[string]any{"alias": "unknown"}, "model_whitelist": []string{"unknown"}}},
+		{Platform: "openai", Type: "apikey", Credentials: map[string]any{"model_mapping": map[string]any{"alias": "canvas"}, "model_whitelist": []string{"canvas", "image-named-text", "mixed"}}},
+	}
+	resolver := routing.RequestableResolver{GroupPolicies: policies, Attributes: attributes}
+	result := resolver.ResolveWithProviders(context.Background(), &groupID, "", nil, gatewayprovider.CatalogueProviders(records))
+	require.NoError(t, result.Err)
+	byID := map[string]routing.RequestableModel{}
+	for _, model := range result.Models {
+		byID[model.ID] = model
+	}
+	require.Contains(t, byID["alias"].Protocols, protocol.ProtocolImagesGenerations)
+	require.NotContains(t, byID["image-named-text"].Protocols, protocol.ProtocolImagesGenerations)
+	require.Contains(t, byID["mixed"].Protocols, protocol.ProtocolOpenAIChatCompletions)
+	require.Contains(t, byID["mixed"].Protocols, protocol.ProtocolImagesGenerations)
+	for _, target := range byID["alias"].AttributeTargets {
+		if target.ClientProtocol == string(protocol.ProtocolImagesGenerations) {
+			require.Equal(t, "canvas", target.Model)
+		}
+	}
+}
+
+// TestCatalogueRecognizesGeminiLiteImage resolves the shipped Gemini Lite
+// image record for batch execution. Its image protocol must come from catalog
+// output metadata even though the former family-prefix classifier omitted it.
+func TestCatalogueRecognizesGeminiLiteImage(t *testing.T) {
+	groupID := int64(1)
+	group := &routing.Group{ID: groupID, AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolImageBatches}}
+	policies := &countedCataloguePolicies{PricingConfigService: routing.NewPricingConfigService(nil, nil, routing.PricingConfigOptions{ReadGroup: func(context.Context, int64) (*routing.Group, error) { return group, nil }})}
+	record := provider.Record{Platform: "gemini", Type: "apikey", Credentials: map[string]any{"model_whitelist": []string{"gemini-3.1-flash-lite-image"}}}
+	resolver := routing.RequestableResolver{GroupPolicies: policies, Attributes: &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}}
+	result := resolver.ResolveWithProviders(context.Background(), &groupID, "", nil, gatewayprovider.CatalogueProviders([]provider.Record{record}))
+	require.NoError(t, result.Err)
+	require.Len(t, result.Models, 1)
+	require.Contains(t, result.Models[0].Protocols, protocol.ProtocolImageBatches)
 }

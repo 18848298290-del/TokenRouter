@@ -23,6 +23,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
@@ -147,6 +148,11 @@ func (s *GrokExecutor) ForwardGrokMedia(
 		resolved, err := gatewayprovider.ResolveModelAttributes(ctx, provider, upstreamModel, s.Attributes)
 		if err != nil {
 			return nil, err
+		}
+		if endpoint == grok.GrokMediaEndpointImagesGenerations || endpoint == grok.GrokMediaEndpointImagesEdits {
+			if err := routing.RequireImageOutput(resolved.Attributes); err != nil {
+				return nil, err
+			}
 		}
 		provider.Capabilities = &resolved
 		modeltrace.RegisterStage(ctx, upstreamModel)

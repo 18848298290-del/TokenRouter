@@ -169,7 +169,7 @@ func (e *Executor) Prepare(ctx context.Context, run CreativeRun) (*CreativeExecu
 			continue
 		}
 		model := strings.TrimSpace(selection.ResolveModel(selectionCtx, groupModel))
-		imageModel := CreativePlatformImageModel(selection.Platform, model)
+		imageModel := false
 		if selection.ResolveAttributes != nil {
 			resolved, resolveErr := selection.ResolveAttributes(selectionCtx, model)
 			// Attribute resolution failed after admission acquired

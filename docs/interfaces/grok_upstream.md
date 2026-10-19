@@ -60,6 +60,8 @@ OAuth 访问令牌 JWT 里的数字或字符串 `tier`，是判断提供商档�
 
 ## 媒体请求格式
 
+图片请求按最终模型路线的输出模态校验，未知型号需要先配置 image 输出能力。Composer 的可调推理控制来自统一属性解析后的 `reasoning_options`，管理员覆盖会影响实际请求；空集合清理控制参数，未知集合保留客户端明确值。图片转文本适配和 logprobs、stop 等报文限制分别由平台执行规则处理。
+
 媒体和 Voice 的 HTTP 由 app 直接绑定 `gateway/httpapi/mediaentry`；生成循环、视频的归属和认领只在 `gateway/media` 里实现，计量输入在提交完成任务之前固定下来。gateway/provider 只组合现有的 Grok Codec 和价格规范化接口，媒体资格复用提供商的规则，并在缺少观测时在原位置执行探测。
 
 JSON 格式的图片编辑和视频生成请求，可以在 `image`、`images`、`reference_images` 和 `mask` 对象里提供参考图片。直接兼容 xAI 的请求使用 `url` 字段；旧的 `image_url` 字段仍然可用，TokenRouter 在转发前把它规范化为 `url`。两者同时存在时，保留非空的 `url`；`url` 为空白时，使用 `image_url`。multipart 图片编辑里上传的文件，也会转成 `url` 形式的 data URL。

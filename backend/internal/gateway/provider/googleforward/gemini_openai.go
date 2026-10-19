@@ -21,7 +21,6 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
-	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
@@ -339,15 +338,9 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 	requestID = result.RequestID
 	usage := &result.Usage
 
-	imageCount := 0
+	imageCount := result.ObservedImages
 	imageInputSize := s.extractImageInputSize(geminiReq)
 	imageSize := media.NormalizeImageSizeTier(imageInputSize)
-	// This compatibility result uses the client model name for its
-	// single-image estimate; native and Messages paths consult their
-	// separate per-attempt image observation counter.
-	if antigravity.IsImageGenerationModel(originalModel) {
-		imageCount = 1
-	}
 
 	return &protocolforward.MessagesResult{
 		RequestID:             requestID,

@@ -1374,6 +1374,9 @@ func wsFixturePoolOptions(options *wsFixtureOptions) *openaiws.WSPoolOptions {
 // setting callbacks remain live, while supplied option structs are copied into
 // the request/output configuration used by these executors.
 func newWSFixture(v wsFixtureInputs) *wsExecutionFixture {
+	if v.readers == nil {
+		v.readers = gatewaytestkit.RuntimeReaders(nil)
+	}
 	aux := newAuxiliaryFixture(auxiliaryFixtureInputs{transport: v.transport, store: v.providers, observer: v.health})
 	requests, output := aux.Requests, aux.Output
 	requests.Readers = v.readers
@@ -1425,7 +1428,7 @@ func newWSFixture(v wsFixtureInputs) *wsExecutionFixture {
 	requests.GrokRoutes = routes
 	fast := &gatewayprovider.ExecutionFastPolicy{Readers: v.readers}
 	connections := openaiws.NewOpenAIWSConnections(wsFixturePoolOptions(v.options), v.dialer, v.pool)
-	grokExecutor := &GrokExecutor{Credentials: credentials, Transport: v.transport, Output: output, Health: output.GrokHealth, Routes: routes, Dialer: connections.Dialer(), FastPolicy: fast, Failure: requests.Failure}
+	grokExecutor := &GrokExecutor{Attributes: requests.Readers.Attributes, Credentials: credentials, Transport: v.transport, Output: output, Health: output.GrokHealth, Routes: routes, Dialer: connections.Dialer(), FastPolicy: fast, Failure: requests.Failure}
 	text := &OpenAITextExecutor{Requests: requests, Output: output, Grok: grokExecutor, Credentials: credentials, FastPolicy: fast, Continuation: &gatewaysession.CompatResponses{TTL: choices.OpenAIHTTPResponseStickyTTL}, PromptCache: gatewaysession.NewAnthropicPromptCache(time.Now), CodexUsage: aux.CodexUsage, ResponseTTL: choices.OpenAIHTTPResponseStickyTTL, Compact: &CompactExecutor{}}
 	lineage := &OpenAIEncryptedLineage{Store: state, TTL: choices.SessionStickyTTL}
 	imagePolicy := &gatewayprovider.ResponseImagePolicy{}
@@ -2473,7 +2476,7 @@ func newResponsesFixture(v responsesFixtureInputs) *OpenAIResponsesExecutor {
 	credentials := gatewaytestkit.RequestCredentials(v.providers, aux.Requests.Credentials, v.grokTokens, aux.Output.Health.Runtime)
 	routes := gatewayprovider.GrokRoutes{Validate: options.Request.URLPolicy.Validate}
 	requests.GrokRoutes = routes
-	grok := &GrokExecutor{Credentials: credentials, Transport: v.transport, Output: aux.Output, Health: aux.Output.GrokHealth, Routes: routes, Failure: requests.Failure}
+	grok := &GrokExecutor{Attributes: requests.Readers.Attributes, Credentials: credentials, Transport: v.transport, Output: aux.Output, Health: aux.Output.GrokHealth, Routes: routes, Failure: requests.Failure}
 	text := &OpenAITextExecutor{ForcedTemplate: options.ForcedTemplate, Requests: requests, Output: aux.Output, Grok: grok, Credentials: credentials, FastPolicy: &gatewayprovider.ExecutionFastPolicy{Readers: v.readers}, Continuation: &gatewaysession.CompatResponses{TTL: aux.Output.ResponseTTL}, PromptCache: gatewaysession.NewAnthropicPromptCache(time.Now), CodexUsage: aux.CodexUsage, ResponseTTL: aux.Output.ResponseTTL, Compact: &CompactExecutor{Models: gatewayprovider.CompactModels{Default: v.compactModel}}}
 	return &OpenAIResponsesExecutor{Requests: requests, Output: aux.Output, Text: text, Grok: grok, Lineage: &OpenAIEncryptedLineage{Store: store, TTL: aux.Output.ResponseTTL}, ImageBridge: &gatewayprovider.ResponseImagePolicy{DefaultEnabled: options.ImageBridge}}
 }

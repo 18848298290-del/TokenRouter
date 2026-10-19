@@ -44,7 +44,7 @@ func TestResolveOpenAIGroupMappedImageIntent(t *testing.T) {
 			name:           "普通别名映射为生图模型",
 			requestedModel: "draw-alias",
 			mappedModel:    "gpt-image-1",
-			wantIntent:     true,
+			wantIntent:     false,
 		},
 		{
 			name:           "生图别名映射为普通模型",
@@ -201,7 +201,7 @@ func TestResolveOpenAIPassthroughImageIntentKeepsCompactMappingAttemptLocal(t *t
 		var calls atomic.Int64
 		classify := countingOpenAIImageIntentClassifier(&calls)
 
-		require.True(t, ResolveOpenAIPassthroughImageIntent(c, "draw-alias", body, "gpt-image-2", compactBody, true, classify))
+		require.False(t, ResolveOpenAIPassthroughImageIntent(c, "draw-alias", body, "gpt-image-2", compactBody, true, classify))
 		cached, known := GetOpenAIImageIntentHint(c)
 		require.True(t, known)
 		require.False(t, cached)
@@ -223,9 +223,9 @@ func TestResolveOpenAIPassthroughImageIntentKeepsCompactMappingAttemptLocal(t *t
 		require.False(t, ResolveOpenAIPassthroughImageIntent(c, "gpt-image-2", body, "gpt-5.4", compactBody, true, classify))
 		cached, known := GetOpenAIImageIntentHint(c)
 		require.True(t, known)
-		require.True(t, cached)
+		require.False(t, cached)
 
-		require.True(t, ResolveOpenAIPassthroughImageIntent(c, "gpt-image-2", body, "gpt-image-2", body, false, classify))
+		require.False(t, ResolveOpenAIPassthroughImageIntent(c, "gpt-image-2", body, "gpt-image-2", body, false, classify))
 		require.Equal(t, int64(2), calls.Load())
 	})
 }
@@ -268,7 +268,7 @@ func TestResolveOpenAIPassthroughImageIntentMappedBodyStartsUnknownThenSeedsCano
 	require.Equal(t, int64(2), calls.Load())
 	cached, known := GetOpenAIImageIntentHint(c)
 	require.True(t, known)
-	require.True(t, cached)
+	require.False(t, cached)
 }
 
 // TestResolveOpenAIPassthroughImageIntentReusesAcrossInvariantMutations
@@ -433,7 +433,7 @@ func TestOpenAIGatewayServicePassthroughCompactImageIntentIsAttemptLocal(t *test
 			name:           "image to text reaches upstream",
 			canonicalModel: "gpt-image-2",
 			compactModel:   "gpt-5.4",
-			wantCanonical:  true,
+			wantCanonical:  false,
 		},
 	}
 

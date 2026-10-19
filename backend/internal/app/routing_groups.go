@@ -95,10 +95,11 @@ func provideGroupReader(store *routingpostgres.GroupStore) routing.GroupReposito
 // and model rules. Catalog model IDs are read when defaults are requested, and
 // score weights use current settings with supplied startup defaults for
 // validation.
-func provideRoutingGroupAdmin(catalog *catalogprovider.Service, store *routingpostgres.GroupStore, providers *providerpostgres.ProviderStore, keys *apikeypostgres.KeyStore, invalidator apikey.APIKeyAuthCacheInvalidator, modelConfigs *routing.PricingConfigService, settings *settingscore.Store, defaults *scheduler.AdminDefaults) *routing.GroupAdmin {
+func provideRoutingGroupAdmin(catalog *catalogprovider.Service, store *routingpostgres.GroupStore, providers *providerpostgres.ProviderStore, keys *apikeypostgres.KeyStore, invalidator apikey.APIKeyAuthCacheInvalidator, modelConfigs *routing.PricingConfigService, settings *settingscore.Store, defaults *scheduler.AdminDefaults, attributes *routing.ModelAttributeService) *routing.GroupAdmin {
 	return routing.NewGroupAdmin(store, store, store, routingGroupProviders{Store: providers}, keys, invalidator, modelConfigs, routing.GroupAdminOptions{
 		DefaultModels: func(string) []string { return catalog.ModelIDs() },
 		ModelResolver: routing.RequestableResolver{
+			Attributes:    attributes,
 			GroupPolicies: modelConfigs,
 			Warn:          slog.Warn,
 		},

@@ -80,7 +80,7 @@ func TestProviderHandlerBulkUpdateOpenAIAPIKeyDoesNotProbe(t *testing.T) {
 	upstream := &bulkUpdateProbeHTTPUpstream{}
 	store := repo
 	policy := &provideradapter.OpenAIProbePolicy{Available: true, Read: store.GetByID}
-	executor := &provideradapter.OpenAIProviderTest{Store: store, Transport: upstream, ValidateURL: (egress.OperatorURLPolicy{AllowInsecureHTTP: true}).Validate, Prepare: policy.Prepare, ApplyRouting: policy.ApplyTestRouting, ResolveTLS: policy.ResolveTestTLS}
+	executor := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: store, Transport: upstream, ValidateURL: (egress.OperatorURLPolicy{AllowInsecureHTTP: true}).Validate, Prepare: policy.Prepare, ApplyRouting: policy.ApplyTestRouting, ResolveTLS: policy.ResolveTestTLS}
 	tests := providercore.NewTestService(&provideradapter.TestTargets{Read: store.GetByID, OpenAI: executor}, providercore.TestOptions{Now: time.Now})
 
 	router := gin.New()

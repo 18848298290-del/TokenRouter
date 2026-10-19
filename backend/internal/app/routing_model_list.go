@@ -38,6 +38,6 @@ func catalogueReader(store *providerpostgres.ProviderStore) func(context.Context
 
 // provideRequestableCatalogue combines provider candidate reads with shared
 // group-policy model resolution.
-func provideRequestableCatalogue(store *providerpostgres.ProviderStore, modelConfigs *routing.PricingConfigService) *routing.RequestableCatalogue {
-	return &routing.RequestableCatalogue{Read: catalogueReader(store), Resolver: routing.RequestableResolver{GroupPolicies: modelConfigs, Warn: slog.Warn}, Warn: slog.Warn}
+func provideRequestableCatalogue(store *providerpostgres.ProviderStore, modelConfigs *routing.PricingConfigService, attributes *routing.ModelAttributeService) *routing.RequestableCatalogue {
+	return &routing.RequestableCatalogue{Read: catalogueReader(store), Resolver: routing.RequestableResolver{Attributes: attributes, GroupPolicies: modelConfigs, Warn: slog.Warn}, Warn: slog.Warn}
 }

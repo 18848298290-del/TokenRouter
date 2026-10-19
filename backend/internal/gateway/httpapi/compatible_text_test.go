@@ -38,7 +38,7 @@ func TestCompatiblePrefaceOrderingAndEnvelope(t *testing.T) {
 			if responses {
 				prefix = append(prefix, "request:original", "endpoint", "plan", "bind", "image")
 			} else {
-				prefix = append(prefix, "plan", "bind", "image", "request:original", "endpoint")
+				prefix = append(prefix, "plan", "bind", "request:original", "endpoint")
 			}
 			moderationProtocol := moderation.ContentModerationProtocolOpenAIChat
 			if responses {

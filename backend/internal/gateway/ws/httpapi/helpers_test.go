@@ -380,6 +380,9 @@ func newOpenAIWSConnPool(options *wsFixtureOptions) *openaiws.WSConnPool {
 // 128 MiB read limit when nonpositive. Callers own any started pool's
 // shutdown.
 func newWSFixture(v wsFixtureInputs) *wsExecutionFixture {
+	if v.readers == nil {
+		v.readers = gatewaytestkit.RuntimeReaders(nil)
+	}
 	aux := newAuxiliaryFixture(auxiliaryFixtureInputs{transport: v.transport, store: v.providers, observer: v.health})
 	requests, output := aux.Requests, aux.Output
 	requests.Readers = v.readers
@@ -429,7 +432,7 @@ func newWSFixture(v wsFixtureInputs) *wsExecutionFixture {
 	requests.GrokRoutes = routes
 	fast := &gatewayadapter.ExecutionFastPolicy{Readers: v.readers}
 	connections := openaiws.NewOpenAIWSConnections(wsFixturePoolOptions(v.options), v.dialer, v.pool)
-	grokExecutor := &gatewayhttp.GrokExecutor{Credentials: credentials, Transport: v.transport, Output: output, Health: output.GrokHealth, Routes: routes, Dialer: connections.Dialer(), FastPolicy: fast, Failure: requests.Failure}
+	grokExecutor := &gatewayhttp.GrokExecutor{Attributes: requests.Readers.Attributes, Credentials: credentials, Transport: v.transport, Output: output, Health: output.GrokHealth, Routes: routes, Dialer: connections.Dialer(), FastPolicy: fast, Failure: requests.Failure}
 	text := &gatewayhttp.OpenAITextExecutor{Requests: requests, Output: output, Grok: grokExecutor, Credentials: credentials, FastPolicy: fast, Continuation: &session.CompatResponses{TTL: choices.OpenAIHTTPResponseStickyTTL}, PromptCache: session.NewAnthropicPromptCache(time.Now), CodexUsage: aux.CodexUsage, ResponseTTL: choices.OpenAIHTTPResponseStickyTTL, Compact: &gatewayhttp.CompactExecutor{}}
 	lineage := &gatewayhttp.OpenAIEncryptedLineage{Store: state, TTL: choices.SessionStickyTTL}
 	imagePolicy := &gatewayadapter.ResponseImagePolicy{}

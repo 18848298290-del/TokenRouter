@@ -422,12 +422,6 @@ func (p openAITextHTTPBackend) MetadataSession(c *gin.Context, hash, key, model 
 	return gatewaysession.MessagesMetadataSession(ClaudeCodeSessionIDFromHeader(c), hash, key, model, body)
 }
 
-// ChatImageModel rejects image-generation family after applying the supplied
-// group mapping.
-func (p openAITextHTTPBackend) ChatImageModel(model string, mapping routing.GroupMappingResult) bool {
-	return media.IsGPTImageGenerationModel(requeststate.GroupMappedModel(model, mapping))
-}
-
 // ErrorMetadata reads current request ID and model for dedicated terminal
 // failure events.
 func (p openAITextHTTPBackend) ErrorMetadata(c *gin.Context) (string, string) {

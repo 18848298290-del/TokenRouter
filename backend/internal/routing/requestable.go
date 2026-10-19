@@ -50,6 +50,9 @@ type RequestableModel struct {
 // RequestableModelsResult contains resolved group models and evidence about
 // restriction or configured candidates.
 type RequestableModelsResult struct {
+	// Err reports failed attribute or policy loading. Callers return this error
+	// instead of presenting a partially resolved set of model capabilities.
+	Err    error
 	Models []RequestableModel // resolved client model catalogue
 	// Restricted records configured group model restriction or a failed
 	// lookup/cancelled resolution. Callers use it to distinguish an empty blocked
@@ -119,14 +122,19 @@ type CataloguePolicies interface {
 // and provider query.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_catalog_resolution
 type RequestableResolver struct {
-	GroupPolicies CataloguePolicies    // optional group policy reader
-	Warn          func(string, ...any) // optional policy read warning
+	Attributes    *ModelAttributeService // shared route attribute resolver
+	GroupPolicies CataloguePolicies      // optional group policy reader
+	Warn          func(string, ...any)   // optional policy read warning
 }
 
 // requestableQuery retains the inputs and initial result shared by one group
 // catalogue resolution.
 type requestableQuery struct {
-	providers []CatalogueProvider // platform-filtered stable query providers
+	attributes *ModelAttributeSession // query-local catalog and profile snapshot
+	groupID    int64                  // selected attribute configuration group
+	preview    bool                   // defer capability filtering to preview draft
+	err        error                  // first attribute resolution failure
+	providers  []CatalogueProvider    // platform-filtered stable query providers
 	// protocols aligns by index with providers. Preparation captures each
 	// provider's enabled protocols once so every model check uses the same
 	// declared protocol selection.
@@ -162,6 +170,9 @@ func (s *RequestableResolver) ResolveWithProviders(ctx context.Context, groupID 
 			result.Models = append(result.Models, resolved)
 		}
 	}
+	if query.err != nil {
+		return RequestableModelsResult{Restricted: true, Err: query.err}
+	}
 	return result
 }
 
@@ -196,6 +207,9 @@ func (s *RequestableResolver) ResolveSelectedWithProviders(ctx context.Context, 
 			result.Models = append(result.Models, resolved)
 		}
 	}
+	if query.err != nil {
+		return RequestableModelsResult{Restricted: true, Err: query.err}
+	}
 	return result
 }
 
@@ -213,6 +227,13 @@ func (s *RequestableResolver) ResolveSelectedWithProviders(ctx context.Context, 
 func (s *RequestableResolver) prepare(ctx context.Context, groupID *int64, platform string, baseModels []string, providers []CatalogueProvider) requestableQuery {
 	providers = filterRequestableModelProviders(providers, platform)
 	query := requestableQuery{providers: providers, billingSource: BillingModelSourceRequested}
+	query.attributes = ModelAttributesFromContext(ctx)
+	if query.attributes == nil {
+		query.attributes = s.Attributes.NewSession()
+	}
+	if groupID != nil {
+		query.groupID = *groupID
+	}
 	if len(providers) == 0 {
 		return query
 	}
@@ -228,6 +249,7 @@ func (s *RequestableResolver) prepare(ctx context.Context, groupID *int64, platf
 				s.Warn("failed to load group policy for requestable model resolution", "group_id", *groupID, "platform", platform, "error", err)
 			}
 			query.result.Restricted = true
+			query.err = err
 			return query
 		}
 		query.policy = policy
@@ -380,8 +402,9 @@ func sortedModelMappingSources(mapping map[string]string) []string {
 // provider contributes an allowed result.
 //
 // A nonnil AllowedProtocols selection gates each candidate; an empty selection
-// excludes it, while absent policy protocols permit legacy name-only
-// resolution. Native status is combined across all providers contributing each
+// excludes it, while absent policy protocols retain configured identity
+// resolution. Each concrete protocol route then resolves its final attributes
+// before contributing output capability, pricing identity, and native status. Native status is combined across all providers contributing each
 // client protocol, so one converted route removes that protocol's native
 // marker. Billing source chooses requested, group-mapped, or a unique
 // case-insensitive upstream identity; differing upstream identities set pricing
@@ -424,14 +447,6 @@ func (q *requestableQuery) resolve(ctx context.Context, requestedModel string) (
 				if !ok {
 					continue
 				}
-				if aware, ok := provider.Rules.(interface {
-					// SupportsClientProtocol checks the mapped model's invocation shape for
-					// this entry. A false result excludes the candidate before support and
-					// final upstream-model collection contribute routes.
-					SupportsClientProtocol(string, capability.ProtocolID) bool
-				}); ok && !aware.SupportsClientProtocol(groupMappedModel, source) {
-					continue
-				}
 				candidateProtocols = append(candidateProtocols, source)
 				targetProtocols[source] = target
 				if target == source {
@@ -445,39 +460,49 @@ func (q *requestableQuery) resolve(ctx context.Context, requestedModel string) (
 		if !provider.Rules.Supports(ctx, groupMappedModel) {
 			continue
 		}
-		contributed := false
 		for _, upstreamModel := range provider.Rules.UpstreamModels(ctx, groupMappedModel) {
-			if policy != nil && policy.RestrictModels && policy.RestrictionSource() == BillingModelSourceUpstream &&
-				policy.IsModelRestricted(upstreamModel) {
+			if policy != nil && policy.RestrictModels && policy.RestrictionSource() == BillingModelSourceUpstream && policy.IsModelRestricted(upstreamModel) {
 				continue
 			}
-			upstreamModels = append(upstreamModels, upstreamModel)
-			if aware, ok := provider.Rules.(interface {
-				// AttributeTarget records the complete route identity for metadata, using
-				// both requested and final model values plus the chosen client and upstream
-				// protocols to retain mapping differences.
-				AttributeTarget(string, string, capability.ProtocolID, capability.ProtocolID) modelcatalog.Target
-			}); ok {
-				for _, source := range candidateProtocols {
-					attributeTargets = append(attributeTargets, aware.AttributeTarget(groupMappedModel, upstreamModel, source, targetProtocols[source]))
+			sources := candidateProtocols
+			if len(sources) == 0 {
+				sources = []capability.ProtocolID{""}
+			}
+			contributed := false
+			for _, source := range sources {
+				target := modelcatalog.Target{Platform: provider.Platform, ProviderType: provider.Type, Model: upstreamModel, ClientProtocol: string(source), UpstreamProtocol: string(targetProtocols[source])}
+				if aware, ok := provider.Rules.(interface {
+					// AttributeTarget supplies the full mapped route used for capability lookup.
+					AttributeTarget(string, string, capability.ProtocolID, capability.ProtocolID) modelcatalog.Target
+				}); ok {
+					target = aware.AttributeTarget(groupMappedModel, upstreamModel, source, targetProtocols[source])
 				}
-				if len(candidateProtocols) == 0 {
-					attributeTargets = append(attributeTargets, aware.AttributeTarget(groupMappedModel, upstreamModel, "", ""))
+				if !q.preview {
+					resolution, err := q.attributes.Resolve(ctx, q.groupID, target)
+					if err != nil {
+						q.err = err
+						return RequestableModel{}, false
+					}
+					if !modelSupportsClientProtocol(target, resolution.Attributes) {
+						continue
+					}
+				}
+				attributeTargets = append(attributeTargets, target)
+				contributed = true
+				if source == "" {
+					continue
+				}
+				native := slices.Contains(nativeCandidates, source)
+				if previous, seen := nativeByProtocol[source]; seen {
+					nativeByProtocol[source] = previous && native
+				} else {
+					nativeByProtocol[source] = native
+					protocols = append(protocols, source)
 				}
 			}
-			contributed = true
-		}
-		if !contributed {
-			continue
-		}
-		for _, source := range candidateProtocols {
-			native := slices.Contains(nativeCandidates, source)
-			if previous, seen := nativeByProtocol[source]; seen {
-				nativeByProtocol[source] = previous && native
-				continue
+			if contributed {
+				upstreamModels = append(upstreamModels, upstreamModel)
 			}
-			nativeByProtocol[source] = native
-			protocols = append(protocols, source)
 		}
 	}
 	if len(upstreamModels) == 0 {
@@ -548,4 +573,31 @@ func RequestableModelIDs(models []RequestableModel) []string {
 // exact platform filter.
 func matchesCataloguePlatform(provider *CatalogueProvider, platform string) bool {
 	return platform == "" || provider.Platform == platform
+}
+
+// modelSupportsClientProtocol checks declared output against the selected
+// entry. Image operations require positive evidence; unknown ordinary text
+// models remain requestable, and mixed text/image outputs retain text routes.
+func modelSupportsClientProtocol(target modelcatalog.Target, attrs modelcatalog.Attributes) bool {
+	source := capability.ProtocolID(target.ClientProtocol)
+	if source == "" {
+		return true
+	}
+	embedding := strings.HasPrefix(strings.ToLower(target.Model), "text-embedding-")
+	if embedding || source == capability.ProtocolEmbeddings {
+		return embedding && source == capability.ProtocolEmbeddings
+	}
+	switch source {
+	case capability.ProtocolImagesGenerations, capability.ProtocolImagesEdits, capability.ProtocolImageBatches:
+		supported := attrs.OutputSupport("image")
+		return supported != nil && *supported
+	case capability.ProtocolOpenAIChatCompletions, capability.ProtocolAnthropicMessages:
+		return !attrs.OutputOnly("image")
+	case capability.ProtocolOpenAIResponses, capability.ProtocolResponsesWebSocket:
+		return target.Platform != "grok" || !attrs.OutputOnly("image")
+	case capability.ProtocolGeminiGenerateContent:
+		return true
+	default:
+		return !attrs.OutputOnly("image")
+	}
 }

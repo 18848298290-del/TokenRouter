@@ -266,39 +266,39 @@ func (s *ModelAttributeService) resolve(view modelcatalog.View, config *ModelAtt
 	return result
 }
 
-// Preview resolves a model through the group's saved provider routes and
-// applies a draft profile or the stored profile when draft is nil. Client
-// protocol filters returned routes when supplied, and models outside the finite
-// saved candidate set yield an empty result. A present Catalogue needs its
-// Read callback configured, and a nil draft requires Repo; missing Catalogue
-// returns configuration unavailability before those reads.
-func (s *ModelAttributeService) Preview(ctx context.Context, groupID int64, model, clientProtocol string, draft *ModelAttributeConfig) ([]modelcatalog.Resolution, error) {
-	if s.Catalogue == nil {
-		return nil, apperror.ServiceUnavailable("MODEL_ATTRIBUTES_UNAVAILABLE", "model catalogue is unavailable")
-	}
-	providers, err := s.Catalogue.Read(ctx, &groupID)
-	if err != nil {
-		return nil, err
-	}
-	resolved := s.Catalogue.Resolver.ResolveSelectedWithProviders(ctx, &groupID, "", []string{model}, providers)
+// Preview applies a draft or stored profile to already enumerated configured
+// routes. Route enumeration precedes capability filtering so a draft can add
+// a missing capability and show the same values used by subsequent requests.
+func (s *ModelAttributeService) Preview(ctx context.Context, groupID int64, targets []modelcatalog.Target, draft *ModelAttributeConfig) ([]modelcatalog.Resolution, error) {
 	config := draft
-	if config == nil {
+	if config == nil && s.Repo != nil {
+		var err error
 		config, err = s.Repo.ForGroup(ctx, groupID)
 		if err != nil {
 			return nil, err
 		}
 	}
-	result := []modelcatalog.Resolution{}
+	result := make([]modelcatalog.Resolution, 0, len(targets))
 	view := s.viewForContext(ctx)
 	candidates := s.identityCandidates()
-	for _, value := range resolved.Models {
-		for _, target := range value.AttributeTargets {
-			if clientProtocol == "" || target.ClientProtocol == clientProtocol {
-				result = append(result, s.resolve(view, config, target, candidates))
-			}
-		}
+	for _, target := range targets {
+		result = append(result, s.resolve(view, config, target, candidates))
 	}
 	return result, nil
+}
+
+// RequireImageOutput validates declared image output before an image operation.
+// Missing declarations and explicit rejection use separate local errors, so
+// callers can distinguish incomplete configuration from a known unsupported route.
+func RequireImageOutput(attributes modelcatalog.Attributes) error {
+	supported := attributes.OutputSupport("image")
+	if supported == nil {
+		return apperror.BadRequest("MODEL_CAPABILITY_UNKNOWN", "image output capability is unknown; configure model attributes before requesting images")
+	}
+	if !*supported {
+		return apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", "the selected model route does not support image output")
+	}
+	return nil
 }
 
 // Unavailable reports whether the session retains any group profile loading or

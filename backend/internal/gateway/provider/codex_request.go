@@ -7,7 +7,6 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
@@ -99,21 +98,6 @@ func EnsureOpenAIResponsesImageGenerationToolChoiceAuto(reqBody map[string]any) 
 // instructions.
 func ApplyCodexImageGenerationBridgeInstructions(reqBody map[string]any) bool {
 	return openai.ApplyCodexImageGenerationBridgeInstructions(reqBody, IsCodexSparkModel(openai.FirstNonEmptyString(reqBody["model"])))
-}
-
-// ValidateOpenAIResponsesImageModel rejects image-only top-level model names
-// when the body declares hosted image generation. The error tells callers to
-// use a Responses-capable text driver; other shapes pass unchanged.
-func ValidateOpenAIResponsesImageModel(reqBody map[string]any, model string) error {
-	return openai.ValidateOpenAIResponsesImageModel(reqBody, model, media.IsImageGenerationModel(strings.TrimSpace(model)))
-}
-
-// NormalizeOpenAIResponsesImageOnlyModel converts recognized image-only
-// requests to the upstream text-driver/image-tool shape. It mutates model,
-// input, tool options, and choice according to the upstream helper and returns
-// its modification flag.
-func NormalizeOpenAIResponsesImageOnlyModel(reqBody map[string]any) bool {
-	return openai.NormalizeOpenAIResponsesImageOnlyModel(reqBody, media.IsImageGenerationModel(openai.FirstNonEmptyString(reqBody["model"])))
 }
 
 // ApplyCodexClientMetadata fills missing installation metadata from the

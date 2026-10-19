@@ -68,9 +68,6 @@ type TransformPorts interface {
 	// IsExplicitImageGenerationIntentMap reports declared image intent in the
 	// supplied decoded request object.
 	IsExplicitImageGenerationIntentMap(endpoint, model string, body map[string]any) bool
-	// IsOpenAIImageGenerationModel reports whether the model belongs to the image-
-	// generation family.
-	IsOpenAIImageGenerationModel(model string) bool
 	// OpenAIRequestBodyImageGenerationToolNeedsNormalization reports whether raw
 	// image tools need compatibility preparation.
 	OpenAIRequestBodyImageGenerationToolNeedsNormalization(body []byte) bool
@@ -85,14 +82,6 @@ type TransformPorts interface {
 	// choice to a writable body. Its result reports a mutation for serialization;
 	// the caller selects this operation when automatic bridge policy permits it.
 	EnsureOpenAIResponsesImageGenerationToolChoiceAuto(body map[string]any) bool
-	// NormalizeOpenAIResponsesImageOnlyModel converts an image-only model request
-	// on the writable object. A true result tells the runner to adopt
-	// serialization and reread the model field for its effective upstream
-	// identity.
-	NormalizeOpenAIResponsesImageOnlyModel(body map[string]any) bool
-	// ValidateOpenAIResponsesImageModel checks the prepared image configuration
-	// against the selected upstream model.
-	ValidateOpenAIResponsesImageModel(body map[string]any, model string) error
 	// ValidateCodexSparkInput checks image input against selected Spark model
 	// capability restrictions.
 	ValidateCodexSparkInput(body map[string]any, model string) error

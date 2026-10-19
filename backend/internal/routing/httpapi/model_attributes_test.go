@@ -85,7 +85,7 @@ func TestModelAttributeHTTPReadWriteAndAuthorization(t *testing.T) {
 			c.AbortWithStatus(403)
 		}
 	})
-	RegisterModelAttributeRoutes(admin, NewModelAttributeHandler(service))
+	RegisterModelAttributeRoutes(admin, NewModelAttributeHandler(service, nil))
 	call := func(method, path, body string, authorized bool) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -127,7 +127,7 @@ func TestModelAttributeDefaultsUsePagedIndex(t *testing.T) {
 			return routing.ModelAttributeSnapshot{}
 		},
 	}}
-	handler := NewModelAttributeHandler(service)
+	handler := NewModelAttributeHandler(service, nil)
 	engine := gin.New()
 	engine.GET("/defaults", handler.Defaults)
 	recorder := httptest.NewRecorder()

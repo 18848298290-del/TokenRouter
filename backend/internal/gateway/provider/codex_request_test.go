@@ -1486,7 +1486,7 @@ func TestNormalizeOpenAIResponsesImageOnlyModel_BuildsImageToolRequest(t *testin
 		"output_format": "png",
 	}
 
-	modified := NormalizeOpenAIResponsesImageOnlyModel(reqBody)
+	modified := openai.NormalizeOpenAIResponsesImageOnlyModel(reqBody, true)
 	require.True(t, modified)
 	require.Equal(t, openai.ImagesResponsesMainModel, reqBody["model"])
 	require.Equal(t, "draw a cat", reqBody["input"])
@@ -1527,7 +1527,7 @@ func TestNormalizeOpenAIResponsesImageOnlyModel_PreservesExistingImageTool(t *te
 		"tool_choice": "auto",
 	}
 
-	modified := NormalizeOpenAIResponsesImageOnlyModel(reqBody)
+	modified := openai.NormalizeOpenAIResponsesImageOnlyModel(reqBody, true)
 	require.True(t, modified)
 	require.Equal(t, openai.ImagesResponsesMainModel, reqBody["model"])
 	require.Equal(t, "auto", reqBody["tool_choice"])
@@ -1544,11 +1544,11 @@ func TestNormalizeOpenAIResponsesImageOnlyModel_PreservesExistingImageTool(t *te
 // image-only top-level model with a hosted image tool. Validation returns the
 // error requiring a Responses-capable text driver for that request.
 func TestValidateOpenAIResponsesImageModel_RejectsImageOnlyModel(t *testing.T) {
-	err := ValidateOpenAIResponsesImageModel(map[string]any{
+	err := openai.ValidateOpenAIResponsesImageModel(map[string]any{
 		"tools": []any{
 			map[string]any{"type": "image_generation"},
 		},
-	}, "gpt-image-2")
+	}, "gpt-image-2", true)
 
 	require.ErrorContains(t, err, `/v1/responses image_generation requests require a Responses-capable text model`)
 }

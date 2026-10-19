@@ -278,9 +278,6 @@ type OpenAITextBackend interface {
 	// MetadataSession derives Messages selection/cache seeds using Claude Code
 	// headers and metadata hints.
 	MetadataSession(*gin.Context, string, string, string, []byte) (string, string)
-	// ChatImageModel reports whether the group-mapped model is rejected at the
-	// Chat endpoint.
-	ChatImageModel(string, routing.GroupMappingResult) bool
 	// ErrorMetadata returns the current request identifier and model for terminal
 	// error output.
 	ErrorMetadata(*gin.Context) (string, string)

@@ -29,6 +29,9 @@ func (s *Public) validateModelAttributes(ctx context.Context, session *routing.M
 	if err != nil {
 		return err
 	}
+	if err := routing.RequireImageOutput(result.Attributes); err != nil {
+		return err
+	}
 	media := result.Attributes.Media
 	if media == nil {
 		return nil

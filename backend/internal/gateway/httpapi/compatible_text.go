@@ -91,8 +91,6 @@ type CompatibleTextBackend interface {
 	// Preparation can derive it before user-slot waiting, then carries the acquired
 	// request lease into that context before the executor uses it.
 	ImageContext(context.Context) context.Context
-	// ChatImageModel identifies mapped image-generation models rejected by the Chat endpoint.
-	ChatImageModel(string, routing.GroupMappingResult) bool
 	// Moderate evaluates the prepared body using the entry's declared content protocol.
 	// A nil decision allows preparation to continue. A blocked decision provides
 	// the message and status classification for a local terminal response.
@@ -462,10 +460,6 @@ func (h *CompatibleTextHandler) ChatCompletions(c *gin.Context) {
 	groupMappingRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, reqModel)
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)
-	if h.backend.ChatImageModel(reqModel, groupMapping) {
-		h.chatCompletionsErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "This model is not supported on the Chat Completions endpoint")
-		return
-	}
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
 	h.backend.ObserveRequest(c, reqModel, reqStream)

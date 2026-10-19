@@ -2,11 +2,13 @@ package selection
 
 import (
 	"context"
+	"sync"
 
-	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
@@ -25,6 +27,18 @@ import (
 // captured selection request lets hydration validate the group and model
 // against the later full record, keeping lightweight candidate state from
 // deciding execution eligibility by itself.
+
+// imageSelectionState retains capability failures across candidate attempts.
+// Its mutex protects diagnostics when the scheduler evaluates candidates
+// concurrently; any supported route keeps transient selection errors authoritative.
+type imageSelectionState struct {
+	// mu protects supported and err across concurrent candidate checks. A
+	// successful declaration makes scheduler availability authoritative; otherwise
+	// err retains the most informative local capability failure for presentation.
+	mu        sync.Mutex // candidate observation lock
+	supported bool       // observed supported image route
+	err       error      // retained local capability failure
+}
 
 type (
 	// candidatePolicyKey separates compatible eligibility state from other request
@@ -64,6 +78,37 @@ type (
 	}
 )
 
+// observe records one candidate's capability outcome for the current selection.
+// A successful declaration records that the pool contains an image-capable
+// route, allowing the scheduler to report capacity or later eligibility failure.
+// Other candidates can continue recording errors without clearing that evidence.
+//
+// Configuration-read failures outrank unknown declarations, which outrank known
+// rejection. The mutex preserves that priority when candidate checks complete
+// concurrently, and the state belongs to one selection including its native-to-
+// basic protocol retry.
+func (s *imageSelectionState) observe(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err == nil {
+		s.supported = true
+	} else if s.err == nil || apperror.Reason(err) == "MODEL_ATTRIBUTES_UNAVAILABLE" || apperror.Reason(s.err) == "MODEL_CAPABILITY_UNSUPPORTED" {
+		s.err = err
+	}
+}
+
+// failure returns a local error only when no inspected route supports images.
+// A supported route leaves capacity, authentication, and protocol diagnostics
+// to the scheduler even if other candidates lacked model attributes.
+func (s *imageSelectionState) failure() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.supported {
+		return nil
+	}
+	return s.err
+}
+
 // withCandidatePolicy captures group membership and the existing sticky
 // provider for eligibility rechecks. The sticky reader's returned ID supplies
 // window-cost and RPM reserve eligibility even when the read also reports an
@@ -81,8 +126,8 @@ func (s *Compatible) withCandidatePolicy(ctx context.Context, groupID *int64, se
 
 // candidateEligibilityReason returns the first compatible candidate rejection,
 // or an empty string when its checks pass. Protocol and model eligibility run
-// first, followed by image identity, preferred-provider membership, admitted
-// group membership, and OAuth requirements.
+// first, followed by preferred-provider membership, admitted group membership,
+// OAuth requirements, and final-route output capabilities.
 //
 // The captured sticky provider controls Anthropic window-cost and RPM reserve
 // eligibility. Generic quota and scheduling thresholds apply before Gemini's
@@ -92,9 +137,6 @@ func (s *Compatible) withCandidatePolicy(ctx context.Context, groupID *int64, se
 func (s *Compatible) candidateEligibilityReason(ctx context.Context, value *gatewayadapter.ExecutionProvider, platform, model string, compact bool, required provider.OpenAIEndpointCapability) string {
 	if reason := gatewayadapter.CompatibleEligibilityReason(ctx, value, platform, model, compact, required); reason != "" {
 		return reason
-	}
-	if required, _ := ctx.Value(imageModelRequiredKey{}).(bool); required && !media.IsImageGenerationModel(gatewayadapter.ExecutionModelPolicy(value).UpstreamModel(ctx, model)) {
-		return "image_model_required"
 	}
 	if preferred, configured := ctx.Value(preferredProvidersKey{}).(map[int64]struct{}); configured {
 		if _, found := preferred[value.Record.ID]; !found {
@@ -108,6 +150,28 @@ func (s *Compatible) candidateEligibilityReason(ctx context.Context, value *gate
 	group, _ := requeststate.GroupFromContext(ctx)
 	if group != nil && group.RequireOAuthOnly && !value.View().IsOAuth() {
 		return "oauth_required"
+	}
+	imageState, imageRequired := ctx.Value(imageModelRequiredKey{}).(*imageSelectionState)
+	if imageRequired {
+		model := gatewayadapter.ExecutionModelPolicy(value).UpstreamModel(ctx, model)
+		resolution, err := gatewayadapter.ResolveModelAttributes(ctx, value, model, nil)
+		if err == nil {
+			err = routing.RequireImageOutput(resolution.Attributes)
+		}
+		imageState.observe(err)
+		if err != nil {
+			return apperror.Reason(err)
+		}
+	}
+	if source, present := requeststate.ClientProtocolFromContext(ctx); !imageRequired && present && (source == capability.ProtocolOpenAIChatCompletions || source == capability.ProtocolAnthropicMessages) {
+		model := gatewayadapter.ExecutionModelPolicy(value).UpstreamModel(ctx, model)
+		resolution, err := gatewayadapter.ResolveModelAttributes(ctx, value, model, nil)
+		if err != nil {
+			return apperror.Reason(err)
+		}
+		if resolution.Attributes.OutputOnly("image") {
+			return "MODEL_CAPABILITY_UNSUPPORTED"
+		}
 	}
 	if s.generic != nil {
 		if !s.generic.isProviderSchedulableForQuota(value) {

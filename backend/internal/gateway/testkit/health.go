@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
@@ -113,6 +112,13 @@ func NewHealthObserver(input HealthInput) *provideradapter.UpstreamHealth {
 			reset := provider.GeminiDailyResetTime(time.Now(), location).Unix()
 			return &reset
 		}},
-		Models: &provideradapter.ModelHealth{Health: health, IsImageModel: media.IsGPTImageGenerationModel},
+		Models: &provideradapter.ModelHealth{Health: health, ImageOutput: func(ctx context.Context, value *provider.Record, model string) bool {
+			resolved, err := gatewayadapter.ResolveModelAttributes(ctx, gatewayadapter.NewExecutionProvider(value), model, RuntimeReaders(nil).Attributes)
+			if err != nil {
+				return false
+			}
+			support := resolved.Attributes.OutputSupport("image")
+			return support != nil && *support
+		}},
 	}
 }

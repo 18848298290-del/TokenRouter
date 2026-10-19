@@ -220,6 +220,10 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 	if policyModel == "" {
 		policyModel = reqModel
 	}
+	attributes, attributeErr := p.ModelAttributes(ctx, policyModel)
+	if attributeErr != nil {
+		return nil, attributeErr
+	}
 	updatedBody, policyErr := p.ApplyFastPass(ctx, policyModel, body)
 	if policyErr != nil {
 		return nil, policyErr
@@ -229,8 +233,8 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 	// Broad intent includes retained image evidence for state and billing;
 	// explicit intent checks the prepared request and selected model before the
 	// group permission decision.
-	imageIntent := p.ImageIntent(reqModel, canonicalImageIntentBody, policyModel, body, attemptImageIntentInvalidated)
-	explicitImageIntent := p.ExplicitImageIntent(policyModel, body)
+	imageIntent := p.ImageIntent(reqModel, canonicalImageIntentBody, policyModel, body, attemptImageIntentInvalidated) || attributes.Attributes.OutputOnly("image")
+	explicitImageIntent := attributes.Attributes.OutputOnly("image") || p.ExplicitImageIntent(policyModel, body)
 	if explicitImageIntent && !p.ImageAllowed() {
 		p.FeatureDenied()
 		p.Reject(403, "permission_error", p.ImagePermissionMessage(), "")
@@ -243,8 +247,6 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 		var imageCfgErr error
 		imageCfg, imageCfgErr := p.ImageBilling(body, reqModel)
 		if imageCfgErr != nil {
-			p.UpstreamError(400, imageCfgErr.Error())
-			p.Reject(400, "invalid_request_error", imageCfgErr.Error(), "size")
 			return nil, imageCfgErr
 		}
 		imageBillingModel = imageCfg.Model

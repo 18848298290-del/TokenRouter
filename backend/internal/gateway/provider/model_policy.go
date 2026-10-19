@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/modeltrace"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
@@ -382,7 +381,7 @@ func (p ModelPolicy) UpstreamModel(ctx context.Context, requested string) string
 //
 // OpenAI and Grok use canonical scheduling names, while Antigravity includes
 // its thinking-specific route. Gemini Antigravity traffic also receives the
-// shared Gemini key, OpenAI image names or request image intent receive the
+// shared Gemini key, declared OpenAI image output or request intent receive the
 // shared image key, and Anthropic Fable names receive the shared Fable key.
 // These scopes supplement the model window, so either active window can
 // restrict that request.
@@ -412,8 +411,14 @@ func (p ModelPolicy) LimitKeys(ctx context.Context, requested string) []string {
 		}
 	case capability.PlatformOpenAI:
 		// A text model can invoke image generation through tools. Request intent
-		// therefore joins model-name evidence when assigning the shared image cooldown scope.
-		images := media.IsImageGenerationModel(requested) || media.IsImageGenerationModel(key) || requeststate.OpenAIImageGenerationIntentFromContext(ctx)
+		// therefore joins declared output evidence when assigning the shared image cooldown scope.
+		images := requeststate.OpenAIImageGenerationIntentFromContext(ctx)
+		if !images {
+			// Mixed-output models can serve ordinary text requests. Apply the shared
+			// image cooldown only to an image-only target or explicit image intent.
+			resolution, err := ResolveModelAttributes(ctx, &ExecutionProvider{Record: *value, Route: p.Route}, key, nil)
+			images = err == nil && resolution.Attributes.OutputOnly("image")
+		}
 		if images && key != provider.OpenAIImageGenerationRateLimitKey {
 			keys = append(keys, provider.OpenAIImageGenerationRateLimitKey)
 		}

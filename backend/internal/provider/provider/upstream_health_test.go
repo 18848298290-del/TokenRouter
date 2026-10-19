@@ -14,8 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	catalogtestkit "github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	upstreamkimi "github.com/TokenFlux/TokenRouter/internal/upstream/kimi"
@@ -1852,7 +1853,11 @@ func openAICodexPlanGatedOAuthProvider() *providercore.Record {
 // classification path.
 func newModelHealthObserver(repo *modelNotFoundProviderRepoStub) *UpstreamHealth {
 	core := providercore.NewHealthService(repo, nil, providercore.HealthOptions{})
-	models := &ModelHealth{Health: core, IsImageModel: media.IsGPTImageGenerationModel}
+	models := &ModelHealth{Health: core, ImageOutput: func(_ context.Context, value *providercore.Record, model string) bool {
+		attrs := catalogtestkit.OfflineView().Resolve(value.ModelAttributeTarget(model, ""), modelcatalog.Attributes{}).Attributes
+		support := attrs.OutputSupport("image")
+		return support != nil && *support
+	}}
 	return &UpstreamHealth{Core: core, Models: models, Limits: &RateLimitObserver{Health: core}}
 }
 

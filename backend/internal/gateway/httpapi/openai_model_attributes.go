@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
@@ -82,6 +84,29 @@ func (s *OpenAIImagesExecutor) resolveModelAttributes(ctx context.Context, value
 	if err != nil {
 		return err
 	}
+	if err := routing.RequireImageOutput(resolved.Attributes); err != nil {
+		return err
+	}
 	value.Capabilities = &resolved
 	return nil
+}
+
+// WriteOpenAIModelAttributeError presents known capability failures with their
+// structured reason and HTTP status. It records a local policy denial and
+// returns false for unrelated errors, leaving upstream failure classification
+// and presentation to their existing callers.
+func WriteOpenAIModelAttributeError(c *gin.Context, err error, stream bool) bool {
+	if c == nil {
+		return false
+	}
+	reason := apperror.Reason(err)
+	switch reason {
+	case "MODEL_CAPABILITY_UNKNOWN", "MODEL_CAPABILITY_UNSUPPORTED", "MODEL_ATTRIBUTES_UNAVAILABLE":
+		failure := apperror.FromError(err)
+		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+		DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, int(failure.Code), "invalid_request_error", reason, failure.Message, stream, false)
+		return true
+	default:
+		return false
+	}
 }

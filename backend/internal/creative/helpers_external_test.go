@@ -1303,7 +1303,7 @@ func newCreativeTestService() *creative.Public {
 		&creativeFakeQueue{}, nil, newCreativeFakeTransient(),
 		&creativeFakeBillingRepo{}, nil, newCreativeMediaCalculator(), nil, nil, nil, nil, &creativeFakeSettingReader{enabled: true, models: []creative.CreativeModelSetting{
 			{GroupID: 12, Model: "gemini-3.1-flash-image", Operations: []string{creative.CreativeOperationGenerate, creative.CreativeOperationEdit}},
-			{GroupID: 12, Model: "grok-imagine", Operations: []string{creative.CreativeOperationGenerate, creative.CreativeOperationEdit}},
+			{GroupID: 12, Model: "grok-imagine-image-2.0", Operations: []string{creative.CreativeOperationGenerate, creative.CreativeOperationEdit}},
 		}},
 		&config.Config{
 			Creative: config.CreativeConfig{

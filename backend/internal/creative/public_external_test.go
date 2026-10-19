@@ -21,6 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 	creativeprovider "github.com/TokenFlux/TokenRouter/internal/creative/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/modelidentity"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -62,7 +63,7 @@ func TestCreativeCatalogueIncludesGroupMappingTargets(t *testing.T) {
 	for _, source := range []string{"draw-alias", "draw-*"} {
 		t.Run(source, func(t *testing.T) {
 			value := &providercore.Record{Platform: creative.PlatformOpenAI, Type: "apikey", Status: "active", Schedulable: true, Credentials: map[string]any{}}
-			service := &creative.Public{ProviderRepo: creativeCatalogTestProviders{[]creative.CatalogProvider{creativeprovider.CatalogProvider(value)}}}
+			service := &creative.Public{Attributes: &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}, ProviderRepo: creativeCatalogTestProviders{[]creative.CatalogProvider{creativeprovider.CatalogProvider(value)}}}
 			group := &creative.GroupView{ID: 1, Operations: map[string][]string{creative.PlatformOpenAI: {creative.CreativeOperationGenerate}}, RoutingPolicy: routing.GroupRoutingPolicy{Enabled: true, ModelMapping: map[string]string{source: "gpt-image-2"}}}
 			models, err := service.CreativeModelsForGroup(context.Background(), group)
 			require.NoError(t, err)
@@ -154,7 +155,7 @@ func TestCreativeGrokConfiguredImageWhitelistCandidates(t *testing.T) {
 		},
 	}
 	models := creativeProviderModelsForTest(t, provider)
-	require.Equal(t, []string{"grok-imagine-image-lite"}, models)
+	require.Empty(t, models)
 }
 
 // TestCreativeGeminiConfiguredImageWhitelistCandidates mixes a Gemini image
@@ -168,7 +169,7 @@ func TestCreativeGeminiConfiguredImageWhitelistCandidates(t *testing.T) {
 		},
 	}
 	models := creativeProviderModelsForTest(t, provider)
-	require.Equal(t, []string{"gemini-3-pro-image-quality"}, models)
+	require.Empty(t, models)
 }
 
 // TestCreativeDirectoryAndCreateUseGroupPolicy exercises requested,
@@ -460,11 +461,7 @@ func TestCreativeListModelsFallbacks(t *testing.T) {
 		[]string{byGroup[22][0].Model, byGroup[22][1].Model, byGroup[22][2].Model})
 
 	// Grok defaults include 1K/2K and generate/edit.
-	require.Len(t, byGroup[23], 2)
-	grok1 := byModel(byGroup[23], "grok-imagine-image-1.0")
-	require.Equal(t, []string{"1K", "2K"}, grok1.ImageSizes)
-	require.Empty(t, grok1.Qualities)
-	require.Equal(t, []string{"generate", "edit"}, grok1.Operations)
+	require.Len(t, byGroup[23], 1)
 	grok2 := byModel(byGroup[23], "grok-imagine-image-2.0")
 	require.Equal(t, []string{"low", "medium"}, grok2.Qualities)
 	require.Contains(t, grok2.AspectRatios, "21:9")
@@ -479,82 +476,6 @@ func TestCreativeListModelsFallbacks(t *testing.T) {
 	require.Equal(t, []string{"1K", "2K", "4K"}, byGroup[24][0].ImageSizes)
 	// Permit floating-point rounding for the configured one-K dollar price.
 	require.InDelta(t, 0.02, byGroup[24][0].Price1K, 1e-9)
-}
-
-// TestCreativeFilterImageSizesForModel supplies the listed image families and
-// configured tiers. Each result equals its expected size sequence, including
-// one-K-only families, Gemini 512 insertion and retained unknown-model tiers.
-func TestCreativeFilterImageSizesForModel(t *testing.T) {
-	tests := []struct {
-		name     string   // case display name text
-		platform string   // selected image platform name
-		model    string   // queried image model spelling
-		input    []string // supplied configured size tiers
-		want     []string // expected filtered size tiers
-	}{
-		{
-			name:     "gemini 2.5 image is 1K only",
-			platform: capability.PlatformGemini,
-			model:    "gemini-2.5-flash-image-preview",
-			input:    []string{"1K", "2K", "4K"},
-			want:     []string{"1K"},
-		},
-		{
-			name:     "gemini lite image is 1K only",
-			platform: capability.PlatformGemini,
-			model:    "models/gemini-3.1-flash-lite-image",
-			input:    []string{"1K", "4K"},
-			want:     []string{"1K"},
-		},
-		{
-			name:     "gemini 3 pro keeps configured tiers",
-			platform: capability.PlatformGemini,
-			model:    "gemini-3-pro-image",
-			input:    []string{"1K", "2K", "4K"},
-			want:     []string{"1K", "2K", "4K"},
-		},
-		{
-			name:     "gemini 3.1 flash prepends 512 tier",
-			platform: capability.PlatformGemini,
-			model:    "gemini-3.1-flash-image",
-			input:    []string{"1K", "2K", "4K"},
-			want:     []string{"512", "1K", "2K", "4K"},
-		},
-		{
-			name:     "custom model keeps configured tiers",
-			platform: capability.PlatformGemini,
-			model:    "custom-image-model",
-			input:    []string{"1K", "2K", "4K"},
-			want:     []string{"1K", "2K", "4K"},
-		},
-		{
-			name:     "non gemini is unchanged",
-			platform: capability.PlatformOpenAI,
-			model:    "gpt-image-2",
-			input:    []string{"1K", "2K", "4K"},
-			want:     []string{"1K", "2K", "4K"},
-		},
-		{
-			name:     "grok image models only expose 1K and 2K",
-			platform: capability.PlatformGrok,
-			model:    "grok-imagine-image-2.0",
-			input:    []string{"1K", "2K", "4K"},
-			want:     []string{"1K", "2K"},
-		},
-		{
-			name:     "older gpt image models do not expose 4K",
-			platform: capability.PlatformOpenAI,
-			model:    "gpt-image-1",
-			input:    []string{"1K", "2K", "4K"},
-			want:     []string{"1K", "2K"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, creative.CreativeFilterImageSizesForModel(tt.platform, tt.model, tt.input))
-		})
-	}
 }
 
 // TestCreativePricingUsesResolvedPricingConfigPrice quotes the supplied image
@@ -742,10 +663,10 @@ func TestValidateCreateParams(t *testing.T) {
 			Platform:    capability.PlatformGrok,
 			Status:      billing.StatusActive,
 			Schedulable: true,
-			Credentials: map[string]any{"model_mapping": map[string]any{"grok-imagine": "grok-imagine"}},
+			Credentials: map[string]any{"model_mapping": map[string]any{"grok-imagine-image-2.0": "grok-imagine-image-2.0"}},
 		}}
 		params := validCreateParams()
-		params.Model = "grok-imagine"
+		params.Model = "grok-imagine-image-2.0"
 		params.Operation = creative.CreativeOperationInpaint
 		_, err := svc.ValidateCreateParams(context.Background(), 7, &params)
 		require.ErrorIs(t, err, creative.ErrCreativeOperationUnsupported)
@@ -758,10 +679,10 @@ func TestValidateCreateParams(t *testing.T) {
 		testassert.MustType[*creativeFakeGroupRepo](testassert.MustType[creativeGroupReader](svc.GroupRepo).source).byID[12] = group
 		testassert.MustType[*creativeFakeProviderRepo](testassert.MustType[creativeProviderReader](svc.ProviderRepo).source).byGroup[12] = []providercore.Record{{
 			ID: 56, Platform: capability.PlatformGrok, Status: billing.StatusActive, Schedulable: true,
-			Credentials: map[string]any{"model_mapping": map[string]any{"grok-imagine": "grok-imagine"}},
+			Credentials: map[string]any{"model_mapping": map[string]any{"grok-imagine-image-2.0": "grok-imagine-image-2.0"}},
 		}}
 		params := validCreateParams()
-		params.Model = "grok-imagine"
+		params.Model = "grok-imagine-image-2.0"
 		params.Operation = creative.CreativeOperationEdit
 		params.SourceImages = []creative.CreativeInputImage{{Bytes: makeTestPNG(t, 8, 8), Mime: "image/png"}}
 		_, err := svc.ValidateCreateParams(context.Background(), 7, &params)
@@ -1029,20 +950,17 @@ func TestCreativeEnabledGate(t *testing.T) {
 // discoverable.
 func TestCreativeGeminiNanoBananaCandidates(t *testing.T) {
 	for _, model := range []string{"nano-banana-pro", "nano-banana-2", "NANO-BANANA-PRO", "models/nano-banana-2"} {
-		require.True(t, creative.IsCreativeGeminiImageModel(model), "模型 %q 应识别为 Gemini 生图模型", model)
-		require.True(t, creative.CreativePlatformImageModel(capability.PlatformGemini, model), "模型 %q 应通过执行器图片模型校验", model)
 		capabilities := creative.CreativeCapabilitiesForModel(capability.PlatformGemini, model)
 		require.Empty(t, capabilities.AspectRatios, "未配置公共身份的模型 %q 保持未知参数集合", model)
 	}
-	require.False(t, creative.IsCreativeGeminiImageModel("nano-banana"), "不完整的 nano-banana 名称不应被识别")
 
 	provider := &providercore.Record{Platform: capability.PlatformGemini, Credentials: map[string]any{}}
 	models := creativeProviderModelsForTest(t, provider)
 	require.NotContains(t, models, "nano-banana-pro")
 	provider.Credentials["model_whitelist"] = []string{"nano-banana-pro", "nano-banana-2"}
 	models = creativeProviderModelsForTest(t, provider)
-	require.Contains(t, models, "nano-banana-pro")
-	require.Contains(t, models, "nano-banana-2")
+	require.NotContains(t, models, "nano-banana-pro")
+	require.NotContains(t, models, "nano-banana-2")
 }
 
 // TestCreativeModelSettingsFilterAndCreateValidation permits editing alone for
@@ -1201,7 +1119,7 @@ func creativeProviderModelsForTest(t *testing.T, value *providercore.Record) []s
 		value.Type = "apikey"
 	}
 	value.Schedulable = true
-	svc := &creative.Public{ProviderRepo: creativeCatalogTestProviders{[]creative.CatalogProvider{creativeprovider.CatalogProvider(value)}}}
+	svc := &creative.Public{Attributes: &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}, ProviderRepo: creativeCatalogTestProviders{[]creative.CatalogProvider{creativeprovider.CatalogProvider(value)}}}
 
 	models, err := svc.CreativeModelsForGroup(context.Background(), &creative.GroupView{ID: 12, Operations: creative.OperationsForGroup(false, nil)})
 	require.NoError(t, err)

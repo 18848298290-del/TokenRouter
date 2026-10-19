@@ -46,6 +46,7 @@ import (
 
 // wsPassthroughAdapter holds platform credentials, handshake parameters, and execution operations.
 type wsPassthroughAdapter struct {
+	attributeContext              context.Context                        // current turn attribute snapshot context
 	gatewayws.RequestUsageDecoder                                        // shared request metadata extraction rules
 	service                       *OpenAIWebSocketExecutor               // shared WS execution dependencies
 	request                       *gin.Context                           // upgraded Gin request context
@@ -74,6 +75,10 @@ func (p *wsPassthroughAdapter) ModelAttributes(ctx context.Context, turn int, mo
 	if p.service.Requests != nil && p.service.Requests.Readers != nil {
 		service = p.service.Requests.Readers.Attributes
 	}
+	if routing.ModelAttributesFromContext(ctx) == nil {
+		ctx = routing.WithModelAttributes(ctx, service)
+	}
+	p.attributeContext = ctx
 	return gatewayprovider.PrepareModelAttributeParameters(ctx, p.provider, model, body, service)
 }
 

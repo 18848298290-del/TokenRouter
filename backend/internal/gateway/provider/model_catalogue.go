@@ -3,14 +3,12 @@ package provider
 import (
 	"context"
 	"slices"
-	"strings"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
-	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
 // model_catalogue.go adapts provider configuration into protocol-aware
@@ -24,10 +22,9 @@ import (
 // Prepared rules let one catalogue query reuse the same model mapping and
 // support data. Provider memberships are copied into the listing input, while
 // the policy retains the provider record for protocol and attribute decisions.
-// Invocation filtering separates embedding models, image-only models, and
-// batch image capability so a model is not displayed for an incompatible
-// client operation; request execution still performs its current eligibility
-// checks.
+// The routing resolver applies declared output capabilities to each final
+// target after this adapter supplies the protocol and service identity.
+// Request execution independently checks the same selected-route capabilities.
 
 // catalogueRules adapts prepared execution model rules to routing catalogue
 // queries.
@@ -54,35 +51,6 @@ func (v catalogueRules) AttributeTarget(requested, model string, source, target 
 	value := v.policy.Record.ModelAttributeTarget(model, string(target))
 	value.ClientProtocol, value.UpstreamProtocol = string(source), string(target)
 	return value
-}
-
-// SupportsClientProtocol checks the provider-mapped model's invocation shape
-// against a client protocol. Embedding models require the embedding protocol,
-// image endpoints require image models, and image-only models are limited to
-// Responses or WS outside those endpoints.
-//
-// Image batches additionally require Gemini image generation. Other
-// model/protocol combinations pass this shape check and continue through their
-// route and provider eligibility checks. Provider alias expansion happens
-// before classification so a client alias receives the shape of its mapped
-// upstream target.
-func (v catalogueRules) SupportsClientProtocol(model string, source capability.ProtocolID) bool {
-	model = v.policy.Mapped(model)
-	embedding := strings.HasPrefix(strings.ToLower(model), "text-embedding-")
-	if embedding || source == capability.ProtocolEmbeddings {
-		return embedding && source == capability.ProtocolEmbeddings
-	}
-	image := upstream.IsGPTImageGenerationModel(model) || upstream.IsGrokImageGenerationModel(model)
-	if source == capability.ProtocolImagesGenerations || source == capability.ProtocolImagesEdits {
-		return image
-	}
-	if image && source != capability.ProtocolOpenAIResponses && source != capability.ProtocolResponsesWebSocket {
-		return false
-	}
-	if source == capability.ProtocolImageBatches {
-		return upstream.IsGeminiImageGenerationModel(model)
-	}
-	return true
 }
 
 // ConfiguredModels returns concrete request model candidates from the prepared

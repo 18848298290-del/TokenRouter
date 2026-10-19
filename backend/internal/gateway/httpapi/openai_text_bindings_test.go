@@ -75,12 +75,12 @@ func TestOpenAITextHTTPPreludeErrorOrder(t *testing.T) {
 		require.NotContains(t, p.events, "moderate")
 		require.NotContains(t, p.events, "user-slot")
 	})
-	t.Run("chat channel image restriction precedes moderation", func(t *testing.T) {
+	t.Run("chat defers model capability until final route", func(t *testing.T) {
 		p, h, c, w, _ := newOpenAITextEntryProbe(t, `{"model":"gpt-image-1","messages":[]}`)
 		p.image = true
 		h.ChatCompletions(c)
-		require.Equal(t, 400, w.Code)
-		require.NotContains(t, p.events, "moderate")
+		require.Equal(t, 200, w.Code)
+		require.Contains(t, p.events, "moderate")
 		require.Contains(t, p.events, "plan")
 	})
 	t.Run("messages keeps permissive stream while chat rejects", func(t *testing.T) {

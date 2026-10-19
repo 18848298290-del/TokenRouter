@@ -118,8 +118,8 @@ func TestIsExplicitImageGenerationIntent_DetectsNativeTool(t *testing.T) {
 // intent with an image-only model and no body. The explicit predicate
 // recognizes that model identity as an image-generation signal.
 func TestIsExplicitImageGenerationIntent_DetectsImageModel(t *testing.T) {
-	assert.True(t, ImageIntent().IsExplicitImageGenerationIntent("/v1/responses", "gpt-image-2", nil),
-		"image model IS explicit intent")
+	assert.False(t, ImageIntent().IsExplicitImageGenerationIntent("/v1/responses", "gpt-image-2", nil),
+		"model names need final route attributes")
 }
 
 // TestIsExplicitImageGenerationIntent_DetectsImageEndpoint queries an
@@ -294,13 +294,13 @@ func TestIsImageGenerationIntentForPlatform_GrokPreservesHardSignals(t *testing.
 		[]byte(`{"input":"draw"}`),
 		capability.PlatformGrok,
 	))
-	require.True(t, ImageIntentForPlatform(
+	require.False(t, ImageIntentForPlatform(
 		media.OpenAIResponsesEndpoint,
 		"gpt-image-2",
 		[]byte(`{"input":"draw"}`),
 		capability.PlatformGrok,
 	))
-	require.True(t, ImageIntentForPlatform(
+	require.False(t, ImageIntentForPlatform(
 		media.OpenAIResponsesEndpoint,
 		"grok-4.5",
 		[]byte(`{"model":"gpt-image-2","input":"draw"}`),
@@ -342,7 +342,7 @@ func TestIsImageGenerationIntent(t *testing.T) {
 			endpoint: "/v1/responses",
 			model:    "gpt-image-2",
 			body:     []byte(`{"model":"gpt-image-2"}`),
-			want:     true,
+			want:     false,
 		},
 		{
 			name:     "image tool",
@@ -439,7 +439,7 @@ func TestIsImageGenerationIntentJSONSemantics(t *testing.T) {
 			name:     "chat body image model",
 			endpoint: "/v1/chat/completions",
 			body:     []byte(`{"model":"gpt-image-2"}`),
-			want:     true,
+			want:     false,
 		},
 		{
 			name:     "large responses input with trailing namespace tool choice",
@@ -588,16 +588,16 @@ func TestIsImageGenerationIntentMap_NamespaceImageGen(t *testing.T) {
 	}
 }
 
-// TestResolveOpenAIResponsesImageBillingConfigUsesCurrentBodyModel supplies a
+// TestResolveOpenAIResponsesImageBillingConfigUsesConfirmedModel supplies a
 // mapped body model and image tool without its own model. Billing config uses
-// that body model and derives the 1K size tier.
-func TestResolveOpenAIResponsesImageBillingConfigUsesCurrentBodyModel(t *testing.T) {
+// the confirmed image identity and derives the 1K size tier.
+func TestResolveOpenAIResponsesImageBillingConfigUsesConfirmedModel(t *testing.T) {
 	imageModel, imageSize, err := ImageIntent().ResolveOpenAIResponsesImageBillingConfigFromBody(
 		[]byte(`{"model":"mapped-image-model","tools":[{"type":"image_generation","size":"1024x1024"}]}`),
 		"requested-model",
 	)
 	require.NoError(t, err)
-	require.Equal(t, "mapped-image-model", imageModel)
+	require.Equal(t, "requested-model", imageModel)
 	require.Equal(t, "1K", imageSize)
 }
 

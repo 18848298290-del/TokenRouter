@@ -185,41 +185,19 @@ func (r *ImageRequest) ValidateRoutingModel(routingModel string) error {
 	return nil
 }
 
-// IsImageGenerationModel recognizes supported GPT-image or Grok-image
-// generation model families.
-func IsImageGenerationModel(model string) bool {
-	return IsGPTImageGenerationModel(model) || IsGrokImageGenerationModel(model)
-}
-
-// IsGPTImageGenerationModel delegates trimmed, case-insensitive GPT-image
-// prefix recognition to native parsing.
-func IsGPTImageGenerationModel(model string) bool {
-	return upstreamcore.IsGPTImageGenerationModel(model)
-}
-
-// IsGrokImageGenerationModel delegates supported Grok image model-family
-// recognition to native parsing.
-func IsGrokImageGenerationModel(model string) bool {
-	return upstreamcore.IsGrokImageGenerationModel(model)
-}
-
-// ValidateImageModel accepts trimmed supported image-family names or
-// returns a model error. Empty input has a required-model error, and
-// aliases require routing before this check can succeed.
+// ValidateImageModel requires a nonempty execution identity before mapping.
+// Image capability belongs to the final selected route and is validated after
+// provider mapping, allowing configured aliases to reach their declared target.
 func ValidateImageModel(model string) error {
-	model = strings.TrimSpace(model)
-	if IsImageGenerationModel(model) {
-		return nil
+	if strings.TrimSpace(model) == "" {
+		return fmt.Errorf("images endpoint requires a model")
 	}
-	if model == "" {
-		return fmt.Errorf("images endpoint requires an image model")
-	}
-	return fmt.Errorf("images endpoint requires an image model, got %q", model)
+	return nil
 }
 
 // ClassifyImageCapability selects basic capability only for an implicit
 // GPT-image single-output request using supported response encoding. Nil
-// input, explicit model/size, other model families, streaming, multiple
+// input, explicit model/size, streaming, multiple
 // outputs, masks or native options require the native capability.
 //
 // Editing also requires native capability unless input is multipart, and a
@@ -235,13 +213,6 @@ func ClassifyImageCapability(req *ImageRequest) ImageCapability {
 	// its value resembles a parser default, retaining the supplied-option
 	// distinction during routing.
 	if req.ExplicitModel || req.ExplicitSize {
-		return ImageCapabilityNative
-	}
-	model := strings.ToLower(strings.TrimSpace(req.Model))
-	// The basic compatibility path is limited to the GPT-image family, so
-	// another routed model requires native capability before any remaining
-	// request options are considered.
-	if !strings.HasPrefix(model, "gpt-image-") {
 		return ImageCapabilityNative
 	}
 	// Streaming, output count, masks and native options jointly rule out the
@@ -367,7 +338,7 @@ func ResolveImageModels(requested, groupMapped, fallback string, resolve func(st
 	}
 	// When request and mapping supply no usable name, validate the fallback
 	// before invoking provider resolution so that callback receives an
-	// accepted image-family choice.
+	// nonempty execution identity.
 	if model == "" {
 		model = fallback
 	}

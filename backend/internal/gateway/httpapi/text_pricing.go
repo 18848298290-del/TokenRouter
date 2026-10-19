@@ -11,10 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/admission"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/completion"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/ws"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -36,8 +36,8 @@ import (
 // forwarding begins.
 
 // CheckTextModelPricing checks the billing model this attempt would use after
-// protocol and model resolution. Nil pricing disables preflight, and mapped
-// image-generation models remain with media pricing. Supply mapped as the
+// protocol and model resolution. Nil pricing skips price lookup after output
+// eligibility; image-only models use media pricing on supported entries. Supply mapped as the
 // current group-routed name; a route plan supplies its mapping fields and
 // requested name when present.
 //
@@ -49,14 +49,6 @@ import (
 // keeping that chosen source authoritative even when another name has a known
 // price.
 func CheckTextModelPricing(ctx context.Context, prices *admission.ModelPricing, key *apikey.APIKey, target *gatewayprovider.ExecutionProvider, requested, mapped string, compact *CompactExecutor, source protocol.ProtocolID) error {
-	if prices == nil {
-		return nil
-	}
-	// Image model requests are admitted by media pricing. A text model that
-	// merely declares image tools still reaches this text billing-model check.
-	if media.IsImageGenerationModel(mapped) {
-		return nil
-	}
 	// Resolve the same candidate protocol used by execution before model policy
 	// lookup, so conversion-specific mappings cannot price a different forwarding route.
 	target, err := gatewayprovider.ProviderForProtocolAttempt(ctx, target)
@@ -95,23 +87,34 @@ func CheckTextModelPricing(ctx context.Context, prices *admission.ModelPricing, 
 			result.BillingModel = ""
 		}
 	}
+	attributes, err := gatewayprovider.ResolveModelAttributes(ctx, target, result.UpstreamModel, nil)
+	if err != nil {
+		return err
+	}
+	target.Capabilities = &attributes
+	if attributes.Attributes.OutputOnly("image") {
+		if compact != nil || source == protocol.ProtocolResponsesCompact || source == protocol.ProtocolOpenAIChatCompletions || source == protocol.ProtocolAnthropicMessages {
+			return apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", "the selected model route produces only images")
+		}
+		return nil
+	}
 	model := completion.OpenAIUsageBillingModel(result, mapping.ToUsageFields(requested, result.UpstreamModel))
 	var groupID *int64
 	if key != nil {
 		groupID = key.GroupID
 	}
+	if prices == nil {
+		return nil
+	}
 	return prices.Check(ctx, groupID, model)
 }
 
-// checkPricing checks the selected text target before execution and presents a
-// classified missing-price denial. Compact paths use the bound CompactExecutor
+// checkPricing validates selected-model output and pricing before execution.
+// Capability and missing-price failures receive their local protocol errors. Compact paths use the bound CompactExecutor
 // when available, otherwise its default instance. Other errors retain their
 // cause; only price rejection records local policy limitation and writes the
 // inbound protocol error.
 func (e *UnifiedTextExecutor) checkPricing(c *gin.Context, target *gatewayprovider.ExecutionProvider, body []byte, source protocol.ProtocolID) error {
-	if e.Pricing == nil {
-		return nil
-	}
 	model := gjson.GetBytes(body, "model").String()
 	key, _ := EffectiveAPIKey(c)
 	var compact *CompactExecutor
@@ -122,6 +125,16 @@ func (e *UnifiedTextExecutor) checkPricing(c *gin.Context, target *gatewayprovid
 		}
 	}
 	err := CheckTextModelPricing(c.Request.Context(), e.Pricing, key, target, model, model, compact, source)
+	if reason := apperror.Reason(err); reason == "MODEL_CAPABILITY_UNKNOWN" || reason == "MODEL_CAPABILITY_UNSUPPORTED" || reason == "MODEL_ATTRIBUTES_UNAVAILABLE" {
+		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+		failure := apperror.FromError(err)
+		if source == protocol.ProtocolAnthropicMessages {
+			DefaultOpenAIErrorOutput().WriteAnthropicStreamingError(c, int(failure.Code), "invalid_request_error", failure.Message, c.Writer.Written())
+		} else {
+			DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, int(failure.Code), "invalid_request_error", reason, failure.Message, c.Writer.Written(), false)
+		}
+		return err
+	}
 	if !errors.Is(err, admission.ErrModelPricingRejected) {
 		return err
 	}

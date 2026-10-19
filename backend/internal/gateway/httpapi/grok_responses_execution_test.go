@@ -1002,7 +1002,9 @@ func TestForwardGrokResponsesRejectsMappedImageModelWithClientError(t *testing.T
 		},
 	}
 
-	result, err := newResponsesFixture(responsesFixtureInputs{}).Grok.ForwardResponses(
+	svc := newResponsesFixture(responsesFixtureInputs{})
+	svc.Grok.Attributes = grokMediaFixtureAttributes()
+	result, err := svc.Grok.ForwardResponses(
 		context.Background(), c, provider, body, "image-alias", false, time.Now(),
 	)
 

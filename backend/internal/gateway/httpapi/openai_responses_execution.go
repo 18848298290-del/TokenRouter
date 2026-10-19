@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
@@ -156,15 +155,9 @@ func (s *OpenAIResponsesExecutor) Forward(ctx context.Context, c *gin.Context, p
 	imageSizeTier := ""
 	imageInputSize := ""
 	if imageIntent {
-		var imageCfg media.OpenAIResponsesImageBillingConfig
-		var imageCfgErr error
-		if reqBody != nil {
-			imageCfg, imageCfgErr = gatewayprovider.ImageIntent().ResolveOpenAIResponsesImageBillingConfigDetailed(reqBody, billingModel)
-		} else {
-			imageCfg, imageCfgErr = gatewayprovider.ImageIntent().ResolveOpenAIResponsesImageBillingConfigDetailedFromBody(body, billingModel)
-		}
+		imageCfg, imageCfgErr := gatewayprovider.ResolveResponsesImageBilling(ctx, provider, body, s.Text.modelAttributes())
 		if imageCfgErr != nil {
-			openAIForwardPreludeAdapter{s: s, c: c, provider: provider, ctx: ctx}.Reject(openaiexecution.Rejection{Status: http.StatusBadRequest, Type: "invalid_request_error", Message: imageCfgErr.Error(), Param: "size", ObserveUpstream: true})
+			WriteOpenAIModelAttributeError(c, imageCfgErr, c.Writer.Written())
 			return nil, imageCfgErr
 		}
 		imageBillingModel = imageCfg.Model

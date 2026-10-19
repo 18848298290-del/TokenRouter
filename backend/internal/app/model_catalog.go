@@ -20,11 +20,10 @@ import (
 // later synchronization.
 
 // provideModelAttributes supplies model attributes for administration and display.
-func provideModelAttributes(repo *postgres.ModelAttributeStore, catalog *provider.Service, invalidator apikey.APIKeyAuthCacheInvalidator, catalogue *routing.RequestableCatalogue) *routing.ModelAttributeService {
+func provideModelAttributes(repo *postgres.ModelAttributeStore, catalog *provider.Service, invalidator apikey.APIKeyAuthCacheInvalidator) *routing.ModelAttributeService {
 	return &routing.ModelAttributeService{
 		Repo:        repo,
 		Invalidator: invalidator,
-		Catalogue:   catalogue,
 		Catalog: routing.ModelAttributeCatalog{
 			View: catalog.CapabilityView,
 			Index: func() (modelcatalog.Index, routing.ModelAttributeSnapshot) {

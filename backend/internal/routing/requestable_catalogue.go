@@ -1,6 +1,12 @@
 package routing
 
-import "context"
+import (
+	"context"
+	"slices"
+
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
+)
 
 // requestable_catalogue.go loads provider configuration and delegates
 // requestable-model resolution.
@@ -52,7 +58,7 @@ func (c *RequestableCatalogue) ResolveRequestableModels(ctx context.Context, gro
 			}
 			c.Warn("failed to load providers for requestable model resolution", "group_id", id, "platform", platform, "error", err)
 		}
-		return RequestableModelsResult{Restricted: true}
+		return RequestableModelsResult{Restricted: true, Err: err}
 	}
 	return c.Resolver.ResolveWithProviders(ctx, groupID, platform, nil, providers)
 }
@@ -71,7 +77,41 @@ func (c *RequestableCatalogue) ResolveSelectedModels(ctx context.Context, groupI
 		// Selected-name validation needs the current provider set. Mark read failure
 		// restricted rather than declaring any selected model eligible from missing
 		// rules.
-		return RequestableModelsResult{Restricted: true}
+		return RequestableModelsResult{Restricted: true, Err: err}
 	}
 	return c.Resolver.ResolveSelectedWithProviders(ctx, groupID, platform, models, providers)
+}
+
+// AttributeTargets enumerates configured routes for an administrator preview.
+// It applies provider, group, and protocol eligibility while leaving capability
+// evaluation to the supplied preview draft, allowing unknown models to acquire
+// capabilities before their first successful media request.
+func (c *RequestableCatalogue) AttributeTargets(ctx context.Context, groupID int64, model, clientProtocol string) ([]modelcatalog.Target, error) {
+	if c == nil || c.Read == nil {
+		return nil, apperror.ServiceUnavailable("MODEL_ATTRIBUTES_UNAVAILABLE", "model catalogue is unavailable")
+	}
+	providers, err := c.Read(ctx, &groupID)
+	if err != nil {
+		return nil, err
+	}
+	query := c.Resolver.prepare(ctx, &groupID, "", nil, providers)
+	if query.err != nil {
+		return nil, query.err
+	}
+	query.attributes = nil
+	query.preview = true
+	if !slices.Contains(query.candidates, model) {
+		return []modelcatalog.Target{}, nil
+	}
+	resolved, _ := query.resolve(ctx, model)
+	if query.err != nil {
+		return nil, query.err
+	}
+	targets := make([]modelcatalog.Target, 0, len(resolved.AttributeTargets))
+	for _, target := range resolved.AttributeTargets {
+		if clientProtocol == "" || target.ClientProtocol == clientProtocol {
+			targets = append(targets, target)
+		}
+	}
+	return targets, nil
 }

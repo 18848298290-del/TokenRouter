@@ -369,17 +369,13 @@ func (a *geminiExecutionAdapter) Execute(ctx context.Context, in forwardcore.Gem
 
 		OutputError: h.OutputError,
 	}
-	return (antigravity.Executor{}).Execute(ctx, upstream.AttemptInput{
+	result, err := (antigravity.Executor{}).Execute(ctx, upstream.AttemptInput{
 		Protocol:      protocol.ProtocolGeminiGenerateContent,
 		Body:          in.Body,
 		ResponseModel: in.OriginalModel,
 		Stream:        in.Stream,
 		Target:        target,
 	}, a.c.Sink())
-}
-
-// IsImageModel recognizes supported image-model identifiers for native
-// completion inference.
-func (a *geminiExecutionAdapter) IsImageModel(model string) bool {
-	return antigravity.IsImageGenerationModel(model)
+	result.ObservedImages = max(result.ObservedImages, a.c.Images)
+	return result, err
 }

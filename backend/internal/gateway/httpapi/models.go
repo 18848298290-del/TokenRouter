@@ -188,7 +188,10 @@ func (h *ModelsHandler) Models(c *gin.Context) {
 
 	apiKey, _ := h.backend.Access(c)
 	if apiKey != nil && apiKey.IsComposite {
-		h.WriteCompositeModelsList(c, h.CompositeRequestableModels(c, apiKey, ""))
+		models := h.CompositeRequestableModels(c, apiKey, "")
+		if !c.IsAborted() {
+			h.WriteCompositeModelsList(c, models)
+		}
 		return
 	}
 
@@ -205,6 +208,10 @@ func (h *ModelsHandler) Models(c *gin.Context) {
 	// Resolve configured candidate routes before metadata lookup so display names
 	// and Key aliases cannot add models that group or provider policy rejected.
 	resolution := h.backend.Resolve(c.Request.Context(), groupID, platform)
+	if resolution.Err != nil {
+		DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, http.StatusServiceUnavailable, "api_error", "MODEL_ATTRIBUTES_UNAVAILABLE", resolution.Err.Error(), false, false)
+		return
+	}
 	h.captureModelAttributes(c, groupID, resolution.Models, "")
 	availableModels := routing.RequestableModelIDs(resolution.Models)
 	if apiKey != nil && apiKey.Group != nil && customListEnabled(apiKey.Group) {
@@ -246,7 +253,10 @@ func (h *ModelsHandler) AntigravityModels(c *gin.Context) {
 
 	apiKey, _ := h.backend.Access(c)
 	if apiKey != nil && apiKey.IsComposite {
-		h.WriteCompositeModelsList(c, h.CompositeRequestableModels(c, apiKey, capability.PlatformAntigravity))
+		models := h.CompositeRequestableModels(c, apiKey, capability.PlatformAntigravity)
+		if !c.IsAborted() {
+			h.WriteCompositeModelsList(c, models)
+		}
 		return
 	}
 	var groupID *int64
@@ -256,6 +266,10 @@ func (h *ModelsHandler) AntigravityModels(c *gin.Context) {
 	}
 	if h != nil && h.backend.Available() {
 		resolution := h.backend.Resolve(c.Request.Context(), groupID, capability.PlatformAntigravity)
+		if resolution.Err != nil {
+			DefaultOpenAIErrorOutput().WriteAnthropicStreamingError(c, http.StatusServiceUnavailable, "api_error", resolution.Err.Error(), false)
+			return
+		}
 		modelIDs := routing.RequestableModelIDs(resolution.Models)
 		if apiKey != nil && apiKey.Group != nil && customListEnabled(apiKey.Group) {
 			modelIDs = FilterModelsByCustomList(modelIDs, nil, apiKey.Group.ModelsListConfig.Models)
@@ -302,6 +316,11 @@ func (h *ModelsHandler) CompositeRequestableModels(c *gin.Context, apiKey *apike
 		}
 		groupID := group.ID
 		resolution := h.backend.Resolve(ctx, &groupID, requiredPlatform)
+		if resolution.Err != nil {
+			DefaultOpenAIErrorOutput().WriteStreamingErrorWithCode(c, http.StatusServiceUnavailable, "api_error", "MODEL_ATTRIBUTES_UNAVAILABLE", resolution.Err.Error(), false, false)
+			c.Abort()
+			return nil
+		}
 		available := routing.RequestableModelIDs(resolution.Models)
 		if customListEnabled(group) {
 			available = FilterModelsByCustomList(available, nil, group.ModelsListConfig.Models)

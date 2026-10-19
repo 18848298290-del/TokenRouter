@@ -28,11 +28,10 @@ import (
 // ModelHealth translates model identities and platform errors into provider
 // health observations.
 type ModelHealth struct {
-	Health *provider.HealthService // provider health rule service
-
-	// IsImageModel optionally recognizes image models before and after key
-	// resolution. A nil callback leaves the image-model flag false.
-	IsImageModel func(string) bool
+	// ImageOutput supplies final-route output evidence for cooldown classification.
+	// Missing readers leave explicit image endpoint observations as the available evidence.
+	ImageOutput func(context.Context, *provider.Record, string) bool
+	Health      *provider.HealthService // provider health rule service
 }
 
 // LimitKey resolves the model identity used by provider cooldown state. A nil
@@ -84,11 +83,14 @@ func (s *ModelHealth) LimitKey(value *provider.Record, requested string, thinkin
 
 // Observe classifies a model failure and returns whether Health handled it.
 // Callers provide the current attempt's model and endpoint intent; image
-// classification checks both supplied and resolved names, and Health must be
-// configured.
+// classification uses endpoint intent or resolved output evidence. Health must
+// be configured before observations are submitted.
 func (s *ModelHealth) Observe(ctx context.Context, value *provider.Record, model string, status int, body []byte, thinking *bool, imagesEndpoint bool) bool {
 	key := s.LimitKey(value, model, thinking)
-	image := s.IsImageModel != nil && (s.IsImageModel(model) || s.IsImageModel(key))
+	image := imagesEndpoint
+	if !image && s.ImageOutput != nil {
+		image = s.ImageOutput(ctx, value, key)
+	}
 	return s.Health.ApplyModelUnavailable(ctx, value, status, provider.ModelFailureObservation{NotFound: upstream.IsModelNotFoundError(status, body), CodexPlanGated: openai.IsCodexPlanGatedModelError(status, body), ModelKey: key, ImageModel: image, ImagesEndpoint: imagesEndpoint})
 }
 

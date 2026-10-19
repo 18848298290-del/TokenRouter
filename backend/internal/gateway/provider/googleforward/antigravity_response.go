@@ -21,6 +21,11 @@ import (
 // attempt.
 func (s *Antigravity) antigravityResponseAdapter(c *attempt) *antigravity.ResponseAdapter {
 	opts := antigravity.ResponseOptions{
+		ObserveRaw: func(body []byte) {
+			if c != nil {
+				c.observeImages(body)
+			}
+		},
 		ReverseTools: func(body []byte) []byte { return c.reverseTools(body) },
 		ClaudeError:  func(status int, kind, message string) error { return c.ClaudeError(status, kind, message) },
 		CompatError: func(status int, kind, message string) error {

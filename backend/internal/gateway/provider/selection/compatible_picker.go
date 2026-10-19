@@ -412,7 +412,8 @@ func (s *Compatible) SelectProviderWithSchedulerForCapabilityAndRoutingModel(
 // SelectProviderWithSchedulerForImages requires a mapped image-generation model
 // and the requested image capability over HTTP/SSE. Failed native selection or
 // a missing target retries basic capability; other capability requests return
-// the initial result.
+// the initial result. When every inspected route lacks image capability, the
+// returned local error distinguishes unknown attributes from declared rejection.
 func (s *Compatible) SelectProviderWithSchedulerForImages(
 	ctx context.Context,
 	groupID *int64,
@@ -421,7 +422,8 @@ func (s *Compatible) SelectProviderWithSchedulerForImages(
 	excludedIDs map[int64]struct{},
 	requiredCapability providercore.OpenAIImagesCapability,
 ) (*gatewayprovider.SelectionResult, schedulercore.PlatformDecision, error) {
-	ctx = context.WithValue(ctx, imageModelRequiredKey{}, true)
+	imageState := &imageSelectionState{}
+	ctx = context.WithValue(ctx, imageModelRequiredKey{}, imageState)
 	selection, decision, err := s.selectProviderWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, egress.OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, false, "", false)
 	if err == nil && selection != nil && selection.Provider != nil {
 		return selection, decision, nil
@@ -430,7 +432,12 @@ func (s *Compatible) SelectProviderWithSchedulerForImages(
 	// Native image support is preferred. When that selection has no usable target,
 	// retry basic image support so eligible bridge providers can serve this request.
 	if requiredCapability == providercore.OpenAIImagesCapabilityNative {
-		return s.selectProviderWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, egress.OpenAIUpstreamTransportHTTPSSE, "", providercore.OpenAIImagesCapabilityBasic, false, "", false)
+		selection, decision, err = s.selectProviderWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, egress.OpenAIUpstreamTransportHTTPSSE, "", providercore.OpenAIImagesCapabilityBasic, false, "", false)
+	}
+	if err != nil || selection == nil || selection.Provider == nil {
+		if capabilityErr := imageState.failure(); capabilityErr != nil {
+			return nil, decision, capabilityErr
+		}
 	}
 	return selection, decision, err
 }

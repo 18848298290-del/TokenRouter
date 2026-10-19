@@ -1525,11 +1525,10 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_ExplicitSizeRequiresNative
 	require.Equal(t, providerimages.OpenAIImagesCapabilityNative, parsed.RequiredCapability)
 }
 
-// TestOpenAIGatewayServiceParseOpenAIImagesRequest_RejectsNonImageModel
-// parses a text-model request with image validation enabled. The parser
-// returns no request and includes the rejected model in its tested
-// image-family error.
-func TestOpenAIGatewayServiceParseOpenAIImagesRequest_RejectsNonImageModel(t *testing.T) {
+// TestOpenAIGatewayServiceParseOpenAIImagesRequest_DefersCapabilityValidation
+// parses a text-named request before provider selection. Parsing retains the
+// supplied identity so the final-route attribute gate can validate its output.
+func TestOpenAIGatewayServiceParseOpenAIImagesRequest_DefersCapabilityValidation(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","prompt":"draw a cat"}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
@@ -1539,14 +1538,14 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_RejectsNonImageModel(t *te
 	c.Request = req
 
 	parsed, err := media.ParseImageRequest(c.Request.URL.Path, c.GetHeader("Content-Type"), body, true)
-	require.Nil(t, parsed)
-	require.ErrorContains(t, err, `images endpoint requires an image model, got "gpt-5.4"`)
+	require.NotNil(t, parsed)
+	require.NoError(t, err)
 }
 
 // TestOpenAIGatewayServiceParseOpenAIImagesRequestForRouting parses an
-// unresolved image alias before group routing validation. A valid mapped
-// image model updates capability, while a mapped text model returns the
-// tested family error.
+// unresolved image alias before provider selection. Nonempty mapped names
+// retain their identity and request-shape capability; the selected provider's
+// attribute pass separately validates image output before transport.
 func TestOpenAIGatewayServiceParseOpenAIImagesRequestForRouting(t *testing.T) {
 	body := []byte(`{"model":"draw-alias","prompt":"draw a cat"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
@@ -1561,7 +1560,7 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequestForRouting(t *testing.T) {
 	require.Equal(t, "draw-alias", parsed.Model)
 	require.NoError(t, parsed.ValidateRoutingModel("gpt-image-1"))
 	require.Equal(t, providerimages.OpenAIImagesCapabilityNative, parsed.RequiredCapability)
-	require.ErrorContains(t, parsed.ValidateRoutingModel("gpt-5.4"), `images endpoint requires an image model, got "gpt-5.4"`)
+	require.NoError(t, parsed.ValidateRoutingModel("gpt-5.4"))
 }
 
 // TestOpenAIGatewayServiceParseOpenAIImagesRequest_AllowsGrokImageModels
@@ -3293,4 +3292,35 @@ func TestBodyFailureFinishesMediaAttempt(t *testing.T) {
 	require.Equal(t, "known", saved.Attempts[0].RequestID)
 	t.Logf("failure=%v attempt=%+v", err, saved.Attempts[0])
 	require.Equal(t, "failed", saved.Attempts[0].Outcome)
+}
+
+// TestImagesRejectUnknownCapabilityBeforeTransport attempts API-key image
+// execution with an unknown target and a known text target. Both failures must
+// remain local and prevent the transport from receiving any upstream request.
+func TestImagesRejectUnknownCapabilityBeforeTransport(t *testing.T) {
+	for _, tc := range []struct {
+		model  string // selected complete model identity
+		reason string // expected local capability failure
+	}{{"gpt-image-private-unknown", "MODEL_CAPABILITY_UNKNOWN"}, {"gpt-4o", "MODEL_CAPABILITY_UNSUPPORTED"}} {
+		t.Run(tc.model, func(t *testing.T) {
+			transport := &auxiliaryHTTPRecorder{onRequest: func(*http.Request) (*http.Response, error) {
+				t.Fatal("capability rejection reached upstream transport")
+				return nil, errors.New("unexpected transport")
+			}}
+			svc := newImagesFixture(imagesFixtureInputs{transport: transport})
+			body := []byte(fmt.Sprintf(`{"model":%q,"prompt":"draw"}`, tc.model))
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+			parsed, err := media.ParseImageRequest(c.Request.URL.Path, "application/json", body, false)
+			require.NoError(t, err)
+			provider := &gatewayprovider.ExecutionProvider{Record: providerimages.Record{Platform: "openai", Type: "apikey", Credentials: map[string]any{"api_key": "fixture"}}}
+			_, err = svc.ForwardImages(context.Background(), c, provider, body, parsed, tc.model)
+			require.ErrorContains(t, err, tc.reason)
+			require.Empty(t, transport.requests)
+			require.True(t, WriteOpenAIModelAttributeError(c, err, false))
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+			require.Equal(t, tc.reason, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
+		})
+	}
 }

@@ -108,12 +108,14 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	apiKeyService := provideKeys(keyStore, userStore, groupStore, subscriptionStore, groupRateStore, apiKeyCache, cfg, eligibility, concurrencyService, teamRepository, calendar)
 	apiKeyAuthCacheInvalidator := provideKeyInvalidator(apiKeyService)
 	pricingConfigService := providePricingConfigService(pricingConfigStore, groupStore, apiKeyAuthCacheInvalidator)
-	requestableCatalogue := provideRequestableCatalogue(providerStore, pricingConfigService)
+	modelAttributeStore := postgres.NewModelAttributeStore(db)
 	remoteClient := provideModelCatalogRemoteClient(cfg)
 	providerService, err := provideModelCatalogService(cfg, remoteClient)
 	if err != nil {
 		return nil, err
 	}
+	modelAttributeService := provideModelAttributes(modelAttributeStore, providerService, apiKeyAuthCacheInvalidator)
+	requestableCatalogue := provideRequestableCatalogue(providerStore, pricingConfigService, modelAttributeService)
 	calculator := provideBillingCalculator(providerService, calendar)
 	priceResolver := provideBillingPriceResolver(pricingConfigService, calculator)
 	sessionLimitCache := provideSessionCache(redisClient, cfg)
@@ -121,8 +123,6 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	quotaSettingsCache := provideQuotaSettings(store)
 	capacityService := provideGroupCapacity(providerStore, groupStore, concurrencyService, sessionLimitCache, rpmCache, quotaSettingsCache)
 	groupAvailabilityProbeRepository := postgres.NewGroupAvailabilityProbeRepository(db)
-	modelAttributeStore := postgres.NewModelAttributeStore(db)
-	modelAttributeService := provideModelAttributes(modelAttributeStore, providerService, apiKeyAuthCacheInvalidator, requestableCatalogue)
 	marketplace := provideMarketplace(groupStore, store, requestableCatalogue, priceResolver, calculator, capacityService, groupAvailabilityProbeRepository, cfg, modelAttributeService)
 	dashboardAggregationRepository := provideUsageAggregationRepository(db, calendar)
 	dashboardStatsCache := provideUsageDashboardCache(redisClient, cfg)
@@ -318,7 +318,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	tlsFingerprintProfileHandler := provideEgressProfileHTTP(tlsFingerprintProfileService, tlsFingerprintCollectorService)
 	privacyService := provideProviderPrivacy(providerStore, proxyStore, privacyClientFactory, manager)
 	admin := provideProviderAdmin(providerStore, providerUsageStore, runtimeBlockState, privacyService, groupStore, proxyStore, tasks, transportClient, tlsProfiles)
-	groupAdmin := provideRoutingGroupAdmin(providerService, groupStore, providerStore, keyStore, apiKeyAuthCacheInvalidator, pricingConfigService, store, adminDefaults)
+	groupAdmin := provideRoutingGroupAdmin(providerService, groupStore, providerStore, keyStore, apiKeyAuthCacheInvalidator, pricingConfigService, store, adminDefaults, modelAttributeService)
 	diagnostics := provideProviderDiagnostics(admin, groupAdmin, concurrencyService, generic, compatible, appSchedulerSharedState)
 	diagnosticsHandler := provideSchedulerDiagnosticsHTTP(diagnostics)
 	tlsFingerprintRouterHandler := httpapi5.NewTLSFingerprintRouterHandler(tlsFingerprintRouterService)
@@ -380,7 +380,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	internal500CounterCache := rediscache6.NewInternal500CounterCache(redisClient)
 	antigravityRetry := provideAntigravityRetry(providerStore, internal500CounterCache, appProviderHealthRuntime, snapshotService, transportClient, cfg)
 	antigravityProbe := provideAntigravityProbe(antigravityTokenSource, antigravityRetry, appGatewayRequestActivity)
-	testService := provideProviderTests(providerStore, geminiTokenSource, claudeTokenSource, grokTokenSource, antigravityProbe, transportClient, cfg, tlsProfiles, tlsFingerprintRouterService, gatewayRuntimeSettings, probeTasks, manager, providerService)
+	testService := provideProviderTests(providerStore, geminiTokenSource, claudeTokenSource, grokTokenSource, antigravityProbe, transportClient, cfg, tlsProfiles, tlsFingerprintRouterService, gatewayRuntimeSettings, probeTasks, manager, providerService, modelAttributeService)
 	testHandler := provideProviderTestHTTP(testService, recoveryService)
 	openAIOAuthHandler := provideOpenAIProviderOAuth(openAIAuthorization, admin, openAIQuotaService, recoveryService, proxyAdmin, manager)
 	geminiOAuthHandler := httpapi6.NewGeminiOAuthHandler(geminiAuthorization)
@@ -405,7 +405,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	auditLogHandler := provideAuditHTTP(auditLogService, totpService)
 	pricingCatalog := providePricingCatalog(calculator, providerService)
 	pricingHandler := httpapi8.NewPricingHandler(pricingConfigService, pricingCatalog)
-	modelAttributeHandler := httpapi8.NewModelAttributeHandler(modelAttributeService)
+	modelAttributeHandler := httpapi8.NewModelAttributeHandler(modelAttributeService, requestableCatalogue)
 	settingsRegistry, err := provideSettingsParticipants(paymentRuntime, grantSettings, adminDefaults, adminSettingsRules, runtime)
 	if err != nil {
 		return nil, err

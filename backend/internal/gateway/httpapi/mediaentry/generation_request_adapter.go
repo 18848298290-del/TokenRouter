@@ -107,7 +107,10 @@ type generationRequestAdapter struct {
 // retained target.
 func (p *generationRequestAdapter) SelectGeneration(ctx context.Context, excluded map[int64]struct{}) (gatewaymedia.GenerationSelection, bool, error) {
 	var err error
-	if p.grok {
+	if p.grok && (p.endpoint == upstreamgrok.GrokMediaEndpointImagesGenerations || p.endpoint == upstreamgrok.GrokMediaEndpointImagesEdits) {
+		ctx = apikey.WithForcePlatform(ctx, capability.PlatformGrok)
+		p.selection, p.decision, err = p.h.bindings.Platform.SelectImages(ctx, p.apiKey.GroupID, p.sessionHash, p.requestModel, excluded, gatewaymedia.ImageCapabilityNative)
+	} else if p.grok {
 		p.selection, p.decision, err = p.h.bindings.Common.Selection.SelectProviderWithSchedulerForCapability(ctx, p.apiKey.GroupID, "", p.sessionHash, p.routingModel, excluded, egress.OpenAIUpstreamTransportHTTPSSE, grokMediaRequiredCapability(p.endpoint), false, false, capability.PlatformGrok)
 	} else {
 		p.selection, p.decision, err = p.h.bindings.Platform.SelectImages(ctx, p.apiKey.GroupID, p.sessionHash, p.requestModel, excluded, p.parsed.RequiredCapability)

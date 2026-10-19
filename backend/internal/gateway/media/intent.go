@@ -10,17 +10,17 @@ import (
 
 // intent.go classifies image-generation intent and resolves image billing
 // model and size evidence from request payloads.
-// Image intent can be established by an image endpoint or requested image
-// model before a body is parsed. Valid JSON bodies add tool declarations
-// and tool-choice evidence, with ordinary classification accepting passive
-// image namespaces and explicit classification accepting body image models,
-// native declarations or selected image functions.
+// Image intent comes from image endpoints, tool declarations, and tool-choice
+// evidence. Ordinary classification accepts passive image namespaces, while
+// explicit classification accepts native declarations or selected functions.
+// Final route attributes determine model output separately after provider
+// mapping, so payload inspection cannot infer capabilities from an identity.
 //
 // Root JSON traversal keeps the first occurrence of each relevant member so
 // duplicate fields agree with gjson lookup. Map inputs instead delegate
 // their ordinary tool qualification to injected platform rules. Billing
 // configuration follows its own precedence: the first native image tool, a
-// permitted body-model hint, then the tool default or caller fallback.
+// confirmed converted image identity, then the registered native tool default.
 // Those billing choices retain raw size evidence alongside a normalized
 // tier and do not validate execution permission.
 
@@ -74,7 +74,7 @@ type ImageIntentPolicy struct {
 // OpenAIResponsesImageBillingConfig carries selected image model and
 // separate billing size evidence.
 type OpenAIResponsesImageBillingConfig struct {
-	// Model follows the detailed resolver's tool/body/default/fallback
+	// Model follows the detailed resolver's tool/confirmed/default
 	// precedence and may be empty. These resolvers select billing evidence
 	// without validating that model for execution.
 	Model     string // selected image billing model
@@ -113,39 +113,29 @@ func (p ImageIntentPolicy) IsOpenAIResponsesLiteWebSocketPayload(body []byte) bo
 	return p.IsOpenAIResponsesLiteHeader(gjson.GetBytes(body, "client_metadata."+ResponsesLiteWSMetadataKey).String())
 }
 
-// IsImageGenerationIntent recognizes image endpoints, requested image
-// models or valid body image declarations. Endpoint/model evidence can
-// return true before body validation; body scanning uses the first root
-// model, tools, input and tool_choice members.
+// IsImageGenerationIntent recognizes image endpoints and body tool declarations.
+// Invalid bodies provide no tool evidence; model identifiers are deliberately
+// left for final-route capability resolution after provider mapping.
 //
-// Ordinary declarations include native image tools and image namespaces,
-// including input additional_tools entries. Each relevant member is
-// considered once, and scanning stops when positive evidence appears or all
-// four members have been visited. This makes duplicate-root handling agree
-// with gjson GetBytes while keeping the first image signal sufficient for
-// classification.
+// Ordinary declarations include native image tools, namespaces, and additional
+// input tools. Each relevant root member is considered once, retaining the
+// first duplicate member consistently with gjson lookups. Positive evidence
+// ends scanning immediately, while absence of evidence keeps the request on
+// its ordinary entry protocol until route attributes are available.
 func (p ImageIntentPolicy) IsImageGenerationIntent(endpoint string, requestedModel string, body []byte) bool {
 	if p.IsImageGenerationEndpoint(endpoint) {
-		return true
-	}
-	if IsImageGenerationModel(requestedModel) {
 		return true
 	}
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return false
 	}
 
-	var modelSeen, toolsSeen, inputSeen, toolChoiceSeen bool
+	var toolsSeen, inputSeen, toolChoiceSeen bool
 	imageIntent := false
 	wirejson.ParseView(body).ForEach(func(key, value gjson.Result) bool {
 		// Track the first root member for each recognized key, matching GetBytes
 		// so later duplicates cannot replace the evidence already examined.
 		switch key.Str {
-		case "model":
-			if !modelSeen {
-				modelSeen = true
-				imageIntent = IsImageGenerationModel(strings.TrimSpace(value.String()))
-			}
 		case "tools":
 			if !toolsSeen {
 				toolsSeen = true
@@ -162,24 +152,22 @@ func (p ImageIntentPolicy) IsImageGenerationIntent(endpoint string, requestedMod
 				imageIntent = p.OpenAIJSONToolChoiceSelectsImageGeneration(value)
 			}
 		}
-		return !imageIntent && (!modelSeen || !toolsSeen || !inputSeen || !toolChoiceSeen)
+		return !imageIntent && (!toolsSeen || !inputSeen || !toolChoiceSeen)
 	})
 	return imageIntent
 }
 
-// IsExplicitImageGenerationIntent recognizes image endpoints/models, native
-// body tools or selected image functions. Endpoint/model checks precede
-// body validation, and body scanning reads the first model, tools and
-// tool_choice members.
+// IsExplicitImageGenerationIntent recognizes image endpoints, native tools,
+// and explicitly selected image functions. Passive namespaces and additional
+// input tools do not establish explicit intent; model capability is resolved
+// independently for the final provider route.
 //
-// Passive namespace declarations and input additional_tools do not supply
-// explicit intent through this root scan. Tool choice can select a
-// namespace or a supported imagegen function reference, including a nested
-// tool object. Tracking seen members prevents later duplicates from
-// changing a field already considered, while positive evidence ends
-// traversal immediately.
+// Each root tool member retains its first occurrence, so a later duplicate
+// cannot change the meaning already examined. Tool choice may select a
+// namespace or nested image function reference. The scan stops once positive
+// evidence is available and leaves invalid JSON to ingress validation.
 func (p ImageIntentPolicy) IsExplicitImageGenerationIntent(endpoint string, requestedModel string, body []byte) bool {
-	if p.IsImageGenerationEndpoint(endpoint) || IsImageGenerationModel(requestedModel) {
+	if p.IsImageGenerationEndpoint(endpoint) {
 		return true
 	}
 	if len(body) == 0 || !gjson.ValidBytes(body) {
@@ -188,15 +176,10 @@ func (p ImageIntentPolicy) IsExplicitImageGenerationIntent(endpoint string, requ
 	// Track explicit-mode root members independently, so a later duplicate
 	// cannot introduce intent after the first value for that key supplied
 	// none.
-	var modelSeen, toolsSeen, toolChoiceSeen bool
+	var toolsSeen, toolChoiceSeen bool
 	imageIntent := false
 	wirejson.ParseView(body).ForEach(func(key, value gjson.Result) bool {
 		switch key.Str {
-		case "model":
-			if !modelSeen {
-				modelSeen = true
-				imageIntent = IsImageGenerationModel(strings.TrimSpace(value.String()))
-			}
 		case "tools":
 			if !toolsSeen {
 				toolsSeen = true
@@ -208,7 +191,7 @@ func (p ImageIntentPolicy) IsExplicitImageGenerationIntent(endpoint string, requ
 				imageIntent = p.OpenAIJSONToolChoiceSelectsExplicitImageGeneration(value)
 			}
 		}
-		return !imageIntent && (!modelSeen || !toolsSeen || !toolChoiceSeen)
+		return !imageIntent && (!toolsSeen || !toolChoiceSeen)
 	})
 	return imageIntent
 }
@@ -216,7 +199,7 @@ func (p ImageIntentPolicy) IsExplicitImageGenerationIntent(endpoint string, requ
 // IsImageGenerationIntentForPlatform chooses ordinary or explicit
 // classification using explicitOnly. Callers decide that platform flag;
 // ordinary mode accepts passive declarations, while explicit mode uses
-// endpoint/model/native-tool or selected-function evidence.
+// endpoint/native-tool or selected-function evidence.
 func (p ImageIntentPolicy) IsImageGenerationIntentForPlatform(endpoint string, requestedModel string, body []byte, explicitOnly bool) bool {
 	if !explicitOnly {
 		return p.IsImageGenerationIntent(endpoint, requestedModel, body)
@@ -224,7 +207,7 @@ func (p ImageIntentPolicy) IsImageGenerationIntentForPlatform(endpoint string, r
 	return p.IsExplicitImageGenerationIntent(endpoint, requestedModel, body)
 }
 
-// IsImageGenerationIntentMap recognizes endpoint/model evidence before
+// IsImageGenerationIntentMap recognizes endpoint evidence before
 // consulting a decoded request map. Nil map returns false after those
 // checks; ordinary map tool and choice qualification delegate to the
 // required injected HasTool and ToolChoice rules.
@@ -232,14 +215,8 @@ func (p ImageIntentPolicy) IsImageGenerationIntentMap(endpoint string, requested
 	if p.IsImageGenerationEndpoint(endpoint) {
 		return true
 	}
-	if IsImageGenerationModel(requestedModel) {
-		return true
-	}
 	if reqBody == nil {
 		return false
-	}
-	if IsImageGenerationModel(p.rules.FirstString(reqBody["model"])) {
-		return true
 	}
 	if p.rules.HasTool(reqBody) {
 		return true
@@ -247,19 +224,16 @@ func (p ImageIntentPolicy) IsImageGenerationIntentMap(endpoint string, requested
 	return p.OpenAIAnyToolChoiceSelectsImageGeneration(reqBody["tool_choice"])
 }
 
-// IsExplicitImageGenerationIntentMap checks endpoint/model, decoded body
-// model, native tools and explicit tool choice. Nil map supplies no body
+// IsExplicitImageGenerationIntentMap checks image endpoints, native
+// tools and explicit tool choice. Nil map supplies no body
 // evidence; passive declaration qualification through HasTool is skipped on
 // this path.
 func (p ImageIntentPolicy) IsExplicitImageGenerationIntentMap(endpoint string, requestedModel string, reqBody map[string]any) bool {
-	if p.IsImageGenerationEndpoint(endpoint) || IsImageGenerationModel(requestedModel) {
+	if p.IsImageGenerationEndpoint(endpoint) {
 		return true
 	}
 	if reqBody == nil {
 		return false
-	}
-	if IsImageGenerationModel(p.rules.FirstString(reqBody["model"])) {
-		return true
 	}
 	if p.OpenAIAnyToolsContainNativeImageGeneration(reqBody["tools"]) {
 		return true
@@ -556,12 +530,12 @@ func (p ImageIntentPolicy) OpenAIAnyToolChoiceSelectsExplicitImageGeneration(cho
 // The first exact image_generation tool supplies model/size; missing tool
 // size falls back to the body size.
 //
-// A missing image model uses the body model when it is an image billing
-// alias or no native tool exists. Otherwise a present tool defaults to
-// gpt-image-2, followed by trimmed fallbackModel if still empty. Model may
-// remain empty and is not validated; unknown size retains its text while
-// tier normalization uses the shared default. The returned error is nil.
-func (p ImageIntentPolicy) ResolveOpenAIResponsesImageBillingConfigDetailed(reqBody map[string]any, fallbackModel string) (OpenAIResponsesImageBillingConfig, error) {
+// A missing tool model uses confirmedImageModel supplied by route conversion.
+// If that identity is also absent, a native tool uses gpt-image-2. With neither
+// evidence source the result stays empty. Callers validate the selected model's
+// capabilities separately; unknown sizes retain their raw spelling while tier
+// normalization uses the existing billing default.
+func (p ImageIntentPolicy) ResolveOpenAIResponsesImageBillingConfigDetailed(reqBody map[string]any, confirmedImageModel string) (OpenAIResponsesImageBillingConfig, error) {
 	imageModel := ""
 	imageSize := ""
 	hasImageTool := false
@@ -581,22 +555,14 @@ func (p ImageIntentPolicy) ResolveOpenAIResponsesImageBillingConfigDetailed(reqB
 			imageSize = strings.TrimSpace(p.rules.FirstString(reqBody["size"]))
 		}
 	}
-	if imageModel == "" && reqBody != nil {
-		bodyModel := strings.TrimSpace(p.rules.FirstString(reqBody["model"]))
-		if p.IsOpenAIImageBillingModelAlias(bodyModel) || !hasImageTool {
-			imageModel = bodyModel
-		}
+
+	// Conversion can retain a confirmed image identity alongside its text driver.
+	// Prefer that identity before the registered default for an unspecified native tool.
+	if imageModel == "" {
+		imageModel = strings.TrimSpace(confirmedImageModel)
 	}
-	// A native image tool with no selected model uses gpt-image-2, separating
-	// its image billing identity from a surrounding text-model request.
 	if imageModel == "" && hasImageTool {
 		imageModel = "gpt-image-2"
-	}
-	// When tool and body evidence still supply no model, use the caller's
-	// trimmed fallback while retaining an empty result if that fallback is
-	// also blank.
-	if imageModel == "" {
-		imageModel = strings.TrimSpace(fallbackModel)
 	}
 	sizeTier := NormalizeImageSizeTier(imageSize)
 	return OpenAIResponsesImageBillingConfig{
@@ -608,10 +574,10 @@ func (p ImageIntentPolicy) ResolveOpenAIResponsesImageBillingConfigDetailed(reqB
 
 // ResolveOpenAIResponsesImageBillingConfigFromBody returns the selected
 // model and normalized size tier from the detailed byte resolver. Raw
-// selected size evidence is omitted from this pair; fallbackModel
+// selected size evidence is omitted from this pair; confirmedImageModel
 // participates when body evidence supplies no model.
-func (p ImageIntentPolicy) ResolveOpenAIResponsesImageBillingConfigFromBody(body []byte, fallbackModel string) (string, string, error) {
-	cfg, err := p.ResolveOpenAIResponsesImageBillingConfigDetailedFromBody(body, fallbackModel)
+func (p ImageIntentPolicy) ResolveOpenAIResponsesImageBillingConfigFromBody(body []byte, confirmedImageModel string) (string, string, error) {
+	cfg, err := p.ResolveOpenAIResponsesImageBillingConfigDetailedFromBody(body, confirmedImageModel)
 	if err != nil {
 		return "", "", err
 	}
@@ -623,12 +589,12 @@ func (p ImageIntentPolicy) ResolveOpenAIResponsesImageBillingConfigFromBody(body
 // raw size. The first native image tool supplies model/size; absent tool
 // size uses body size, and the first root members follow gjson lookup.
 //
-// Missing model accepts a body image alias or any body model when no native
-// tool exists. A native tool with no usable model then defaults to
-// gpt-image-2 before caller fallback. Invalid or empty body uses
-// fallbackModel and default size tier. Model selection performs no
-// execution validation, and the returned error is nil.
-func (p ImageIntentPolicy) ResolveOpenAIResponsesImageBillingConfigDetailedFromBody(body []byte, fallbackModel string) (OpenAIResponsesImageBillingConfig, error) {
+// A missing tool model uses the caller's confirmed converted image identity,
+// then the registered gpt-image-2 default when a native tool exists. A text
+// driver's model field supplies no image identity. Invalid or empty bodies
+// retain only confirmedImageModel and the default size tier; callers perform
+// final route capability validation before sending the selected operation.
+func (p ImageIntentPolicy) ResolveOpenAIResponsesImageBillingConfigDetailedFromBody(body []byte, confirmedImageModel string) (OpenAIResponsesImageBillingConfig, error) {
 	imageModel := ""
 	imageSize := ""
 	hasImageTool := false
@@ -648,40 +614,20 @@ func (p ImageIntentPolicy) ResolveOpenAIResponsesImageBillingConfigDetailedFromB
 		if imageSize == "" {
 			imageSize = p.OpenAIJSONString(gjson.GetBytes(body, "size"))
 		}
-		if imageModel == "" {
-			bodyModel := p.OpenAIJSONString(gjson.GetBytes(body, "model"))
-			if p.IsOpenAIImageBillingModelAlias(bodyModel) || !hasImageTool {
-				imageModel = bodyModel
-			}
-		}
 	}
-	// A native image tool with no selected model uses gpt-image-2, separating
-	// its image billing identity from a surrounding text-model request.
+	// Conversion can retain a confirmed image identity alongside its text driver.
+	// Prefer that identity before the registered default for an unspecified native tool.
+	if imageModel == "" {
+		imageModel = strings.TrimSpace(confirmedImageModel)
+	}
 	if imageModel == "" && hasImageTool {
 		imageModel = "gpt-image-2"
-	}
-	// When tool and body evidence still supply no model, use the caller's
-	// trimmed fallback while retaining an empty result if that fallback is
-	// also blank.
-	if imageModel == "" {
-		imageModel = strings.TrimSpace(fallbackModel)
 	}
 	return OpenAIResponsesImageBillingConfig{
 		Model:     imageModel,
 		SizeTier:  NormalizeImageSizeTier(imageSize),
 		InputSize: imageSize,
 	}, nil
-}
-
-// IsOpenAIImageBillingModelAlias recognizes trimmed, case-insensitive image
-// model families or names containing image. Empty returns false; this broad
-// billing hint does not validate an upstream image execution model.
-func (p ImageIntentPolicy) IsOpenAIImageBillingModelAlias(model string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(model))
-	if normalized == "" {
-		return false
-	}
-	return IsImageGenerationModel(normalized) || strings.Contains(normalized, "image")
 }
 
 // OpenAIJSONString returns trimmed content only for a JSON string result.

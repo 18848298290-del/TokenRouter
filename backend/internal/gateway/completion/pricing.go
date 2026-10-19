@@ -420,13 +420,6 @@ func (s *Recorder) CalculateOpenAIRecordUsageCostAt(
 	return tokenCost, nil
 }
 
-// IsGrokVideoBillingModel reports whether the trimmed, case-folded name starts
-// with grok-imagine-video. It recognizes the family prefix for completion helpers;
-// version and other trailing text do not change that prefix result.
-func IsGrokVideoBillingModel(model string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "grok-imagine-video")
-}
-
 // IsGrokVideoUsageResult reports whether a nonnil result has positive VideoCount.
 // Positive video quantity also qualifies results whose billing model was renamed
 // or whose candidate names identify an unknown model family.

@@ -53,17 +53,17 @@ func TestImagePolicyExplicitModeAndDuplicateFields(t *testing.T) {
 func TestImagePolicyUsesExistingModelAndSizeRules(t *testing.T) {
 	p := imagePolicyFixture()
 	for _, model := range []string{"gpt-image-2", "grok-imagine"} {
-		require.True(t, p.IsImageGenerationIntent("/v1/responses", model, nil))
+		require.False(t, p.IsImageGenerationIntent("/v1/responses", model, nil))
 	}
 	require.True(t, p.IsImageGenerationEndpoint("https://api.openai.com/v1/images/edits/?x=1"))
-	cfg, err := p.ResolveOpenAIResponsesImageBillingConfigDetailedFromBody([]byte(`{"model":"text","tools":[{"type":"image_generation","size":"1536x1024"}]}`), "fallback")
+	cfg, err := p.ResolveOpenAIResponsesImageBillingConfigDetailedFromBody([]byte(`{"model":"text","tools":[{"type":"image_generation","size":"1536x1024"}]}`), "")
 	require.NoError(t, err)
 	require.Equal(t, "gpt-image-2", cfg.Model)
 	require.Equal(t, NormalizeImageSizeTier("1536x1024"), cfg.SizeTier)
 	require.Equal(t, "1536x1024", cfg.InputSize)
 	cfg, err = p.ResolveOpenAIResponsesImageBillingConfigDetailed(map[string]any{"model": "custom-image", "size": "future-size"}, "fallback")
 	require.NoError(t, err)
-	require.Equal(t, "custom-image", cfg.Model)
+	require.Equal(t, "fallback", cfg.Model)
 	require.Equal(t, "future-size", cfg.InputSize)
 }
 

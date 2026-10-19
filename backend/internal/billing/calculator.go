@@ -388,7 +388,7 @@ func (s *Calculator) imageDisplayPricing(model string, rateMultiplier float64) (
 func (s *Calculator) imageDisplayPricingWithResolved(model string, rateMultiplier float64, resolved *ResolvedPricing) (ModelDisplayPricing, bool) {
 	raw := s.RawModelPricing(model)
 	knownImage := raw != nil && len(raw.ImagePrices) > 0
-	if resolved == nil && !knownImage && !hasExplicitImageGenerationPricing(raw) && !looksLikeImageModel(model) && (raw == nil || !raw.TokenPricingAbsent) {
+	if resolved == nil && !knownImage && !hasExplicitImageGenerationPricing(raw) && (raw == nil || !raw.TokenPricingAbsent) {
 		return ModelDisplayPricing{}, false
 	}
 	prices := make([]float64, 3)
@@ -531,10 +531,6 @@ func hasExplicitImageGenerationPricing(pricing *CatalogModelPricing) bool {
 func hasAnyDisplayTokenPricing(pricing *ModelPricing) bool {
 	return purepricing.HasAnyDisplayTokenPricing(pricing)
 }
-
-// looksLikeImageModel delegates the pricing package's heuristic image-name
-// classification for display.
-func looksLikeImageModel(model string) bool { return purepricing.LooksLikeImageModel(model) }
 
 // DefaultVideoPrice returns a validated catalog amount per output second for
 // the normalized resolution. Missing entries or dimensions return pricing

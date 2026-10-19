@@ -13,6 +13,7 @@ import (
 	creativeprovider "github.com/TokenFlux/TokenRouter/internal/creative/provider"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/selection"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -127,7 +128,7 @@ func TestCreativeExecutorForwardsModelAllowedByGroupScheduler(t *testing.T) {
 	choices := selection.NewCompatible(selection.CompatibleDependencies{
 		Reads: selection.Reads{Providers: providers, Groups: groups}, Shared: selection.Shared{GroupPolicies: policies},
 	}, selection.DefaultOptions())
-	executor := provideCreativeExecutor(nil, groups, &gatewayprovider.CreativeTargets{}, nil, choices, nil)
+	executor := provideCreativeExecutor(nil, groups, &gatewayprovider.CreativeTargets{}, nil, choices, &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}})
 	run := creative.CreativeRun{GroupID: group.ID, Model: "gpt-image-1", Operation: creative.CreativeOperationGenerate, ImageSize: "1K"}
 	prepared, err := executor.Prepare(ctx, run)
 	require.NoError(t, err)

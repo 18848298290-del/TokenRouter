@@ -149,6 +149,11 @@ func TestNativeGeminiForwardPricingScope(t *testing.T) {
 			fixture := newNativeGeminiPricingFixture(t, provider.PlatformGemini, tc.action)
 			fixture.bridge.modelName = tc.model
 			outcome := fixture.bridge.Forward(text.AttemptState{})
+			if tc.action == "generateContent" {
+				require.ErrorIs(t, outcome.Err, admission.ErrModelPricingRejected)
+				require.Zero(t, fixture.forwards)
+				return
+			}
 			require.NoError(t, outcome.Err)
 			require.False(t, outcome.Stop)
 			require.Equal(t, 1, fixture.forwards)

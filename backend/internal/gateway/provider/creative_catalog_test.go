@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/creative"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
@@ -34,7 +35,7 @@ func TestCreativeCatalogUsesExecutionModelPolicy(t *testing.T) {
 			Credentials: map[string]any{"model_mapping": map[string]any{"gpt-image-1": "gpt-image-2"}},
 			Extra:       map[string]any{"openai_passthrough": passthrough},
 		}
-		public := creative.Public{ProviderRepo: creativeCatalogRows{[]creative.CatalogProvider{CreativeCatalogProvider(value)}}}
+		public := creative.Public{Attributes: &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}, ProviderRepo: creativeCatalogRows{[]creative.CatalogProvider{CreativeCatalogProvider(value)}}}
 		group := &creative.GroupView{ID: 12, Operations: creative.OperationsForGroup(false, nil), RoutingPolicy: routing.GroupRoutingPolicy{
 			Enabled: true, RestrictModels: true, RestrictionModelSource: routing.BillingModelSourceUpstream,
 			AllowedModels: []string{"gpt-image-2"},

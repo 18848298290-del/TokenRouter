@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -622,7 +623,7 @@ func ShouldApplySessionLongContextPricing(tokens UsageTokens, pricing *ModelPric
 // valid time rules are attached separately.
 //
 // Image and per-request displays require configuration-source prices.
-// Per-request mode also needs the image-name display heuristic, then quotes
+// Per-request mode also needs explicitly labeled image dimensions, then quotes
 // only fixed available 1K, 2K, and 4K amounts. Video and unsupported modes
 // return false. Callers supply a finite rate already normalized for display.
 func DisplayPricingFromResolved(model string, rateMultiplier float64, resolved *ResolvedPricing) (ModelDisplayPricing, bool) {
@@ -648,8 +649,16 @@ func DisplayPricingFromResolved(model string, rateMultiplier float64, resolved *
 		if resolved.Source != PricingSourceConfig {
 			return ModelDisplayPricing{}, false
 		}
-		if resolved.Mode == BillingModePerRequest && !LooksLikeImageModel(model) {
-			return ModelDisplayPricing{}, false
+		if resolved.Mode == BillingModePerRequest {
+			imageDimensions := false
+			for _, tier := range resolved.RequestTiers {
+				if slices.ContainsFunc([]string{"512", "1K", "2K", "4K"}, func(size string) bool { return strings.EqualFold(strings.TrimSpace(tier.TierLabel), size) }) {
+					imageDimensions = true
+				}
+			}
+			if !imageDimensions {
+				return ModelDisplayPricing{}, false
+			}
 		}
 		result := ModelDisplayPricing{PricingMode: "image", PriceStatus: "priced"}
 		prices := []*float64{&result.ImagePrice1K, &result.ImagePrice2K, &result.ImagePrice4K}
@@ -1247,24 +1256,6 @@ func HasAnyDisplayTokenPricing(pricing *ModelPricing) bool {
 		pricing.CacheCreation1hPrice > 0 ||
 		pricing.CacheReadPricePerToken > 0 ||
 		pricing.ImageOutputPricePerToken > 0
-}
-
-// LooksLikeImageModel reports recognized image-name fragments used by display
-// classification. It trims and lowercases input and rejects empty names. This
-// heuristic does not select settlement mode or establish available image
-// prices.
-func LooksLikeImageModel(model string) bool {
-	model = strings.ToLower(strings.TrimSpace(model))
-	if model == "" {
-		return false
-	}
-
-	return strings.Contains(model, "-image") ||
-		strings.Contains(model, "image-") ||
-		strings.Contains(model, "/image") ||
-		strings.HasPrefix(model, "imagen-") ||
-		strings.Contains(model, "gpt-image") ||
-		strings.Contains(model, "dall-e")
 }
 
 // CalculateCost dispatches usage according to the resolved billing mode.

@@ -293,3 +293,31 @@ func TestCommonOwnsNestedValues(t *testing.T) {
 		}
 	}
 }
+
+// TestOutputCapabilityStates separates absent, empty, image-only, and mixed
+// output declarations. Queries must retain unknown state and must not classify
+// mixed text/image output as an image-only route.
+func TestOutputCapabilityStates(t *testing.T) {
+	cases := []struct {
+		name    string    // output declaration scenario
+		outputs *[]string // declared output modality set
+		known   bool      // expected declaration presence
+		image   bool      // expected image support
+		only    bool      // expected image-only classification
+	}{
+		{name: "unknown"},
+		{name: "empty", outputs: valuePointer([]string{}), known: true},
+		{name: "text", outputs: valuePointer([]string{"text"}), known: true},
+		{name: "image", outputs: valuePointer([]string{"image"}), known: true, image: true, only: true},
+		{name: "mixed", outputs: valuePointer([]string{"text", "image"}), known: true, image: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			attrs := Attributes{OutputModalities: tc.outputs}
+			support := attrs.OutputSupport("image")
+			if (support != nil) != tc.known || support != nil && *support != tc.image || attrs.OutputOnly("image") != tc.only {
+				t.Fatalf("unexpected capability result: support=%v only=%v", support, attrs.OutputOnly("image"))
+			}
+		})
+	}
+}

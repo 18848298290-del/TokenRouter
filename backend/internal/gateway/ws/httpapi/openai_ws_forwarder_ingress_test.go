@@ -809,7 +809,7 @@ func TestOpenAIWSImageIntentForRoutingModel(t *testing.T) {
 		wantExplicit  bool   // expected explicit image intent
 	}{
 		{name: "分组普通模型映射为上游生图模型", routingModel: "gpt-5.4", upstreamModel: "gpt-image-1"},
-		{name: "分组生图模型映射为上游普通模型", routingModel: "gpt-image-1", upstreamModel: "gpt-5.4", wantIntent: true, wantExplicit: true},
+		{name: "分组生图模型映射为上游普通模型", routingModel: "gpt-image-1", upstreamModel: "gpt-5.4"},
 	}
 
 	for _, tt := range tests {

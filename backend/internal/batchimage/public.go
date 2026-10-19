@@ -232,8 +232,8 @@ type Public struct {
 	// the attribute service is absent.
 	Attributes *routing.ModelAttributeService // optional shared model attribute resolver
 	// ModelOutputModalities supplies final-model output information when
-	// Attributes is absent. Nil output information means unknown, which
-	// ListModels accepts only for a concrete configured name with pricing.
+	// Attributes is absent. Nil output information means unknown and excludes
+	// the route from image listings until a declaration becomes available.
 	ModelOutputModalities func(string) *[]string            // optional final model modality lookup
 	Now                   func() time.Time                  // injected current time
 	Repo                  BatchImageRepository              // persistent batch state store
@@ -312,7 +312,10 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 	if !s.Enabled() {
 		return nil, ErrBatchImageDisabled
 	}
-	attributeSession := s.Attributes.NewSession()
+	if routing.ModelAttributesFromContext(ctx) == nil {
+		ctx = routing.WithModelAttributes(ctx, s.Attributes)
+	}
+	attributeSession := routing.ModelAttributesFromContext(ctx)
 	normalized, err := s.ValidateSubmitRequest(req)
 	if err != nil {
 		return nil, err
@@ -867,9 +870,9 @@ func (s *Public) DeleteRecord(ctx context.Context, owner BatchImageOwner, batchI
 // group mapping, provider mapping, stage-specific restrictions and per-image
 // pricing.
 //
-// Known final output modalities must include image. Unknown modalities require
-// a concrete configured name at some model stage and a valid image price;
-// modality errors use that same admission rule. Results are deduplicated within
+// Final output modalities must explicitly include image. Unknown modalities
+// exclude the route even when configuration and image prices are present;
+// attribute-read errors stop listing. Results are deduplicated within
 // each backend and sorted by request name. Provider protocol enablement is
 // checked separately during submission selection.
 func (s *Public) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchImagePublicModelsResponse, error) {
@@ -924,7 +927,6 @@ func (s *Public) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchI
 			if !provider.IsSchedulable() || !provider.SupportsProvider(providerName) {
 				continue
 			}
-			configured := batchImageConfiguredModels(&provider, policy)
 			for _, model := range BatchImageModelsFromProviderMapping(&provider, candidates...) {
 				if err := ctx.Err(); err != nil {
 					return nil, err
@@ -952,19 +954,13 @@ func (s *Public) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchI
 					if err == nil {
 						modalities = resolved.Attributes.OutputModalities
 					} else {
-						// Failed attributes leave capability unknown. The configured-name and
-						// image-price checks below still determine this catalogue entry's admission.
-						modalities = nil
+						return nil, err
 					}
 				} else if !found && s.ModelOutputModalities != nil {
 					modalities = s.ModelOutputModalities(upstreamModel)
 					outputs[upstreamModel] = modalities
 				}
-				if modalities != nil {
-					if !slices.Contains(*modalities, "image") {
-						continue
-					}
-				} else if !configured[model] && !configured[routingModel] && !configured[upstreamModel] {
+				if modalities == nil || !slices.Contains(*modalities, "image") {
 					continue
 				}
 				mapping := billingMapping
@@ -1329,6 +1325,11 @@ func (s *Public) SelectProviderAndProvider(
 	requestedProvider, routingModel string,
 	mapping GroupMappingResult,
 ) (ExecutionProvider, *Candidate, string, error) {
+	session := routing.ModelAttributesFromContext(ctx)
+	if session == nil {
+		session = s.Attributes.NewSession()
+	}
+	var capabilityErr error
 	providers := BatchImageProviderSelectionOrder(requestedProvider)
 	// Automatic selection tries backends in its fixed order; only the requested
 	// backend participates when the caller supplied an explicit platform.
@@ -1366,9 +1367,24 @@ func (s *Public) SelectProviderAndProvider(
 				s.PricingConfigService.IsModelRestricted(ctx, *owner.GroupID, upstreamModel) {
 				continue
 			}
+			var groupID int64
+			if owner.GroupID != nil {
+				groupID = *owner.GroupID
+			}
+			attributes, err := session.Resolve(ctx, groupID, provider.modelAttributeTarget(upstreamModel))
+			if err != nil {
+				return nil, nil, "", err
+			}
+			if err := routing.RequireImageOutput(attributes.Attributes); err != nil {
+				capabilityErr = err
+				continue
+			}
 			s.RegisterModel(ctx, upstreamModel)
 			return provider.Bind(providerName), &provider, upstreamModel, nil
 		}
+	}
+	if capabilityErr != nil {
+		return nil, nil, "", capabilityErr
 	}
 	if requestedProvider != "" {
 		return nil, nil, "", ErrBatchImageNoProviderAvailable
@@ -1713,46 +1729,6 @@ func BatchImageProviderSelectionOrder(requestedProvider string) []string {
 		return []string{strings.TrimSpace(requestedProvider)}
 	}
 	return []string{BatchImageProviderGeminiAPI, BatchImageProviderVertex}
-}
-
-// batchImageConfiguredModels collects trimmed concrete names from provider
-// and group configuration for unknown-modality admission. Wildcard spellings
-// are omitted, and the optional configured-request-model interface contributes
-// prepared names. A nil candidate is invalid for this helper.
-func batchImageConfiguredModels(provider *Candidate, policy *routing.GroupPolicyView) map[string]bool {
-	ids := make(map[string]bool)
-	add := func(id string) {
-		id = strings.TrimSpace(id)
-		if id != "" && !strings.ContainsAny(id, "*?") {
-			ids[id] = true
-		}
-	}
-	if configured, ok := provider.CandidateRules.(interface {
-		// GetConfiguredRequestModels supplies concrete request names prepared from
-		// provider configuration.
-		GetConfiguredRequestModels() []string
-	}); ok {
-		for _, id := range configured.GetConfiguredRequestModels() {
-			add(id)
-		}
-	}
-	for source, target := range provider.GetModelMapping() {
-		add(source)
-		add(target)
-	}
-	if policy != nil {
-		for _, id := range policy.ModelsList {
-			add(id)
-		}
-		for _, id := range policy.AllowedModels {
-			add(id)
-		}
-		for source, target := range policy.ModelMapping {
-			add(source)
-			add(target)
-		}
-	}
-	return ids
 }
 
 // BatchImageModelsFromProviderMapping merges supplied candidates with concrete

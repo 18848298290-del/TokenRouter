@@ -91,7 +91,7 @@ func TestNativeAntigravityProbeAssembly(t *testing.T) {
 	manager := lifecycle.New()
 	activity := NewGatewayActivityForTest(manager)
 	probe := NewAntigravityProbeForTest(tokens, retry, activity)
-	core := NewProviderTestsForTest(store, nil, nil, nil, probe, transport, cfg, nil, nil, nil, nil, manager, nil)
+	core := NewProviderTestsForTest(store, nil, nil, nil, probe, transport, cfg, nil, nil, nil, nil, manager, nil, nil)
 	require.Empty(t, transport.requests)
 
 	row, err := f.client.Provider.Create().SetName("test-antigravity-probe").SetPlatform(provider.PlatformAntigravity).SetType(provider.ProviderTypeOAuth).SetCredentials(map[string]any{

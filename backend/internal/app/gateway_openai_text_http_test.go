@@ -48,6 +48,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	catalogtestkit "github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	opscore "github.com/TokenFlux/TokenRouter/internal/ops"
 	opsprovider "github.com/TokenFlux/TokenRouter/internal/ops/provider"
@@ -55,7 +56,6 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
-	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
@@ -200,147 +200,35 @@ func newEmptyGenericSelectionFixture() *selection.Generic {
 	return selection.NewGeneric(selection.GenericDependencies{}, selection.DefaultOptions())
 }
 
-// TestChatCompletionsRejectsGPTImageModelsBeforeScheduling submits supported
-// image-model names to both Chat Completions handlers. It checks
-// invalid-request responses and an absent selected-provider marker for every
-// model.
-func TestChatCompletionsRejectsGPTImageModelsBeforeScheduling(t *testing.T) {
+// TestChatCompletionsChecksFinalOutput validates each selected provider target
+// before forwarding. Image-only declarations reject Chat, while a provider
+// mapping to a text target keeps the image-named client alias executable.
+func TestChatCompletionsChecksFinalOutput(t *testing.T) {
 	for _, model := range []string{"gpt-image-1", "gpt-image-1.5", "gpt-image-2"} {
-		for _, tc := range []struct {
-			name string             // Endpoint fixture case name.
-			call func(*gin.Context) // Endpoint handler under test.
-		}{
-			{
-				name: "gateway",
-				call: newGatewayExecutionHandlerForTest(nil).ChatCompletions,
-			},
-			{
-				name: "openai_gateway",
-				call: newOpenAIImageChatRejectionHandler(t).ChatCompletions,
-			},
-		} {
-			t.Run(tc.name+"/"+model, func(t *testing.T) {
-				recorder := httptest.NewRecorder()
-				c, _ := gin.CreateTestContext(recorder)
-				body := []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"draw"}]}`)
-				c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-				setImageChatTestAuth(c)
-
-				tc.call(c)
-
-				require.Equal(t, http.StatusBadRequest, recorder.Code)
-				require.Equal(t, "invalid_request_error", gjson.Get(recorder.Body.String(), "error.type").String())
-				require.Contains(t, gjson.Get(recorder.Body.String(), "error.message").String(), "Chat Completions")
-				_, selected := c.Get(gatewayhttp.OpsProviderIDKey)
-				require.False(t, selected, "rejection must happen before provider selection")
-			})
-		}
-	}
-}
-
-// TestChatCompletionsRejectsGroupMappedImageModel maps a request alias to an
-// image model for both Chat Completions handlers. It checks endpoint rejection
-// before a selected-provider marker is installed.
-func TestChatCompletionsRejectsGroupMappedImageModel(t *testing.T) {
-	groupID := int64(4349)
-	pricingConfigService := newGatewayExecutionPricingConfigServiceForTest(groupID, capability.PlatformOpenAI, routingtestkit.Configuration{
-		ID:           4349,
-		Status:       billing.StatusActive,
-		ModelMapping: map[string]string{"draw-alias": "gpt-image-1"},
-	})
-
-	tests := []struct {
-		name string             // Endpoint fixture case name.
-		call func(*gin.Context) // Endpoint handler under test.
-	}{
-		{
-			name: "gateway",
-			call: newGatewayExecutionHandlerWithPricingConfigForTest(nil, pricingConfigService).ChatCompletions,
-		},
-		{
-			name: "openai_gateway",
-			call: newOpenAIImageChatRejectionHandlerWithPricingConfig(t, pricingConfigService).ChatCompletions,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(recorder)
-			body := []byte(`{"model":"draw-alias","messages":[{"role":"user","content":"draw"}]}`)
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-			setImageChatTestAuthForGroup(c, groupID)
-
-			tt.call(c)
-
-			require.Equal(t, http.StatusBadRequest, recorder.Code)
-			require.Contains(t, gjson.Get(recorder.Body.String(), "error.message").String(), "Chat Completions")
-			_, selected := c.Get(gatewayhttp.OpsProviderIDKey)
-			require.False(t, selected, "分组映射后的端点拒绝必须发生在提供商选择之前")
+		t.Run(model, func(t *testing.T) {
+			ctx := routing.WithModelAttributes(context.Background(), &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: catalogtestkit.OfflineView}})
+			target := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Platform: "openai", Type: "apikey"}}
+			err := gatewayhttp.CheckTextModelPricing(ctx, nil, nil, target, model, model, nil, capability.ProtocolOpenAIChatCompletions)
+			if model == "gpt-image-1.5" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "MODEL_CAPABILITY_UNSUPPORTED")
+			}
+			target.Record.Credentials = map[string]any{"model_mapping": map[string]any{model: "gpt-4o"}}
+			err = gatewayhttp.CheckTextModelPricing(ctx, nil, nil, target, model, model, nil, capability.ProtocolOpenAIChatCompletions)
+			require.NoError(t, err)
 		})
 	}
 }
 
-// TestOpenAIChatCompletionsImageModelRejectionDoesNotAcquireConcurrency submits
-// an authenticated image-model request through a counted user-slot hook. It
-// checks bad-request status and zero user-slot acquisition calls at Chat
-// Completions.
-func TestOpenAIChatCompletionsImageModelRejectionDoesNotAcquireConcurrency(t *testing.T) {
-	var acquireCalls atomic.Int64
-	cache := &httptestkit.ConcurrencyHooks{
-		AcquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) {
-			acquireCalls.Add(1)
-			return true, nil
-		},
-	}
-	h := newOpenAIImageChatRejectionHandlerWithCache(t, cache)
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
-		`{"model":"gpt-image-2","messages":[{"role":"user","content":"draw"}]}`,
-	))
-	setImageChatTestAuth(c)
-
-	h.ChatCompletions(c)
-
-	require.Equal(t, http.StatusBadRequest, recorder.Code)
-	require.Zero(t, acquireCalls.Load(), "rejection must happen before user/provider concurrency and scheduling")
-}
-
-// newOpenAIImageChatRejectionHandler builds the image-model rejection fixture
-// with empty concurrency hooks.
-func newOpenAIImageChatRejectionHandler(t *testing.T) *gatewayHTTPEndpointsFixture {
-	t.Helper()
-	return newOpenAIImageChatRejectionHandlerWithCache(t, &httptestkit.ConcurrencyHooks{})
-}
-
-// newOpenAIImageChatRejectionHandlerWithCache builds an image-model rejection
-// fixture using the supplied concurrency hooks. Execution and selection use
-// empty fixtures so endpoint validation can be inspected before upstream
-// forwarding.
-func newOpenAIImageChatRejectionHandlerWithCache(t *testing.T, cache *httptestkit.ConcurrencyHooks) *gatewayHTTPEndpointsFixture {
-	t.Helper()
-	return newOpenAIImageChatRejectionHandlerWithService(t, cache, &gatewayExecutionFixture{}, newExecutionAvailabilityForTest(
-		nil, nil, nil), newEmptyCompatibleSelectionFixture())
-}
-
-// setImageChatTestAuth installs the fixed image-test principal and an ungrouped
-// key.
-func setImageChatTestAuth(c *gin.Context) {
-	setImageChatTestAuthForGroup(c, 0)
-}
-
-// setImageChatTestAuthForGroup installs the image-test key and a principal with
-// concurrency one. A positive groupID supplies both group references; other
-// values leave the key ungrouped.
-func setImageChatTestAuthForGroup(c *gin.Context, groupID int64) {
-	apiKey := &apikey.APIKey{ID: 4348, UserID: 4348, User: &identity.User{ID: 4348}}
-	if groupID > 0 {
-		apiKey.GroupID = &groupID
-		apiKey.Group = &routing.Group{ID: groupID}
-	}
-	c.Set(string(keyhttp.ContextKeyAPIKey), apiKey)
-	c.Set(string(authctx.ContextKeyUser), authctx.AuthSubject{UserID: apiKey.UserID, Concurrency: 1})
+// TestChatCompletionsChecksGroupMappedImageOutput supplies a group alias whose
+// selected upstream target produces only images. The model rejection occurs
+// after both mapping stages, including when the client alias has no image marker.
+func TestChatCompletionsChecksGroupMappedImageOutput(t *testing.T) {
+	ctx := routing.WithModelAttributes(context.Background(), &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: catalogtestkit.OfflineView}})
+	target := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Platform: "openai", Type: "apikey", Credentials: map[string]any{"model_mapping": map[string]any{"group-alias": "gpt-image-2"}}}}
+	err := gatewayhttp.CheckTextModelPricing(ctx, nil, nil, target, "draw", "group-alias", nil, capability.ProtocolOpenAIChatCompletions)
+	require.ErrorContains(t, err, "MODEL_CAPABILITY_UNSUPPORTED")
 }
 
 // TempUnscheduleRetryableError appends the provider ID and original error
@@ -348,12 +236,6 @@ func setImageChatTestAuthForGroup(c *gin.Context, groupID int64) {
 // expects callers to serialize access to its observation slice.
 func (m *mockTempUnscheduler) TempUnscheduleRetryableError(_ context.Context, providerID int64, failoverErr *forwardcore.UpstreamFailoverError) {
 	m.calls = append(m.calls, tempUnscheduleCall{providerID: providerID, failoverErr: failoverErr})
-}
-
-// newGatewayExecutionHandlerForTest constructs message-compatible endpoints
-// with the supplied store and no pricing configuration.
-func newGatewayExecutionHandlerForTest(repo gatewayprovider.ExecutionProviderStore) *messageEndpointsFixture {
-	return newGatewayExecutionHandlerWithPricingConfigForTest(repo, nil)
 }
 
 // GetSnapshot increments its atomic read counter before delegating to

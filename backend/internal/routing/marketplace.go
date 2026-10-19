@@ -265,12 +265,16 @@ func NewMarketplace(groups MarketplaceGroups, settings MarketplaceSettings, mode
 //
 // Providers are prefetched once when available, then visible models are
 // assembled before a single attribute batch and optional observation queries.
-// Attribute, capacity, availability, and currency-setting failures leave models
-// and quotes available with missing auxiliary values. Probe history is limited
+// Capability resolution failures stop the query. Optional display enrichment,
+// capacity, availability, and currency failures retain models with missing
+// auxiliary values; capability filtering and display share one catalog view. Probe history is limited
 // to visible probe-enabled groups, and capacity is skipped when IncludeCapacity
 // is false. A failed active-group read returns an error before assembly.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_catalog_resolution
 func (s *Marketplace) ListPublic(ctx context.Context, options MarketplaceListOptions) ([]ModelMarketplaceGroup, error) {
+	if s.requestable.Attributes != nil && ModelAttributesFromContext(ctx) == nil {
+		ctx = WithModelAttributes(ctx, s.requestable.Attributes)
+	}
 	groups, err := s.groups.ListActive(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list active groups: %w", err)
@@ -286,10 +290,14 @@ func (s *Marketplace) ListPublic(ctx context.Context, options MarketplaceListOpt
 		}
 
 		var models []MarketplaceModelDef
+		var resolveErr error
 		if providersPrefetched {
-			models = s.resolveGroupModelsWithProviders(ctx, group, providersByGroup[group.ID])
+			models, resolveErr = s.resolveGroupModelsWithProviders(ctx, group, providersByGroup[group.ID])
 		} else {
-			models = s.resolveGroupModels(ctx, group)
+			models, resolveErr = s.resolveGroupModels(ctx, group)
+		}
+		if resolveErr != nil {
+			return nil, resolveErr
 		}
 		if len(models) == 0 {
 			continue
@@ -636,7 +644,14 @@ func parsePositiveMarketplaceSettingFloat(raw string) (float64, bool) {
 // resolutions yield nil, following the resolver's configured model eligibility
 // rules.
 func (s *Marketplace) ModelsForGroup(ctx context.Context, group *Group) []ModelMarketplaceModel {
-	return s.BuildPublicModels(ctx, group, s.resolveGroupModels(ctx, group))
+	if s.requestable.Attributes != nil && ModelAttributesFromContext(ctx) == nil {
+		ctx = WithModelAttributes(ctx, s.requestable.Attributes)
+	}
+	models, err := s.resolveGroupModels(ctx, group)
+	if err != nil {
+		return nil
+	}
+	return s.BuildPublicModels(ctx, group, models)
 }
 
 // BuildPublicModels resolves display attributes and prices for supplied group
@@ -784,23 +799,26 @@ func (s *Marketplace) PublicModelPricing(ctx context.Context, group *Group, mode
 // requestable resolver. Missing group or model reader and an empty resolved
 // catalog yield nil, keeping public listings empty when no eligible configured
 // candidates are available.
-func (s *Marketplace) resolveGroupModels(ctx context.Context, group *Group) []MarketplaceModelDef {
+func (s *Marketplace) resolveGroupModels(ctx context.Context, group *Group) ([]MarketplaceModelDef, error) {
 	if s.models != nil && group != nil {
 		groupID := group.ID
 		resolution := s.models.ResolveRequestableModels(ctx, &groupID, "")
+		if resolution.Err != nil {
+			return nil, resolution.Err
+		}
 		if len(resolution.Models) > 0 {
-			return buildMarketplaceModelDefsFromRequestable(resolution.Models)
+			return buildMarketplaceModelDefsFromRequestable(resolution.Models), nil
 		}
 		// An empty eligibility result keeps the group catalog empty so static
 		// platform suggestions cannot introduce models absent from its configured
 		// provider and group rules.
-		return nil
+		return nil, nil
 	}
 
 	if group == nil {
-		return nil
+		return nil, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // resolveGroupModelsWithProviders resolves one group using the supplied
@@ -808,16 +826,19 @@ func (s *Marketplace) resolveGroupModels(ctx context.Context, group *Group) []Ma
 // an empty resolution stays empty so prefetch cannot introduce platform-default
 // candidates. Resolver policy failures and cancellation observed during its
 // checks also yield no definitions.
-func (s *Marketplace) resolveGroupModelsWithProviders(ctx context.Context, group *Group, providers []CatalogueProvider) []MarketplaceModelDef {
+func (s *Marketplace) resolveGroupModelsWithProviders(ctx context.Context, group *Group, providers []CatalogueProvider) ([]MarketplaceModelDef, error) {
 	if s == nil || s.models == nil || group == nil {
-		return nil
+		return nil, nil
 	}
 	groupID := group.ID
 	resolution := s.requestable.ResolveWithProviders(ctx, &groupID, "", nil, providers)
-	if len(resolution.Models) == 0 {
-		return nil
+	if resolution.Err != nil {
+		return nil, resolution.Err
 	}
-	return buildMarketplaceModelDefsFromRequestable(resolution.Models)
+	if len(resolution.Models) == 0 {
+		return nil, nil
+	}
+	return buildMarketplaceModelDefsFromRequestable(resolution.Models), nil
 }
 
 // buildMarketplaceModelDefsFromRequestable converts requestable model results

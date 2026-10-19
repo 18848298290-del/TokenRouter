@@ -10,8 +10,11 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
@@ -318,7 +321,7 @@ func TestIsModelRateLimited(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := (ModelPolicy{Record: tt.provider}).Limited(context.Background(), tt.requestedModel)
+			result := (ModelPolicy{Record: tt.provider}).Limited(routing.WithModelAttributes(context.Background(), &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}), tt.requestedModel)
 			if result != tt.expected {
 				t.Errorf("isModelRateLimited(%q) = %v, want %v", tt.requestedModel, result, tt.expected)
 			}
@@ -684,5 +687,22 @@ func TestProtocolConversionProviderConstraints(t *testing.T) {
 		t.Run(string(tc.source)+"/"+tc.platform+"/"+tc.kind+"/"+tc.auth, func(t *testing.T) {
 			require.Equal(t, tc.want, capability.SupportsProtocolConversion(tc.platform, tc.kind, tc.auth, tc.source, tc.target))
 		})
+	}
+}
+
+// TestMixedOutputKeepsTextRequestsOutsideImageCooldown supplies a model with
+// both text and image output behind an active image quota window. Only an
+// explicit image request should use that shared window; text remains eligible.
+func TestMixedOutputKeepsTextRequestsOutsideImageCooldown(t *testing.T) {
+	mixed := []string{"text", "image"}
+	service := &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{Lookup: func(string) modelcatalog.Attributes { return modelcatalog.Attributes{OutputModalities: &mixed} }}}
+	ctx := routing.WithModelAttributes(context.Background(), service)
+	value := &providercore.Record{Platform: "openai", Extra: map[string]any{"model_rate_limits": map[string]any{providercore.OpenAIImageGenerationRateLimitKey: map[string]any{"rate_limit_reset_at": time.Now().Add(time.Hour).Format(time.RFC3339)}}}}
+	policy := ModelPolicy{Record: value}
+	if policy.Limited(ctx, "mixed-output") {
+		t.Fatal("image capability alone restricted an ordinary text request")
+	}
+	if !policy.Limited(requeststate.WithOpenAIImageGenerationIntent(ctx), "mixed-output") {
+		t.Fatal("explicit image intent bypassed the shared image cooldown")
 	}
 }

@@ -216,7 +216,4 @@ type GeminiPorts interface {
 	// response metadata before return, using OutputError for response-output
 	// failures and returning captured attempt observations.
 	Execute(context.Context, GeminiExecution, GeminiHooks) (upstream.AttemptResult, error)
-	// IsImageModel reports whether the selected mapped model uses
-	// image-generation classification.
-	IsImageModel(string) bool
 }

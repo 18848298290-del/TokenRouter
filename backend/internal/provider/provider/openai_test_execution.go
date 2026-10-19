@@ -25,7 +25,7 @@ import (
 // using the selected authentication and protocol. OpenAI provider tests choose
 // their endpoint from probe mode, explicit test type, authentication, and text
 // protocol. Native and legacy compact modes use fixed payloads, explicit image
-// selection precedes model-name inference, and API-key text requests can
+// selection requires declared image output, and API-key text requests can
 // select Chat while OAuth uses Codex Responses.
 //
 // Shadow requests resolve their credential owner for authentication while
@@ -41,6 +41,9 @@ import (
 // OpenAIProviderTest prepares provider-authenticated text, compact, and image
 // connection probes.
 type OpenAIProviderTest struct {
+	// Attributes supplies capabilities for the mapped probe target. A missing
+	// callback leaves automatic and image probes without required output evidence.
+	Attributes ModelAttributeLookup
 	// Store optionally receives probe observations, but credential-shadow lookup
 	// requires its GetByID method. State write errors are ignored by best-effort
 	// paths.
@@ -94,8 +97,8 @@ type OpenAIProviderTestStore interface {
 // legacy compact adds its separate mapping; compact modes use fixed payloads
 // before image or text selection.
 //
-// An explicit image type wins over model-name inference, while explicit text
-// prevents that inference. OAuth and shadows resolve their credential owner for
+// Automatic probe type follows declared final-model output, while explicit
+// image tests require the same capability and explicit text retains its route. OAuth and shadows resolve their credential owner for
 // authentication, keeping the selected record's proxy, concurrency, and
 // state-write ID. API-key text routes use the requested protocol when supplied
 // for OpenAI, otherwise their resolved configuration.
@@ -106,7 +109,10 @@ type OpenAIProviderTestStore interface {
 // updates that can occur before a diagnostic probe failure is returned.
 func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, modelID string, prompt string, mode string, testTypes ...string) error {
 	ctx := c.Context
-	mode, testType, explicitTestType := providercore.ResolveProviderTestModeAndType(mode, testTypes...)
+	mode, requestedType, explicitType := providercore.ResolveProviderTestModeAndType(mode, testTypes...)
+	if explicitType {
+		testTypes = []string{requestedType}
+	}
 
 	testModelID := modelID
 	if testModelID == "" {
@@ -126,10 +132,13 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 	}
 
 	// Explicit type selection determines whether the image endpoint is tested.
-	// Model-name inference is retained for older calls that omit a type, so
-	// explicit text keeps the text route.
-	if (explicitTestType && testType == providercore.ProviderTestTypeImage) ||
-		(!explicitTestType && strings.HasPrefix(strings.ToLower(testModelID), "gpt-image-")) {
+	// Automatic selection reads declared output for calls that omit a type,
+	// while explicit text keeps the text route.
+	testType, capabilityErr := resolveProbeType(ctx, s.Attributes, value, testModelID, "openai_responses", testTypes...)
+	if capabilityErr != nil {
+		return (TestStreamOutput{}).Error(c, capabilityErr.Error())
+	}
+	if testType == providercore.ProviderTestTypeImage {
 		imagePrompt := strings.TrimSpace(prompt)
 		if imagePrompt == "" {
 			imagePrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."

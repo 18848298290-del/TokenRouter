@@ -92,6 +92,9 @@ func (s *GroupAdmin) GetGroupModelsListCandidates(ctx context.Context, id int64,
 	// Consuming Models leaves unavailable editor choices empty after the group
 	// and provider reads have succeeded.
 	resolution := s.options.ModelResolver.ResolveWithProviders(ctx, &id, "", nil, providers)
+	if resolution.Err != nil {
+		return nil, resolution.Err
+	}
 	candidates := make([]string, 0, len(resolution.Models))
 	for _, model := range resolution.Models {
 		candidates = append(candidates, model.ID)

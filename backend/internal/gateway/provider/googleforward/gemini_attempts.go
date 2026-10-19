@@ -313,8 +313,8 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	usage := &result.Usage
 
 	// Combine request size hints with the attempt observation after
-	// reading; observed image counts take precedence over model-name
-	// inference in completion metadata.
+	// reading; completion uses observed image counts independently of model
+	// naming or declared output capability.
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := media.NormalizeImageSizeTier(imageInputSize)
 	imageCount := c.imageCount(originalModel, mappedModel)
@@ -562,8 +562,8 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 	usage := &result.Usage
 
 	// Combine request size hints with the attempt observation after
-	// reading; observed image counts take precedence over model-name
-	// inference in completion metadata.
+	// reading; completion uses observed image counts independently of model
+	// naming or declared output capability.
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := media.NormalizeImageSizeTier(imageInputSize)
 	imageCount := c.imageCount(originalModel, mappedModel)

@@ -17,7 +17,8 @@ import (
 func TestImageRequestRoutingAndMultipart(t *testing.T) {
 	request, err := ParseImageRequest("/v1/images/generations", "application/json", []byte(`{"model":"my-alias","prompt":"draw"}`), false)
 	require.NoError(t, err)
-	require.Error(t, request.ValidateRoutingModel("text-model"))
+	require.NoError(t, request.ValidateRoutingModel("text-model"))
+	require.Error(t, request.ValidateRoutingModel(""))
 	require.NoError(t, request.ValidateRoutingModel("gpt-image-2"))
 	require.Equal(t, ImageCapabilityNative, request.RequiredCapability)
 	require.Equal(t, "my-alias", request.Model)
@@ -78,36 +79,6 @@ func TestImageOutcomePreservesPartialAndTransportBoundaries(t *testing.T) {
 			count, retain := ImageOutcome(tc.stream, tc.oauth, tc.sse, 3, tc.observed, tc.err)
 			require.Equal(t, tc.count, count)
 			require.Equal(t, tc.retain, retain)
-		})
-	}
-}
-
-// TestIsGrokImageGenerationModel supplies supported Grok image names,
-// case/whitespace variants and neighboring video/text families. It checks
-// the accepted family spellings and rejection of the supplied nonimage
-// model names.
-func TestIsGrokImageGenerationModel(t *testing.T) {
-	// Allow this model-family table to run concurrently with other tests; its
-	// cases and recognition inputs are local and share no mutable fixture
-	// state.
-	t.Parallel()
-
-	tests := []struct {
-		model string // supplied Grok model spelling
-		want  bool   // expected image-family recognition result
-	}{
-		{"grok-imagine", true},
-		{"grok-imagine-image-quality", true},
-		{"grok-imagine-edit", true},
-		{"grok-imagine-image-hd", true},
-		{" Grok-Imagine ", true},
-		{"grok-imagine-video", false},
-		{"grok-4.5", false},
-		{"grok-composer", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.model, func(t *testing.T) {
-			require.Equal(t, tt.want, IsGrokImageGenerationModel(tt.model))
 		})
 	}
 }

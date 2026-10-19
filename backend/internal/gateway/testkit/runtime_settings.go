@@ -5,6 +5,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	catalogtestkit "github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
@@ -96,8 +97,11 @@ func (s *FastPolicySettingsRepo) Delete(ctx context.Context, key string) error {
 // Gateway defaults use production Beta and User-Agent rules; the fixture
 // returns shared readers for later request tests.
 func RuntimeReaders(repo settings.Repository) *gatewayprovider.RuntimeReaders {
+	if repo == nil {
+		repo = &FastPolicySettingsRepo{}
+	}
 	runtime := gateway.NewRuntimeSettings(repo, settings.ErrSettingNotFound, func() *gateway.BetaPolicySettings {
 		return gatewayprovider.GatewayBetaPolicy(anthropic.DefaultBetaPolicySettings())
 	}, gateway.ClientSettingsOptions{NormalizeUserAgentVersion: antigravity.NormalizeUserAgentVersion, DefaultUserAgentVersion: antigravity.GetDefaultUserAgentVersion})
-	return &gatewayprovider.RuntimeReaders{Gateway: runtime, Provider: provider.NewRuntimeSettings(repo, settings.ErrSettingNotFound), Quota: provider.NewQuotaSettingsCache(repo, settings.ErrSettingNotFound, ops.ParseRuntimeQuotaAutoPauseSettings), Routing: routing.NewRuntimeSettings(repo), Moderation: moderation.NewRuntimeSettings(repo, settings.ErrSettingNotFound), Search: search.NewConfigService(repo, nil, nil, search.NewRegistry()), Scheduler: repo}
+	return &gatewayprovider.RuntimeReaders{Attributes: &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: catalogtestkit.OfflineView}}, Gateway: runtime, Provider: provider.NewRuntimeSettings(repo, settings.ErrSettingNotFound), Quota: provider.NewQuotaSettingsCache(repo, settings.ErrSettingNotFound, ops.ParseRuntimeQuotaAutoPauseSettings), Routing: routing.NewRuntimeSettings(repo), Moderation: moderation.NewRuntimeSettings(repo, settings.ErrSettingNotFound), Search: search.NewConfigService(repo, nil, nil, search.NewRegistry()), Scheduler: repo}
 }

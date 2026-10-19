@@ -65,7 +65,7 @@ type DefaultPriceInterval struct {
 // DefaultBillingMode classifies the supplied catalog's published price
 // dimensions. A nonempty video map wins, followed by an image map or eligible
 // flat image amount. Flat image metadata on a text-priced chat model retains
-// token classification unless the image-mode or name conditions apply.
+// token classification unless an explicit image operation mode applies.
 //
 // Available token prices then select token mode. When every price lookup is
 // unavailable, the supplied image, image_generation, or video mode still
@@ -76,7 +76,7 @@ func DefaultBillingMode(model, mode string, raw *CatalogModelPricing) string {
 	if raw != nil && len(raw.VideoPrices) > 0 {
 		return "video"
 	}
-	imageModel := mode == "image" || HasExplicitImageGenerationPricing(raw) || LooksLikeImageModel(model)
+	imageModel := mode == "image" || HasExplicitImageGenerationPricing(raw)
 	if raw != nil && len(raw.ImagePrices) > 0 || HasImageUnitPrice(raw) && (imageModel || raw.TokenPricingAbsent) {
 		return "image"
 	}

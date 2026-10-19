@@ -471,18 +471,16 @@ func (m BodyCodec) GrokModelRejectsLogprobs(model string) bool {
 	return strings.HasPrefix(model, "grok-4.20")
 }
 
-// SanitizeGrokResponsesModelCapabilities removes all reasoning spellings for
-// recognized Composer aliases. Other models retain body bytes. Removal includes
-// the reasoning object itself, while JSON-edit errors return before later
-// request normalization proceeds.
+// SanitizeGrokResponsesModelCapabilities removes reasoning controls when the
+// final attributes explicitly disable them. Unknown declarations retain client
+// controls; configured effort choices therefore survive Composer platform defaults.
 func (m BodyCodec) SanitizeGrokResponsesModelCapabilities(body []byte, upstreamModel string) ([]byte, error) {
-	if !m.GrokModelRejectsReasoningEffort(upstreamModel) {
+	attributes := m.modelAttributes(upstreamModel)
+	disabled := attributes.Reasoning != nil && !*attributes.Reasoning
+	if !disabled && (attributes.ReasoningOptions == nil || len(*attributes.ReasoningOptions) != 0) {
 		return body, nil
 	}
-
 	out := body
-	// Composer aliases reject effort controls; remove the object and both flat
-	// spellings together so another spelling cannot reintroduce a discarded value.
 	for _, field := range []string{"reasoning", "reasoning_effort", "reasoningEffort"} {
 		if !gjson.GetBytes(out, field).Exists() {
 			continue
@@ -490,22 +488,10 @@ func (m BodyCodec) SanitizeGrokResponsesModelCapabilities(body []byte, upstreamM
 		var err error
 		out, err = sjson.DeleteBytes(out, field)
 		if err != nil {
-			return nil, fmt.Errorf("remove unsupported Grok Composer %s: %w", field, err)
+			return nil, fmt.Errorf("remove unsupported reasoning control %s: %w", field, err)
 		}
 	}
 	return out, nil
-}
-
-// GrokModelRejectsReasoningEffort recognizes fixed Composer aliases after
-// an optional xai prefix.
-func (m BodyCodec) GrokModelRejectsReasoningEffort(model string) bool {
-	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "xai/")
-	switch model {
-	case "grok-composer", "grok-composer-2.5-fast", "composer-2.5":
-		return true
-	default:
-		return false
-	}
 }
 
 // NormalizeGrokResponsesReasoningEffort applies model attributes to nested and
@@ -570,6 +556,11 @@ func (m BodyCodec) NormalizeGrokResponsesReasoningEffort(body []byte, upstreamMo
 // that selected effort, while unknown attributes retain its trimmed text. The
 // result carries one flat spelling and reports JSON-edit errors to the caller.
 func (m BodyCodec) NormalizeGrokChatReasoningEffort(body []byte, upstreamModel string) ([]byte, error) {
+	var cleanupErr error
+	body, cleanupErr = m.SanitizeGrokResponsesModelCapabilities(body, upstreamModel)
+	if cleanupErr != nil {
+		return nil, cleanupErr
+	}
 	// Select the source before deleting the legacy key; unsupported nonblank flat
 	// text still outranks legacy text, so validation cannot revive displaced input.
 	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
@@ -613,6 +604,9 @@ func (m BodyCodec) NormalizeGrokReasoningEffortValue(raw, model string) (string,
 	// still unknown.
 	if attributes.ReasoningOptions == nil && (attributes.Reasoning == nil || *attributes.Reasoning) {
 		return strings.TrimSpace(raw), strings.TrimSpace(raw) != ""
+	}
+	if supported := attributes.EffortSupport(value); supported != nil && *supported {
+		return value, true
 	}
 	switch value {
 	case "none", "low", "medium", "high":
@@ -1215,10 +1209,12 @@ func (m BodyCodec) ShouldBridgeGrokComposerImageInputs(body []byte) bool {
 	return protocolopenai.JSONValueMayContainImageInput(messages)
 }
 
-// IsGrokComposerModel uses the fixed Composer reasoning-rejection aliases
-// for image bridging.
+// IsGrokComposerModel identifies registered deployments using the Composer
+// image-to-text adapter. This encoding choice is independent of configurable
+// reasoning controls and does not establish the model's declared modalities.
 func (m BodyCodec) IsGrokComposerModel(model string) bool {
-	return m.GrokModelRejectsReasoningEffort(model)
+	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "xai/")
+	return model == "grok-composer" || model == "grok-composer-2.5-fast" || model == "composer-2.5"
 }
 
 // CollectGrokComposerImageURLs collects usable image_url parts in message and

@@ -14,7 +14,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
-	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 	geminicli "github.com/TokenFlux/TokenRouter/internal/upstream/gemini/codeassist"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
@@ -27,8 +26,8 @@ import (
 // and AI Studio otherwise, and service accounts use a Vertex project/location
 // URL with their access token.
 //
-// An explicit test type takes precedence over model-based image detection, so
-// a text selection remains text even for an image-named model. API-key and
+// Automatic test types come from declared output modalities, while explicit
+// image probes require positive capability and explicit text retains its route. API-key and
 // service-account mappings choose the model before payload construction. Code
 // Assist wraps the same payload with its project and model identifiers, while
 // the other routes send the payload directly to their model-action endpoint.
@@ -36,6 +35,9 @@ import (
 // GeminiProviderTest probes Gemini using provider credentials and a shared
 // transport.
 type GeminiProviderTest struct {
+	// Attributes supplies capabilities for the mapped probe target. A missing
+	// callback leaves automatic and image probes without required output evidence.
+	Attributes ModelAttributeLookup
 	// Tokens is required for OAuth and service-account probes. API-key probes
 	// read their stored key directly and do not consult this source.
 	Tokens *providercore.GeminiTokenSource
@@ -83,7 +85,11 @@ func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 
 	c.Begin(true)
 
-	payload := geminiTestPayload(testModelID, prompt, testTypes...)
+	testType, capabilityErr := resolveProbeType(ctx, s.Attributes, value, testModelID, "gemini_generate_content", testTypes...)
+	if capabilityErr != nil {
+		return (TestStreamOutput{}).Error(c, capabilityErr.Error())
+	}
+	payload := geminiTestPayload(testModelID, prompt, testType)
 
 	var req *http.Request
 	var err error
@@ -277,19 +283,17 @@ func (s *GeminiProviderTest) buildCodeAssistRequest(ctx context.Context, accessT
 }
 
 // geminiTestPayload builds JSON for a selected text or image probe.
-// An explicit test type wins over model-name image detection. Blank prompts use
+// The caller supplies the resolved test type. Blank prompts use
 // route-specific defaults; image payloads request text and image modalities with
 // a square aspect ratio, while text payloads include the helper system instruction.
 func geminiTestPayload(modelID string, prompt string, testTypes ...string) []byte {
 	// Both payload variants contain fixed JSON-compatible containers and
 	// scalar values.
 	// Their ignored marshal errors are limited to these constructed test shapes.
-	testType, explicitTestType := providercore.ProviderTestTypeFromArgs(testTypes...)
-	useImageTest := (explicitTestType && testType == providercore.ProviderTestTypeImage) ||
-		(!explicitTestType && antigravity.IsImageGenerationModel(modelID))
-	// Explicit type selection can exercise image endpoints with a text model
-	// spelling;
-	// name detection supports older callers that supplied no separate test type.
+	testType, _ := providercore.ProviderTestTypeFromArgs(testTypes...)
+	useImageTest := testType == providercore.ProviderTestTypeImage
+	// The executor has already resolved and validated image capability. Payload
+	// construction follows that supplied operation independently of model spelling.
 	if useImageTest {
 		imagePrompt := strings.TrimSpace(prompt)
 		if imagePrompt == "" {

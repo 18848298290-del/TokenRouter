@@ -3,7 +3,9 @@ package creative
 import (
 	"context"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
 // Target-query fixtures count group/provider reads and candidate-inventory
@@ -124,5 +126,5 @@ func (f *targetQueryFixture) GetCreativeModelSettings(context.Context) []Creativ
 // presence for Enabled; callers use discovery or validation rather than task
 // persistence.
 func newTargetQueryPublic(fixture *targetQueryFixture) *Public {
-	return &Public{Repo: &targetQueryRunRepository{}, ProviderRepo: fixture, UserRepo: fixture, GroupRepo: fixture, Settings: fixture, Options: PublicOptions{Enabled: true}, ImageUnitPrice: func(context.Context, *GroupView, string, string) (float64, bool) { return 0.1, true }}
+	return &Public{Attributes: &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}, Repo: &targetQueryRunRepository{}, ProviderRepo: fixture, UserRepo: fixture, GroupRepo: fixture, Settings: fixture, Options: PublicOptions{Enabled: true}, ImageUnitPrice: func(context.Context, *GroupView, string, string) (float64, bool) { return 0.1, true }}
 }

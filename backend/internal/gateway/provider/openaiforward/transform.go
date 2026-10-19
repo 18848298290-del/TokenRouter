@@ -249,8 +249,8 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 		}
 	}
 
-	imageIntent = imageIntent || p.IsImageGenerationIntent("/v1/responses", reqModel, nil) || p.IsOpenAIImageGenerationModel(upstreamModel)
-	explicitImageIntent = explicitImageIntent || p.IsExplicitImageGenerationIntent("/v1/responses", reqModel, nil) || p.IsOpenAIImageGenerationModel(upstreamModel)
+	imageIntent = imageIntent || p.IsImageGenerationIntent("/v1/responses", reqModel, nil) || attributes.Attributes.OutputOnly("image")
+	explicitImageIntent = explicitImageIntent || p.IsExplicitImageGenerationIntent("/v1/responses", reqModel, nil) || attributes.Attributes.OutputOnly("image")
 	if explicitImageIntent && !imageGenerationAllowed {
 		p.Reject(Rejection{Status: 403, Type: "permission_error", Message: p.ImagePermissionMessage(), FeatureDenied: true})
 		return nil, errors.New("image generation disabled for group")
@@ -259,7 +259,7 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 	// Bridge insertion and image-only model migration share the decoded path,
 	// allowing model validation and instruction preparation to inspect the same
 	// normalized image tool declaration.
-	if imageGenerationAllowed && !isCompactRequest && (codexImageGenerationBridgeEnabled || p.IsOpenAIImageGenerationModel(requestView.Model) || p.OpenAIRequestBodyImageGenerationToolNeedsNormalization(body) || p.IsOpenAIImageGenerationModel(upstreamModel)) {
+	if imageGenerationAllowed && !isCompactRequest && (codexImageGenerationBridgeEnabled || attributes.Attributes.OutputOnly("image") || p.OpenAIRequestBodyImageGenerationToolNeedsNormalization(body)) {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
 			return nil, decodeErr
@@ -276,15 +276,15 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 			markDecodedModified()
 			p.Log("[OpenAI] Normalized /responses image_generation tool payload")
 		}
-		if p.NormalizeOpenAIResponsesImageOnlyModel(decoded) {
+		if openai.NormalizeOpenAIResponsesImageOnlyModel(decoded, attributes.Attributes.OutputOnly("image")) {
 			markDecodedModified()
 			if model, ok := decoded["model"].(string); ok {
 				upstreamModel = strings.TrimSpace(model)
 			}
 			p.Log("[OpenAI] Normalized /responses image-only model request inbound_model=%s image_model=%s upstream_model=%s", requestView.Model, billingModel, upstreamModel)
 		}
-		if err := p.ValidateOpenAIResponsesImageModel(decoded, upstreamModel); err != nil {
-			p.Reject(Rejection{Status: 400, Type: "invalid_request_error", Message: err.Error(), Param: "model", ObserveUpstream: true})
+		if err := openai.ValidateOpenAIResponsesImageModel(decoded, upstreamModel, upstreamModel == attributes.Target.Model && attributes.Attributes.OutputOnly("image")); err != nil {
+			p.Reject(Rejection{Status: 400, Type: "invalid_request_error", Message: err.Error(), Param: "model", PolicyDenied: true})
 			return nil, err
 		}
 		if openai.HasOpenAIImageGenerationTool(decoded) {

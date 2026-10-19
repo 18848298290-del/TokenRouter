@@ -26,6 +26,8 @@ import (
 	egressadapter "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	openaiprotocol "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
@@ -642,7 +644,7 @@ func TestProviderTestServiceCNProviderUsesConfiguredProtocol(t *testing.T) {
 			upstream := &cnProviderTestHTTP{}
 			service := newCNProtocolTestCore(repo.GetByID, upstream)
 			recorder := httptest.NewRecorder()
-			require.Error(t, service.Test(t.Context(), providercore.TestRequest{ProviderID: test.provider.ID, Prompt: "hi", Mode: providercore.ProviderTestModeDefault}, NewTestEventSink(recorder)))
+			require.Error(t, service.Test(t.Context(), providercore.TestRequest{ProviderID: test.provider.ID, Prompt: "hi", Mode: providercore.ProviderTestModeDefault, Type: func() *string { kind := providercore.ProviderTestTypeText; return &kind }()}, NewTestEventSink(recorder)))
 
 			require.NotNil(t, upstream.request)
 			require.Equal(t, "relay.example", upstream.request.URL.Hostname())
@@ -1029,7 +1031,7 @@ func TestProviderTestServiceOpenAICompactAgentIdentityUsesFreshAssertion(t *test
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body:       io.NopCloser(strings.NewReader(compactionTestV2SSESuccessBody)),
 	}}
-	svc := &provideradapter.OpenAIProviderTest{Store: repo, Transport: upstream, EnsureTask: probeAgentTasks(repo, "", nil).Ensure}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo, Transport: upstream, EnsureTask: probeAgentTasks(repo, "", nil).Ensure}
 
 	rec := httptest.NewRecorder()
 	c := &openAIProbeOutput{recorder: rec}
@@ -1081,7 +1083,7 @@ func TestProviderTestServiceOpenAICompactAgentIdentityRecoversInvalidTaskOnce(t 
 		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(compactionTestV2SSESuccessBody))},
 	}}
 	invalidator := &probeAgentInvalidations{}
-	svc := &provideradapter.OpenAIProviderTest{Store: repo, Transport: upstream, EnsureTask: probeAgentTasks(repo, registerServer.URL, invalidator).Ensure}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo, Transport: upstream, EnsureTask: probeAgentTasks(repo, registerServer.URL, invalidator).Ensure}
 	rec := httptest.NewRecorder()
 	c := &openAIProbeOutput{recorder: rec}
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/providers/22/test", bytes.NewReader(nil))
@@ -1120,8 +1122,9 @@ func TestProviderTestService_TestProviderConnection_OpenAICompactOAuthUsesNative
 		Body:       io.NopCloser(strings.NewReader(compactionTestV2SSESuccessBody)),
 	}}
 	svc := &provideradapter.OpenAIProviderTest{
-		Store:     repo,
-		Transport: upstream,
+		Attributes: probeModelAttributes,
+		Store:      repo,
+		Transport:  upstream,
 	}
 
 	rec := httptest.NewRecorder()
@@ -1180,8 +1183,9 @@ func TestProviderTestService_TestProviderConnection_OpenAICompactOAuth404DoesNot
 		Body:       io.NopCloser(strings.NewReader(`404 page not found`)),
 	}}
 	svc := &provideradapter.OpenAIProviderTest{
-		Store:     repo,
-		Transport: upstream,
+		Attributes: probeModelAttributes,
+		Store:      repo,
+		Transport:  upstream,
 	}
 
 	rec := httptest.NewRecorder()
@@ -1222,6 +1226,7 @@ func TestProviderTestService_TestProviderConnection_OpenAICompactAPIKeyUsesNativ
 		Body:       io.NopCloser(strings.NewReader(compactionTestV2SSESuccessBody)),
 	}}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes:  probeModelAttributes,
 		Store:       repo,
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
@@ -1265,6 +1270,7 @@ func TestProviderTestService_TestProviderConnection_OpenAICompactAPIKeyDefaultBa
 		Body:       io.NopCloser(strings.NewReader(compactionTestV2SSESuccessBody)),
 	}}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes:  probeModelAttributes,
 		Store:       repo,
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
@@ -1307,6 +1313,7 @@ func TestProviderTestService_TestProviderConnection_OpenAILegacyCompactUsesDedic
 		Body:       io.NopCloser(strings.NewReader(`{"id":"legacy_compact_probe","status":"completed"}`)),
 	}}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes:  probeModelAttributes,
 		Store:       repo,
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
@@ -1347,7 +1354,7 @@ func TestManualCompactionTestsPreserveConfigurationAcrossOutcomes(t *testing.T) 
 				}
 				resp := newJSONResponse(status, body)
 				upstream := &openAIProbeTransport{resp: resp}
-				svc := &provideradapter.OpenAIProviderTest{Store: repo, Transport: upstream}
+				svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo, Transport: upstream}
 				c, _ := newTestContext()
 				err := executeOpenAIProbe(t, svc, c, provider, "gpt-5.4", "", mode)
 				if status == 200 {
@@ -1395,7 +1402,7 @@ func TestProviderTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *te
 			)),
 		},
 	}
-	svc := &provideradapter.OpenAIProviderTest{Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Transport: upstream}
 	provider := &providercore.Record{
 		ID:       53,
 		Name:     "openai-oauth",
@@ -1436,6 +1443,7 @@ func TestProviderTestService_OpenAIImageOAuthForwardsTLSProfile(t *testing.T) {
 		},
 	}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes: probeModelAttributes,
 		Transport:  upstream,
 		ResolveTLS: (&provideradapter.OpenAIProbePolicy{ManualProfiles: &egressadapter.TLSProfiles{}}).ResolveTestTLS,
 	}
@@ -1478,6 +1486,7 @@ func TestProviderTestService_OpenAIImageAPIKeyUsesConfiguredV1BaseURL(t *testing
 		},
 	}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes:  probeModelAttributes,
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
 	}
@@ -1519,6 +1528,10 @@ func TestProviderTestService_OpenAIExplicitImageTypeDoesNotInspectModelName(t *t
 		},
 	}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes: func(context.Context, *providercore.Record, string, string) (modelcatalog.Attributes, error) {
+			image := []string{"image"}
+			return modelcatalog.Attributes{OutputModalities: &image}, nil
+		},
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
 	}
@@ -1558,6 +1571,7 @@ func TestProviderTestService_OpenAIExplicitTextTypeDoesNotInspectModelName(t *te
 		},
 	}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes:  probeModelAttributes,
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
 	}
@@ -1608,7 +1622,7 @@ func TestProviderTestService_OpenAIImageAPIKeyHandlesURLAndEmptyImages(t *testin
 					Body:       io.NopCloser(strings.NewReader(tc.body)),
 				},
 			}
-			svc := &provideradapter.OpenAIProviderTest{Transport: upstream, ValidateURL: (egress.OperatorURLPolicy{}).Validate}
+			svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Transport: upstream, ValidateURL: (egress.OperatorURLPolicy{}).Validate}
 			provider := &providercore.Record{
 				ID:          55,
 				Name:        "openai-apikey",
@@ -1637,7 +1651,7 @@ func TestProviderTestServiceSkipsShadow(t *testing.T) {
 		ParentProviderID: &pid,
 	}
 	repo := &openAIProbeStore{openAIProbeRecords: openAIProbeRecords{providersByID: map[int64]*providercore.Record{shadow.ID: shadow}}}
-	svc := &provideradapter.OpenAIProviderTest{Store: repo}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo}
 	c, _ := newTestContext()
 
 	err := executeOpenAIProbeRequest(t, svc, c, 200, "", "", "")
@@ -1665,7 +1679,7 @@ func TestProviderTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing
 
 	repo := &openAIProbeStore{}
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &provideradapter.OpenAIProviderTest{Store: repo, Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo, Transport: upstream}
 	provider := &providercore.Record{
 		ID:          89,
 		Platform:    capability.PlatformOpenAI,
@@ -1701,7 +1715,7 @@ func TestProviderTestService_OpenAIOAuthTestDoesNotRedirectBareGPT56(t *testing.
 `))
 
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &provideradapter.OpenAIProviderTest{Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Transport: upstream}
 	provider := &providercore.Record{
 		ID:          90,
 		Platform:    capability.PlatformOpenAI,
@@ -1731,7 +1745,7 @@ func TestProviderTestService_OpenAIOAuthUsesConfiguredUserAgent(t *testing.T) {
 
 `))
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &provideradapter.OpenAIProviderTest{Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Transport: upstream}
 	provider := &providercore.Record{
 		ID:          890,
 		Platform:    capability.PlatformOpenAI,
@@ -1797,7 +1811,7 @@ func TestProviderTestService_OpenAIShadowUsesParentCredentialsAndShadowModel(t *
 		},
 	}
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &provideradapter.OpenAIProviderTest{Store: repo, Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo, Transport: upstream}
 
 	err := executeOpenAIProbeRequest(t, svc, ctx, shadow.ID, "gpt-5.3-codex-spark", "", "")
 	require.NoError(t, err)
@@ -1823,7 +1837,7 @@ func TestProviderTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
 `))
 
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &provideradapter.OpenAIProviderTest{Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Transport: upstream}
 	provider := &providercore.Record{
 		ID:          90,
 		Platform:    capability.PlatformOpenAI,
@@ -1859,8 +1873,9 @@ func TestProviderTestService_RunTestBackgroundWithPromptAndUserAgentOverridesHea
 	repo := &openAIProbeStore{openAIProbeRecords: openAIProbeRecords{providersByID: map[int64]*providercore.Record{provider.ID: &provider}}}
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
 	svc := &provideradapter.OpenAIProviderTest{
-		Store:     repo,
-		Transport: upstream,
+		Attributes: probeModelAttributes,
+		Store:      repo,
+		Transport:  upstream,
 	}
 
 	result, err := openAIProbeCore(svc).RunTestBackgroundWithPromptAndUserAgent(context.Background(), provider.ID, "gpt-5.4", "hi", "codex-tui/9.9.1 test-terminal")
@@ -1889,7 +1904,7 @@ func TestProviderTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testi
 
 	repo := &openAIProbeStore{}
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &provideradapter.OpenAIProviderTest{Store: repo, Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo, Transport: upstream}
 	provider := &providercore.Record{
 		ID:          88,
 		Platform:    capability.PlatformOpenAI,
@@ -1922,7 +1937,7 @@ func TestProviderTestService_OpenAI429BodyOnlyPersistsRateLimitAndClearsStaleErr
 
 	repo := &openAIProbeStore{}
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &provideradapter.OpenAIProviderTest{Store: repo, Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo, Transport: upstream}
 	provider := &providercore.Record{
 		ID:           77,
 		Platform:     capability.PlatformOpenAI,
@@ -1955,7 +1970,7 @@ func TestProviderTestService_OpenAI429SyncsObservedPlanType(t *testing.T) {
 
 	repo := &openAIProbeStore{}
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &provideradapter.OpenAIProviderTest{Store: repo, Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo, Transport: upstream}
 	provider := &providercore.Record{
 		ID:          81,
 		Platform:    capability.PlatformOpenAI,
@@ -1985,7 +2000,7 @@ func TestProviderTestService_OpenAI429ActiveProviderDoesNotClearError(t *testing
 
 	repo := &openAIProbeStore{}
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &provideradapter.OpenAIProviderTest{Store: repo, Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo, Transport: upstream}
 	provider := &providercore.Record{
 		ID:          78,
 		Platform:    capability.PlatformOpenAI,
@@ -2015,7 +2030,7 @@ func TestProviderTestService_OpenAI429WithoutResetSignalDoesNotMutateRuntimeStat
 
 	repo := &openAIProbeStore{}
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &provideradapter.OpenAIProviderTest{Store: repo, Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo, Transport: upstream}
 	provider := &providercore.Record{
 		ID:           79,
 		Platform:     capability.PlatformOpenAI,
@@ -2047,7 +2062,7 @@ func TestProviderTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 
 	repo := &openAIProbeStore{}
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &provideradapter.OpenAIProviderTest{Store: repo, Transport: upstream}
+	svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: repo, Transport: upstream}
 	provider := &providercore.Record{
 		ID:          80,
 		Platform:    capability.PlatformOpenAI,
@@ -2077,6 +2092,7 @@ func TestProviderTestService_DeepSeekResponsesRoutesToOpenAIProbe(t *testing.T) 
 	resp.Body = io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n"))
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes:  probeModelAttributes,
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
 	}
@@ -2099,7 +2115,7 @@ func TestProviderTestService_DeepSeekResponsesRoutesToOpenAIProbe(t *testing.T) 
 	}
 	svc.Store = repo
 
-	err := executeOpenAIProbeRequest(t, svc, ctx, provider.ID, "gpt-5.4", "", "")
+	err := executeOpenAIProbeRequest(t, svc, ctx, provider.ID, "gpt-5.4", "", providercore.ProviderTestTypeText)
 	require.NoError(t, err)
 	require.Len(t, upstream.requests, 1)
 	require.Equal(t, "https://relay.example.com/v1/responses", upstream.requests[0].URL.String())
@@ -2126,6 +2142,7 @@ func TestProviderTestService_OpenAIAPIKeySelectedChatUsesChatCompletionsPath(t *
 		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
 	}}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes:  probeModelAttributes,
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
 	}
@@ -2167,6 +2184,7 @@ func TestProviderTestService_OpenAIChatCompletionsPathReturns4xx(t *testing.T) {
 
 	upstream := &openAIProbeTransport{resp: newJSONResponse(http.StatusBadRequest, `{"error":{"message":"bad request"}}`)}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes:  probeModelAttributes,
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
 	}
@@ -2199,6 +2217,7 @@ func TestProviderTestService_OpenAIChatCompletionsPathTimeout(t *testing.T) {
 
 	upstream := &openAIProbeTransport{err: context.DeadlineExceeded}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes:  probeModelAttributes,
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
 	}
@@ -2235,6 +2254,7 @@ func TestProviderTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *te
 		Body:       io.NopCloser(strings.NewReader("data: not-json\n\n")),
 	}}
 	svc := &provideradapter.OpenAIProviderTest{
+		Attributes:  probeModelAttributes,
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
 	}
@@ -2271,7 +2291,7 @@ func TestProviderTestServiceExplicitProtocolDoesNotMutateProvider(t *testing.T) 
 			}
 			original := provider.Extra["openai_text_route_mode"]
 			upstream := &openAIProbeTransport{resp: &http.Response{StatusCode: http.StatusBadRequest, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":"capture"}`))}}
-			svc := &provideradapter.OpenAIProviderTest{Store: &openAIProbeStore{openAIProbeRecords: openAIProbeRecords{providersByID: map[int64]*providercore.Record{provider.ID: &provider}}}, Transport: upstream, ValidateURL: (egress.OperatorURLPolicy{}).Validate}
+			svc := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: &openAIProbeStore{openAIProbeRecords: openAIProbeRecords{providersByID: map[int64]*providercore.Record{provider.ID: &provider}}}, Transport: upstream, ValidateURL: (egress.OperatorURLPolicy{}).Validate}
 			c, _ := newTestContext()
 			c.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
 			require.Error(t, executeOpenAIProbeRequestType(t, svc, c, provider.ID, "gpt-5.4", "hi", "text", "default", protocol))
@@ -3103,6 +3123,7 @@ func adaptiveCNProviderTestService(provider *providercore.Record, responses ...*
 	}
 	upstream := &openAIProbeTransport{responses: responses}
 	return &provideradapter.OpenAIProviderTest{
+		Attributes:  probeModelAttributes,
 		Store:       repo,
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{AllowInsecureHTTP: true}).Validate,
@@ -3619,7 +3640,7 @@ func (f *openAIProbeTransport) DoWithTLS(req *http.Request, _ string, _ int64, _
 // controlled transport.
 func newCNProtocolTestCore(read func(context.Context, int64) (*providercore.Record, error), transport provideradapter.QoderTransport) *providercore.TestService {
 	policy := egress.OperatorURLPolicy{}
-	openaiExecutor := &provideradapter.OpenAIProviderTest{Transport: transport, ValidateURL: policy.Validate}
+	openaiExecutor := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Transport: transport, ValidateURL: policy.Validate}
 	configureOpenAIProbe(openaiExecutor)
 	targets := &provideradapter.TestTargets{Read: read, CN: &provideradapter.CNProviderTest{Transport: transport, ValidateURL: policy.Validate, Responses: openaiExecutor}}
 	return providercore.NewTestService(targets, providercore.TestOptions{Now: time.Now, Error: func(string) {}, WriteError: func(error) {}})
@@ -3674,7 +3695,7 @@ func newOpenAIAutomaticProbeTestService(t *testing.T, values []providercore.Reco
 		t.Cleanup(routers.Stop)
 		policy.Routers = routers
 	}
-	executor := &provideradapter.OpenAIProviderTest{Store: store, Transport: transport, Prepare: policy.Prepare, ApplyRouting: policy.ApplyTestRouting, ResolveTLS: policy.ResolveTestTLS, ValidateURL: func(raw string) (string, error) {
+	executor := &provideradapter.OpenAIProviderTest{Attributes: probeModelAttributes, Store: store, Transport: transport, Prepare: policy.Prepare, ApplyRouting: policy.ApplyTestRouting, ResolveTLS: policy.ResolveTestTLS, ValidateURL: func(raw string) (string, error) {
 		if urlPolicy == nil {
 			return "", errors.New("config is not available")
 		}
@@ -3828,4 +3849,11 @@ func executeQoderTest(t *testing.T, output *qoderTestOutputFixture, executor *pr
 		WriteError: func(err error) { log.Printf("failed to write SSE event: %v", err) },
 	})
 	return core.Test(output.Context, providercore.TestRequest{ProviderID: value.ID, Model: model, Prompt: prompt, Mode: mode}, NewTestEventSink(output.recorder))
+}
+
+// probeModelAttributes resolves fixture provider models against the embedded
+// catalog. Probe tests keep authentication and transport stubs independent of
+// capability data while unknown identities retain an absent output declaration.
+func probeModelAttributes(_ context.Context, value *providercore.Record, model, protocol string) (modelcatalog.Attributes, error) {
+	return testkit.OfflineView().Resolve(value.ModelAttributeTarget(model, protocol), modelcatalog.Attributes{}).Attributes, nil
 }

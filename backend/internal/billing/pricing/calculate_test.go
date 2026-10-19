@@ -189,3 +189,35 @@ func TestZeroPricingTimeDoesNotEnablePricingTimeMultiplier(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 0.0002, cost.ActualCost, 1e-12)
 }
+
+// TestDefaultBillingModeIgnoresModelSpelling supplies identical token and
+// incidental image prices under unrelated model names. Names cannot switch
+// the published billing dimension; an explicit image price table still can.
+func TestDefaultBillingModeIgnoresModelSpelling(t *testing.T) {
+	price := &CatalogModelPricing{Source: "models.dev", Mode: "chat", InputCostPerToken: 0.000001, OutputCostPerToken: 0.000002, InputPricePresent: true, OutputCostPerImage: 0.04}
+	for _, model := range []string{"plain", "company-image-helper", "grok-imagine-video", "imagen-custom"} {
+		if got := DefaultBillingMode(model, "chat", price); got != "token" {
+			t.Fatalf("%s changed token classification to %s", model, got)
+		}
+	}
+	price.ImagePrices = map[string]float64{"1K": 0}
+	if got := DefaultBillingMode("plain", "chat", price); got != "image" {
+		t.Fatalf("explicit free image dimension classified as %s", got)
+	}
+}
+
+// TestPerRequestDisplayRequiresDeclaredImageDimensions compares generic
+// per-request prices with an explicitly labeled free image tier. Display keeps
+// unit evidence separate from model spelling and accepts case-insensitive labels.
+func TestPerRequestDisplayRequiresDeclaredImageDimensions(t *testing.T) {
+	zero := 0.0
+	generic := &ResolvedPricing{Mode: BillingModePerRequest, Source: PricingSourceConfig, DefaultPerRequestPricePresent: true}
+	if _, ok := DisplayPricingFromResolved("gpt-image-unregistered", 1, generic); ok {
+		t.Fatal("a model name converted an unlabeled per-request price into image units")
+	}
+	image := &ResolvedPricing{Mode: BillingModePerRequest, Source: PricingSourceConfig, RequestTiers: []PricingInterval{{TierLabel: "1k", PerRequestPrice: &zero}}}
+	result, ok := DisplayPricingFromResolved("canvas", 1, image)
+	if !ok || result.PriceStatus != "priced" || len(result.ImagePriceSizes) != 1 || result.ImagePriceSizes[0] != "1K" || result.ImagePrice1K != 0 {
+		t.Fatalf("explicit free image tier lost its dimension or zero price: %+v", result)
+	}
+}

@@ -57,6 +57,7 @@ type openAIForwardTransformAdapter struct {
 func (p openAIForwardTransformAdapter) ModelAttributes(ctx context.Context, model string, body []byte, compact bool) (modelcatalog.Resolution, error) {
 	result, err := gatewayadapter.ResolveModelAttributes(ctx, p.provider, model, p.s.Text.modelAttributes(), "openai_responses")
 	if err != nil {
+		WriteOpenAIModelAttributeError(p.c, err, p.c.Writer.Written())
 		return modelcatalog.Resolution{}, err
 	}
 	// Compact capabilities use a distinct endpoint target. Resolve that target
@@ -76,6 +77,7 @@ func (p openAIForwardTransformAdapter) ModelAttributes(ctx context.Context, mode
 		}
 		result, err = session.Resolve(ctx, groupID, target)
 		if err != nil {
+			WriteOpenAIModelAttributeError(p.c, err, p.c.Writer.Written())
 			return modelcatalog.Resolution{}, err
 		}
 	}
@@ -172,12 +174,6 @@ func (p openAIForwardTransformAdapter) IsExplicitImageGenerationIntentMap(endpoi
 	return gatewayadapter.ImageIntent().IsExplicitImageGenerationIntentMap(endpoint, model, body)
 }
 
-// IsOpenAIImageGenerationModel reports whether the model belongs to the
-// image-generation family.
-func (p openAIForwardTransformAdapter) IsOpenAIImageGenerationModel(model string) bool {
-	return media.IsImageGenerationModel(model)
-}
-
 // OpenAIRequestBodyImageGenerationToolNeedsNormalization delegates whether the
 // body's image tool needs compatibility normalization.
 func (p openAIForwardTransformAdapter) OpenAIRequestBodyImageGenerationToolNeedsNormalization(body []byte) bool {
@@ -204,22 +200,6 @@ func (p openAIForwardTransformAdapter) EnsureOpenAIResponsesImageGenerationTool(
 // appropriate for the request.
 func (p openAIForwardTransformAdapter) EnsureOpenAIResponsesImageGenerationToolChoiceAuto(body map[string]any) bool {
 	return gatewayadapter.EnsureOpenAIResponsesImageGenerationToolChoiceAuto(body)
-}
-
-// NormalizeOpenAIResponsesImageOnlyModel delegates image-only model
-// compatibility normalization on the supplied map. Callers retain writable
-// ownership during the edit and use the returned flag when deciding whether to
-// serialize changed request state.
-func (p openAIForwardTransformAdapter) NormalizeOpenAIResponsesImageOnlyModel(body map[string]any) bool {
-	return gatewayadapter.NormalizeOpenAIResponsesImageOnlyModel(body)
-}
-
-// ValidateOpenAIResponsesImageModel delegates image model/configuration
-// validation before request serialization. A returned error prevents
-// forwarding through the shared transform; callers pass the selected model and
-// its currently prepared decoded request map.
-func (p openAIForwardTransformAdapter) ValidateOpenAIResponsesImageModel(body map[string]any, model string) error {
-	return gatewayadapter.ValidateOpenAIResponsesImageModel(body, model)
 }
 
 // ValidateCodexSparkInput delegates selected-model Spark input validation

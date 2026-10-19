@@ -49,14 +49,14 @@ func TestNormalizeCreativeModelSettingsForSaveByPlatform(t *testing.T) {
 	got, err := svc.NormalizeCreativeModelSettingsForSave(context.Background(), []creative.CreativeModelSetting{
 		{GroupID: 12, Model: "gemini-3.1-flash-image", Operations: []string{creative.CreativeOperationGenerate, creative.CreativeOperationInpaint}},
 		{GroupID: 13, Model: "gpt-image-2", Operations: []string{creative.CreativeOperationGenerate, creative.CreativeOperationInpaint}},
-		{GroupID: 12, Model: "gemini-only-inpaint", Operations: []string{creative.CreativeOperationInpaint}},
 		{GroupID: 999, Model: "legacy", Operations: []string{creative.CreativeOperationInpaint}},
 	})
 	require.NoError(t, err)
 	require.Equal(t, []creative.CreativeModelSetting{
 		{GroupID: 12, Model: "gemini-3.1-flash-image", Operations: []string{creative.CreativeOperationGenerate}},
 		{GroupID: 13, Model: "gpt-image-2", Operations: []string{creative.CreativeOperationGenerate, creative.CreativeOperationInpaint}},
-		{GroupID: 12, Model: "gemini-only-inpaint", Operations: []string{creative.CreativeOperationInpaint}},
 		{GroupID: 999, Model: "legacy", Operations: []string{creative.CreativeOperationInpaint}},
 	}, got)
+	_, err = svc.NormalizeCreativeModelSettingsForSave(context.Background(), []creative.CreativeModelSetting{{GroupID: 12, Model: "gemini-only-inpaint", Operations: []string{creative.CreativeOperationGenerate}}})
+	require.ErrorContains(t, err, "MODEL_CAPABILITY_UNKNOWN")
 }

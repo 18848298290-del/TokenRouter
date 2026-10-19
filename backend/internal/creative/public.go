@@ -649,11 +649,8 @@ func (s *Public) ListCreativeModelCandidates(ctx context.Context) ([]CreativeMod
 			return nil, err
 		}
 		modelNames := make([]string, 0, len(models))
-		for model, finalModel := range models {
-			if finalModel == "" {
-				finalModel = model
-			}
-			if len(CreativeImageSizesForModel(routes[model].Platform, finalModel)) == 0 {
+		for model := range models {
+			if len(creativeRouteImageSizes(routes[model])) == 0 {
 				continue
 			}
 			modelNames = append(modelNames, model)
@@ -712,23 +709,6 @@ func CreativeOperationsForPlatform(platform string) []string {
 	}
 }
 
-// CreativeDefaultImageSizesForPlatform returns fresh fallback tier slices for
-// a trimmed platform. OpenAI and Gemini use one-K/two-K/four-K, Grok uses
-// one-K/two-K, and unknown platforms return nil when capability defaults are
-// requested.
-func CreativeDefaultImageSizesForPlatform(platform string) []string {
-	switch strings.TrimSpace(platform) {
-	case PlatformOpenAI:
-		return []string{"1K", "2K", "4K"}
-	case PlatformGrok:
-		return []string{"1K", "2K"}
-	case PlatformGemini:
-		return []string{"1K", "2K", "4K"}
-	default:
-		return nil
-	}
-}
-
 // CreativeCapabilitiesForModel returns media choices with one-output and
 // one-reference defaults. Only the first supplied attribute value participates;
 // its effort choices can populate ThinkingLevels even when Media is absent.
@@ -766,139 +746,14 @@ func CreativeCapabilitiesForModel(platform, model string, attributes ...modelcat
 	return result
 }
 
-// creativeRouteImageSizes returns a copied route size list or model defaults
-// when size knowledge is absent. An explicit empty list keeps zero available
-// tiers for discovery and submission.
-//
-// Missing media and nil ImageSizes carry unknown capability information, so
-// they reach the catalogue/platform lookup. A present empty list instead
-// declares no sizes and returns before that lookup. This distinction keeps
-// fallback defaults from widening a route whose resolved size choices were
-// explicitly emptied.
+// creativeRouteImageSizes copies the resolved route's declared size choices.
+// Unknown media and explicit empty choices both offer no selectable sizes;
+// discovery and submission therefore cannot widen a route using platform defaults.
 func creativeRouteImageSizes(route creativeModelRoute) []string {
 	if route.Attributes.Media != nil && route.Attributes.Media.ImageSizes != nil {
 		return append([]string(nil), route.Attributes.Media.ImageSizes...)
 	}
-	// Only unknown route size metadata reaches model fallback. An explicit empty
-	// size list already returned above, so configured absence of choices is not
-	// widened by the catalogue defaults used here.
-	return CreativeImageSizesForModel(route.Platform, route.Model)
-}
-
-// CreativeNormalizedModelID trims, lowercases, and removes one models/ prefix
-// from supplied model spelling.
-func CreativeNormalizedModelID(model string) string {
-	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
-}
-
-// CreativeGeminiMaxReferenceImages returns a known catalogue reference limit
-// or one when absent. It uses Gemini model identity and does not read current
-// group or selected-provider attribute overrides.
-func CreativeGeminiMaxReferenceImages(model string) int {
-	if media := modelcatalog.MediaForModel(PlatformGemini, model); media != nil && media.MaxReferenceImages != nil {
-		return *media.MaxReferenceImages
-	}
-	return 1
-}
-
-// CreativeImageSizesForModel copies catalogue media tiers or uses platform
-// defaults when media is unknown. Size availability follows model capabilities
-// independently from whether a matching price override is configured.
-func CreativeImageSizesForModel(platform, model string) []string {
-	if media := modelcatalog.MediaForModel(platform, model); media != nil {
-		return append([]string(nil), media.ImageSizes...)
-	}
-	// Unknown model media can still use platform tier defaults for capability
-	// display. Quote availability remains a separate discovery and submission
-	// decision, so these tiers do not supply a missing image price.
-	return CreativeDefaultImageSizesForPlatform(platform)
-}
-
-// CreativeFilterImageSizesForModel narrows supplied tiers for the listed
-// recognized model families. Grok and older GPT Image retain one-K/two-K,
-// supported Gemini Flash prepends 512 when one-K exists, and one-K-only
-// families keep one-K. Other models receive a copied supplied list.
-func CreativeFilterImageSizesForModel(platform, model string, sizes []string) []string {
-	platform = strings.TrimSpace(platform)
-	if platform == PlatformGrok && upstream.IsGrokImageGenerationModel(model) {
-		return CreativeFilterImageSizes(sizes, "1K", "2K")
-	}
-	if platform == PlatformOpenAI && upstream.IsGPTImageGenerationModel(model) && !IsCreativeGPTImage2Model(model) {
-		return CreativeFilterImageSizes(sizes, "1K", "2K")
-	}
-	if platform != PlatformGemini {
-		return append([]string(nil), sizes...)
-	}
-	if IsCreativeGemini512Model(model) {
-		filtered := append([]string(nil), sizes...)
-		if ContainsCreativeImageSize(filtered, "1K") && !ContainsCreativeImageSize(filtered, "512") {
-			filtered = append([]string{"512"}, filtered...)
-		}
-		return filtered
-	}
-	if !IsCreativeGemini1KOnlyModel(model) {
-		return append([]string(nil), sizes...)
-	}
-	filtered := make([]string, 0, 1)
-	for _, size := range sizes {
-		if strings.EqualFold(strings.TrimSpace(size), "1K") {
-			filtered = append(filtered, "1K")
-		}
-	}
-	return filtered
-}
-
-// CreativeFilterImageSizes keeps supplied tier spellings and order when
-// allowed tiers match. Membership trims and ignores case, while the returned
-// list retains the original supplied spelling of each surviving tier.
-func CreativeFilterImageSizes(sizes []string, allowed ...string) []string {
-	filtered := make([]string, 0, len(sizes))
-	for _, size := range sizes {
-		if ContainsCreativeImageSize(allowed, size) {
-			filtered = append(filtered, size)
-		}
-	}
-	return filtered
-}
-
-// IsCreativeGemini512Model reports whether normalized spelling matches the
-// listed Gemini Flash image family for 512.
-func IsCreativeGemini512Model(model string) bool {
-	model = CreativeNormalizedModelID(model)
-	return strings.HasPrefix(model, "gemini-3.1-flash-image") && !strings.HasPrefix(model, "gemini-3.1-flash-lite-image")
-}
-
-// IsCreativeGemini1KOnlyModel reports whether normalized spelling matches a
-// listed one-K-only Gemini image family.
-func IsCreativeGemini1KOnlyModel(model string) bool {
-	model = CreativeNormalizedModelID(model)
-	switch {
-	case strings.HasPrefix(model, "gemini-2.5-flash-image"):
-		return true
-	case strings.HasPrefix(model, "gemini-3.1-flash-lite-image"):
-		return true
-	case model == "gemini-2.0-flash-exp-image-generation":
-		return true
-	default:
-		return false
-	}
-}
-
-// IsCreativeGPTImage2Model reports whether trimmed lowercase spelling begins
-// with the gpt-image-2 prefix.
-func IsCreativeGPTImage2Model(model string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image-2")
-}
-
-// ContainsCreativeImageSize reports whether trimmed size spelling matches the
-// target without case sensitivity.
-func ContainsCreativeImageSize(sizes []string, target string) bool {
-	for _, size := range sizes {
-		if strings.EqualFold(strings.TrimSpace(size), strings.TrimSpace(target)) {
-			return true
-		}
-	}
-	return false
+	return nil
 }
 
 // CreativeCanonicalOption returns the first option spelling matching trimmed
@@ -982,16 +837,6 @@ func (s *Public) creativeModelRoutes(ctx context.Context, group *GroupView) (map
 	}
 	configured := creativeSettingsModels(s.CreativeModelSettings(ctx), group.ID)
 	return query.resolveModels(ctx, query.candidates(configured))
-}
-
-// IsCreativeGeminiImageModel recognizes normalized Gemini names containing
-// image and names with the nano-banana- prefix. This fallback applies when
-// resolved modalities are unknown; known non-image output modalities can
-// reject the route.
-func IsCreativeGeminiImageModel(model string) bool {
-	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
-	return (strings.HasPrefix(model, "gemini-") && strings.Contains(model, "image")) ||
-		strings.HasPrefix(model, "nano-banana-")
 }
 
 // CreateRun validates and moderates current scope, model permissions, and

@@ -1,7 +1,5 @@
 package creative
 
-import "github.com/TokenFlux/TokenRouter/internal/upstream"
-
 // execution_values.go validates and deduplicates generated images before
 // selecting the retained creative output.
 // A creative execution delivers one retained image even when an upstream
@@ -20,22 +18,6 @@ import "github.com/TokenFlux/TokenRouter/internal/upstream"
 // CreativeMaxOutputBytes caps each decoded execution image at thirty-two MiB
 // before the worker records successful delivery metadata.
 const CreativeMaxOutputBytes = 32 << 20
-
-// CreativePlatformImageModel recognizes image names using the selected
-// platform rules. An unknown platform reports false, and Gemini recognition
-// includes configured nano-banana aliases alongside Gemini image names.
-func CreativePlatformImageModel(platform, model string) bool {
-	switch platform {
-	case PlatformOpenAI:
-		return upstream.IsGPTImageGenerationModel(model)
-	case PlatformGrok:
-		return upstream.IsGrokImageGenerationModel(model)
-	case PlatformGemini:
-		return IsCreativeGeminiImageModel(model)
-	default:
-		return false
-	}
-}
 
 // NormalizeCreativeOutputs returns the first nonempty distinct image with
 // index zero, or a nonretryable error when no image survives. The returned

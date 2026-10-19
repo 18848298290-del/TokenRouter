@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
+	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
@@ -108,7 +108,7 @@ func provideProviderHealthRuntime(
 	}
 
 	team := provider.NewTeamLinkedHealth(store, provider.TeamLinkedOptions{Now: options.Now, Warn: options.Warn, Block: options.Block})
-	models := &provideradapter.ModelHealth{Health: health, IsImageModel: media.IsGPTImageGenerationModel}
+	models := &provideradapter.ModelHealth{Health: health, ImageOutput: gatewayprovider.ResolvedImageOutput}
 
 	return &providerHealthRuntime{
 		Health: health, Recovery: recovery, Observer: &provideradapter.UpstreamHealth{Core: health, Team: team, Limits: limits, Models: models},

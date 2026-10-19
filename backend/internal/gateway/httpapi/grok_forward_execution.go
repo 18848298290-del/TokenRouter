@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
-	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/grokforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
@@ -66,6 +65,9 @@ func (a *grokForwardAdapter) options() grokforward.Options {
 	}
 	return grokforward.Options{ResolveAttributes: func(ctx context.Context, model string) (modelcatalog.Attributes, error) {
 		result, err := gatewayprovider.ResolveModelAttributes(ctx, a.provider, model, a.s.Attributes, "openai_responses")
+		if err != nil {
+			WriteOpenAIModelAttributeError(a.c, err, a.c != nil && a.c.Writer.Written())
+		}
 		return result.Attributes, err
 	}, Codec: grok.BodyCodec{
 		NewID: uuid.NewString,
@@ -104,12 +106,6 @@ func (a *grokForwardAdapter) BillingModel(model string) string {
 // directly.
 func (a *grokForwardAdapter) UpstreamModel(model string) string {
 	return gatewayprovider.ExecutionModelPolicy(a.provider).NormalizeOpenAI(model)
-}
-
-// ImageModel reports whether the supplied model requires Grok image
-// generation.
-func (a *grokForwardAdapter) ImageModel(model string) bool {
-	return media.IsGrokImageGenerationModel(model)
 }
 
 // InvalidRequest writes the request-local OpenAI parameter error through

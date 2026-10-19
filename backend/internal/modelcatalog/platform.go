@@ -126,7 +126,6 @@ func (r *Resolution) applyPlatform() {
 		// catalog contains other capability metadata.
 		if slices.Contains([]string{"grok-composer", "grok-composer-2.5-fast", "composer-2.5"}, model) {
 			patch.ReasoningOptions = valuePointer([]ReasoningOption{})
-			r.Rules.DropFields = append(r.Rules.DropFields, "reasoning", "reasoning_effort", "reasoningEffort")
 		}
 		if strings.HasPrefix(model, "grok-4.20") {
 			r.Rules.DropFields = append(r.Rules.DropFields, "logprobs", "top_logprobs")

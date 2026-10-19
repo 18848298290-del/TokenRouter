@@ -40,7 +40,13 @@ func provideKeyHTTP(keys *apikey.APIKeyService, capacity *routing.CapacityServic
 		if !includeModels {
 			return result
 		}
+		if attributes != nil && routing.ModelAttributesFromContext(ctx) == nil {
+			ctx = routing.WithModelAttributes(ctx, attributes)
+		}
 		resolved := catalogue.ResolveRequestableModels(ctx, &group.ID, "")
+		if resolved.Err != nil {
+			return result
+		}
 		result.Models = make([]string, 0, len(resolved.Models))
 		result.ModelProtocols = make(map[string][]protocol.ProtocolID)
 		for _, model := range resolved.Models {
