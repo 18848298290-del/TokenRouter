@@ -100,20 +100,50 @@ func TestPublicVideoQuoteMatchesCatalogCharges(t *testing.T) {
 }
 
 // TestConfiguredVideoQuoteKeepsMissingDimensionsUnavailable selects a partial
-// video card over a catalog containing other resolutions. Public quoting and
-// settlement both retain the configured free tier and report missing dimensions.
+// video card over a catalog containing other resolutions. Unified video dispatch
+// rejects a missing tier while free and paid controls settle at their quoted
+// rates, proving that the missing-price assertion exercises the video path.
 func TestConfiguredVideoQuoteKeepsMissingDimensionsUnavailable(t *testing.T) {
 	groupID := int64(1)
 	zero := 0.0
+	paid := 0.25
 	calculator := NewCalculator(defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
 		"custom-video": {CatalogRules: pricing.CatalogRules{VideoPrices: pricing.MediaPrices{"480p": 0.1, "768p": 0.2}}, TokenPricingAbsent: true},
 	}}, CalculatorOptions{})
-	resolver := NewPriceResolver(mediaPriceCards{card: &ModelPricingEntry{BillingMode: pricing.BillingModeVideo, Intervals: []pricing.PricingInterval{{TierLabel: "2K", PerRequestPrice: &zero}}}}, calculator, nil, nil)
+	resolver := NewPriceResolver(mediaPriceCards{card: &ModelPricingEntry{
+		BillingMode: pricing.BillingModeVideo,
+		Intervals: []pricing.PricingInterval{
+			{TierLabel: "2K", PerRequestPrice: &zero},
+			{TierLabel: "1080p", PerRequestPrice: &paid},
+		},
+	}}, calculator, nil, nil)
 	input := PricingInput{Model: "custom-video", GroupID: &groupID}
 	quote := resolver.PublicQuote(context.Background(), PublicQuoteInput{PricingInput: input, RateMultiplier: 1.5})
-	require.Equal(t, map[string]float64{"2k": 0}, quote.VideoPrices)
+	require.Equal(t, map[string]float64{"2k": 0, "1080p": 0.375}, quote.VideoPrices)
 	require.Nil(t, quote.VideoPricePerSecond)
 	resolved := resolver.Resolve(context.Background(), input)
-	_, err := calculator.CalculateCostUnified(CostInput{Ctx: context.Background(), Model: input.Model, GroupID: &groupID, Resolved: resolved, UsageUnits: 60, SizeTier: "768p", RateMultiplier: 1.5})
+	costInput := CostInput{
+		Ctx:            context.Background(),
+		Model:          input.Model,
+		GroupID:        &groupID,
+		Resolver:       resolver,
+		Resolved:       resolved,
+		UsageUnits:     60,
+		SizeTier:       "768p",
+		RateMultiplier: 1.5,
+	}
+	_, err := calculator.CalculateCostUnified(costInput)
 	require.ErrorIs(t, err, pricing.ErrModelPricingUnavailable)
+	for resolution, unitPrice := range map[string]float64{"2k": zero, "1080p": paid} {
+		t.Run(resolution, func(t *testing.T) {
+			costInput.SizeTier = resolution
+			cost, err := calculator.CalculateCostUnified(costInput)
+			require.NoError(t, err)
+			require.Equal(t, string(pricing.BillingModeVideo), cost.BillingMode)
+			// Allow binary rounding when comparing the same per-second amounts
+			// through base-cost calculation and group-scaled public quotation.
+			require.InDelta(t, unitPrice*60, cost.TotalCost, 1e-12)
+			require.InDelta(t, quote.VideoPrices[resolution]*60, cost.ActualCost, 1e-12)
+		})
+	}
 }

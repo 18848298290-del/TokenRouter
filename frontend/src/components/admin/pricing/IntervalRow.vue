@@ -42,7 +42,8 @@
       </div>
     </template>
 
-    <!-- 按次、图片和视频计费共用层级、上下文范围与价格字段。 -->
+    <!-- Video tiers select per-second prices by resolution. The completed output
+         duration determines the total charge for that selected video price. -->
     <template v-else>
       <div class="min-w-0">
         <label class="text-xs text-gray-400">
@@ -51,12 +52,12 @@
         <input :value="interval.tier_label" @input="emitField('tier_label', ($event.target as HTMLInputElement).value)"
           type="text" class="input mt-1 text-xs" :maxlength="mode === 'video' ? 50 : undefined" :placeholder="mode === 'video' ? '480p / 720p / 768p / 1080p / 2K' : mode === 'image' ? '1K / 2K / 4K' : ''" />
       </div>
-      <div class="min-w-0">
+      <div v-if="mode !== 'video'" class="min-w-0">
         <label class="text-xs text-gray-400">Min</label>
         <input :value="interval.min_tokens" @input="emitField('min_tokens', toInt(($event.target as HTMLInputElement).value))"
           type="number" min="0" class="input mt-1 text-xs" />
       </div>
-      <div class="min-w-0">
+      <div v-if="mode !== 'video'" class="min-w-0">
         <label class="text-xs text-gray-400">Max <span class="text-gray-300">(含)</span></label>
         <input :value="interval.max_tokens ?? ''" @input="emitField('max_tokens', toIntOrNull(($event.target as HTMLInputElement).value))"
           type="number" min="0" class="input mt-1 text-xs" :placeholder="'∞'" />
@@ -77,9 +78,10 @@ import type { IntervalFormEntry } from './types'
 import type { BillingMode } from '@/api/admin/pricing'
 
 // IntervalRow.vue edits one labeled or context-based pricing interval.
-// Video rows accept custom resolution labels and display a per-second unit;
-// the parent validates aliases and amounts before saving. Empty amounts remain
-// distinct from explicit free prices throughout editing.
+// Video rows edit resolution labels and per-second prices because their cost
+// uses the selected resolution's unit price and output seconds. The parent
+// validates aliases and amounts before saving. Empty amounts remain distinct
+// from explicit free prices throughout editing.
 
 const { t } = useI18n()
 
