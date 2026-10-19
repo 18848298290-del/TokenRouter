@@ -1,4 +1,3 @@
-// 语义名称在此统一映射，页面不直接依赖上游文件名。
 import ArchiveIcon from './artwork/archive'
 import ArrowDownIcon from './artwork/arrow-down'
 import ArrowDownUpIcon from './artwork/arrow-down-up'
@@ -100,8 +99,8 @@ import SparklesIcon from './artwork/sparkles'
 import SquareIcon from './artwork/square'
 import SquareDashedIcon from './artwork/square-dashed'
 import SquarePenIcon from './artwork/square-pen'
+import StoreIcon from './artwork/store'
 import SunIcon from './artwork/sun'
-import TableIcon from './artwork/table'
 import TagIcon from './artwork/tag'
 import TagsIcon from './artwork/tags'
 import TerminalIcon from './artwork/terminal'
@@ -125,6 +124,11 @@ import XIcon from './artwork/x'
 import ZapIcon from './artwork/zap'
 import type { IconDefinition } from './types'
 
+// registry.ts maps semantic icon names to the ported Lucide artwork files.
+// Pages and components render Icon.vue with one of these names, so changing the
+// artwork behind a name updates every caller that uses it.
+
+/** icons maps each semantic IconName to the artwork rendered by Icon.vue. */
 export const icons = {
   play: PlayIcon,
   refresh: RefreshCwIcon,
@@ -216,7 +220,7 @@ export const icons = {
   brain: BrainIcon,
   loader: LoaderCircleIcon,
   dashboard: LayoutDashboardIcon,
-  modelMarketplace: TableIcon,
+  modelMarketplace: StoreIcon,
   ranking: TrophyIcon,
   batchImage: ImagesIcon,
   creative: PaletteIcon,
@@ -255,4 +259,5 @@ export const icons = {
   attachment: PaperclipIcon
 } as const satisfies Record<string, IconDefinition>
 
+/** IconName lists the semantic names accepted by Icon.vue. */
 export type IconName = keyof typeof icons
