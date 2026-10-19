@@ -318,6 +318,9 @@ describe('admin ProvidersView upstream usage', () => {
     wrapper.unmount()
   })
 
+  // Selecting 205 eligible providers produces batches of 100, 100, and five.
+  // Every request must start before any batch resolves, protecting concurrent
+  // dispatch independently of how long selection rendering takes.
   it('把 API Key 批量请求按 100 个提供商分块并并发执行', async () => {
     const providers = Array.from({ length: 205 }, (_, index) => provider(index + 1))
     listProviders.mockResolvedValue({ items: providers, total: 205, page: 1, page_size: 500, pages: 1 })
@@ -331,19 +334,21 @@ describe('admin ProvidersView upstream usage', () => {
 
     const wrapper = mountView()
     await flushPromises()
-    for (const checkbox of wrapper.findAll('input[type="checkbox"]')) {
-      await checkbox.setValue(true)
-    }
+    // Dispatch all selection events before Vue flushes, preventing 205 complete
+    // table renders from dominating this request-batching regression under load.
+    await Promise.all(wrapper.findAll('input[type="checkbox"]').map(checkbox => checkbox.setValue(true)))
     await wrapper.get('[data-test="query-upstream-batch"]').trigger('click')
     await flushPromises()
 
-    // 三个请求在首个请求完成前都已启动，证明批次不是串行执行。
+    // All batches must start while every result remains pending; resolving one
+    // early would allow a serial implementation to satisfy the request counts.
     expect(queryBatchUpstreamUsage).toHaveBeenCalledTimes(3)
     expect(queryBatchUpstreamUsage).toHaveBeenNthCalledWith(1, Array.from({ length: 100 }, (_, index) => index + 1))
     expect(queryBatchUpstreamUsage).toHaveBeenNthCalledWith(2, Array.from({ length: 100 }, (_, index) => index + 101))
     expect(queryBatchUpstreamUsage).toHaveBeenNthCalledWith(3, [201, 202, 203, 204, 205])
     releases.forEach(release => release())
     await flushPromises()
+    wrapper.unmount()
   })
 })
 
