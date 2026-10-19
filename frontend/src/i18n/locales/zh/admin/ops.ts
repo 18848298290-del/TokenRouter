@@ -1,3 +1,8 @@
+// ops.ts supplies Chinese labels for administrator monitoring and error inspection.
+// Error summaries describe recorded evidence, and response labels retain the
+// distinction between client output and upstream diagnostics throughout the
+// shared detail dialog and its recovery states.
+
 export default {
 // Ops Monitoring
     ops: {
@@ -319,9 +324,27 @@ export default {
         status: '状态码',
         upstreamStatus: '上游状态码',
         message: '消息',
-        rootCause: '根因',
-        diagnosticPayloads: '诊断载荷',
+        summary: '错误摘要',
+        summarySource: '来源：{source}',
+        summaryFormats: {
+          html: '收到 HTML 错误页面',
+          json: '收到结构化错误响应',
+          empty: '未记录错误消息'
+        },
+        requestInfo: '请求信息',
+        upstreamAttempts: '上游尝试',
+        attemptCount: '已显示 {count} / {total} 条',
+        incompleteAttempts: '部分上游记录没有可读取的详情。',
+        noUpstreamAttempts: '未记录关联的上游错误。',
+        attemptsLoadFailed: '上游尝试加载失败。',
+        loadMoreAttempts: '加载更多尝试',
+        hideResponse: '收起响应',
+        viewResponse: '查看响应',
+        copyPayload: '复制{source}',
+        noPayloads: '未记录原始响应。',
+        diagnosticPayloads: '原始响应',
         payloads: {
+          message: '错误消息',
           client: '客户端响应',
           upstream_message: '上游消息',
           upstream_detail: '上游详情',

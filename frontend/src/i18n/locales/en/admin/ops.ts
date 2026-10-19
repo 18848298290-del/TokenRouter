@@ -1,3 +1,8 @@
+// ops.ts supplies English labels for administrator monitoring and error inspection.
+// Error summaries describe recorded evidence, and response labels retain the
+// distinction between client output and upstream diagnostics throughout the
+// shared detail dialog and its recovery states.
+
 export default {
 // Ops Monitoring
     ops: {
@@ -319,9 +324,27 @@ export default {
         status: 'Status',
         upstreamStatus: 'Upstream Status',
         message: 'Message',
-        rootCause: 'Root Cause',
-        diagnosticPayloads: 'Diagnostic Payloads',
+        summary: 'Error summary',
+        summarySource: 'Source: {source}',
+        summaryFormats: {
+          html: 'Received an HTML error page',
+          json: 'Received a structured error response',
+          empty: 'No error message recorded'
+        },
+        requestInfo: 'Request information',
+        upstreamAttempts: 'Upstream attempts',
+        attemptCount: 'Showing {count} of {total}',
+        incompleteAttempts: 'Details are unavailable for some upstream records.',
+        noUpstreamAttempts: 'No associated upstream errors were recorded.',
+        attemptsLoadFailed: 'Failed to load upstream attempts.',
+        loadMoreAttempts: 'Load more attempts',
+        hideResponse: 'Hide response',
+        viewResponse: 'View response',
+        copyPayload: 'Copy {source}',
+        noPayloads: 'No original response was recorded.',
+        diagnosticPayloads: 'Original responses',
         payloads: {
+          message: 'Error message',
           client: 'Client Response',
           upstream_message: 'Upstream Message',
           upstream_detail: 'Upstream Detail',

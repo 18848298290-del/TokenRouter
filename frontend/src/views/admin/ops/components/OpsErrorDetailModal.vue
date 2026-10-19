@@ -1,319 +1,331 @@
 <template>
-  <BaseDialog :show="show" :title="title" width="full" :close-on-click-outside="true" @close="close">
-    <ContentSkeleton v-if="loading" variant="detail" :rows="8" class="p-6" />
+  <BaseDialog :show="show" :title="title" width="extra-wide" :close-on-click-outside="true" @close="close">
+    <ContentSkeleton v-if="loading" variant="detail" :rows="6" />
 
-    <div v-else-if="!detail" class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">
-      {{ emptyText }}
+    <div v-else-if="detailFailed" class="space-y-4 py-10 text-center" role="alert">
+      <p class="text-sm text-gray-600 dark:text-dark-300">{{ t('admin.ops.failedToLoadErrorDetail') }}</p>
+      <button type="button" class="btn btn-secondary" @click="loadDetail">{{ t('common.retry') }}</button>
     </div>
+    <p v-else-if="!detail" class="py-10 text-center text-sm text-gray-500 dark:text-dark-300">
+      {{ t('admin.ops.errorDetail.noErrorSelected') }}
+    </p>
 
-    <div v-else class="space-y-6 p-6">
-      <!-- Summary -->
-      <!-- 深色信息块使用与弹窗底色有区分的背景。 -->
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.requestId') }}</div>
-          <div class="mt-1">
-            <RequestIdLink :value="requestId" full />
-          </div>
-        </div>
-
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.time') }}</div>
-          <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
-            {{ formatDateTime(detail.created_at) }}
-          </div>
-        </div>
-
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">
-            {{ isUpstreamError(detail) ? t('admin.ops.errorDetail.provider') : t('admin.ops.errorDetail.user') }}
-          </div>
-          <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
-            <template v-if="isUpstreamError(detail)">
-              {{ detail.provider_name || (detail.provider_id != null ? String(detail.provider_id) : '—') }}
-            </template>
-            <template v-else>
-              {{ detail.user_email || (detail.user_id != null ? String(detail.user_id) : '—') }}
-            </template>
-          </div>
-        </div>
-
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.platform') }}</div>
-          <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
-            {{ detail.platform || '—' }}
-          </div>
-        </div>
-
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.group') }}</div>
-          <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
-            {{ detail.group_name || (detail.group_id != null ? String(detail.group_id) : '—') }}
-          </div>
-        </div>
-
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.model') }}</div>
-          <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
-            <template v-if="hasModelMapping(detail)">
-              <span class="font-mono">{{ detail.requested_model }}</span>
-              <span class="mx-1 text-gray-400">→</span>
-              <span class="font-mono text-primary-600 dark:text-primary-400">{{ detail.upstream_model }}</span>
-            </template>
-            <template v-else>
-              {{ displayModel(detail) || '—' }}
-            </template>
-          </div>
-        </div>
-
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.inboundEndpoint') }}</div>
-          <div class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-white">
-            {{ detail.inbound_endpoint || '—' }}
-          </div>
-        </div>
-
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.upstreamEndpoint') }}</div>
-          <div class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-white">
-            {{ detail.upstream_endpoint || '—' }}
-          </div>
-        </div>
-
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.status') }}</div>
-          <div class="mt-1">
-            <span :class="['inline-flex items-center rounded-compact px-2 py-1 text-xs font-black ring-1 ring-inset shadow-sm', statusClass]">
-              {{ detail.status_code }}
-            </span>
-          </div>
-        </div>
-
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.upstreamStatus') }}</div>
-          <div class="mt-1">
-            <span :class="['inline-flex items-center rounded-compact px-2 py-1 text-xs font-black ring-1 ring-inset shadow-sm', upstreamStatusClass]">
-              {{ detail.upstream_status_code ?? '—' }}
-            </span>
-          </div>
-        </div>
-
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.requestType') }}</div>
-          <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
-            {{ formatRequestTypeLabel(detail.request_type) }}
-          </div>
-        </div>
-
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.message') }}</div>
-          <div class="mt-1 break-words text-sm font-medium text-gray-900 dark:text-white" :title="rootCauseMessage">
-            {{ rootCauseMessage || '—' }}
-          </div>
-        </div>
-
-        <div v-if="detail.api_key_prefix" class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.apiKeyPrefix') }}</div>
-          <div class="mt-1 font-mono text-sm font-medium text-gray-900 dark:text-white">
-            {{ detail.api_key_prefix }}
-          </div>
-        </div>
-
-      </div>
-
-      <div v-if="rootCauseMessage" class="rounded-surface bg-amber-50 p-6 dark:bg-amber-900/10">
-        <h3 class="text-sm font-black uppercase tracking-wider text-amber-900 dark:text-amber-200">{{ t('admin.ops.errorDetail.rootCause') }}</h3>
-        <div class="mt-3 break-words text-sm font-medium text-amber-900 dark:text-amber-100">{{ rootCauseMessage }}</div>
-      </div>
-
-      <div class="rounded-surface bg-gray-50 p-6 dark:bg-dark-950">
-        <h3 class="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">{{ t('admin.ops.errorDetail.diagnosticPayloads') }}</h3>
-        <div v-if="!diagnosticPayloadSections.length" class="mt-4 text-sm text-gray-500 dark:text-gray-400">{{ t('common.noData') }}</div>
-        <div v-else class="mt-4 space-y-4">
-          <div v-for="section in diagnosticPayloadSections" :key="section.key">
-            <div class="mb-2 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ diagnosticPayloadLabel(section.key) }}</div>
-            <pre class="max-h-[520px] overflow-auto rounded-surface border border-gray-200 bg-white p-4 text-xs text-gray-800 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-100"><code>{{ prettyJSON(section.value) }}</code></pre> <!-- check-ui-allow: 错误详情 JSON 局部高度 -->
-          </div>
-        </div>
-      </div>
-
-      <!-- Upstream errors list (only for request errors) -->
-      <div v-if="showUpstreamList" class="rounded-surface bg-gray-50 p-6 dark:bg-dark-950">
+    <div v-else class="error-detail min-w-0 space-y-6">
+      <section :aria-labelledby="`${panelId}-summary`" class="min-w-0" data-testid="error-summary">
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <h3 class="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">{{ t('admin.ops.errorDetails.upstreamErrors') }}</h3>
-          <div class="text-xs text-gray-500 dark:text-gray-400" v-if="correlatedUpstreamLoading">{{ t('common.loading') }}</div>
+          <h4 :id="`${panelId}-summary`" class="text-sm font-semibold text-gray-900 dark:text-dark-100">
+            {{ t('admin.ops.errorDetail.summary') }}
+          </h4>
+          <span v-if="summary.source" class="text-xs text-gray-500 dark:text-dark-400">
+            {{ t('admin.ops.errorDetail.summarySource', { source: payloadLabel(summary.source) }) }}
+          </span>
         </div>
-
-        <div v-if="!correlatedUpstreamLoading && !correlatedUpstreamErrors.length" class="mt-3 text-sm text-gray-500 dark:text-gray-400">
-          {{ t('common.noData') }}
+        <p class="mt-3 max-w-prose line-clamp-4 break-words text-base font-semibold leading-6 text-gray-900 dark:text-dark-100">
+          {{ summaryText(summary) }}
+        </p>
+        <div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+          <div class="flex items-center gap-2">
+            <span class="text-gray-500 dark:text-dark-400">{{ t('admin.ops.errorDetail.status') }}</span>
+            <span class="rounded-compact px-2 py-1 font-mono font-semibold" :class="statusBadgeClass(detail.status_code)">{{ detail.status_code }}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-gray-500 dark:text-dark-400">{{ t('admin.ops.errorDetail.upstreamStatus') }}</span>
+            <span class="rounded-compact px-2 py-1 font-mono font-semibold" :class="statusBadgeClass(detail.upstream_status_code)">{{ detail.upstream_status_code ?? '—' }}</span>
+          </div>
         </div>
+        <dl class="mt-4 grid min-w-0 grid-cols-1 gap-4 rounded-surface bg-gray-50 p-4 dark:bg-dark-950 sm:grid-cols-2">
+          <div class="min-w-0">
+            <dt class="detail-label">{{ t('admin.ops.errorDetail.provider') }}</dt>
+            <dd class="detail-value">{{ detail.provider_name || detail.provider_id || '—' }}</dd>
+          </div>
+          <div class="min-w-0">
+            <dt class="detail-label">{{ t('admin.ops.errorDetail.model') }}</dt>
+            <dd class="detail-value font-mono">
+              <template v-if="hasModelMapping">
+                <span class="sr-only">{{ t('admin.ops.errorDetail.requestedModel') }}: </span>
+                <span>{{ detail.requested_model }}</span>
+                <span class="mx-1 text-gray-400" aria-hidden="true">→</span>
+                <span class="sr-only">{{ t('admin.ops.errorDetail.upstreamModel') }}: </span>
+                <span>{{ detail.upstream_model }}</span>
+              </template>
+              <template v-else>{{ detail.upstream_model || detail.requested_model || detail.model || '—' }}</template>
+            </dd>
+          </div>
+        </dl>
+      </section>
 
-        <div v-else class="mt-4 space-y-3">
-          <div
-            v-for="(ev, idx) in correlatedUpstreamErrors"
-            :key="ev.id"
-            class="rounded-surface border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900"
-          >
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="text-xs font-black text-gray-900 dark:text-white">
-                #{{ idx + 1 }}
-                <span v-if="ev.type" class="ml-2 rounded-control bg-gray-100 px-2 py-0.5 font-mono text-xs font-bold text-gray-700 dark:bg-dark-950 dark:text-gray-200">{{ ev.type }}</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="font-mono text-xs text-gray-500 dark:text-gray-400">
-                  {{ ev.status_code ?? '—' }}
+      <section class="detail-section" :aria-labelledby="`${panelId}-request`">
+        <h4 :id="`${panelId}-request`" class="detail-heading">{{ t('admin.ops.errorDetail.requestInfo') }}</h4>
+        <dl class="mt-4 grid min-w-0 grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
+          <div class="detail-metadata sm:col-span-2">
+            <dt class="detail-label">{{ t('admin.ops.errorDetail.requestId') }}</dt>
+            <dd class="min-w-0 flex-1"><RequestIdLink :value="requestId" full /></dd>
+          </div>
+          <div v-for="field in requestFields" :key="field.key" class="detail-metadata">
+            <dt class="detail-label">{{ t(`admin.ops.errorDetail.${field.key}`) }}</dt>
+            <dd class="min-w-0 flex-1 break-all text-sm leading-6 text-gray-900 dark:text-dark-100" :class="{ 'font-mono': field.mono }">{{ field.value }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section
+        v-if="errorType === 'request'"
+        class="detail-section"
+        :aria-labelledby="`${panelId}-attempts`"
+        data-testid="upstream-attempts"
+      >
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h4 :id="`${panelId}-attempts`" class="detail-heading">{{ t('admin.ops.errorDetail.upstreamAttempts') }}</h4>
+          <span v-if="upstreamErrors.length" class="text-xs tabular-nums text-gray-500 dark:text-dark-400">
+            {{ t('admin.ops.errorDetail.attemptCount', { count: upstreamErrors.length, total: upstreamTotal }) }}
+          </span>
+        </div>
+        <ContentSkeleton v-if="upstreamLoading && !upstreamErrors.length" variant="list" :rows="2" class="mt-4" />
+        <p v-else-if="!upstreamFailed && !upstreamErrors.length && upstreamTotal === 0" class="mt-4 text-sm text-gray-500 dark:text-dark-300">
+          {{ t('admin.ops.errorDetail.noUpstreamAttempts') }}
+        </p>
+        <ol v-if="upstreamErrors.length" class="mt-4 divide-y divide-gray-200 dark:divide-dark-700">
+          <li v-for="(attempt, index) in upstreamAttempts" :key="attempt.detail.id" class="min-w-0 py-4 first:pt-0 last:pb-0">
+            <div class="flex min-w-0 flex-wrap items-center gap-2">
+              <span class="text-xs tabular-nums text-gray-500 dark:text-dark-400">#{{ index + 1 }}</span>
+              <span class="min-w-0 max-w-prose break-all text-sm font-medium text-gray-900 dark:text-dark-100">{{ attempt.detail.provider_name || attempt.detail.provider_id || '—' }}</span>
+              <span class="rounded-compact px-2 py-1 font-mono text-xs font-semibold" :class="statusBadgeClass(attempt.detail.upstream_status_code ?? attempt.detail.status_code)">{{ attempt.detail.upstream_status_code ?? attempt.detail.status_code ?? '—' }}</span>
+              <time class="text-xs text-gray-500 dark:text-dark-400 sm:ml-auto">{{ formatDateTime(attempt.detail.created_at) }}</time>
+            </div>
+            <p class="mt-2 max-w-prose line-clamp-2 break-words text-sm leading-6 text-gray-700 dark:text-dark-200">{{ summaryText(attempt.summary) }}</p>
+            <div class="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+              <RequestIdLink :value="attempt.detail.request_id || attempt.detail.client_request_id" full />
+              <button
+                v-if="attempt.payload"
+                type="button"
+                class="detail-action"
+                :aria-expanded="expandedAttempts.has(attempt.detail.id)"
+                :aria-controls="`${panelId}-attempt-${attempt.detail.id}`"
+                @click="toggleAttempt(attempt.detail.id)"
+              >
+                <Icon
+                  name="chevronRight"
+                  size="sm"
+                  class="transition-transform duration-normal"
+                  :class="{ 'rotate-90': expandedAttempts.has(attempt.detail.id) }"
+                />
+                {{ expandedAttempts.has(attempt.detail.id) ? t('admin.ops.errorDetail.hideResponse') : t('admin.ops.errorDetail.viewResponse') }}
+              </button>
+            </div>
+            <Collapse :open="expandedAttempts.has(attempt.detail.id)" unmount-on-hide>
+              <div :id="`${panelId}-attempt-${attempt.detail.id}`" class="mt-2 min-w-0 rounded-control border border-gray-200 dark:border-dark-600">
+                <div class="flex justify-end border-b border-gray-200 px-3 py-1 dark:border-dark-600">
+                  <button
+                    type="button"
+                    class="detail-action"
+                    @click="copyPayload(`attempt-${attempt.detail.id}`, attempt.payload)"
+                  >
+                    <Icon :name="copied && copiedKey === `attempt-${attempt.detail.id}` ? 'check' : 'copy'" size="sm" />
+                    {{ copied && copiedKey === `attempt-${attempt.detail.id}` ? t('common.copied') : t('common.copy') }}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1.5 rounded-compact px-1.5 py-1 text-xs font-bold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60 dark:text-primary-200 dark:hover:bg-dark-700"
-                  :disabled="!getUpstreamResponsePreview(ev)"
-                  :title="getUpstreamResponsePreview(ev) ? '' : t('common.noData')"
-                  @click="toggleUpstreamDetail(ev.id)"
-                >
-                  <Icon
-                    name="chevronRight" class="transition-transform duration-normal" :class="{ 'rotate-90': expandedUpstreamDetailIds.has(ev.id) }"
-                    size="xs"
-                    :stroke-width="2"
-                    :animate-on-hover="false"
-                  />
-                  <span>
-                    {{
-                      expandedUpstreamDetailIds.has(ev.id)
-                        ? t('admin.ops.errorDetail.responsePreview.collapse')
-                        : t('admin.ops.errorDetail.responsePreview.expand')
-                    }}
-                  </span>
-                </button>
+                <pre class="detail-payload" tabindex="0" :aria-label="t('admin.ops.errorDetail.viewResponse')"><code>{{ formatErrorPayload(attempt.payload) }}</code></pre>
               </div>
+            </Collapse>
+          </li>
+        </ol>
+        <div
+          v-if="upstreamFailed"
+          class="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-control bg-gray-50 p-3 dark:bg-dark-950"
+          role="alert"
+        >
+          <p class="text-sm text-gray-600 dark:text-dark-300">{{ t('admin.ops.errorDetail.attemptsLoadFailed') }}</p>
+          <button type="button" class="detail-action" @click="loadUpstreamErrors">{{ t('common.retry') }}</button>
+        </div>
+        <button
+          v-else-if="upstreamPage < upstreamPages"
+          type="button"
+          class="detail-action mt-4"
+          :disabled="upstreamLoading"
+          @click="loadUpstreamErrors"
+        >
+          {{ upstreamLoading ? t('common.loading') : t('admin.ops.errorDetail.loadMoreAttempts') }}
+        </button>
+        <p v-if="!upstreamLoading && !upstreamFailed && upstreamPage >= upstreamPages && upstreamErrors.length < upstreamTotal" class="mt-3 text-sm text-gray-500 dark:text-dark-300">
+          {{ t('admin.ops.errorDetail.incompleteAttempts') }}
+        </p>
+      </section>
+
+      <section class="detail-section" :aria-labelledby="`${panelId}-payloads`" data-testid="diagnostic-payloads">
+        <h4 :id="`${panelId}-payloads`" class="detail-heading">{{ t('admin.ops.errorDetail.diagnosticPayloads') }}</h4>
+        <p v-if="!payloads.length" class="mt-4 text-sm text-gray-500 dark:text-dark-300">{{ t('admin.ops.errorDetail.noPayloads') }}</p>
+        <div v-else class="mt-4 divide-y divide-gray-200 border-y border-gray-200 dark:divide-dark-700 dark:border-dark-600">
+          <div v-for="payload in payloads" :key="payload.key" class="min-w-0">
+            <div class="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                class="detail-action min-w-0 flex-1 justify-start py-3 text-left"
+                :aria-expanded="expandedPayloads.has(payload.key)"
+                :aria-controls="`${panelId}-payload-${payload.key}`"
+                @click="togglePayload(payload.key)"
+              >
+                <Icon
+                  name="chevronRight"
+                  size="sm"
+                  class="shrink-0 transition-transform duration-normal"
+                  :class="{ 'rotate-90': expandedPayloads.has(payload.key) }"
+                />
+                <span class="min-w-0 break-words">{{ payload.sources.map(payloadLabel).join(' · ') }}</span>
+              </button>
+              <button
+                type="button"
+                class="detail-action shrink-0"
+                :aria-label="t('admin.ops.errorDetail.copyPayload', { source: payload.sources.map(payloadLabel).join(' · ') })"
+                @click="copyPayload(payload.key, payload.value)"
+              >
+                <Icon :name="copied && copiedKey === payload.key ? 'check' : 'copy'" size="sm" />
+                <span>{{ copied && copiedKey === payload.key ? t('common.copied') : t('common.copy') }}</span>
+              </button>
             </div>
-
-            <div class="mt-3 grid grid-cols-1 gap-2 text-xs text-gray-600 dark:text-gray-300 sm:grid-cols-2">
-              <div>
-                <span class="text-gray-400">{{ t('admin.ops.errorDetail.upstreamEvent.status') }}:</span>
-                <span class="ml-1 font-mono">{{ ev.status_code ?? '—' }}</span>
-              </div>
-              <div>
-                <span class="text-gray-400">{{ t('admin.ops.errorDetail.upstreamEvent.requestId') }}:</span>
-                <span class="ml-1 font-mono">{{ ev.request_id || ev.client_request_id || '—' }}</span>
-              </div>
-            </div>
-
-            <div v-if="ev.message" class="mt-3 break-words text-sm font-medium text-gray-900 dark:text-white">{{ ev.message }}</div>
-
-            <Collapse :open="expandedUpstreamDetailIds.has(ev.id)" unmount-on-hide>
+            <Collapse :open="expandedPayloads.has(payload.key)" unmount-on-hide>
               <pre
-
-                class="mt-3 max-h-menu-sm overflow-auto rounded-surface border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800 dark:border-dark-700 dark:bg-dark-950 dark:text-gray-100"
-              ><code>{{ prettyJSON(getUpstreamResponsePreview(ev)) }}</code></pre>
+                :id="`${panelId}-payload-${payload.key}`"
+                class="detail-payload mb-3 rounded-control"
+                tabindex="0"
+                :aria-label="payload.sources.map(payloadLabel).join(' · ')"
+              ><code>{{ formatErrorPayload(payload.value) }}</code></pre>
             </Collapse>
           </div>
         </div>
-      </div>
+      </section>
     </div>
     <template v-if="backToList" #footer>
-      <button
-        type="button"
-        class="btn btn-secondary"
-        data-testid="error-detail-back-to-list"
-        @click="goBack"
-      >
-        {{ t('admin.ops.errorDetail.backToList') }}
-      </button>
+      <button type="button" class="btn btn-secondary" data-testid="error-detail-back-to-list" @click="goBack">{{ t('admin.ops.errorDetail.backToList') }}</button>
     </template>
   </BaseDialog>
 </template>
 
 <script setup lang="ts">
-import RequestIdLink from '@/components/common/RequestIdLink.vue'
-import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
-import Collapse from '@/components/common/Collapse.vue'
-
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
+import Collapse from '@/components/common/Collapse.vue'
+import RequestIdLink from '@/components/common/RequestIdLink.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { useAppStore } from '@/stores'
 import { opsAPI, type OpsErrorDetail } from '@/api/admin/ops'
+import { useClipboard } from '@/composables/useClipboard'
 import { formatDateTime } from '@/utils/format'
-import { resolveUpstreamPayload } from '../utils/errorDetailResponse'
+import {
+  formatErrorPayload,
+  getAttemptPayload,
+  getErrorPayloads,
+  getErrorSummary,
+  type ErrorSummary,
+  type PayloadSource
+} from '../utils/errorDetailPresentation'
 
+// OpsErrorDetailModal.vue presents an error summary, request context, upstream
+// attempts, and collapsible response evidence in investigation order. Stored
+// messages remain available in the response inspector while summary formatting
+// keeps long HTML and JSON bodies out of the initial reading path. Response
+// copies use the stored string, including its whitespace, rather than the
+// formatted preview displayed by the inspector.
+//
+// Detail and attempt queries run independently for one selected error. A
+// generation counter invalidates both query streams when the selection changes,
+// closes, or unmounts. Each area retains its own loading and retry state so an
+// attempt-query failure cannot erase a successfully loaded request detail.
+
+/** Props identifies the selected error and its dialog navigation context. */
 interface Props {
-  show: boolean
-  errorId: number | null
-  errorType?: 'request' | 'upstream'
-  backToList?: boolean
+  show: boolean // current dialog visibility
+  errorId: number | null // selected error identifier
+  errorType?: 'request' | 'upstream' // detail API category
+  backToList?: boolean // list return availability
 }
 
+/** Emits returns visibility and list navigation events to the owning page. */
 interface Emits {
+  /** Updates the owning page when the dialog requests closing. */
   (e: 'update:show', value: boolean): void
+  /** Returns navigation to the list that opened this dialog. */
   (e: 'back'): void
 }
 
-const props = defineProps<Props>()
+// Component bindings share translation, clipboard feedback, and stable disclosure
+// identifiers across the independently loaded sections of one dialog instance.
+const props = withDefaults(defineProps<Props>(), { errorType: 'request', backToList: false })
 const emit = defineEmits<Emits>()
-
 const { t } = useI18n()
-const appStore = useAppStore()
+const { copied, copyToClipboard } = useClipboard()
+const panelId = useId()
 
-const loading = ref(false)
+// Query and disclosure state belongs to the current selection and is reset
+// before another error can publish its detail or attempt records.
 const detail = ref<OpsErrorDetail | null>(null)
+const loading = ref(false)
+const detailFailed = ref(false)
+const upstreamErrors = ref<OpsErrorDetail[]>([])
+const upstreamLoading = ref(false)
+const upstreamFailed = ref(false)
+const upstreamTotal = ref(0)
+const upstreamPage = ref(0)
+const upstreamPages = ref(0)
+const expandedAttempts = ref(new Set<number>())
+const expandedPayloads = ref(new Set<PayloadSource>())
+const copiedKey = ref('')
+let loadGeneration = 0
 
-const showUpstreamList = computed(() => props.errorType === 'request')
-
+// Derived display values preserve the selected record's stored model mapping
+// and identity while placing optional metadata below the primary error message.
+const title = computed(() => props.errorId
+  ? t('admin.ops.errorDetail.titleWithId', { id: String(props.errorId) })
+  : t('admin.ops.errorDetail.title'))
 const requestId = computed(() => detail.value?.request_id || detail.value?.client_request_id || '')
-
-type DiagnosticPayloadKey = 'client' | 'upstream_message' | 'upstream_detail' | 'upstream_events'
-
-const rootCauseMessage = computed(() => {
-  const current = detail.value
-  if (!current) return ''
-  for (const candidate of [current.upstream_error_message, current.upstream_error_detail, current.message, current.error_body]) {
-    const value = meaningfulPayload(candidate)
-    if (value) return value
-  }
-  return ''
-})
-
-const diagnosticPayloadSections = computed(() => {
+const summary = computed(() => getErrorSummary(detail.value))
+const payloads = computed(() => getErrorPayloads(detail.value))
+const hasModelMapping = computed(() => Boolean(
+  detail.value?.requested_model
+  && detail.value?.upstream_model
+  && detail.value.requested_model !== detail.value.upstream_model
+))
+const requestFields = computed(() => {
   const current = detail.value
   if (!current) return []
-  const candidates: Array<{ key: DiagnosticPayloadKey; value: string }> = [
-    { key: 'client', value: meaningfulPayload(current.error_body) },
-    { key: 'upstream_message', value: meaningfulPayload(current.upstream_error_message) },
-    { key: 'upstream_detail', value: meaningfulPayload(current.upstream_error_detail) },
-    { key: 'upstream_events', value: meaningfulPayload(current.upstream_errors) }
+  const fields = [
+    { key: 'time', value: formatDateTime(current.created_at) },
+    { key: 'requestType', value: formatRequestType(current.request_type) },
+    { key: 'platform', value: current.platform || '—' },
+    { key: 'group', value: current.group_name || current.group_id || '—' },
+    { key: 'inboundEndpoint', value: current.inbound_endpoint || '—', mono: true },
+    { key: 'upstreamEndpoint', value: current.upstream_endpoint || '—', mono: true },
+    { key: 'user', value: current.user_email || current.user_id || '—' }
   ]
-  return candidates.filter((section, index, all) => {
-    return section.value && all.findIndex(candidate => candidate.value === section.value) === index
-  })
+  if (current.api_key_prefix) fields.push({ key: 'apiKeyPrefix', value: current.api_key_prefix, mono: true })
+  return fields
 })
+const upstreamAttempts = computed(() => upstreamErrors.value.map(current => ({
+  detail: current,
+  summary: getErrorSummary(current),
+  payload: getAttemptPayload(current)
+})))
 
-function meaningfulPayload(candidate: unknown): string {
-  const value = String(candidate || '').trim()
-  if (!value || value === '[]' || value === '{}' || value.toLowerCase() === 'null') return ''
-  return value
-}
-
-function diagnosticPayloadLabel(key: DiagnosticPayloadKey): string {
+/** payloadLabel names the stored field behind a diagnostic section. */
+function payloadLabel(key: PayloadSource): string {
   return t(`admin.ops.errorDetail.payloads.${key}`)
 }
 
-const title = computed(() => {
-  if (!props.errorId) return t('admin.ops.errorDetail.title')
-  return t('admin.ops.errorDetail.titleWithId', { id: String(props.errorId) })
-})
-
-const emptyText = computed(() => t('admin.ops.errorDetail.noErrorSelected'))
-
-function isUpstreamError(d: OpsErrorDetail | null): boolean {
-  if (!d) return false
-  const phase = String(d.phase || '').toLowerCase()
-  const owner = String(d.error_owner || '').toLowerCase()
-  return phase === 'upstream' && owner === 'provider'
+/** summaryText translates format-only summaries and retains extracted message text.
+ * Empty evidence receives an explicit missing-message label. The format labels
+ * describe recorded responses and do not infer a failure cause.
+ */
+function summaryText(value: ErrorSummary): string {
+  if (value.kind === 'text') return value.text
+  return t(`admin.ops.errorDetail.summaryFormats.${value.kind}`)
 }
 
-function formatRequestTypeLabel(type: number | null | undefined): string {
-  switch (type) {
+/** formatRequestType translates recorded request modes and labels unknown codes.
+ * Missing and unrecognized values use the same unknown label because the stored
+ * record supplies no supported request-mode classification for either case.
+ */
+function formatRequestType(value: number | null | undefined): string {
+  switch (value) {
     case 1: return t('admin.ops.errorDetail.requestTypeSync')
     case 2: return t('admin.ops.errorDetail.requestTypeStream')
     case 3: return t('admin.ops.errorDetail.requestTypeWs')
@@ -322,120 +334,165 @@ function formatRequestTypeLabel(type: number | null | undefined): string {
   }
 }
 
-function hasModelMapping(d: OpsErrorDetail | null): boolean {
-  if (!d) return false
-  const requested = String(d.requested_model || '').trim()
-  const upstream = String(d.upstream_model || '').trim()
-  return !!requested && !!upstream && requested !== upstream
+/** statusBadgeClass applies status color while leaving missing codes neutral.
+ * Callers retain the numeric status next to the color. A missing upstream status
+ * uses neutral styling and is displayed separately as a placeholder.
+ */
+function statusBadgeClass(code: number | null | undefined): string {
+  if (code && code >= 500) return 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300'
+  if (code === 429) return 'bg-purple-50 text-purple-700 dark:bg-purple-500/10 dark:text-purple-300'
+  if (code && code >= 400) return 'bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200'
+  return 'bg-gray-100 text-gray-600 dark:bg-dark-950 dark:text-dark-300'
 }
 
-function displayModel(d: OpsErrorDetail | null): string {
-  if (!d) return ''
-  const upstream = String(d.upstream_model || '').trim()
-  if (upstream) return upstream
-  const requested = String(d.requested_model || '').trim()
-  if (requested) return requested
-  return String(d.model || '').trim()
+/** toggleAttempt expands or collapses one attempt's retained response preview. */
+function toggleAttempt(id: number): void {
+  if (expandedAttempts.value.has(id)) expandedAttempts.value.delete(id)
+  else expandedAttempts.value.add(id)
 }
 
-const correlatedUpstream = ref<OpsErrorDetail[]>([])
-const correlatedUpstreamLoading = ref(false)
-
-const correlatedUpstreamErrors = computed<OpsErrorDetail[]>(() => correlatedUpstream.value)
-
-const expandedUpstreamDetailIds = ref(new Set<number>())
-
-function getUpstreamResponsePreview(ev: OpsErrorDetail): string {
-  const upstreamPayload = resolveUpstreamPayload(ev)
-  if (upstreamPayload) return upstreamPayload
-  return String(ev.error_body || '').trim()
+/** togglePayload expands one source section without changing other disclosure states. */
+function togglePayload(key: PayloadSource): void {
+  if (expandedPayloads.value.has(key)) expandedPayloads.value.delete(key)
+  else expandedPayloads.value.add(key)
 }
 
-function toggleUpstreamDetail(id: number) {
-  const next = new Set(expandedUpstreamDetailIds.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
-  expandedUpstreamDetailIds.value = next
+/** copyPayload copies stored evidence and associates feedback with its source.
+ * Completion updates feedback only while the same selection remains active.
+ * The shared clipboard helper supplies failure feedback and resets copied state.
+ */
+async function copyPayload(key: string, value: string): Promise<void> {
+  const generation = loadGeneration
+  const succeeded = await copyToClipboard(value)
+  if (succeeded && generation === loadGeneration) copiedKey.value = key
 }
 
-async function fetchCorrelatedUpstreamErrors(requestErrorId: number) {
-  correlatedUpstreamLoading.value = true
+/** loadDetail retrieves the selected error and owns the main retry state.
+ * Only one detail request runs for the current selection at a time. Each
+ * completion compares its captured generation before publishing data, failure,
+ * or loading state because the user can select another error while it waits.
+ * Closing and unmounting also invalidate completions, keeping stale failures
+ * from replacing the visible record or showing an unrelated error message.
+ */
+async function loadDetail(): Promise<void> {
+  const id = props.errorId
+  if (!props.show || !id || loading.value) return
+  const generation = loadGeneration
+  const kind = props.errorType
+  loading.value = true
+  detailFailed.value = false
   try {
-    const res = await opsAPI.listRequestErrorUpstreamErrors(
-      requestErrorId,
-      { page: 1, page_size: 100, view: 'all' },
-      { include_detail: true }
-    )
-    correlatedUpstream.value = res.items || []
-  } catch (err) {
-    console.error('[OpsErrorDetailModal] Failed to load correlated upstream errors', err)
-    correlatedUpstream.value = []
+    const result = kind === 'upstream'
+      ? await opsAPI.getUpstreamErrorDetail(id)
+      : await opsAPI.getRequestErrorDetail(id)
+    if (generation === loadGeneration) detail.value = result
+  } catch {
+    // Keep retrieval failures in the dialog so retry preserves the selected
+    // record and remains distinct from an empty or missing error selection.
+    if (generation === loadGeneration) detailFailed.value = true
   } finally {
-    correlatedUpstreamLoading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
-function close() {
+/** loadUpstreamErrors appends the next chronological page for the selected request.
+ * The successful page cursor advances after data arrives, so a failed page can
+ * be retried while earlier attempts remain readable. Selection generations
+ * prevent a previous request's records or failure state from entering the new
+ * dialog. The loading guard serializes page requests within a selection and
+ * the total count exposes any additional pages that remain available to inspect.
+ */
+async function loadUpstreamErrors(): Promise<void> {
+  const id = props.errorId
+  if (!props.show || !id || props.errorType !== 'request' || upstreamLoading.value) return
+  const generation = loadGeneration
+  const page = upstreamPage.value + 1
+  upstreamLoading.value = true
+  upstreamFailed.value = false
+  try {
+    const result = await opsAPI.listRequestErrorUpstreamErrors(id,
+      { page, page_size: 100, view: 'all', sort_by: 'created_at', sort_order: 'asc' },
+      { include_detail: true })
+    if (generation !== loadGeneration) return
+    upstreamErrors.value = [...upstreamErrors.value, ...(result.items || [])]
+    upstreamTotal.value = result.total ?? upstreamErrors.value.length
+    // Detail expansion can omit unavailable records, so pagination follows the
+    // server page count instead of waiting for visible rows to reach total.
+    upstreamPages.value = result.pages ?? Math.ceil(upstreamTotal.value / (result.page_size || 100))
+    upstreamPage.value = page
+  } catch {
+    // Preserve loaded attempts when a later page fails, and expose a local
+    // retry action instead of treating a transport failure as an empty history.
+    if (generation === loadGeneration) upstreamFailed.value = true
+  } finally {
+    if (generation === loadGeneration) upstreamLoading.value = false
+  }
+}
+
+/** close asks the owning page to hide the error dialog. */
+function close(): void {
   emit('update:show', false)
 }
 
-function goBack() {
-  emit('update:show', false)
+/** goBack closes the dialog before returning to its originating list.
+ * The owning page receives the visibility event first, then the navigation event
+ * that restores its previously displayed list context.
+ */
+function goBack(): void {
+  close()
   emit('back')
 }
 
-function prettyJSON(raw?: string): string {
-  if (!raw) return 'N/A'
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
-  } catch {
-    return raw
+watch(() => [props.show, props.errorId, props.errorType] as const, ([show, id]) => {
+  // Invalidate in-flight reads before resetting local state so a later
+  // completion cannot publish data belonging to a previously selected error.
+  loadGeneration += 1
+  detail.value = null
+  detailFailed.value = false
+  loading.value = false
+  upstreamErrors.value = []
+  upstreamFailed.value = false
+  upstreamLoading.value = false
+  upstreamTotal.value = 0
+  upstreamPage.value = 0
+  upstreamPages.value = 0
+  expandedAttempts.value = new Set()
+  expandedPayloads.value = new Set()
+  copiedKey.value = ''
+  if (show && typeof id === 'number' && id > 0) {
+    void loadDetail()
+    void loadUpstreamErrors()
   }
-}
+}, { immediate: true })
 
-async function fetchDetail(id: number) {
-  loading.value = true
-  try {
-    const kind = props.errorType || (detail.value?.phase === 'upstream' ? 'upstream' : 'request')
-    const d = kind === 'upstream' ? await opsAPI.getUpstreamErrorDetail(id) : await opsAPI.getRequestErrorDetail(id)
-    detail.value = d
-  } catch (err: any) {
-    detail.value = null
-    appStore.showError(err?.message || t('admin.ops.failedToLoadErrorDetail'))
-  } finally {
-    loading.value = false
-  }
-}
-
-watch(
-  () => [props.show, props.errorId] as const,
-  ([show, id]) => {
-    if (!show) {
-      detail.value = null
-      return
-    }
-    if (typeof id === 'number' && id > 0) {
-      expandedUpstreamDetailIds.value = new Set()
-      fetchDetail(id)
-      if (props.errorType === 'request') {
-        fetchCorrelatedUpstreamErrors(id)
-      } else {
-        correlatedUpstream.value = []
-      }
-    }
-  },
-  { immediate: true }
-)
-
-function statusBadgeClass(code: number): string {
-  if (code >= 500) return 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-900/30 dark:text-red-400 dark:ring-red-500/30'
-  if (code === 429) return 'bg-purple-50 text-purple-700 ring-purple-600/20 dark:bg-purple-900/30 dark:text-purple-400 dark:ring-purple-500/30'
-  if (code >= 400) return 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-900/30 dark:text-amber-400 dark:ring-amber-500/30'
-  return 'bg-gray-50 text-gray-700 ring-gray-600/20 dark:bg-gray-900/30 dark:text-gray-400 dark:ring-gray-500/30'
-}
-
-const statusClass = computed(() => statusBadgeClass(detail.value?.status_code ?? 0))
-
-const upstreamStatusClass = computed(() => statusBadgeClass(detail.value?.upstream_status_code ?? 0))
-
+// Invalidate both query streams when the owner removes the dialog, even if
+// visibility was never changed before the component's lifecycle ended.
+onBeforeUnmount(() => { loadGeneration += 1 })
 </script>
+
+<style scoped>
+.detail-section {
+  @apply min-w-0 border-t border-gray-200 pt-6 dark:border-dark-600;
+}
+.detail-heading {
+  @apply text-sm font-semibold text-gray-900 dark:text-dark-100;
+}
+.detail-label {
+  @apply text-xs text-gray-500 dark:text-dark-400;
+}
+.detail-value {
+  @apply mt-1 break-all text-sm leading-6 text-gray-900 dark:text-dark-100;
+}
+.detail-metadata {
+  @apply flex min-w-0 items-baseline gap-4;
+}
+.detail-metadata > dt {
+  @apply w-20 shrink-0;
+}
+.detail-action {
+  @apply inline-flex min-h-11 items-center gap-2 rounded-control px-2 text-sm font-medium text-primary-800 transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50 dark:text-primary-400 dark:hover:bg-dark-800 sm:min-h-9;
+}
+.detail-payload {
+  @apply max-h-panel min-w-0 overflow-auto whitespace-pre-wrap break-all bg-gray-50 p-4 font-mono text-sm leading-6 text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:bg-dark-950 dark:text-dark-200;
+}
+</style>
