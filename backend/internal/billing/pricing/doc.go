@@ -24,7 +24,7 @@
 //     catalog amounts and describe administrator default-price rows.
 //   - media.go, image_unit_price.go, image_billing_size.go, and
 //     video_billing_resolution.go select media units, sizes, and fixed
-//     prices.
+//     prices. video_quote.go exposes available video dimensions and defaults.
 //   - time.go and settings.go validate daily schedules and evaluate
 //     billing policy using supplied clocks and locations.
 //   - provider_stats.go selects independent provider cost rules and

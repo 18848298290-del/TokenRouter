@@ -1,5 +1,17 @@
 import type { BillingMode, TimePricingConfig, PricingInterval } from '@/api/admin/pricing'
 
+// types.ts converts administrator price forms and validates their configured rules.
+// Optional amounts distinguish missing prices from free tiers, and video labels
+// retain custom dimensions. Resolution validation matches persisted label capacity
+// and canonical aliases before a price card can be saved. Token prices use
+// million-token units in the form and per-token units in API payloads; media
+// prices retain their per-output or per-second amounts.
+//
+// Interval validation combines bounds, optional amounts, and the selected billing
+// mode. Token ranges require nonoverlap, while media rows select named units.
+// Daily schedules validate local clock periods separately from amount conversion,
+// retaining their configured timezone when the form is serialized.
+
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string
 
 export interface IntervalFormEntry {
@@ -310,12 +322,11 @@ export function findModelConflict(models: string[]): [string, string] | null {
 
 // ── 区间校验 ──────────────────────────────────────────────
 
-/** 校验区间列表的合法性，返回错误消息；通过则返回 null
- *
- * mode 决定区间的匹配方式：
- * - token：区间是上下文 token 数分段 (min, max]，不能重叠，无上限段必须放最后
- * - per_request / image / video：区间是按 tier_label 分层（1K/2K/4K、分辨率等），后端按 label
- *   匹配，不依赖 min/max，因此跳过重叠 / “无上限区间必须最后”校验
+/**
+ * validateIntervals checks interval amounts, dimensions, and context ranges.
+ * Video labels must be unique after alias normalization and fit fifty characters.
+ * Media modes allow overlapping context ranges; token intervals require ordered,
+ * nonoverlapping bounds with an unbounded interval last.
  */
 export function validateIntervals(
   intervals: IntervalFormEntry[],
@@ -324,7 +335,20 @@ export function validateIntervals(
 ): string | null {
   if (!intervals || intervals.length === 0) return null
 
-  // 按 min_tokens 排序（不修改原数组）
+  if (mode === 'video') {
+    const seen = new Set<string>()
+    for (const interval of intervals) {
+      const label = normalizeVideoResolution(interval.tier_label)
+      if (!label) continue
+      if ([...label].length > 50 || /\p{Cc}/u.test(label)) {
+        return t('admin.pricing.intervalValidation.invalidVideoResolution')
+      }
+      if (seen.has(label)) return t('admin.pricing.intervalValidation.duplicateVideoResolution', { resolution: label })
+      seen.add(label)
+    }
+  }
+
+  // Validate a sorted copy so editing retains the configured row order.
   const sorted = [...intervals].sort((a, b) => a.min_tokens - b.min_tokens)
 
   for (let i = 0; i < sorted.length; i++) {
@@ -335,6 +359,19 @@ export function validateIntervals(
   // 非 token 模式按 tier_label 匹配，不做 token 区间重叠校验。
   if (mode !== 'token') return null
   return checkIntervalOverlap(sorted, t)
+}
+
+/**
+ * normalizeVideoResolution folds known aliases and retains custom price labels.
+ * Empty values remain empty for unlabeled intervals. This mirrors backend video
+ * matching so duplicate labels can be reported before submitting the form.
+ */
+function normalizeVideoResolution(value: string): string {
+  const label = value.trim().toLowerCase()
+  if (['480', '480p', 'sd'].includes(label)) return '480p'
+  if (['720', '720p', 'hd'].includes(label)) return '720p'
+  if (['1080', '1080p', 'full_hd', 'full-hd', 'fhd'].includes(label)) return '1080p'
+  return label
 }
 
 function intervalValidationMessage(

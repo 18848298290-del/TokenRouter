@@ -931,9 +931,9 @@ func TestCalculateImageCost(t *testing.T) {
 }
 
 // TestCalculateVideoCostBillsPerSecond compares one-second and fifteen-second
-// fixture videos, then nonpositive and excessive durations. Totals must use
-// the per-second rate with the selected eight-second default and
-// fifteen-second maximum.
+// fixture videos, then nonpositive and long durations. Totals must use
+// the per-second rate with the selected eight-second default while retaining
+// the complete duration for a long video.
 func TestCalculateVideoCostBillsPerSecond(t *testing.T) {
 	svc := newTestCalculator()
 
@@ -945,13 +945,13 @@ func TestCalculateVideoCostBillsPerSecond(t *testing.T) {
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
 	}
-	// Nonpositive duration defaults to 8 seconds; duration above 15 seconds is
-	// capped at 15.
+	// Missing duration uses eight seconds; long observed outputs retain their
+	// full duration so settlement includes every generated second.
 	defaultDuration, mediaErr := svc.CalculateVideoCost("grok-imagine-video", "720p", 1, 0, 1.0)
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
 	}
-	clampedDuration, mediaErr := svc.CalculateVideoCost("grok-imagine-video", "720p", 1, 999, 1.0)
+	longDuration, mediaErr := svc.CalculateVideoCost("grok-imagine-video", "720p", 1, 999, 1.0)
 	if mediaErr != nil {
 		t.Fatal(mediaErr)
 	}
@@ -960,7 +960,7 @@ func TestCalculateVideoCostBillsPerSecond(t *testing.T) {
 	require.InDelta(t, 0.07, oneSecond.TotalCost, 1e-10)
 	require.InDelta(t, 0.07*15, fifteenSeconds.TotalCost, 1e-10)
 	require.InDelta(t, 0.07*8, defaultDuration.TotalCost, 1e-10)
-	require.InDelta(t, 0.07*15, clampedDuration.TotalCost, 1e-10)
+	require.InDelta(t, 0.07*999, longDuration.TotalCost, 1e-10)
 }
 
 // TestCalculateGrokImagineImageCostUsesDefaultRateCard queries two sizes for

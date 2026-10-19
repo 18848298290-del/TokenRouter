@@ -33,3 +33,20 @@ func TestCatalogProviderCompatibility(t *testing.T) {
 		require.Contains(t, string(output), `"provider":`)
 	}
 }
+
+// TestCatalogVideoDimensionsNormalizeBeforePublication parses custom video rates
+// and conflicting aliases. Valid tables retain free dimensions; conflicts become
+// publication diagnostics instead of selecting a map iteration winner.
+func TestCatalogVideoDimensionsNormalizeBeforePublication(t *testing.T) {
+	entries, err := DecodeCatalogEntries([]byte(`{"video":{"video_prices":{"768P":0.12,"2K":0}}}`))
+	require.NoError(t, err)
+	values, diagnostics, err := ParsePricingEntries(entries)
+	require.NoError(t, err)
+	require.NoError(t, diagnostics.ValidationError())
+	require.Equal(t, MediaPrices{"768p": 0.12, "2k": 0}, values["video"].VideoPrices)
+	entries, err = DecodeCatalogEntries([]byte(`{"video":{"video_prices":{"HD":0.1,"720p":0.2}}}`))
+	require.NoError(t, err)
+	_, diagnostics, err = ParsePricingEntries(entries)
+	require.Error(t, err)
+	require.ErrorContains(t, diagnostics.ValidationError(), "duplicate video resolution")
+}

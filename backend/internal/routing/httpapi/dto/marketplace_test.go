@@ -93,3 +93,21 @@ func TestMarketplaceProtocolAttributesJSON(t *testing.T) {
 	require.NotContains(t, string(body), "base_url")
 	require.NotContains(t, string(body), "provider_type")
 }
+
+// TestVideoQuoteJSONPreservesFreeAndMissingPrices encodes dynamic video dimensions
+// and an explicit free default. Optional fields remain absent when unavailable,
+// while zero prices survive conversion and JSON serialization unchanged.
+func TestVideoQuoteJSONPreservesFreeAndMissingPrices(t *testing.T) {
+	zero := 0.0
+	row := modelMarketplacePricingFromRouting(pricing.ModelDisplayPricing{PricingMode: "video", PriceStatus: "priced", VideoPrices: map[string]float64{"768p": 0, "2k": 0.2}, VideoPricePerSecond: &zero})
+	body, err := json.Marshal(row)
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(body, &fields))
+	require.Equal(t, map[string]any{"768p": float64(0), "2k": 0.2}, fields["video_prices"])
+	require.Equal(t, float64(0), fields["video_price_per_second"])
+	body, err = json.Marshal(modelMarketplacePricingFromRouting(pricing.ModelDisplayPricing{PricingMode: "unknown", PriceStatus: "unpriced"}))
+	require.NoError(t, err)
+	require.NotContains(t, string(body), "video_prices")
+	require.NotContains(t, string(body), "video_price_per_second")
+}

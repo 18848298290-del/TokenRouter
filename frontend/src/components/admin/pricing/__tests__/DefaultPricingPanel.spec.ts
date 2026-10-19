@@ -166,3 +166,25 @@ describe('默认价格查询', () => {
     wrapper.unmount()
   })
 })
+
+// Custom video labels can resemble token service-tier prefixes. The detail view
+// keeps every resolution visible with its per-second unit and exposes no token switches.
+it('shows all custom video dimensions without interpreting token prefixes', async () => {
+  vi.mocked(listDefaultPricing).mockResolvedValue({ total: 1, last_updated: '', items: [{
+    model: 'custom-video', platform: 'grok', billing_mode: 'video', price_status: 'priced', prices: [
+      { key: '768p', value: 0.12, unit: 'USD/s' },
+      { key: '2k', value: 0, unit: 'USD/s' },
+      { key: 'fast_custom', value: 0.3, unit: 'USD/s' },
+      { key: 'long_custom', value: 0.4, unit: 'USD/s' },
+    ],
+  }] })
+  const wrapper = mount(DefaultPricingPanel, { global: { stubs } })
+  await flushPromises()
+  await wrapper.findAll('button').find(item => item.text() === 'admin.pricing.defaults.details')!.trigger('click')
+  const dialog = wrapper.findComponent({ name: 'BaseDialog' })
+  for (const label of ['768p', '2k', 'fast_custom', 'long_custom']) expect(dialog.text()).toContain(label)
+  expect(dialog.text()).toContain('0 USD/s')
+  expect(wrapper.find('[data-testid="pricing-context-switch"]').exists()).toBe(false)
+  expect(wrapper.find('[data-testid="pricing-tier-switch"]').exists()).toBe(false)
+  wrapper.unmount()
+})

@@ -377,15 +377,15 @@ func NormalizeImageBillingTierOrDefault(v string) string {
 }
 
 // NormalizeVideoBillingResolutionOrDefault delegates recognized video resolution
-// aliases to pricing normalization. Missing or unrecognized values select 480p,
+// aliases to pricing normalization. Missing values select 480p; custom labels remain,
 // so the stored usage resolution and media price lookup use the same category.
 func NormalizeVideoBillingResolutionOrDefault(v string) string {
 	return pricing.NormalizeVideoBillingResolutionOrDefault(v)
 }
 
 // NormalizeVideoBillingDurationSecondsOrDefault delegates video duration selection
-// to pricing. Nonpositive seconds select eight seconds, and positive input is bounded
-// to one through fifteen seconds for both price units and recorded metadata.
+// to pricing. Nonpositive seconds select eight seconds; positive input remains
+// unchanged for both price units and recorded metadata, including long videos.
 func NormalizeVideoBillingDurationSecondsOrDefault(v int) int {
 	return pricing.NormalizeVideoBillingDurationSecondsOrDefault(v)
 }

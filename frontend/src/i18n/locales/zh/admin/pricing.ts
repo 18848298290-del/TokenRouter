@@ -1,3 +1,8 @@
+// pricing.ts supplies Chinese labels for administrator pricing forms and catalog views.
+// Video validation messages explain invalid or duplicate custom dimensions,
+// while price labels identify the per-second units used when these entries
+// are saved and applied to completed tasks.
+
 export default {
 riskControl: {
       title: '风控中心',
@@ -441,6 +446,8 @@ riskControl: {
       modelConflict:
         "模型模式 '{model1}' 和 '{model2}' 冲突：匹配范围重叠。模型名称按大小写不敏感匹配，已有条目已覆盖其所有大小写变体，无需重复添加。",
       intervalValidation: {
+        invalidVideoResolution: '视频分辨率最多 50 个字符，不能包含控制字符。',
+        duplicateVideoResolution: '视频分辨率 {resolution} 已配置。',
         negativeMin: '区间 #{index}：最小 token 数（{value}）不能为负数',
         maxPositive: '区间 #{index}：最大 token 数（{value}）必须大于 0',
         maxGreaterThanMin: '区间 #{index}：最大 token 数（{max}）必须大于最小 token 数（{min}）',

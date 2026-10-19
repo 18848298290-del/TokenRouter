@@ -85,8 +85,8 @@ type GrokVideoPendingBilling struct {
 	// empty value remains for later completion defaulting.
 	VideoResolution string `json:"video_resolution,omitempty"` // optional creation video resolution
 	// VideoDurationSeconds fills nonpositive observed duration. Store
-	// normalizes only positive values to the shared range, retaining
-	// nonpositive evidence until completion supplies a default.
+	// retains every positive second and leaves nonpositive evidence unresolved
+	// until completion supplies a usable observation or default.
 	VideoDurationSeconds int `json:"video_duration_seconds,omitempty"` // optional creation duration in seconds
 	// OriginalModel is retained as the final pending candidate for a missing
 	// response Model. It does not override a supplied BillingModel or routed
@@ -339,8 +339,8 @@ func VideoPendingKey(requestID string, userID, apiKeyID int64) string {
 
 // StoreGrokVideoPendingBilling normalizes and JSON-encodes a value copy of
 // creation evidence, then stores it for VideoPendingTTL. Both owner and
-// billing cache interfaces are required, and invalid task/user/key identity
-// returns an error.
+// billing cache interfaces are required. Invalid task/user/key identity or
+// resolution labels return an error before the cache write.
 //
 // Model names are trimmed, nonempty resolution and positive duration use
 // shared pricing normalization, and blank CreatedAt receives a clock
@@ -360,6 +360,9 @@ func (s *VideoTasks) StoreGrokVideoPendingBilling(
 	key := VideoPendingKey(requestID, userID, apiKeyID)
 	if key == "" {
 		return fmt.Errorf("grok video pending billing key is invalid")
+	}
+	if err := pricing.ValidateVideoBillingResolution(pending.VideoResolution); err != nil {
+		return err
 	}
 	pending.Model = strings.TrimSpace(pending.Model)
 	pending.BillingModel = strings.TrimSpace(pending.BillingModel)

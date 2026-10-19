@@ -575,14 +575,22 @@ func GetRequestTierPrice(resolved *ResolvedPricing, tierLabel string) float64 {
 
 // GetRequestTierPriceValue returns the first trimmed, case-insensitive label
 // price and its presence. Nil resolution, blank labels, and unmatched tiers
-// return false. A supplied zero amount returns true and remains a free price.
+// return false. Video labels also share canonical resolution aliases. A supplied
+// zero amount returns true and remains a free price.
 func GetRequestTierPriceValue(resolved *ResolvedPricing, tierLabel string) (float64, bool) {
 	tierLabel = strings.TrimSpace(tierLabel)
 	if resolved == nil || tierLabel == "" {
 		return 0, false
 	}
 	for _, tier := range resolved.RequestTiers {
-		if strings.EqualFold(strings.TrimSpace(tier.TierLabel), tierLabel) && tier.PerRequestPrice != nil {
+		label := strings.TrimSpace(tier.TierLabel)
+		if resolved.Mode == BillingModeVideo {
+			// Normalize both saved and requested labels so historical aliases and
+			// custom dimensions select the same unit during quotation and settlement.
+			label = NormalizeVideoBillingResolutionOrDefault(label)
+			tierLabel = NormalizeVideoBillingResolutionOrDefault(tierLabel)
+		}
+		if strings.TrimSpace(tier.TierLabel) != "" && strings.EqualFold(label, tierLabel) && tier.PerRequestPrice != nil {
 			return *tier.PerRequestPrice, true
 		}
 	}

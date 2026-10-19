@@ -243,3 +243,17 @@ describe('time pricing', () => {
     }, t)).toContain('timezone')
   })
 })
+
+// Custom video tiers retain their values through form and API conversion.
+// Duplicate aliases and labels beyond persistence capacity fail before saving.
+describe('custom video resolutions', () => {
+  it('round-trips custom labels and free amounts', () => {
+    const rows = [makeInterval({ tier_label: '768P', per_request_price: 0.12 }), makeInterval({ tier_label: '2K', per_request_price: 0 })]
+    expect(validateIntervals(rows, 'video', key => key)).toBeNull()
+    expect(apiIntervalsToForm(formIntervalsToAPI(rows)).map(row => [row.tier_label, row.per_request_price])).toEqual([['768P', 0.12], ['2K', 0]])
+  })
+  it('rejects normalized duplicates and oversized resolution labels', () => {
+    expect(validateIntervals([makeInterval({ tier_label: 'HD' }), makeInterval({ tier_label: '720p' })], 'video', key => key)).toBe('admin.pricing.intervalValidation.duplicateVideoResolution')
+    expect(validateIntervals([makeInterval({ tier_label: 'a'.repeat(51) })], 'video', key => key)).toBe('admin.pricing.intervalValidation.invalidVideoResolution')
+  })
+})

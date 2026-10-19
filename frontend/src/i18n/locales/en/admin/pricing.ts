@@ -1,3 +1,8 @@
+// pricing.ts supplies English labels for administrator pricing forms and catalog views.
+// Video validation messages explain invalid or duplicate custom dimensions,
+// while price labels identify the per-second units used when these entries
+// are saved and applied to completed tasks.
+
 export default {
 riskControl: {
       title: 'Risk Control',
@@ -441,6 +446,8 @@ riskControl: {
       modelConflict:
         "Model patterns '{model1}' and '{model2}' conflict: overlapping match range. Model names are matched case-insensitively, so an existing entry already covers all case variants - no need to add the variant separately.",
       intervalValidation: {
+        invalidVideoResolution: 'Use at most 50 characters and no control characters for a video resolution.',
+        duplicateVideoResolution: 'Video resolution {resolution} is already configured.',
         negativeMin: 'Interval #{index}: minimum token count ({value}) cannot be negative',
         maxPositive: 'Interval #{index}: maximum token count ({value}) must be greater than 0',
         maxGreaterThanMin: 'Interval #{index}: maximum token count ({max}) must be greater than minimum token count ({min})',

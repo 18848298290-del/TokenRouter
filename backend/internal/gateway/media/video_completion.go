@@ -179,11 +179,11 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 	// media-unit classification separate from any image observations carried
 	// by the status result.
 	merged.ImageCount = 0
-	// Normalize resolution to the shared video tier; unresolved input uses
-	// 480p.
+	// Retain the saved custom price label; only an omitted resolution selects
+	// the shared default used when the video request was submitted.
 	merged.VideoResolution = pricing.NormalizeVideoBillingResolutionOrDefault(merged.VideoResolution)
-	// Use eight seconds for missing duration and cap positive duration at
-	// fifteen seconds.
+	// Supply the historical default when both completion and creation omit
+	// duration, keeping every reported positive second available for settlement.
 	merged.VideoDurationSeconds = pricing.NormalizeVideoBillingDurationSecondsOrDefault(merged.VideoDurationSeconds)
 	// Prefer positive creation-to-discovery elapsed time from the saved
 	// creation timestamp, retaining polling duration when the timestamp is
@@ -240,8 +240,8 @@ func IsGrokVideoStatusBillable(statusBody []byte) bool {
 //
 // Duration uses gjson.Int followed by Go int conversion. Representable positive
 // fractions truncate toward zero, and subsecond values leave zero before pending
-// fallback. Numeric range is not validated before those conversions, so pricing
-// bounds apply to their result rather than validating the source number.
+// fallback. Numeric range is not validated before those conversions; positive
+// integer results retain every second, while nonpositive results use pending data.
 // Positive duration and nonempty resolution are normalized, while missing
 // values remain for PrepareCompletion defaults. Missing model uses
 // grok-imagine-video and missing billing model follows Model. Nonempty

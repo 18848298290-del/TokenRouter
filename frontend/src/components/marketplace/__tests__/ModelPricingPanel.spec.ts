@@ -347,3 +347,28 @@ it('显示明确免费的图片尺寸，省略未定价尺寸', () => {
   expect(wrapper.text()).not.toContain('4K')
   expect(wrapper.text()).not.toContain('marketplace.unpriced')
 })
+
+// Video rows retain their declared units, including free custom dimensions.
+// Token mode controls must remain absent from this per-second price view.
+it('shows custom video resolutions and the explicit default per second', async () => {
+  const wrapper = mountPanel(marketplaceModel('video', { pricing_mode: 'video', price_status: 'priced', video_prices: { '768p': 0.12, '2k': 0 }, video_price_per_second: 0.3 }))
+  await wrapper.get('[data-testid="model-pricing-toggle"]').trigger('click')
+  const rows = wrapper.get('[data-testid="pricing-rows"]')
+  expect(rows.text()).toContain('768p')
+  expect(rows.text()).toContain('2k')
+  expect(rows.text()).toContain('0.0000 点 marketplace.perSecond')
+  expect(rows.text()).toContain('marketplace.defaultVideoPrice')
+  expect(wrapper.find('[data-testid="pricing-fast-switch"]').exists()).toBe(false)
+  wrapper.unmount()
+})
+
+// An explicit free default alone is enough to display a video quote.
+// The expanded panel must not substitute zero-token rows for this valid quote.
+it('shows a free default-only video quote', async () => {
+  const wrapper = mountPanel(marketplaceModel('video', { pricing_mode: 'video', price_status: 'priced', video_price_per_second: 0 }))
+  await wrapper.get('[data-testid="model-pricing-toggle"]').trigger('click')
+  expect(wrapper.text()).toContain('marketplace.defaultVideoPrice')
+  expect(wrapper.text()).toContain('marketplace.perSecond')
+  expect(wrapper.text()).not.toContain('marketplace.input')
+  wrapper.unmount()
+})

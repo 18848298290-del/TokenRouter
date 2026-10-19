@@ -475,3 +475,19 @@ describe('ModelMarketplaceView', () => {
     expect(wrapper.get('[data-testid="model-pricing-toggle"]').attributes('aria-expanded')).toBe('false')
   })
 })
+
+// Public model cards display the quoted video unit and expose its filter.
+// Selecting video pricing removes token models while retaining free video tiers.
+it('shows and filters custom video prices', async () => {
+  getMarketplaceModels.mockResolvedValueOnce([marketplaceGroup(1, 'Videos', [
+    marketplaceModel('custom-video', 'Custom Video', { pricing_mode: 'video', price_status: 'priced', video_prices: { '768p': 0.12, '2k': 0 } }),
+    marketplaceModel('text-model', 'Text Model', tokenPricing),
+  ])])
+  const wrapper = await mountMarketplace()
+  expect(wrapper.text()).toContain('768p')
+  expect(wrapper.text()).toContain('marketplace.perSecond')
+  await wrapper.get('[data-testid="select-option-video"]').trigger('click')
+  expect(wrapper.text()).toContain('Custom Video')
+  expect(wrapper.text()).not.toContain('Text Model')
+  wrapper.unmount()
+})

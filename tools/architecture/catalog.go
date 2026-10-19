@@ -5,10 +5,11 @@ package architecture
 // these tables so a dependency selected for reviewed instrumentation cannot
 // silently authorize neighboring files or unrelated adapters in another module.
 
-// 纯包只使用明确的内存计算和编码库；不能通过通用标准库许可获得 I/O。
+// pureStandard permits in-memory parsing, encoding, Unicode validation, and caller-owned
+// streams for pure packages. File and network acquisition require narrower permissions.
 const pureStandard = `bufio bytes context crypto/rand crypto/sha256 encoding/base64 encoding/hex encoding/json errors fmt
 golang.org/x/mod/semver golang.org/x/net/http/httpguts golang.org/x/sync/singleflight io iter maps
-math net/textproto net/url reflect regexp slices sort strconv strings sync testing time unicode/utf8
+math net/textproto net/url reflect regexp slices sort strconv strings sync testing time unicode unicode/utf8
 unsafe`
 
 var (
@@ -418,7 +419,7 @@ internal/upstream/zhipu/...`, Tests: ""},
 		{Scope: "internal/usage/postgres", Imports: "internal/testutil/rediscontainer", Files: "main_integration_test.go"},
 		{Scope: "internal/usage/rediscache", Imports: "internal/testutil/rediscontainer", Files: "dashboard_integration_test.go"},
 		{Scope: "internal/testutil/rediscontainer", Imports: "github.com/testcontainers/testcontainers-go github.com/testcontainers/testcontainers-go/wait", Files: "run.go"},
-		{Scope: "migrations", Imports: "internal/infra/postgres github.com/lib/pq github.com/testcontainers/testcontainers-go/modules/postgres", Files: "platform_independent_groups_integration_test.go platform_independent_pricing_integration_test.go provider_names_integration_test.go product_brand_integration_test.go antigravity_retirement_integration_test.go user_localization_integration_test.go responses_ws_integration_test.go request_lookup_integration_test.go provider_balance_alert_integration_test.go usage_performance_integration_test.go"},
+		{Scope: "migrations", Imports: "internal/infra/postgres github.com/lib/pq github.com/testcontainers/testcontainers-go/modules/postgres", Files: "platform_independent_groups_integration_test.go platform_independent_pricing_integration_test.go provider_names_integration_test.go product_brand_integration_test.go antigravity_retirement_integration_test.go user_localization_integration_test.go responses_ws_integration_test.go request_lookup_integration_test.go provider_balance_alert_integration_test.go usage_performance_integration_test.go custom_video_resolution_integration_test.go"},
 		{Scope: "internal/usage/postgres", Imports: "internal/ops/postgres", Files: "platform_snapshot_scenario_integration_test.go"},
 		{Scope: "internal/provider", Imports: "internal/provider/provider", Files: "admin_edit_external_test.go helpers_external_test.go shadow_external_test.go"},
 		{Scope: "internal/apikey", Imports: "internal/apikey/postgres", Files: "admin_external_test.go"},

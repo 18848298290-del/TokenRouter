@@ -538,7 +538,7 @@ func (s *Recorder) CalculateOpenAIImageCost(ctx context.Context, billingModel st
 
 // CalculateOpenAIVideoCost prices video quantity and normalized resolution or
 // duration. Nonpositive VideoCount defaults to one for direct callers; duration
-// uses eight seconds when absent and otherwise the pricing package's supported range.
+// uses eight seconds when absent and retains every positive observed second.
 //
 // A configured video card measures total seconds across outputs, while other card
 // modes receive output count as units. With no configured card, catalogue pricing

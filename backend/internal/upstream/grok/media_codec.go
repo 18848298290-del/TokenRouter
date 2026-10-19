@@ -136,8 +136,8 @@ type GrokMediaRequestInfo struct {
 	SizeTier    string // normalized image billing tier
 	AspectRatio string // supplied aspect ratio
 	// ImageResolution retains canonical 1k/2k image values;
-	// AssignGrokMediaResolution routes other nonblank resolution text to the video
-	// field.
+	// AssignGrokMediaResolution also retains the supplied label for video billing
+	// because the same label can be used by either media endpoint.
 	ImageResolution string // recognized image resolution
 	// Resolution is normalized through the injected video callback even when image
 	// requests provide no separate video resolution value.
@@ -831,10 +831,10 @@ func (m MediaCodec) ApplyGrokImagineImageGeometry(body []byte) ([]byte, error) {
 	return sjson.DeleteBytes(out, "size")
 }
 
-// AssignGrokMediaResolution routes recognized 1k/2k values to ImageResolution
-// and other nonblank text to Resolution. Nil info or blank text is ignored.
-// Existing values remain in the other field, allowing the normalized request
-// view to retain both image and video dimensions.
+// AssignGrokMediaResolution retains video labels and recognizes image geometry.
+// Nil info or blank text is ignored. A 1k/2k value populates both interpretations,
+// allowing the selected endpoint to consume its own dimensions without losing
+// a custom video resolution during shared request parsing.
 func (m MediaCodec) AssignGrokMediaResolution(value string, info *GrokMediaRequestInfo) {
 	if info == nil {
 		return
@@ -843,11 +843,10 @@ func (m MediaCodec) AssignGrokMediaResolution(value string, info *GrokMediaReque
 	if value == "" {
 		return
 	}
+	info.Resolution = value
 	if img := m.GrokImagineImageResolution(value); img != "" {
 		info.ImageResolution = img
-		return
 	}
-	info.Resolution = value
 }
 
 // GrokImagineImageResolution canonicalizes trimmed case-insensitive 1k or 2k

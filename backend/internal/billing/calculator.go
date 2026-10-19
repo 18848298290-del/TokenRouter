@@ -290,7 +290,7 @@ func (s *Calculator) ForceUpdatePricing() error {
 	return fmt.Errorf("pricing service not initialized")
 }
 
-// DisplayPricing returns available image unit amounts before attempting
+// DisplayPricing returns available video or image unit amounts before attempting
 // catalog token display. A negative user rate becomes zero; unavailable token
 // lookup or buckets yield an unpriced display result, while catalog time rules
 // use the injected clock.
@@ -301,6 +301,9 @@ func (s *Calculator) DisplayPricing(model string, rateMultiplier float64) ModelD
 		rateMultiplier = 0
 	}
 
+	if quote, found := purepricing.BuildVideoDisplayPricing(nil, s.RawModelPricing(model), rateMultiplier); found {
+		return quote
+	}
 	if mediaPricing, found := s.imageDisplayPricing(model, rateMultiplier); found {
 		return mediaPricing
 	}
@@ -315,13 +318,13 @@ func (s *Calculator) DisplayPricing(model string, rateMultiplier float64) ModelD
 	return buildTokenDisplayPricing(s.applyCatalogTimePricing(pricing, s.options.Now()), rateMultiplier)
 }
 
-// DisplayPricingWithResolvedMultipliers builds image, per-request or token
+// DisplayPricingWithResolvedMultipliers builds video, image, per-request or token
 // display from resolved prices. Missing resolved data can use ordinary catalog
-// display, and negative user rates become zero. A declared image or
+// display, and negative user rates become zero. A declared video, image or
 // per-request mode stays unpriced when its mode-specific display cannot be
 // built.
 //
-// An unpriced token result can still use independent catalog image prices when
+// An unpriced token result can still use independent catalog media prices when
 // no configured card was selected. Catalog-sourced token base prices receive
 // their time multiplier on a shallow result copy before display. Other
 // unsuccessful resolved display attempts return to the ordinary catalog
@@ -332,7 +335,7 @@ func (s *Calculator) DisplayPricingWithResolvedMultipliers(model string, rateMul
 	if rateMultiplier < 0 {
 		rateMultiplier = 0
 	}
-	// Declared image and per-request modes use their own display availability; a
+	// Declared media and per-request modes use their own display availability; a
 	// failed mode-specific quote remains unknown so unrelated catalog token
 	// amounts are not substituted.
 	if resolved != nil && resolved.Mode == purepricing.BillingModeImage {
@@ -341,11 +344,19 @@ func (s *Calculator) DisplayPricingWithResolvedMultipliers(model string, rateMul
 		}
 		return unknownDisplayPricing()
 	}
-	if resolved != nil && resolved.Mode == purepricing.BillingModePerRequest {
+	if resolved != nil && (resolved.Mode == purepricing.BillingModePerRequest || resolved.Mode == purepricing.BillingModeVideo) {
 		if quote, ok := displayPricingFromResolved(model, rateMultiplier, resolved); ok {
 			return quote
 		}
 		return unknownDisplayPricing()
+	}
+	if resolved == nil {
+		return s.DisplayPricing(model, rateMultiplier)
+	}
+	if resolved.ConfigPricing == nil {
+		if quote, found := purepricing.BuildVideoDisplayPricing(nil, s.RawModelPricing(model), rateMultiplier); found {
+			return quote
+		}
 	}
 	if resolved.IsUnpriced() {
 		// An unpriced token record can still describe a catalog image model; check

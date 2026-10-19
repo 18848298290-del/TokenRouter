@@ -268,13 +268,13 @@ func (p mediaHTTPAdapter) NewGenerationPorts(c *gin.Context, in gatewayhttp.Gene
 // allowance.
 func (p mediaHTTPAdapter) MaxSwitches() int { return p.h.bindings.Options.MaxSwitches }
 
-// ParseGrok returns the codec's parsed model and extracted media moderation
-// bytes. Generation callers require a usable model before execution;
+// ParseGrok returns the codec's parsed model, video resolution, and moderation
+// bytes for entry validation. Generation callers require a usable model before execution;
 // model-free video lookup can retain empty body-derived data for its saved
 // owner.
 func (p mediaHTTPAdapter) ParseGrok(contentType string, body []byte) gatewayhttp.GrokMediaInput {
 	value := gatewayadapter.GrokMediaCodec().ParseGrokMediaRequest(contentType, body)
-	return gatewayhttp.GrokMediaInput{Model: value.Model, ModerationBody: value.ModerationBody()}
+	return gatewayhttp.GrokMediaInput{Model: value.Model, VideoResolution: value.Resolution, ModerationBody: value.ModerationBody()}
 }
 
 // ResolveCompositeVideo restores a saved video's Key view and provider for

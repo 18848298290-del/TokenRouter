@@ -161,7 +161,7 @@ type CostBreakdown struct {
 // respective Fast units. Both sets include the caller's rate multiplier;
 // configured effort and time controls are carried separately.
 type ModelDisplayPricing struct {
-	PricingMode                   string  // display classification: token, image, or unknown
+	PricingMode                   string  // display classification: token, image, video, or unknown
 	PriceStatus                   string  // priced or unpriced display state
 	InputPricePerToken            float64 // USD per text-input token
 	ImageInputPricePerToken       float64 // USD per image-input token
@@ -190,6 +190,12 @@ type ModelDisplayPricing struct {
 	// construction does not load its zone here; catalog time factors may already
 	// be included by the billing caller.
 	TimePricing *TimePricingConfig // displayed configured daily schedule
+	// VideoPrices contains only quoted resolutions, including free amounts. The
+	// quote owns its map, and every value already includes the group multiplier.
+	VideoPrices map[string]float64 // USD per video second
+	// VideoPricePerSecond carries the explicit default for unlisted resolutions;
+	// nil means unavailable, while a pointer to zero declares a free default.
+	VideoPricePerSecond *float64 // default USD per second
 	// ImagePriceSizes identifies quoted dimensions, including explicit free
 	// values. Marketplace DTO conversion omits other sizes; with an empty list it
 	// uses nonzero legacy amounts.

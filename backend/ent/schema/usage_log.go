@@ -253,12 +253,13 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int("video_count").
 			Default(0).
 			Comment("Generated video count; a positive value identifies video usage"),
-		// Selected video billing resolution.
+		// The normalized video label selects a configured per-second price. Custom
+		// labels share the fifty-character limit of pricing interval labels.
 		field.String("video_resolution").
-			MaxLen(10).
+			MaxRuneLen(50).
 			Optional().
 			Nillable().
-			Comment("Video resolution used for billing: 480p/720p/1080p"),
+			Comment("Normalized video resolution label used for per-second billing"),
 		// video_duration_seconds records the duration selected for video billing.
 		// Grok completion prefers a positive duration from the status response,
 		// then the creation snapshot, and uses the pricing default when both
@@ -266,7 +267,7 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int("video_duration_seconds").
 			Optional().
 			Nillable().
-			Comment("Requested video duration at submission, in seconds, used for per-second billing"),
+			Comment("Billable video seconds from completion, submission, or the missing-duration default"),
 		// Administrator cache-TTL billing override.
 		field.Bool("cache_ttl_overridden").
 			Default(false),

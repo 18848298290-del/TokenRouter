@@ -142,8 +142,13 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { formatCompactTokenRange } from '@/utils/formatters'
-import { formatPriceNumber, pricingKind } from '@/utils/marketplacePricing'
+import { formatPriceNumber, pricingKind, videoPricingEntries } from '@/utils/marketplacePricing'
 import type { MarketplaceModel, MarketplaceModelPricing, MarketplacePricingInterval } from '@/types'
+
+// ModelPricingPanel.vue displays public model prices in the existing marketplace layout.
+// Backend quotes already contain the group multiplier; rows add the selected
+// balance unit and billing unit. Named video dimensions and the explicit default
+// retain separate labels, including when their amounts are zero.
 
 // 完整定价面板在卡片内展开、收起，并提供上下文区间与 fast mode 切换。
 const props = defineProps<{
@@ -249,6 +254,19 @@ function zeroTokenPricingRows(): PricingRow[] {
   ]
 }
 
+/**
+ * videoPricingRows formats video dimensions using the displayed balance unit.
+ * Named dimensions use their supplied labels; the explicit default uses a
+ * translated label, and every row retains the per-second billing unit.
+ */
+function videoPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
+  return videoPricingEntries(pricing).map(item => ({
+    key: item.key,
+    label: item.resolution ?? t('marketplace.defaultVideoPrice'),
+    value: `${formatPrice(item.price)} ${t('marketplace.perSecond')}`,
+  }))
+}
+
 function imagePricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
   const values = [
     { key: '1k', label: '1K', price: pricing.image_price_1k },
@@ -286,7 +304,11 @@ const activeSource = computed<MarketplaceModelPricing | MarketplacePricingInterv
   selectableIntervals.value[activeIntervalIndex.value]?.interval ?? props.model.pricing
 )
 
+// standardRows selects video, image, or token rows for the expanded quote.
 const standardRows = computed<PricingRow[]>(() => {
+  if (pricingKind(props.model.pricing) === 'video') {
+    return videoPricingRows(props.model.pricing)
+  }
   if (pricingKind(props.model.pricing) === 'image') {
     return imagePricingRows(props.model.pricing)
   }

@@ -20,6 +20,14 @@ type unreadableMediaBody struct {
 	reads int // observed request body reads
 }
 
+// videoResolutionProbe overrides parsed video facts while sharing ordinary
+// authenticated HTTP test ports. The handler can reject invalid labels before
+// any provider selection without requiring a network fixture.
+type videoResolutionProbe struct {
+	*mediaHTTPProbe        // authenticated base HTTP ports
+	resolution      string // parsed video price label
+}
+
 // Read counts unexpected admission body access and returns a fixed error.
 func (b *unreadableMediaBody) Read([]byte) (int, error) {
 	b.reads++
@@ -94,4 +102,23 @@ func TestGrokVideoLookupSkipsBodyAndRequiresTaskID(t *testing.T) {
 	require.Equal(t, 400, rec.Code)
 	require.Contains(t, rec.Body.String(), "request_id is required")
 	require.Zero(t, body.reads)
+}
+
+// ParseGrok supplies a model and the scripted video label for validation.
+func (p videoResolutionProbe) ParseGrok(string, []byte) GrokMediaInput {
+	return GrokMediaInput{Model: "custom-video", VideoResolution: p.resolution}
+}
+
+// TestVideoHTTPRejectsUnpersistableResolution submits oversized and control-bearing
+// labels to the creation endpoint. Both fail with a client error before routing
+// or funding can start work that would later fail usage persistence.
+func TestVideoHTTPRejectsUnpersistableResolution(t *testing.T) {
+	for _, resolution := range []string{strings.Repeat("a", 51), "a\x00b"} {
+		p := videoResolutionProbe{mediaHTTPProbe: &mediaHTTPProbe{t: t, access: &MediaAccess{ID: 2}}, resolution: resolution}
+		c, rec := mediaHTTPContext(http.MethodPost, "/v1/videos/generations", strings.NewReader(`{"model":"custom-video"}`))
+		NewMediaHandler(p).GrokMedia(c, "videos_generations", "")
+		require.Equal(t, 400, rec.Code)
+		require.Contains(t, rec.Body.String(), "video resolution")
+		require.NotContains(t, p.steps, "plan")
+	}
 }

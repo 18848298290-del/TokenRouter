@@ -84,12 +84,12 @@ func TestVideoTasksRedisOwnershipAndCompletion(t *testing.T) {
 	// lifetime.
 	require.InDelta(t, VideoPendingTTL.Seconds(), ttl.Seconds(), 2)
 	created := time.Now().UTC().Add(-time.Minute)
-	pending := GrokVideoPendingBilling{Model: "create-model", BillingModel: "bill-model", UpstreamModel: "upstream-model", VideoResolution: "720p", VideoDurationSeconds: 10, CreatedAt: created.Format(time.RFC3339Nano)}
+	pending := GrokVideoPendingBilling{Model: "create-model", BillingModel: "bill-model", UpstreamModel: "upstream-model", VideoResolution: "custom-resolution", VideoDurationSeconds: 30, CreatedAt: created.Format(time.RFC3339Nano)}
 	require.NoError(t, tasks.StoreGrokVideoPendingBilling(ctx, task, 2, 3, pending))
 	saved, err := tasks.LoadGrokVideoPendingBilling(ctx, task, 2, 3)
 	require.NoError(t, err)
 	require.Equal(t, pending, *saved)
-	status := &VideoCompletion{ResponseID: task, Model: "response-model", VideoCount: 1, ImageCount: 2, VideoDurationSeconds: 12}
+	status := &VideoCompletion{ResponseID: task, Model: "response-model", VideoCount: 1, ImageCount: 2, VideoDurationSeconds: 60}
 	var winners atomic.Int32
 	var wg sync.WaitGroup
 	// Race twelve polling preparations against one Redis claim, using atomic
@@ -113,8 +113,8 @@ func TestVideoTasksRedisOwnershipAndCompletion(t *testing.T) {
 	require.Equal(t, "grok-video:"+task, result.RequestID)
 	require.Equal(t, "response-model", result.Model)
 	require.Equal(t, "bill-model", result.BillingModel)
-	require.Equal(t, "720p", result.VideoResolution)
-	require.Equal(t, 12, result.VideoDurationSeconds)
+	require.Equal(t, "custom-resolution", result.VideoResolution)
+	require.Equal(t, 60, result.VideoDurationSeconds)
 	require.Zero(t, result.ImageCount)
 	require.GreaterOrEqual(t, result.Duration, time.Minute)
 	require.Equal(t, 2, status.ImageCount, "不得修改调用方原观测")

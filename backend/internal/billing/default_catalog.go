@@ -2,6 +2,7 @@ package billing
 
 import (
 	"maps"
+	"slices"
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
@@ -35,16 +36,16 @@ func (s *Calculator) WithPriceCatalog(catalog PriceCatalog) *Calculator {
 }
 
 // DefaultModelPrice builds catalog display amounts for the full model with the
-// supplied platform/mode metadata. Known video tables return the recognized
-// resolution quotes first; eligible image prices can coexist with token
+// supplied platform/mode metadata. Known video tables return every valid
+// resolution quote first; eligible image prices can coexist with token
 // quotes. Source maps and displayed amount storage are built for this
 // response.
 //
 // Token display uses the calculation rules for standard, Fast, Flex and
 // long-context amounts, preserving missing optional buckets as absent values
 // and known zero amounts as priced. Context intervals retain their own amounts
-// and tier choices. A media table establishes priced status even when none of
-// the recognized displayed sizes has a quote.
+// and tier choices. Valid video tables expose all their dimensions, while
+// conflicting or invalid video tables retain an unpriced result.
 func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.DefaultModelPrice {
 	result := pricing.DefaultModelPrice{Model: model, Platform: platform, BillingMode: "token", PriceStatus: "unpriced", Prices: []pricing.DefaultPriceValue{}}
 	add := func(key string, value float64, unit string) {
@@ -61,15 +62,14 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 		if result.PriceSources == nil {
 			result.PriceSources = map[string]string{}
 		}
-		// Quote recognized video resolutions independently; unavailable keys are
-		// omitted while the nonempty video table still determines this row's media
-		// classification.
-		for _, size := range []string{"480p", "720p", "1080p"} {
-			price, ok := pricing.DefaultVideoPrice(raw, size)
-			if !ok {
-				continue
-			}
-			add(size, price, "USD/s")
+		prices, err := pricing.NormalizeVideoPrices(raw.VideoPrices)
+		if err != nil {
+			// An invalid table cannot establish default-price availability; keep this
+			// row unpriced so administrators can identify its missing usable amounts.
+			return result
+		}
+		for _, size := range slices.Sorted(maps.Keys(prices)) {
+			add(size, prices[size], "USD/s")
 			source := raw.PriceSources["video_prices"]
 			if source == "" {
 				source = raw.Source

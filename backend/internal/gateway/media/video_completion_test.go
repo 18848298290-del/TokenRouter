@@ -33,3 +33,17 @@ func TestGrokVideoRequestStateSeparatesStatusFromBilling(t *testing.T) {
 		})
 	}
 }
+
+// TestVideoStatusUsesActualLongDurationAndSavedResolution merges a custom creation
+// label with completed duration evidence. Missing completion duration uses the
+// saved duration, and failed tasks never produce a billable completion.
+func TestVideoStatusUsesActualLongDurationAndSavedResolution(t *testing.T) {
+	pending := &GrokVideoPendingBilling{Model: "custom-video", VideoResolution: "custom-resolution", VideoDurationSeconds: 30}
+	result := ExtractGrokVideoBillingFromStatusBody([]byte(`{"status":"done","video":{"url":"https://example.test/video.mp4","duration":60}}`), pending, "task", "")
+	require.NotNil(t, result)
+	require.Equal(t, 60, result.VideoDurationSeconds)
+	require.Equal(t, "custom-resolution", result.VideoResolution)
+	result = ExtractGrokVideoBillingFromStatusBody([]byte(`{"status":"done","video":{"url":"https://example.test/video.mp4"}}`), pending, "task", "")
+	require.Equal(t, 30, result.VideoDurationSeconds)
+	require.Nil(t, ExtractGrokVideoBillingFromStatusBody([]byte(`{"status":"failed"}`), pending, "task", ""))
+}

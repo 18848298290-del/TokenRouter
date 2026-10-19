@@ -125,9 +125,9 @@ type UsageLog struct {
 	ImageSizeBreakdown map[string]int `json:"image_size_breakdown,omitempty"`
 	// Generated video count; a positive value identifies video usage
 	VideoCount int `json:"video_count,omitempty"`
-	// Video resolution used for billing: 480p/720p/1080p
+	// Normalized video resolution label used for per-second billing
 	VideoResolution *string `json:"video_resolution,omitempty"`
-	// Requested video duration at submission, in seconds, used for per-second billing
+	// Billable video seconds from completion, submission, or the missing-duration default
 	VideoDurationSeconds *int `json:"video_duration_seconds,omitempty"`
 	// CacheTTLOverridden holds the value of the "cache_ttl_overridden" field.
 	CacheTTLOverridden bool `json:"cache_ttl_overridden,omitempty"`

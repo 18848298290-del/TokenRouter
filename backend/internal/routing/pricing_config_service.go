@@ -801,21 +801,38 @@ func (s *PricingConfigService) IsModelRestricted(ctx context.Context, groupID in
 	return policy.IsModelRestricted(model)
 }
 
-// PricingEntries validates conflicting model ranges, interval rules, billing
-// fields, and time pricing. Validation can clear empty TimePricing objects in
-// the supplied card slice, so callers use working entries until the complete
-// validation succeeds.
-func (v PricingConfigValidation) PricingEntries(pricing []ModelPricingEntry) error {
-	if err := validateNoConflictingModels(pricing); err != nil {
+// PricingEntries validates model ranges, interval rules, amounts, and time pricing.
+// It clears empty time objects and canonicalizes valid video labels in the
+// supplied working entries. Callers publish or persist these entries only after
+// validation succeeds, keeping stored labels within the validated character limit.
+func (v PricingConfigValidation) PricingEntries(entries []ModelPricingEntry) error {
+	if err := validateNoConflictingModels(entries); err != nil {
 		return err
 	}
-	if err := validatePricingIntervals(pricing); err != nil {
+	if err := validatePricingIntervals(entries); err != nil {
 		return err
 	}
-	if err := validatePricingBillingMode(pricing); err != nil {
+	if err := validatePricingBillingMode(entries); err != nil {
 		return err
 	}
-	return v.PricingTime(pricing)
+	if err := v.PricingTime(entries); err != nil {
+		return err
+	}
+	for i := range entries {
+		if entries[i].BillingMode != BillingModeVideo {
+			continue
+		}
+		for j := range entries[i].Intervals {
+			// Persist the validated canonical spelling so surrounding whitespace
+			// cannot exceed the database capacity after a normalized-length check.
+			label := strings.TrimSpace(entries[i].Intervals[j].TierLabel)
+			if label != "" {
+				label = pricing.NormalizeVideoBillingResolutionOrDefault(label)
+			}
+			entries[i].Intervals[j].TierLabel = label
+		}
+	}
+	return nil
 }
 
 // PricingTime validates time multipliers for token cards and removes time

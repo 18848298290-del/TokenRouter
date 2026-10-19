@@ -38,9 +38,9 @@ type CatalogRules struct {
 	// Present zero is free; absent dimensions stay unpriced during catalog lookup.
 	// USD per image-size map
 	ImagePrices MediaPrices `json:"image_prices,omitempty"`
-	// VideoPrices holds USD-per-second amounts under exact 480p, 720p, and 1080p
-	// keys. Present zero is free; missing resolution keys retain unavailable
-	// status.
+	// VideoPrices holds USD-per-second amounts for canonical resolution labels.
+	// Present zero is free; missing resolution keys retain unavailable status.
+	// NormalizeVideoPrices validates custom labels and rejects alias collisions.
 	// USD per video-resolution second map
 	VideoPrices MediaPrices `json:"video_prices,omitempty"`
 	// optional catalog Fast scaling factor
@@ -131,15 +131,13 @@ func (r CatalogRules) Clone() CatalogRules {
 // periods are empty. Map-based checks report the first encountered invalid
 // field.
 func (r CatalogRules) Validate() error {
-	for name, values := range map[string]map[string]float64{"image_prices": r.ImagePrices, "video_prices": r.VideoPrices} {
-		for key, price := range values {
-			valid := key == "1K" || key == "2K" || key == "4K"
-			if name == "video_prices" {
-				valid = key == "480p" || key == "720p" || key == "1080p"
-			}
-			if !valid || !validAmount(price) {
-				return fmt.Errorf("invalid %s.%s", name, key)
-			}
+	if _, err := NormalizeVideoPrices(r.VideoPrices); err != nil {
+		return err
+	}
+	for key, price := range r.ImagePrices {
+		valid := key == "1K" || key == "2K" || key == "4K"
+		if !valid || !validAmount(price) {
+			return fmt.Errorf("invalid image_prices.%s", key)
 		}
 	}
 	for name, value := range map[string]*float64{"fast_multiplier": r.FastMultiplier, "flex_multiplier": r.FlexMultiplier, "max_reasoning_effort_multiplier": r.MaxReasoningEffortMultiplier, "cache_write_multiplier": r.CacheWriteMultiplier, "cache_write_1h_multiplier": r.CacheWrite1hMultiplier} {

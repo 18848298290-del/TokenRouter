@@ -293,19 +293,22 @@ import { initTheme, useTheme } from '@/composables/useTheme'
 import { getMarketplaceModels } from '@/api/marketplace'
 import { providerBrandDisplayName, providerBrandFilterKey, resolveProviderBrand } from '@/utils/providerBrand'
 import { formatCompactTokenRange } from '@/utils/formatters'
-import { formatPriceNumber, pricingKind } from '@/utils/marketplacePricing'
+import { formatPriceNumber, pricingKind, videoPricingEntries } from '@/utils/marketplacePricing'
 import { marketplaceProtocols } from '@/utils/marketplaceProtocols'
 import { sanitizeUrl } from '@/utils/url'
 import type { MarketplaceGroup, MarketplaceModelPricing, MarketplacePricingInterval } from '@/types'
+
 import { useAppStore, useAuthStore } from '@/stores'
 
 // ModelMarketplaceView.vue displays public model groups with searchable pricing
 // and capability details. Authenticated visitors use the application layout,
 // while guests receive the public page. Model tooltips combine attributes and
-// protocols, with route differences shown after both sections.
+// protocols, with route differences shown after both sections. Video summaries
+// show the backend's group-scaled per-second quotes and retain free dimensions.
 
 type VisibleMarketplaceGroup = MarketplaceGroup
-type PricingFilter = 'all' | 'token' | 'image' | 'unpriced'
+// PricingFilter selects the public quote category shown in marketplace results.
+type PricingFilter = 'all' | 'token' | 'image' | 'video' | 'unpriced'
 
 interface PricingRow {
   key: string
@@ -374,10 +377,12 @@ const brandSelectOptions = computed(() => [
   })),
 ])
 
+// pricingSelectOptions lists the billing units available in marketplace filters.
 const pricingSelectOptions = computed(() => [
   { value: 'all', label: t('marketplace.allTypes') },
   { value: 'token', label: t('marketplace.tokenPricing') },
   { value: 'image', label: t('marketplace.imagePricing') },
+  { value: 'video', label: t('marketplace.videoPricing') },
   { value: 'unpriced', label: t('marketplace.unpriced') },
 ])
 
@@ -615,6 +620,11 @@ function compactIntervalTokenPricingRows(pricing: MarketplacePricingInterval): P
     .slice(0, 2)
 }
 
+/**
+ * compactPricingRows selects summary rows with units matching the public quote.
+ * Unpriced models return no rows. Token context ranges use compact summaries,
+ * while image and video models expose their available unit prices.
+ */
 function compactPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
   const kind = pricingKind(pricing)
   if (kind === 'token' && hasContextIntervalPricing(pricing)) {
@@ -626,7 +636,23 @@ function compactPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
   if (kind === 'image') {
     return imagePricingRows(pricing)
   }
+  if (kind === 'video') {
+    return videoPricingRows(pricing)
+  }
   return []
+}
+
+/**
+ * videoPricingRows formats video dimensions using the displayed balance unit.
+ * Named dimensions use their supplied labels; the explicit default uses a
+ * translated label, and every row retains the per-second billing unit.
+ */
+function videoPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
+  return videoPricingEntries(pricing).map(item => ({
+    key: item.key,
+    label: item.resolution ?? t('marketplace.defaultVideoPrice'),
+    value: `${formatPrice(item.price)} ${t('marketplace.perSecond')}`,
+  }))
 }
 
 function imagePricingRows(pricing: MarketplaceModelPricing): PricingRow[] {

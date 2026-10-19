@@ -523,17 +523,17 @@ func TestSanitizeGrokMediaForwardBodyConvertsImageSize(t *testing.T) {
 	require.Equal(t, "1:1", gjson.GetBytes(out, "aspect_ratio").String())
 }
 
-// TestParseGrokMediaRequestKeepsImageResolutionOutOfVideoNormalize parses a 2K
+// TestParseGrokMediaRequestRetainsBothResolutionInterpretations parses a 2K
 // image request with aspect ratio. It checks image resolution is normalized
-// independently while the video-resolution field keeps its ordinary 480p
-// default.
-func TestParseGrokMediaRequestKeepsImageResolutionOutOfVideoNormalize(t *testing.T) {
+// independently while the video-resolution field retains the same custom label
+// for video endpoints sharing this parser.
+func TestParseGrokMediaRequestRetainsBothResolutionInterpretations(t *testing.T) {
 	t.Parallel()
 
 	info := gatewayprovider.GrokMediaCodec().ParseGrokMediaRequest("application/json", []byte(`{"model":"grok-imagine-image-2.0","resolution":"2K","aspect_ratio":"16:9"}`))
 	require.Equal(t, "2k", info.ImageResolution)
 	require.Equal(t, "16:9", info.AspectRatio)
-	require.Equal(t, pricing.VideoBillingResolution480P, info.Resolution)
+	require.Equal(t, "2k", info.Resolution)
 }
 
 // TestGrokImagineAspectRatioFromSize supplies square, portrait, landscape and

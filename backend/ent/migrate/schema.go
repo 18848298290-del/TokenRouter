@@ -1915,7 +1915,7 @@ var (
 		{Name: "image_size_source", Type: field.TypeString, Nullable: true, Size: 16},
 		{Name: "image_size_breakdown", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "video_count", Type: field.TypeInt, Default: 0},
-		{Name: "video_resolution", Type: field.TypeString, Nullable: true, Size: 10},
+		{Name: "video_resolution", Type: field.TypeString, Nullable: true, Size: 50},
 		{Name: "video_duration_seconds", Type: field.TypeInt, Nullable: true},
 		{Name: "cache_ttl_overridden", Type: field.TypeBool, Default: false},
 		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},

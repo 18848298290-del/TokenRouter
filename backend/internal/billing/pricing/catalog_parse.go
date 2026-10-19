@@ -175,6 +175,9 @@ func ParsePricingEntries(rawData map[string]json.RawMessage) (map[string]*Catalo
 			invalidEntries = append(invalidEntries, fmt.Sprintf("%s: %v", modelName, err))
 			continue
 		}
+		// Validation has rejected alias collisions; store canonical keys so all
+		// consumers observe the same video dimensions in the published catalog.
+		entry.VideoPrices, _ = NormalizeVideoPrices(entry.VideoPrices)
 		// Reserved operation defaults need their own amount validation before
 		// publication, but they remain outside model lookup even when valid.
 		if modelName == BillingDefaultsKey {

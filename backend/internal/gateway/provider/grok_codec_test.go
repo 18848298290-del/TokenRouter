@@ -774,3 +774,23 @@ func grokAttributeCodec() grok.BodyCodec {
 	}
 	return codec
 }
+
+// TestGrokVideoCustomResolutionAndLongDuration parses JSON and multipart task
+// submissions. Both formats retain the custom video price label and all requested
+// seconds while still exposing recognized image geometry to image endpoints.
+func TestGrokVideoCustomResolutionAndLongDuration(t *testing.T) {
+	codec := GrokMediaCodec()
+	info := codec.ParseGrokMediaRequest("application/json", []byte(`{"model":"custom-video","resolution":"2K","duration":60}`))
+	require.Equal(t, "2k", info.Resolution)
+	require.Equal(t, "2k", info.ImageResolution)
+	require.Equal(t, 60, info.DurationSeconds)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "custom-video"))
+	require.NoError(t, writer.WriteField("resolution", "768P"))
+	require.NoError(t, writer.WriteField("duration", "999"))
+	require.NoError(t, writer.Close())
+	info = codec.ParseGrokMediaRequest(writer.FormDataContentType(), body.Bytes())
+	require.Equal(t, "768p", info.Resolution)
+	require.Equal(t, 999, info.DurationSeconds)
+}

@@ -624,14 +624,16 @@ func ShouldApplySessionLongContextPricing(tokens UsageTokens, pricing *ModelPric
 //
 // Image and per-request displays require configuration-source prices.
 // Per-request mode also needs explicitly labeled image dimensions, then quotes
-// only fixed available 1K, 2K, and 4K amounts. Video and unsupported modes
-// return false. Callers supply a finite rate already normalized for display.
+// only fixed available 1K, 2K, and 4K amounts. Video mode exposes configured
+// per-second labels and its optional default; unsupported modes return false. Callers supply a finite rate already normalized for display.
 func DisplayPricingFromResolved(model string, rateMultiplier float64, resolved *ResolvedPricing) (ModelDisplayPricing, bool) {
 	if resolved == nil {
 		return ModelDisplayPricing{}, false
 	}
 
 	switch resolved.Mode {
+	case BillingModeVideo:
+		return BuildVideoDisplayPricing(resolved, nil, rateMultiplier)
 	case BillingModeToken:
 		pricing := ResolvedDisplayTokenPricing(resolved)
 		if pricing != nil && !resolved.LongContextPricingEnabled {

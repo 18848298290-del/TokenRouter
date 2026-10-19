@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
@@ -53,11 +54,11 @@ type MediaSubject struct {
 	Concurrency int   // allowed concurrent user requests
 }
 
-// GrokMediaInput carries the parsed model and content extracted for
-// moderation.
+// GrokMediaInput carries the parsed model, video label, and moderation content.
 type GrokMediaInput struct {
-	Model          string // parsed media request model
-	ModerationBody []byte // normalized moderation request bytes
+	VideoResolution string // normalized video billing label
+	Model           string // parsed media request model
+	ModerationBody  []byte // normalized moderation request bytes
 }
 
 // MediaHTTPFailure carries a funding error's client classification and
@@ -391,7 +392,8 @@ func (h *MediaHandler) GrokVideoContent(c *gin.Context) {
 // selection with the task's user-and-Key correlation hash and positive saved
 // provider ID. Group mapping rewrites forwarding bytes while original input
 // stays retained, and one video creation timestamp is carried through the
-// attempt adapter.
+// attempt adapter. New video requests also validate the resolution before
+// admission so their eventual usage label fits persistent storage.
 func (h *MediaHandler) GrokMedia(c *gin.Context, endpoint, requestID string) {
 	done, accepted := h.BeginRequest(c, "openai")
 	if !accepted {
@@ -427,6 +429,12 @@ func (h *MediaHandler) GrokMedia(c *gin.Context, endpoint, requestID string) {
 	}
 	contentType := c.GetHeader("Content-Type")
 	parsed := h.ports.ParseGrok(contentType, body)
+	if media.IsVideoCreate(endpoint) {
+		if err := pricing.ValidateVideoBillingResolution(parsed.VideoResolution); err != nil {
+			h.ports.Error(c, 400, "invalid_request_error", err.Error())
+			return
+		}
+	}
 	requestModel := parsed.Model
 	routingModel := strings.TrimSpace(requestModel)
 	if generation && strings.TrimSpace(requestModel) == "" {

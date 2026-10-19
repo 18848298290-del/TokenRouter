@@ -395,7 +395,8 @@ func ClonePricingAmounts(fields ...**float64) {
 // label or configuration-order selection determines their price. All modes
 // still check nonnegative minima, positive maxima above minima, finite
 // nonnegative amounts, and finite positive interval factors. Error indices
-// refer to the copied minimum-sorted order.
+// refer to the copied minimum-sorted order. Video labels must fit stored
+// resolution columns and remain unique after alias and case normalization.
 func ValidateIntervals(intervals []PricingInterval, mode BillingMode) error {
 	if len(intervals) == 0 {
 		return nil
@@ -406,7 +407,18 @@ func ValidateIntervals(intervals []PricingInterval, mode BillingMode) error {
 		return sorted[i].MinTokens < sorted[j].MinTokens
 	})
 
+	videoLabels := make(map[string]struct{})
 	for i := range sorted {
+		if mode == BillingModeVideo && strings.TrimSpace(sorted[i].TierLabel) != "" {
+			label, valid := LookupVideoBillingResolution(sorted[i].TierLabel)
+			if !valid {
+				return fmt.Errorf("invalid video resolution %q", sorted[i].TierLabel)
+			}
+			if _, duplicate := videoLabels[label]; duplicate {
+				return fmt.Errorf("duplicate video resolution %q", label)
+			}
+			videoLabels[label] = struct{}{}
+		}
 		if err := ValidateSingleInterval(&sorted[i], i); err != nil {
 			return err
 		}

@@ -39,7 +39,7 @@
         <template #cell-price="{ row }">
           <span v-if="row.price_status === 'unpriced'">{{ t('admin.pricing.defaults.unpriced') }}</span>
           <div v-else class="space-y-1">
-            <div v-for="price in row.prices.slice(0, 2)" :key="price.key" class="text-sm">{{ priceLabel(price.key) }}: {{ formatPrice(price) }}</div>
+            <div v-for="price in row.prices.slice(0, 2)" :key="price.key" class="text-sm">{{ priceLabel(price) }}: {{ formatPrice(price) }}</div>
           </div>
         </template>
         <template #cell-actions="{ row }">
@@ -95,7 +95,7 @@
         <!-- 价格行与模型广场卡片定价一致：弱化标签、等宽数字、细分隔线。 -->
         <dl class="space-y-2.5">
           <div v-for="price in activePrices" :key="price.key" class="flex items-baseline justify-between gap-3 border-b border-gray-100 pb-2 text-sm dark:border-dark-700">
-            <dt class="min-w-0 max-w-[45%] shrink-0 break-words text-gray-500 dark:text-dark-400">{{ priceLabel(price.key) }}<span v-if="selected.price_sources?.[price.key.replace(/^(?:fast_|flex_)/, '')]" class="ml-1 text-xs">({{ t(`admin.modelAttributes.sources.${selected.price_sources[price.key.replace(/^(?:fast_|flex_)/, '')]}`) }})</span></dt>
+            <dt class="min-w-0 max-w-[45%] shrink-0 break-words text-gray-500 dark:text-dark-400">{{ priceLabel(price) }}<span v-if="selected.price_sources?.[price.key.replace(/^(?:fast_|flex_)/, '')]" class="ml-1 text-xs">({{ t(`admin.modelAttributes.sources.${selected.price_sources[price.key.replace(/^(?:fast_|flex_)/, '')]}`) }})</span></dt>
             <dd class="min-w-0 break-words text-right font-medium tabular-nums [overflow-wrap:anywhere] text-gray-900 dark:text-white">{{ formatPrice(price) }}</dd>
           </div>
         </dl>
@@ -124,6 +124,11 @@ import Icon from '@/components/icons/Icon.vue'
 import { formatCompactTokenRange } from '@/utils/formatters'
 import { SEARCH_DEBOUNCE_MS } from '@/constants/ui'
 
+// DefaultPricingPanel.vue lists catalog prices and their available unit dimensions.
+// Detail controls select token context and service tiers, while video records
+// show their complete resolution table. Media labels remain independent of token
+// prefixes because administrators can configure custom resolution names.
+
 const { t } = useI18n()
 const items = ref<DefaultModelPrice[]>([])
 const selected = ref<DefaultModelPrice | null>(null)
@@ -148,9 +153,14 @@ const platforms = ref<string[]>([])
 const platformOptions = computed(() => [{ value: '', label: t('admin.pricing.defaults.allPlatforms') }, ...platforms.value.map(value => ({ value, label: t(`admin.groups.platforms.${value}`, value) }))])
 const modeOptions = computed(() => [{ value: '', label: t('admin.pricing.defaults.allModes') }, ...['token', 'image', 'video', 'per_request'].map(value => ({ value, label: t(`admin.pricing.defaults.modes.${value}`) }))])
 const columns = computed(() => ['model', 'platform', 'billing_mode', 'price', 'actions'].map(key => ({ key, label: t(`admin.pricing.defaults.columns.${key}`) })))
-// long_/fast_/flex_ 前缀由上下文与模式开关表达，行标签只保留基础价格名。
-function priceLabel(key: string): string {
-  const stripped = key.replace(/^(?:long_)?(?:fast_|flex_)?/, '')
+/**
+ * priceLabel displays media dimensions verbatim and translates token bucket names.
+ * Video dimensions may start with token modifier prefixes, so their USD/s unit
+ * identifies labels that must remain intact in both summaries and details.
+ */
+function priceLabel(price: DefaultPriceValue): string {
+  if (price.unit === 'USD/s') return price.key
+  const stripped = price.key.replace(/^(?:long_)?(?:fast_|flex_)?/, '')
   return t(`admin.pricing.defaults.keys.${stripped}`, stripped)
 }
 
@@ -170,13 +180,16 @@ function comboOf(key: string): { context: PricingContext; tier: PricingTier } {
   const tier: PricingTier = rest.startsWith('fast_') ? 'fast' : rest.startsWith('flex_') ? 'flex' : 'standard'
   return { context, tier }
 }
+// availableContexts lists token ranges while video prices retain a single view.
 const availableContexts = computed<PricingContext[]>(() => {
+  if (selected.value?.billing_mode === 'video') return ['standard']
   if (selected.value?.context_intervals?.length) return selected.value.context_intervals.map((_, index) => index)
   if (!selected.value?.prices.some(price => comboOf(price.key).context === 'long_context')) return ['standard']
   return ['standard', 'long_context']
 })
+// availableTiers exposes service tiers only where token prices define them.
 const availableTiers = computed<PricingTier[]>(() => {
-  if (!selected.value) return ['standard']
+  if (!selected.value || selected.value.billing_mode === 'video') return ['standard']
   const present = new Set(selected.value.prices.map(price => comboOf(price.key).tier))
   return (['standard', 'fast', 'flex'] as PricingTier[]).filter(tier => tier === 'standard' || present.has(tier))
 })
@@ -191,7 +204,9 @@ function contextRangeLabel(context: PricingContext): string {
   const threshold = selected.value?.long_context_threshold ?? 0
   return context === 'long_context' ? formatCompactTokenRange(threshold, null) : formatCompactTokenRange(0, threshold)
 }
+// activePrices selects token modifiers or every available video resolution quote.
 const activePrices = computed(() => {
+  if (selected.value?.billing_mode === 'video') return selected.value.prices
   const prefix = comboPrefix(activeContext.value, activeTier.value)
   const prices = typeof activeContext.value === 'number' ? selected.value?.context_intervals?.[activeContext.value]?.prices : selected.value?.prices
   return (prices ?? []).filter(price => {

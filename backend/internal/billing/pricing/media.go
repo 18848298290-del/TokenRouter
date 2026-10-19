@@ -10,9 +10,9 @@ package pricing
 // Catalog media lookup retains price presence independently of value, so an
 // explicit zero remains available. A nonempty image-size map controls the
 // allowed dimensions and prevents a missing size from borrowing the flat image
-// price. Unknown image sizes select 2K, and unknown video resolutions select
-// 480p before lookup; callers validate the resulting amount before using it for
-// a charge.
+// price. Unknown image sizes select 2K; video labels retain custom dimensions
+// and use 480p only when omitted. Callers validate the selected amount before
+// using it for a charge.
 
 // CalculateImageCost multiplies unitPrice by imageCount and the supplied rate.
 // A nonpositive count returns an empty breakdown; a negative rate becomes zero.
@@ -41,14 +41,14 @@ func CalculateImageCost(unitPrice float64, imageCount int, rateMultiplier float6
 
 // CalculateVideoCost charges videoCount copies of one normalized duration.
 // Nonpositive counts return an empty breakdown; nonpositive durations use eight
-// seconds and positive durations are capped at fifteen. Callers supply a finite
+// seconds and positive durations remain unchanged. Callers supply a finite
 // per-second price and rate; negative rates become zero.
 func CalculateVideoCost(perSecondPrice float64, videoCount, durationSeconds int, rateMultiplier float64) *CostBreakdown {
 	if videoCount <= 0 {
 		return &CostBreakdown{}
 	}
-	// Apply the submission duration rule before multiplying by count, so each
-	// video uses one supported length.
+	// Fill missing duration before multiplying by count, retaining every
+	// observed second for each completed video in the charge.
 	durationSeconds = NormalizeVideoBillingDurationSecondsOrDefault(durationSeconds)
 	totalCost := perSecondPrice * float64(durationSeconds) * float64(videoCount)
 
@@ -103,12 +103,19 @@ func DefaultImagePrice(price *CatalogModelPricing, size string) (float64, bool) 
 }
 
 // DefaultVideoPrice returns the supplied entry's per-second resolution price
-// and presence. Aliases are normalized and an unknown resolution selects 480p.
-// An absent map entry returns false, while a mapped zero remains a known price.
+// and presence. Aliases and custom labels are normalized; only omitted
+// resolution selects 480p. Invalid or conflicting tables return false, while
+// an explicitly mapped zero remains a known free price.
 func DefaultVideoPrice(price *CatalogModelPricing, resolution string) (float64, bool) {
 	if price == nil {
 		return 0, false
 	}
-	value, ok := price.VideoPrices[NormalizeVideoBillingResolutionOrDefault(resolution)]
+	prices, err := NormalizeVideoPrices(price.VideoPrices)
+	if err != nil {
+		// Invalid catalog tables cannot establish a billable amount; retain missing
+		// price status so callers can apply the existing pricing error policy.
+		return 0, false
+	}
+	value, ok := prices[NormalizeVideoBillingResolutionOrDefault(resolution)]
 	return value, ok
 }

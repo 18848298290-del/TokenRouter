@@ -490,7 +490,8 @@ export type ProtocolID =
   | 'qoder_chat'
   | 'gemini_batch_generate_content'
   | 'vertex_batch_prediction'
-export type MarketplacePricingMode = 'token' | 'image' | 'unknown'
+// MarketplacePricingMode identifies the unit selected for a public model quote.
+export type MarketplacePricingMode = 'token' | 'image' | 'video' | 'unknown'
 export type MarketplacePriceStatus = 'priced' | 'unpriced'
 
 export interface MarketplacePricingInterval {
@@ -523,7 +524,14 @@ export interface MarketplaceTimePricing {
   }>
 }
 
+// MarketplaceModelPricing carries available group-scaled prices and optional token modifiers.
 export interface MarketplaceModelPricing {
+  // video_prices includes quoted resolutions only; zero declares free video seconds.
+  // Each amount already includes the group multiplier used by this public quote.
+  video_prices?: Record<string, number>
+  // video_price_per_second is the explicit default for unlisted resolutions;
+  // absence means unavailable and zero remains a valid free default.
+  video_price_per_second?: number
   pricing_mode: MarketplacePricingMode
   price_status: MarketplacePriceStatus
   input_price_per_token?: number

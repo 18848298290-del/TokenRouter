@@ -49,7 +49,7 @@
           {{ mode === 'image' || mode === 'video' ? t('admin.pricing.form.resolution', '分辨率') : t('admin.pricing.form.tierLabel', '层级') }}
         </label>
         <input :value="interval.tier_label" @input="emitField('tier_label', ($event.target as HTMLInputElement).value)"
-          type="text" class="input mt-1 text-xs" :placeholder="mode === 'video' ? '480p / 720p / 1080p' : mode === 'image' ? '1K / 2K / 4K' : ''" />
+          type="text" class="input mt-1 text-xs" :maxlength="mode === 'video' ? 50 : undefined" :placeholder="mode === 'video' ? '480p / 720p / 768p / 1080p / 2K' : mode === 'image' ? '1K / 2K / 4K' : ''" />
       </div>
       <div class="min-w-0">
         <label class="text-xs text-gray-400">Min</label>
@@ -62,7 +62,7 @@
           type="number" min="0" class="input mt-1 text-xs" :placeholder="'∞'" />
       </div>
       <div class="min-w-0">
-        <label class="text-xs text-gray-400">{{ mode === 'video' ? t('admin.pricing.form.videoUnitPrice') : mode === 'image' ? t('admin.pricing.form.imageUnitPrice') : t('admin.pricing.form.perRequestPrice', '单次价格') }} <span v-if="isEmpty" class="text-red-500">*</span> <span class="text-gray-300">$</span></label>
+        <label class="text-xs text-gray-400">{{ mode === 'video' ? t('admin.pricing.form.videoUnitPrice') : mode === 'image' ? t('admin.pricing.form.imageUnitPrice') : t('admin.pricing.form.perRequestPrice', '单次价格') }} <span v-if="isEmpty" class="text-red-500">*</span> <span class="text-gray-300">{{ mode === 'video' ? '$/s' : '$' }}</span></label>
         <input :value="interval.per_request_price" @input="emitField('per_request_price', ($event.target as HTMLInputElement).value)"
           type="number" step="any" min="0" class="input mt-1 text-xs" />
       </div>
@@ -75,6 +75,11 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { IntervalFormEntry } from './types'
 import type { BillingMode } from '@/api/admin/pricing'
+
+// IntervalRow.vue edits one labeled or context-based pricing interval.
+// Video rows accept custom resolution labels and display a per-second unit;
+// the parent validates aliases and amounts before saving. Empty amounts remain
+// distinct from explicit free prices throughout editing.
 
 const { t } = useI18n()
 

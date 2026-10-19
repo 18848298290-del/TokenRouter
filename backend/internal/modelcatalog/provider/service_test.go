@@ -1610,7 +1610,7 @@ func TestSupplementRejectsInvalidOperationAndRule(t *testing.T) {
 		`{"claude-test":{"input_cost_per_token":-1}}`,
 		`{"claude-test":{"fast_multiplier":0}}`,
 		`{"claude-test":{"input_cost_per_token":1e308,"cache_write_multiplier":1e308}}`,
-		`{"claude-test":{"video_prices":{"4K":1}}}`,
+		`{"claude-test":{"video_prices":{"HD":1,"720p":2}}}`,
 		`{"claude-test":{"image_prices":{"1K":null}}}`,
 		`{"claude-test":{"time_pricing":{"timezone":"Local","periods":[]}}}`,
 	} {

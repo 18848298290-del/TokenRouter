@@ -32,10 +32,16 @@ type ModelMarketplaceStats struct {
 	TotalUsers  int64 `json:"total_users"`  // public total user count
 }
 
-// ModelMarketplacePricing exposes a quote's billing mode, token amounts, and
-// optional modifiers.
+// ModelMarketplacePricing exposes token and media unit amounts with optional
+// pricing modifiers for a public group quote.
 type ModelMarketplacePricing struct {
-	PricingMode string `json:"pricing_mode"` // quoted billing mode
+	// VideoPrices carries the available per-resolution amounts, including zero.
+	// The billing quote already applies the group multiplier to each value.
+	VideoPrices map[string]float64 `json:"video_prices,omitempty"`
+	// VideoPricePerSecond supplies the explicit default for unlisted resolutions.
+	// A nil pointer is absent; zero remains an encoded free price.
+	VideoPricePerSecond *float64 `json:"video_price_per_second,omitempty"`
+	PricingMode         string   `json:"pricing_mode"` // quoted billing mode
 	// PriceStatus identifies whether a quote is priced; zero-valued token fields
 	// may be omitted from JSON even when the quote is free.
 	PriceStatus string `json:"price_status"` // priced or unpriced status
@@ -312,9 +318,11 @@ func modelMarketplaceCapacityFromRouting(capacity *routing.GroupCapacitySummary)
 
 // modelMarketplacePricingFromRouting maps an already resolved display quote
 // without recalculating its amounts. It allocates interval records and daily
-// schedule records, retains existing bound and modifier pointers, and derives
-// optional image prices from size-presence metadata so declared free sizes
-// remain encoded.
+// schedule records, retains video maps and optional scalar pointers as read-only
+// quote data, and derives optional image prices from size-presence metadata so
+// declared free sizes remain encoded. A free video default retains its nonnil
+// pointer, while an unavailable default remains absent. Video dimension keys
+// pass through using the canonical labels supplied by the billing quote.
 func modelMarketplacePricingFromRouting(pricing pricing.ModelDisplayPricing) ModelMarketplacePricing {
 	intervals := make([]ModelMarketplacePricingInterval, 0, len(pricing.ContextIntervals))
 	for _, interval := range pricing.ContextIntervals {
@@ -339,6 +347,8 @@ func modelMarketplacePricingFromRouting(pricing pricing.ModelDisplayPricing) Mod
 	}
 
 	return ModelMarketplacePricing{
+		VideoPrices:                   pricing.VideoPrices,
+		VideoPricePerSecond:           pricing.VideoPricePerSecond,
 		PricingMode:                   pricing.PricingMode,
 		PriceStatus:                   pricing.PriceStatus,
 		InputPricePerToken:            pricing.InputPricePerToken,

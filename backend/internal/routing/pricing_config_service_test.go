@@ -2920,3 +2920,19 @@ func testPtrInt(value int) *int { return &value }
 
 // testPtrString allocates a supplied string value for optional update fields.
 func testPtrString(value string) *string { return &value }
+
+// TestVideoPriceConfigurationCanonicalizesStoredLabels validates a working video
+// price card containing padded labels. Persistence receives canonical keys, and
+// collisions or oversized dimensions fail before configuration publication.
+func TestVideoPriceConfigurationCanonicalizesStoredLabels(t *testing.T) {
+	validator := PricingConfigValidation{LoadLocation: time.LoadLocation}
+	entries := []ModelPricingEntry{{Models: []string{"custom-video"}, BillingMode: BillingModeVideo, Intervals: []PricingInterval{
+		{TierLabel: " 768P ", PerRequestPrice: testPtrFloat64(0.1)},
+		{TierLabel: " 2K ", PerRequestPrice: testPtrFloat64(0)},
+	}}}
+	require.NoError(t, validator.PricingEntries(entries))
+	require.Equal(t, "768p", entries[0].Intervals[0].TierLabel)
+	require.Equal(t, "2k", entries[0].Intervals[1].TierLabel)
+	entries[0].Intervals[1].TierLabel = "768p"
+	require.ErrorContains(t, validator.PricingEntries(entries), "duplicate video resolution")
+}

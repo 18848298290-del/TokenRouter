@@ -4269,11 +4269,11 @@ func TestOpenAIGatewayServiceRecordUsage_GroupImagePriceOverridesPricingConfigIm
 // TestOpenAIGatewayServiceRecordUsage_GroupVideoPriceOverridesPricingConfigImagePrice
 // installs an owning fixture video card over an underlying image-mode card. It
 // checks positive video identity, absent image metadata, video mode, and the
-// configured one-second media amount.
+// configured sixty-second media amount with its stored custom resolution.
 func TestOpenAIGatewayServiceRecordUsage_GroupVideoPriceOverridesPricingConfigImagePrice(t *testing.T) {
 	groupID := int64(128)
 	pricingConfigPrice := 0.201
-	groupVideoPrice720P := 0.037
+	groupVideoPrice := 0.037
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &completiontestkit.UserStore{}, &completiontestkit.SubscriptionStore{}, nil)
 	svc.Dependencies.Prices = newOpenAIImageConfigPricingResolverForTest(t, groupID, "grok-imagine-video", pricingConfigPrice)
@@ -4285,8 +4285,8 @@ func TestOpenAIGatewayServiceRecordUsage_GroupVideoPriceOverridesPricingConfigIm
 			BillingModel:         "grok-imagine-video",
 			ImageCount:           0,
 			VideoCount:           1,
-			VideoResolution:      pricing.VideoBillingResolution720P,
-			VideoDurationSeconds: 1,
+			VideoResolution:      "custom-resolution",
+			VideoDurationSeconds: 60,
 			Duration:             time.Second,
 		},
 		APIKey: &apikey.APIKey{
@@ -4300,7 +4300,7 @@ func TestOpenAIGatewayServiceRecordUsage_GroupVideoPriceOverridesPricingConfigIm
 				PeakRateMultiplier:           1,
 				BatchImageDiscountMultiplier: 0.5,
 				BatchImageHoldMultiplier:     0.6,
-			}, testVideoModelPricing(map[string]*float64{"720p": &groupVideoPrice720P})),
+			}, testVideoModelPricing(map[string]*float64{"custom-resolution": &groupVideoPrice})),
 		},
 		User:     &identity.User{ID: 20128},
 		Provider: &providercore.Record{ID: 30128, Platform: capability.PlatformGrok},
@@ -4310,9 +4310,11 @@ func TestOpenAIGatewayServiceRecordUsage_GroupVideoPriceOverridesPricingConfigIm
 	require.NotNil(t, usageRepo.LastLog)
 	require.Equal(t, 0, usageRepo.LastLog.ImageCount)
 	require.Nil(t, usageRepo.LastLog.ImageSize)
+	require.Equal(t, "custom-resolution", *usageRepo.LastLog.VideoResolution)
+	require.Equal(t, 60, *usageRepo.LastLog.VideoDurationSeconds)
 	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
-	require.InDelta(t, 0.037, usageRepo.LastLog.TotalCost, 1e-12)
-	require.InDelta(t, 0.037, usageRepo.LastLog.ActualCost, 1e-12)
+	require.InDelta(t, 0.037*60, usageRepo.LastLog.TotalCost, 1e-12)
+	require.InDelta(t, 0.037*60, usageRepo.LastLog.ActualCost, 1e-12)
 	require.NotNil(t, usageRepo.LastLog.BillingMode)
 	require.Equal(t, string(routing.BillingModeVideo), *usageRepo.LastLog.BillingMode)
 }

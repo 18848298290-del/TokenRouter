@@ -162,3 +162,34 @@ func creativePriceFixture(calculator *billingcore.Calculator, resolver *billingc
 		return value, err == nil
 	}
 }
+
+// TestVideoPublicQuoteMatchesConfiguredSettlement compares public group quotes
+// with completed task charges under card and group multipliers. Custom dimensions,
+// aliases, explicit free tiers, and default-only cards use identical unit prices.
+func TestVideoPublicQuoteMatchesConfiguredSettlement(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(100)
+	for _, tiers := range []bool{false, true} {
+		card := routing.ModelPricingEntry{Models: []string{"custom-video"}, BillingMode: routing.BillingModeVideo, PerRequestPrice: testPtrFloat64(0.4), PriceMultiplier: testPtrFloat64(2)}
+		if tiers {
+			card.Intervals = []routing.PricingInterval{{TierLabel: "768P", PerRequestPrice: testPtrFloat64(0.12)}, {TierLabel: "2K", PerRequestPrice: testPtrFloat64(0)}, {TierLabel: "HD", PerRequestPrice: testPtrFloat64(0.1)}}
+		}
+		calculator := newCalculator(nil)
+		resolver := billingtestkit.ResolverWithCards(t, calculator, []routing.ModelPricingEntry{card})
+		recorder := completion.NewRecorder(completion.Dependencies{Calculator: calculator, Prices: resolver}, completion.RecorderOptions{DefaultMultiplier: 1})
+		quote := resolver.PublicQuote(ctx, billingcore.PublicQuoteInput{PricingInput: billingcore.PricingInput{Model: "custom-video", GroupID: &groupID}, RateMultiplier: 1.5})
+		require.Equal(t, "video", quote.PricingMode)
+		require.NotNil(t, quote.VideoPricePerSecond)
+		require.InDelta(t, 1.2, *quote.VideoPricePerSecond, 1e-12)
+		for _, resolution := range []string{"768p", "2k", "720p", "unlisted"} {
+			result := &completion.Result{VideoCount: 2, VideoDurationSeconds: 60, VideoResolution: resolution}
+			cost, err := recorder.CalculateOpenAIVideoCost(ctx, "custom-video", &completion.KeySnapshot{GroupID: &groupID, Group: &completion.GroupSnapshot{ID: groupID, RateMultiplier: 1.5}}, result, 1.5)
+			require.NoError(t, err)
+			unit, found := quote.VideoPrices[resolution]
+			if !found {
+				unit = *quote.VideoPricePerSecond
+			}
+			require.InDelta(t, unit*120, cost.ActualCost, 1e-12)
+		}
+	}
+}

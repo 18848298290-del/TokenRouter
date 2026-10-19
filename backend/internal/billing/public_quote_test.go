@@ -72,3 +72,48 @@ func TestPricingManagementFreeImageOverridesCatalog(t *testing.T) {
 		require.Positive(t, official, "用户售价不能覆盖目录及提供商成本的基础数据")
 	}
 }
+
+// TestPublicVideoQuoteMatchesCatalogCharges compares custom catalog rates with
+// long-video charges. Free dimensions remain present, unknown dimensions remain
+// unpriced, and the administrator catalog exposes every declared resolution.
+func TestPublicVideoQuoteMatchesCatalogCharges(t *testing.T) {
+	calculator := NewCalculator(defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
+		"custom-video": {CatalogRules: pricing.CatalogRules{VideoPrices: pricing.MediaPrices{"768P": 0.12, "2K": 0}}, TokenPricingAbsent: true},
+	}}, CalculatorOptions{})
+	resolver := NewPriceResolver(nil, calculator, nil, nil)
+	quote := resolver.PublicQuote(context.Background(), PublicQuoteInput{PricingInput: PricingInput{Model: "custom-video"}, RateMultiplier: 1.5})
+	require.Equal(t, "video", quote.PricingMode)
+	require.Equal(t, "priced", quote.PriceStatus)
+	require.Len(t, quote.VideoPrices, 2)
+	require.Nil(t, quote.VideoPricePerSecond)
+	for _, resolution := range []string{"768p", "2k"} {
+		cost, err := calculator.CalculateVideoCost("custom-video", resolution, 2, 60, 1.5)
+		require.NoError(t, err)
+		require.InDelta(t, quote.VideoPrices[resolution]*120, cost.ActualCost, 1e-12)
+	}
+	_, err := calculator.CalculateVideoCost("custom-video", "480p", 1, 30, 1)
+	require.ErrorIs(t, err, pricing.ErrModelPricingUnavailable)
+	defaults := calculator.DefaultModelPrice("custom-video", "", "video")
+	require.Len(t, defaults.Prices, 2)
+	require.Equal(t, "2k", defaults.Prices[0].Key)
+	require.Zero(t, *defaults.Prices[0].Value)
+}
+
+// TestConfiguredVideoQuoteKeepsMissingDimensionsUnavailable selects a partial
+// video card over a catalog containing other resolutions. Public quoting and
+// settlement both retain the configured free tier and report missing dimensions.
+func TestConfiguredVideoQuoteKeepsMissingDimensionsUnavailable(t *testing.T) {
+	groupID := int64(1)
+	zero := 0.0
+	calculator := NewCalculator(defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
+		"custom-video": {CatalogRules: pricing.CatalogRules{VideoPrices: pricing.MediaPrices{"480p": 0.1, "768p": 0.2}}, TokenPricingAbsent: true},
+	}}, CalculatorOptions{})
+	resolver := NewPriceResolver(mediaPriceCards{card: &ModelPricingEntry{BillingMode: pricing.BillingModeVideo, Intervals: []pricing.PricingInterval{{TierLabel: "2K", PerRequestPrice: &zero}}}}, calculator, nil, nil)
+	input := PricingInput{Model: "custom-video", GroupID: &groupID}
+	quote := resolver.PublicQuote(context.Background(), PublicQuoteInput{PricingInput: input, RateMultiplier: 1.5})
+	require.Equal(t, map[string]float64{"2k": 0}, quote.VideoPrices)
+	require.Nil(t, quote.VideoPricePerSecond)
+	resolved := resolver.Resolve(context.Background(), input)
+	_, err := calculator.CalculateCostUnified(CostInput{Ctx: context.Background(), Model: input.Model, GroupID: &groupID, Resolved: resolved, UsageUnits: 60, SizeTier: "768p", RateMultiplier: 1.5})
+	require.ErrorIs(t, err, pricing.ErrModelPricingUnavailable)
+}
