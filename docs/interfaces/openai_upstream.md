@@ -263,7 +263,9 @@ OpenAI OAuth 提供商处理 Anthropic 的 `count_tokens` 时，调用 Responses
 
 OpenAI OAuth 和 API Key 的普通 Responses 请求保留 `function_call`、`tool_call`、`custom_tool_call`、`mcp_tool_call` 历史项上的 `namespace`。工具可以在顶层 `tools`、历史的 `additional_tools.tools` 或 `tool_search_output.tools` 中声明，也可以由上游会话保存；本轮省略声明不影响已经执行的调用身份。普通消息等非调用项上残留的这个字段会被清理，转义的 JSON 键名使用同一规则。旧版 Compact 的字段白名单、namespace 清理和 OAuth 工具平铺仍由对应端点规则决定。
 
-转换到 Chat 或 function-only Responses 时，协议桥接层先解析有效声明，再生成历史调用、`tool_choice` 和响应恢复共用的名称映射。默认 `functions` 命名空间使用工具裸名；其他显式 namespace 子工具使用稳定的平铺名称。工具搜索加载的普通 function 根据实际加载声明保留自己的调用身份，不会把 `name=js, namespace=js` 变成与声明不符的 `js__js`。转换后的非流式结果、SSE 生命周期和终态使用同一份映射恢复名称、namespace 和调用 ID；名称碰撞或缺少身份依据时，转换返回错误。
+转换到 Chat 或 function-only Responses 时，协议桥接层先解析有效声明，再生成已知历史调用、`tool_choice` 和响应恢复使用的名称映射。默认 `functions` 命名空间使用工具裸名；其他显式 namespace 子工具使用稳定的平铺名称。工具搜索加载的普通 function 根据实际加载声明保留自己的调用身份。转换后的非流式结果、SSE 生命周期和终态使用声明映射恢复名称、namespace 和调用 ID；声明之间的名称碰撞或无法解析的限定工具选择返回错误。
+
+压缩或工具列表变化后，历史 `function_call` 仍可能带有 namespace，但对应声明已被省略。桥接层为这些调用单独分配本次请求的回放名称，保留调用 ID、参数和结果。名称分配预留已知工具、响应恢复认可的 custom 工具别名及历史裸名，按 namespace/name 排序；平铺名称碰撞时，用完整二元组的摘要区分，并检查长度和名称占用。补出的身份只用于输入回放，工具声明、选择器、响应恢复和后续 WS 可用工具不包含这些身份。身份扫描仅检查直接输入项，工具结果和参数中的嵌套数据不参与名称分配。
 
 WS HTTP bridge 在后续轮次省略 `tools` 时复用已有的声明和映射；显式空值清空后续可用工具，历史身份仍可用于解释已经执行的调用。原生 Responses 保留动态声明项的原位置，工具平铺只在需要协议转换的路径执行。提供商切换清空当前尝试的映射，下一次尝试从原始请求重新准备。
 

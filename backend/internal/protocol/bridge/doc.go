@@ -20,6 +20,7 @@
 //   - chatcompletions*.go and responses_to_chatcompletions.go handle Chat requests, responses, and streams.
 //   - gemini*.go handle Gemini options, content, and stream events.
 //   - responses_client_tools.go, responses_namespace.go, responses_tool_identity.go, and responses_tool_adaptation.go adapt client tools and namespaces.
+//   - responses_tool_history.go assigns replay names when historical tool declarations are absent.
 //   - responses_input_namespace.go, responses_tool_search_discoveries.go, and client_tools_json.go parse tool input and discoveries.
 //   - compat*.go handle continuation, replay, and output observation.
 //   - response_format.go and response_forward_wire.go handle response formats and terminal stream output.

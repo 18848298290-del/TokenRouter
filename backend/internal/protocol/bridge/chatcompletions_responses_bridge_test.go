@@ -18,6 +18,137 @@ const (
 	testToolImageRemote  = "https://example.com/tool-output.png"
 )
 
+// TestResponsesToChatCompletionsRequestReplaysUndeclaredNamespaces reproduces
+// compaction input after tool declarations disappear. Completed history remains
+// paired, while the outgoing callable list and returned restoration map exclude it.
+func TestResponsesToChatCompletionsRequestReplaysUndeclaredNamespaces(t *testing.T) {
+	for _, tools := range [][]ResponsesTool{
+		nil, {}, {{Type: "tool_search"}}, {{Type: "function", Name: "current"}},
+	} {
+		request := &ResponsesRequest{
+			Model: "deepseek-v4.1-flash", Stream: true,
+			Tools: tools,
+			Input: json.RawMessage(`[
+				{"type":"function_call","call_id":"call_1","name":"js","namespace":"mcp__cua_proxy","arguments":"{\"code\":\"inspect\"}"},
+				{"type":"function_call_output","call_id":"call_1","output":"ok"},
+				{"type":"function_call","call_id":"call_2","name":"open_in_codex","namespace":"mcp__codex_app","arguments":"{}"},
+				{"type":"function_call_output","call_id":"call_2","output":"opened"}
+			]`),
+		}
+		converted, mapping, err := ResponsesToChatCompletionsRequestWithMapping(request, nil)
+		require.NoError(t, err)
+		require.Len(t, converted.Messages, 4)
+		require.Equal(t, "mcp__cua_proxy__js", converted.Messages[0].ToolCalls[0].Function.Name)
+		require.JSONEq(t, `{"code":"inspect"}`, converted.Messages[0].ToolCalls[0].Function.Arguments)
+		require.Equal(t, "call_1", converted.Messages[1].ToolCallID)
+		require.Equal(t, "mcp__codex_app__open_in_codex", converted.Messages[2].ToolCalls[0].Function.Name)
+		require.Equal(t, "call_2", converted.Messages[3].ToolCallID)
+		require.Len(t, converted.Tools, len(tools))
+		require.Empty(t, mapping.NamespaceTools)
+		require.NotContains(t, mapping.CallNames, NamespacedToolName{Namespace: "mcp__cua_proxy", Name: "js"})
+	}
+}
+
+// TestResponsesToChatCompletionsRequestRetainsUndeclaredToolMedia replays an
+// undeclared screenshot call and a second unanswered call. The image stays
+// attributed to its answered call, and existing pairing drops the unanswered one.
+func TestResponsesToChatCompletionsRequestRetainsUndeclaredToolMedia(t *testing.T) {
+	request := &ResponsesRequest{
+		Model: "deepseek-test",
+		Input: json.RawMessage(`[{"type":"function_call","namespace":"browser","name":"screenshot","call_id":"image_call","arguments":"{}"},{"type":"function_call_output","call_id":"image_call","output":[{"type":"input_image","image_url":"` + testToolImageDataURL + `"}]},{"type":"function_call","namespace":"browser","name":"pending","call_id":"pending_call","arguments":"{}"}]`),
+	}
+	converted, _, err := ResponsesToChatCompletionsRequestWithMapping(request, nil)
+	require.NoError(t, err)
+	require.Len(t, converted.Messages, 3)
+	require.Equal(t, "browser__screenshot", converted.Messages[0].ToolCalls[0].Function.Name)
+	require.Equal(t, "image_call", converted.Messages[1].ToolCallID)
+	require.Equal(t, "user", converted.Messages[2].Role)
+	require.Contains(t, string(converted.Messages[2].Content), testToolImageDataURL)
+	require.Contains(t, string(converted.Messages[2].Content), "image_call")
+}
+
+// TestResponsesChatBridgeSeparatesHistoricalCustomAliases combines an active
+// custom tool with undeclared history under a neighboring namespace. Replayed
+// names stay ordinary functions in buffered and streamed replies, while the
+// current custom tool's valid namespace-prefixed alias still restores correctly.
+func TestResponsesChatBridgeSeparatesHistoricalCustomAliases(t *testing.T) {
+	request := &ResponsesRequest{
+		Model: "deepseek-test",
+		Tools: []ResponsesTool{
+			{Type: "custom", Name: "exec"},
+			{Type: "namespace", Name: "browser", Tools: []ResponsesTool{{Type: "function", Name: "inspect"}}},
+		},
+		Input: json.RawMessage(`[{"type":"function_call","namespace":"browser","name":"exec","call_id":"old","arguments":"{}"},{"type":"function_call_output","call_id":"old","output":"old result"}]`),
+	}
+	converted, mapping, err := ResponsesToChatCompletionsRequestWithMapping(request, nil)
+	require.NoError(t, err)
+	historicalName := converted.Messages[0].ToolCalls[0].Function.Name
+	require.NotEqual(t, "browser__exec", historicalName)
+	response := &ChatCompletionsResponse{Choices: []ChatChoice{{Message: ChatMessage{ToolCalls: []ChatToolCall{
+		{ID: "historical", Function: ChatFunctionCall{Name: historicalName, Arguments: "{}"}},
+		{ID: "current", Function: ChatFunctionCall{Name: "browser__exec", Arguments: `{"input":"pwd"}`}},
+	}}}}}
+	output := ChatCompletionsResponseToResponses(testRuntime(), response, request.Model, mapping.CustomTools, mapping.FunctionTools, mapping.ToolSearch, mapping.NamespaceTools)
+	require.Len(t, output.Output, 2)
+	require.Equal(t, "function_call", output.Output[0].Type)
+	require.Equal(t, historicalName, output.Output[0].Name)
+	require.Equal(t, "custom_tool_call", output.Output[1].Type)
+	require.Equal(t, "exec", output.Output[1].Name)
+	require.Equal(t, "pwd", output.Output[1].Input)
+
+	state := NewChatCompletionsToResponsesStreamState(testRuntime(), request.Model)
+	state.CustomTools = mapping.CustomTools
+	state.FunctionTools = mapping.FunctionTools
+	state.NamespaceTools = mapping.NamespaceTools
+	calls := response.Choices[0].Message.ToolCalls
+	indices := []int{0, 1}
+	for i := range calls {
+		calls[i].Index = &indices[i]
+	}
+	events := ChatCompletionsChunkToResponsesEvents(testRuntime(), &ChatCompletionsChunk{
+		Choices: []ChatChunkChoice{{Delta: ChatDelta{ToolCalls: calls}}},
+	}, state)
+	events = append(events, FinalizeChatCompletionsResponsesStream(testRuntime(), state)...)
+	historicalEvents := 0
+	for _, event := range events {
+		if event.Item != nil && event.Item.CallID == "historical" {
+			require.Equal(t, "function_call", event.Item.Type)
+			require.Equal(t, historicalName, event.Item.Name)
+			historicalEvents++
+		}
+		if event.Response != nil && event.Type == "response.completed" {
+			require.Len(t, event.Response.Output, 2)
+			require.Equal(t, "function_call", event.Response.Output[0].Type)
+			require.Equal(t, "custom_tool_call", event.Response.Output[1].Type)
+		}
+	}
+	require.Equal(t, 2, historicalEvents)
+}
+
+// TestResponsesToChatCompletionsRequestIsolatesHistoricalChoice creates an
+// active flat name matching an undeclared namespace join. History receives a
+// distinct name, and a forced undeclared selector cannot target the active tool.
+func TestResponsesToChatCompletionsRequestIsolatesHistoricalChoice(t *testing.T) {
+	request := &ResponsesRequest{
+		Model: "deepseek-test",
+		Tools: []ResponsesTool{{Type: "function", Name: "browser__js"}},
+		Input: json.RawMessage(`[{"type":"function_call","namespace":"browser","name":"js","call_id":"c1","arguments":"{}"},{"type":"function_call_output","call_id":"c1","output":"ok"}]`),
+	}
+	converted, mapping, err := ResponsesToChatCompletionsRequestWithMapping(request, nil)
+	require.NoError(t, err)
+	require.NotEqual(t, "browser__js", converted.Messages[0].ToolCalls[0].Function.Name)
+	require.Equal(t, "browser__js", converted.Tools[0].Function.Name)
+	require.Empty(t, mapping.NamespaceTools)
+	for _, choice := range []string{
+		`{"type":"function","namespace":"browser","name":"js"}`,
+		`{"type":"namespace","name":"browser"}`,
+	} {
+		request.ToolChoice = json.RawMessage(choice)
+		_, _, err := ResponsesToChatCompletionsRequestWithMapping(request, nil)
+		require.Error(t, err)
+	}
+}
+
 // TestResponsesInputToChatMessages_DeveloperRoleMapsToSystem supplies scalar
 // developer content. Conversion must return one system message with JSON-
 // equivalent text, checking the target role and retained instruction value.

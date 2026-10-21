@@ -53,8 +53,8 @@ func TestResponsesToolIdentityMappingRejectsAmbiguousNames(t *testing.T) {
 }
 
 // TestResponsesToolIdentityMappingRequiresNamespaceEvidence supplies an
-// ordinary function beside unknown qualified history. Matching names alone
-// cannot establish a discovered alias or authorize a new namespace mapping.
+// ordinary function beside unknown qualified identities. Declaration lookup
+// cannot infer a discovery alias or authorize an undeclared namespace selector.
 func TestResponsesToolIdentityMappingRequiresNamespaceEvidence(t *testing.T) {
 	mapping, err := responsesToolIdentityMapping([]ResponsesTool{{Type: "function", Name: "js"}}, nil)
 	require.NoError(t, err)

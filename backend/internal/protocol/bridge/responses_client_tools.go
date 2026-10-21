@@ -100,10 +100,10 @@ type responsesClientToolStreamCall struct {
 
 // AdaptResponsesClientTools lowers decoded custom, search, and namespace
 // declarations and their history/choice in place. Nil requests remain
-// unchanged. Without active declarations, known historical function identities
-// can still be converted, while the returned future mapping stays empty.
-// Collisions and unresolved identities return errors; failed candidates can
-// contain earlier mutations and are discarded by the caller.
+// unchanged. Without active declarations, historical function identities can
+// still be converted, while the returned future mapping stays empty.
+// Declaration collisions and invalid identities return errors; failed
+// candidates can contain earlier mutations and are discarded by the caller.
 //
 // Promotion registers effective discoveries before flattening. Custom input
 // uses a fixed string wrapper, search uses a named function proxy, and
@@ -143,8 +143,9 @@ func adaptResponsesClientTools(req map[string]any, inherited ResponsesClientTool
 		if err != nil {
 			return ResponsesClientToolMapping{}, false, err
 		}
-		// Historical declarations can explain executed calls without enabling any
-		// future tools. Validate supplied identities even when the active list is absent.
+		// Resolve executed calls independently of future tools, including calls
+		// whose declarations disappeared during compaction or replacement of the
+		// active list.
 		changed, err := rewriteResponsesFunctionCalls(req["input"], &history)
 		if err != nil {
 			return ResponsesClientToolMapping{}, false, err
@@ -342,7 +343,7 @@ func stripResponsesDeferredToolFlags(tools []any) bool {
 // history using inherited identities when tools is absent. Any present tools
 // value selects fresh adaptation, including empty or invalid values. With no
 // inherited identities, normal adaptation still resolves additional_tools
-// and validates qualified history. A nonempty first optional lowered slice
+// and prepares qualified history. A nonempty first optional lowered slice
 // restores effective client declarations; later optional slices are ignored.
 //
 // Without restored declarations, inherited maps remain shared while history

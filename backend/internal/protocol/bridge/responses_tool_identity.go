@@ -18,8 +18,9 @@ import (
 // with ordinary declarations, while discovered plain functions can carry
 // their own declared name as a client namespace.
 //
-// Declaration evidence establishes those aliases before history or choices
-// are rewritten. Reverse-name collisions fail conversion before an upstream
+// Declaration evidence establishes known aliases before history or choices
+// are rewritten. Missing historical declarations use responses_tool_history.go
+// for separate replay names. Reverse-name collisions fail before an upstream
 // request can execute the wrong tool. The resulting maps belong to one
 // preparation and remain immutable after publication to response readers or
 // a later WebSocket turn. Historical declarations supply identity evidence;
@@ -172,8 +173,8 @@ func (m *ResponsesClientToolMapping) registerToolIdentity(tool ResponsesTool, ow
 	return nil
 }
 
-// resolveCallName returns the upstream spelling of a supplied client identity.
-// Bare and default-scoped historical names remain usable without current
+// resolveCallName looks up the upstream spelling of an evidenced identity.
+// Bare and default-scoped names remain usable without current
 // declarations; another supplied namespace requires declaration or inherited
 // mapping evidence and returns an error when that evidence is absent.
 //
@@ -181,7 +182,9 @@ func (m *ResponsesClientToolMapping) registerToolIdentity(tool ResponsesTool, ow
 // supports inherited mappings created before forward aliases were recorded.
 // Qualified names cannot be derived by concatenation alone, because discovery
 // can assign a namespace while the executable declaration still uses a bare
-// name. The mapping therefore supplies the conversion's dispatch authority.
+// name. The mapping therefore supplies the conversion's declared aliases.
+// Historical replay allocates missing identities separately through
+// responsesToolHistoryNames, leaving this lookup strict for qualified choices.
 func (m *ResponsesClientToolMapping) resolveCallName(namespace, name string) (string, error) {
 	if upstream, ok := m.CallNames[NamespacedToolName{Namespace: namespace, Name: name}]; ok {
 		return upstream, nil
@@ -205,15 +208,24 @@ func (m *ResponsesClientToolMapping) resolveCallName(namespace, name string) (st
 // Calls are visited only at direct input positions. Argument strings, result
 // payloads, and nested schemas are not recursively interpreted as executable
 // requests, so JSON data that resembles a call remains data. Call IDs and
-// argument values stay with their original items while validated names encode
-// the removed namespace for function-only execution.
+// argument values stay with their original items while prepared names encode
+// the removed namespace for function-only execution. Missing declarations
+// receive request-local names independent of callable mappings and selectors.
 func rewriteResponsesFunctionCalls(input any, mapping *ResponsesClientToolMapping) (bool, error) {
 	items, ok := input.([]any)
 	if !ok {
 		return false, nil
 	}
+	encoded, err := json.Marshal(items)
+	if err != nil {
+		return false, err
+	}
+	history, err := newResponsesToolHistoryNames(encoded, *mapping)
+	if err != nil {
+		return false, err
+	}
 	changed := false
-	// Move direct calls to their validated function-only identities together;
+	// Move direct calls to their prepared function-only identities together;
 	// call correlation and arguments remain attached while the encoded namespace is removed.
 	for _, raw := range items {
 		item, ok := raw.(map[string]any)
@@ -221,7 +233,7 @@ func rewriteResponsesFunctionCalls(input any, mapping *ResponsesClientToolMappin
 			continue
 		}
 		name := stringValue(item["name"])
-		resolved, err := mapping.resolveCallName(stringValue(item["namespace"]), name)
+		resolved, err := history.resolve(stringValue(item["namespace"]), name)
 		if err != nil {
 			return false, err
 		}
@@ -242,8 +254,8 @@ func rewriteResponsesFunctionCalls(input any, mapping *ResponsesClientToolMappin
 // a known namespace-group choice becomes auto after lowering its members.
 // Missing qualified identities return an error before upstream execution.
 //
-// History and selectors use the same lookup, preventing a selector from
-// targeting an undeclared doubled name after discovery. Raw byte patches keep
+// Selectors use evidenced aliases, preventing a synthesized historical name
+// from authorizing an undeclared tool after discovery. Raw byte patches keep
 // other selector fields intact and support escaped JSON keys. A declared group
 // authorizes automatic selection even when platform filtering later removes
 // all executable members from that group.

@@ -64,9 +64,9 @@ type ResponsesToChatOptions struct {
 	// nonempty ID. Nil disables lookup; an empty return leaves prior pending
 	// reasoning unchanged. Conversion waits for the callback, and any panic propagates.
 	ReasoningContentByID func(itemID string) string
-	// toolMapping belongs to one conversion. The request builder assigns it
-	// before history conversion so declarations and calls share the same names.
-	toolMapping *ResponsesClientToolMapping
+	// toolHistory belongs to one conversion. Known calls share declaration names;
+	// missing declarations receive replay names that cannot authorize selectors.
+	toolHistory responsesToolHistoryNames
 }
 
 // NamespacedToolName identifies a child tool by namespace and unqualified name.
@@ -179,8 +179,10 @@ func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *R
 // no request, preventing partially prepared identities from being forwarded.
 //
 // The caller keeps the returned mapping with this request through response
-// consumption. History, tool choice, and declaration lowering use that same
-// mapping, including default-scope and discovered plain-function aliases.
+// consumption. Known history, tool choice, and declaration lowering share
+// aliases, including default-scope and discovered plain-function identities.
+// Missing historical declarations use a separate request-local lookup, keeping
+// synthesized replay names out of selectors and response restoration.
 // Options are copied before attaching conversion state, leaving caller-owned
 // lookup settings unchanged across independent conversions and retries.
 func ResponsesToChatCompletionsRequestWithMapping(req *ResponsesRequest, opts *ResponsesToChatOptions) (*ChatCompletionsRequest, ResponsesClientToolMapping, error) {
@@ -197,11 +199,15 @@ func ResponsesToChatCompletionsRequestWithMapping(req *ResponsesRequest, opts *R
 	}
 	mapping.CustomTools = CustomToolNames(effectiveTools)
 	mapping.ToolSearch = HasToolSearchTool(effectiveTools)
+	historyNames, err := newResponsesToolHistoryNames(req.Input, mapping)
+	if err != nil {
+		return nil, ResponsesClientToolMapping{}, err
+	}
 	var conversionOptions ResponsesToChatOptions
 	if opts != nil {
 		conversionOptions = *opts
 	}
-	conversionOptions.toolMapping = &mapping
+	conversionOptions.toolHistory = historyNames
 
 	messages, err := responsesInputToChatMessagesWithOptions(req.Instructions, req.Input, &conversionOptions)
 	if err != nil {
@@ -449,13 +455,7 @@ func customToolCallName(name string, customTools, functionTools map[string]bool,
 	match := ""
 	for customName := range customTools {
 		for _, namespaceTool := range namespaceTools {
-			alias := flattenNamespaceToolName(namespaceTool.Namespace, customName)
-			// Captured legacy default-scope mappings can accompany prefixed custom
-			// aliases from older adapters. Current default declarations still dispatch
-			// their own function names without that prefix.
-			if namespaceTool.Namespace == responsesDefaultToolNamespace {
-				alias = responsesDefaultToolNamespace + "__" + customName
-			}
+			alias := customToolAlias(namespaceTool.Namespace, customName)
 			if alias != name {
 				continue
 			}
@@ -466,6 +466,19 @@ func customToolCallName(name string, customTools, functionTools map[string]bool,
 		}
 	}
 	return match, match != ""
+}
+
+// customToolAlias returns a namespace-prefixed custom spelling recognized by
+// Chat response restoration. History allocation reserves these same aliases
+// so an undeclared function cannot be interpreted as a current custom tool.
+func customToolAlias(namespace, name string) string {
+	// Captured legacy default-scope mappings can accompany prefixed custom
+	// aliases from older adapters. Current default declarations still dispatch
+	// their own function names without that prefix.
+	if namespace == responsesDefaultToolNamespace {
+		return responsesDefaultToolNamespace + "__" + name
+	}
+	return flattenNamespaceToolName(namespace, name)
 }
 
 // customNameForStreamTool returns recognized custom identity or the supplied
@@ -640,11 +653,10 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 				continue
 			}
 			name := rawString(item["name"])
-			// The request builder supplies declaration evidence before history is
-			// converted, so a discovered bare function cannot acquire a doubled
-			// prefix while its declaration retains its original name.
-			if opts != nil && opts.toolMapping != nil {
-				resolved, err := opts.toolMapping.resolveCallName(rawString(item["namespace"]), name)
+			// Known declarations retain their aliases, while missing declarations use
+			// request-local replay names that cannot expand the current callable tools.
+			if opts != nil && opts.toolHistory != nil {
+				resolved, err := opts.toolHistory.resolve(rawString(item["namespace"]), name)
 				if err != nil {
 					return nil, nil, err
 				}

@@ -23,11 +23,31 @@ func TestAdaptResponsesClientToolsJSONPromotesInitialAdditionalTools(t *testing.
 	require.Equal(t, "js", gjson.GetBytes(restored, "output.0.name").String())
 }
 
-// TestAdaptResponsesClientToolsJSONRequiresHistoricalNamespaceEvidence sends
-// qualified history without declarations or inherited state. Conversion reports
-// the missing identity instead of forwarding an unresolved namespace downstream.
-func TestAdaptResponsesClientToolsJSONRequiresHistoricalNamespaceEvidence(t *testing.T) {
-	body := []byte(`{"input":[{"type":"function_call","name":"js","namespace":"browser","call_id":"call_1","arguments":"{}"}]}`)
-	_, _, err := AdaptResponsesClientToolsJSON(body, "OpenAI")
-	require.ErrorContains(t, err, "without its declaration or inherited mapping")
+// TestAdaptResponsesClientToolsJSONReplaysUndeclaredHistory sends qualified
+// history with absent, reset, and replaced tools. Conversion retains the call
+// and result while synthesized identities stay out of future mappings and tools.
+func TestAdaptResponsesClientToolsJSONReplaysUndeclaredHistory(t *testing.T) {
+	for name, tools := range map[string]string{
+		"omitted": "", "empty": `,"tools":[]`, "null": `,"tools":null`,
+		"search":      `,"tools":[{"type":"tool_search"}]`,
+		"replacement": `,"tools":[{"type":"function","name":"current"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := []byte(`{"input":[{"type":"function_call","name":"js","namespace":"browser","call_id":"call_1","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":{"value":9007199254740993,"nested":{"type":"function_call","namespace":"data","name":"js"}}}]` + tools + `}`)
+			adapted, mapping, err := AdaptResponsesClientToolsJSON(body, "OpenAI")
+			require.NoError(t, err)
+			require.Equal(t, "browser__js", gjson.GetBytes(adapted, "input.0.name").String())
+			require.False(t, gjson.GetBytes(adapted, "input.0.namespace").Exists())
+			require.Equal(t, "call_1", gjson.GetBytes(adapted, "input.0.call_id").String())
+			require.Equal(t, "call_1", gjson.GetBytes(adapted, "input.1.call_id").String())
+			require.Equal(t, "9007199254740993", gjson.GetBytes(adapted, "input.1.output.value").Raw)
+			require.Equal(t, "data", gjson.GetBytes(adapted, "input.1.output.nested.namespace").String())
+			require.NotContains(t, mapping.NamespaceTools, "browser__js")
+			require.NotContains(t, mapping.CallNames, NamespacedToolName{Namespace: "browser", Name: "js"})
+			require.False(t, gjson.GetBytes(adapted, `tools.#(name=="browser__js")`).Exists())
+			again, _, err := AdaptResponsesClientToolsJSON(adapted, "OpenAI")
+			require.NoError(t, err)
+			require.JSONEq(t, string(adapted), string(again))
+		})
+	}
 }

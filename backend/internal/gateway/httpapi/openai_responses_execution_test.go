@@ -1992,6 +1992,79 @@ func TestForwardResponsesChatFallbackRestoresEncryptedReasoningFromCache(t *test
 	require.Equal(t, "plain thinking", cache.sets["item_plain"])
 }
 
+// TestForwardResponsesReplaysUndeclaredNamespaceHistory sends compaction-style
+// history through Chat, native Responses, and Anthropic provider routes. Each
+// exchange reaches the transport with a paired call and returns a usable summary.
+func TestForwardResponsesReplaysUndeclaredNamespaceHistory(t *testing.T) {
+	for _, protocol := range []string{providercore.APIProtocolChatCompletions, providercore.APIProtocolResponses, providercore.APIProtocolAnthropic} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", protocol, stream), func(t *testing.T) {
+				body := []byte(fmt.Sprintf(`{"model":"deepseek-v4.1-flash","stream":%t,"input":[{"type":"function_call","call_id":"call_1","name":"js","namespace":"mcp__cua_proxy","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}],"tools":[{"type":"tool_search"}]}`, stream))
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+				provider := rawChatCompletionsTestProvider()
+				provider.Record.Platform = capability.PlatformDeepseek
+				provider.Record.Credentials["api_protocol"] = protocol
+				provider.Record.Credentials["base_url"] = "https://relay.example"
+
+				contentType := "application/json"
+				response := `{"id":"chat_1","choices":[{"index":0,"message":{"role":"assistant","content":"summary"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1}}`
+				switch protocol {
+				case providercore.APIProtocolChatCompletions:
+					if stream {
+						contentType = "text/event-stream"
+						response = "data: " + `{"id":"chat_1","choices":[{"index":0,"delta":{"content":"summary"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1}}` + "\n\ndata: [DONE]\n\n"
+					}
+				case providercore.APIProtocolResponses:
+					response = `{"id":"resp_1","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"summary"}]}],"usage":{"input_tokens":2,"output_tokens":1}}`
+					if stream {
+						contentType = "text/event-stream"
+						response = "data: " + `{"type":"response.completed","response":` + response + "}\n\n"
+					}
+				case providercore.APIProtocolAnthropic:
+					contentType = "text/event-stream"
+					response = strings.Join([]string{
+						`event: message_start`, `data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"deepseek-v4.1-flash","content":[],"usage":{"input_tokens":2,"output_tokens":0}}}`, "",
+						`event: content_block_start`, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`, "",
+						`event: content_block_delta`, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"summary"}}`, "",
+						`event: content_block_stop`, `data: {"type":"content_block_stop","index":0}`, "",
+						`event: message_delta`, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`, "",
+						`event: message_stop`, `data: {"type":"message_stop"}`, "", "",
+					}, "\n")
+				}
+				upstream := &auxiliaryHTTPRecorder{resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{contentType}},
+					Body:       io.NopCloser(strings.NewReader(response)),
+				}}
+				svc := newResponsesFixture(responsesFixtureInputs{options: protocolHTTPOptions(), transport: upstream})
+				result, err := svc.Forward(context.Background(), c, provider, body)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				require.Len(t, upstream.requests, 1)
+				require.Contains(t, recorder.Body.String(), "summary")
+				require.NotContains(t, recorder.Body.String(), "response.failed")
+				switch protocol {
+				case providercore.APIProtocolChatCompletions:
+					require.Contains(t, upstream.lastReq.URL.Path, "/chat/completions")
+					require.Equal(t, "mcp__cua_proxy__js", gjson.GetBytes(upstream.lastBody, "messages.0.tool_calls.0.function.name").String())
+					require.Equal(t, "call_1", gjson.GetBytes(upstream.lastBody, "messages.1.tool_call_id").String())
+				case providercore.APIProtocolResponses:
+					require.Contains(t, upstream.lastReq.URL.Path, "/responses")
+					require.Equal(t, "mcp__cua_proxy__js", gjson.GetBytes(upstream.lastBody, "input.0.name").String())
+					require.Equal(t, "call_1", gjson.GetBytes(upstream.lastBody, "input.1.call_id").String())
+				case providercore.APIProtocolAnthropic:
+					require.Contains(t, upstream.lastReq.URL.Path, "/messages")
+					require.Equal(t, "mcp__cua_proxy__js", gjson.GetBytes(upstream.lastBody, "messages.0.content.0.name").String())
+					require.Equal(t, "call_1", gjson.GetBytes(upstream.lastBody, "messages.1.content.0.tool_use_id").String())
+				}
+				require.Equal(t, int64(1), gjson.GetBytes(upstream.lastBody, "tools.#").Int())
+			})
+		}
+	}
+}
+
 // TestDeepSeekResponsesForwardRestoresClientToolsStreaming lowers custom tools
 // for a DeepSeek Responses exchange and receives function-call SSE. It checks
 // the upstream tool shape and unversioned endpoint while downstream

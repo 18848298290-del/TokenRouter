@@ -244,6 +244,30 @@ func TestAdaptResponsesClientToolsWithInheritedMappingResetsFutureToolsOnly(t *t
 	require.False(t, gjson.GetBytes(body, "input.0.namespace").Exists())
 }
 
+// TestAdaptResponsesClientToolsWithInheritedMappingReplaysUnknownHistory supplies
+// known and undeclared historical calls across omitted, reset, and replaced tools.
+// The shared inherited mapping stays unchanged and missing history never becomes callable.
+func TestAdaptResponsesClientToolsWithInheritedMappingReplaysUnknownHistory(t *testing.T) {
+	inherited := ResponsesClientToolMapping{
+		NamespaceTools: map[string]ResponsesNamespaceName{"known__run": {Namespace: "known", Name: "run"}},
+	}
+	for _, toolField := range []string{"", `,"tools":[]`, `,"tools":null`, `,"tools":[{"type":"function","name":"current"}]`} {
+		var request map[string]any
+		require.NoError(t, json.Unmarshal([]byte(`{"input":[{"type":"function_call","namespace":"known","name":"run","call_id":"k","arguments":"{}"},{"type":"function_call_output","call_id":"k","output":"known"},{"type":"function_call","namespace":"missing","name":"run","call_id":"m","arguments":"{}"},{"type":"function_call_output","call_id":"m","output":"missing"}]`+toolField+`}`), &request))
+		mapping, changed, err := AdaptResponsesClientToolsWithInheritedMapping(request, inherited)
+		require.NoError(t, err)
+		require.True(t, changed)
+		encoded, err := json.Marshal(request)
+		require.NoError(t, err)
+		require.Equal(t, "known__run", gjson.GetBytes(encoded, "input.0.name").String())
+		require.Equal(t, "missing__run", gjson.GetBytes(encoded, "input.2.name").String())
+		require.NotContains(t, mapping.NamespaceTools, "missing__run")
+		require.False(t, gjson.GetBytes(encoded, `tools.#(name=="missing__run")`).Exists())
+		require.Equal(t, map[string]ResponsesNamespaceName{"known__run": {Namespace: "known", Name: "run"}}, inherited.NamespaceTools)
+		require.Empty(t, inherited.CallNames)
+	}
+}
+
 // TestAdaptResponsesClientToolsWithInheritedMappingRejectsAliasReplacement
 // discovers an explicit namespace colliding with a previously loaded plain
 // function. The continuation fails before the inherited alias can replace

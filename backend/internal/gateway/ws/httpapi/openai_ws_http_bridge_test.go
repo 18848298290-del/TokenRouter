@@ -554,9 +554,9 @@ func TestProxyOpenAIWSHTTPBridgeTurnGrokInheritsToolSearchAndPromotesFollowupDis
 }
 
 // TestOpenAIWSHTTPBridgeAPIKeyReusesClientToolMappingWhenFollowupOmitsTools
-// declares a custom tool before a later output-only request. Both HTTP bodies
-// contain the lowered function, and the followup output becomes
-// function_call_output with its client item ID removed.
+// declares a custom tool before a followup with its result and undeclared
+// namespace history. Both HTTP bodies contain the callable custom function,
+// while historical replay names stay out of saved mappings and declarations.
 func TestOpenAIWSHTTPBridgeAPIKeyReusesClientToolMappingWhenFollowupOmitsTools(t *testing.T) {
 	response := func(id string) *http.Response {
 		body := `data: {"type":"response.completed","response":{"id":"` + id + `","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n" // scripted successful terminal SSE bytes
@@ -584,7 +584,7 @@ func TestOpenAIWSHTTPBridgeAPIKeyReusesClientToolMappingWhenFollowupOmitsTools(t
 	)
 	require.NoError(t, err)
 
-	secondPayload := []byte(`{"type":"response.create","model":"gpt-5.6","stream":true,"previous_response_id":"resp_custom_first","input":[{"type":"custom_tool_call_output","id":"ctco_client_output_1","call_id":"call_custom_1","output":"ok"}]}`)
+	secondPayload := []byte(`{"type":"response.create","model":"gpt-5.6","stream":true,"previous_response_id":"resp_custom_first","input":[{"type":"custom_tool_call_output","id":"ctco_client_output_1","call_id":"call_custom_1","output":"ok"},{"type":"function_call","namespace":"mcp__cua_proxy","name":"js","call_id":"old_call","arguments":"{}"},{"type":"function_call_output","call_id":"old_call","output":"old result"}]}`)
 	_, err = svc.proxyOpenAIWSHTTPBridgeTurn(
 		context.Background(), c, provider, "test-token", secondPayload, len(secondPayload),
 		"gpt-5.6", "", "", "", "", "", 2, write,
@@ -598,6 +598,12 @@ func TestOpenAIWSHTTPBridgeAPIKeyReusesClientToolMappingWhenFollowupOmitsTools(t
 	require.Equal(t, "exec", gjson.GetBytes(upstream.bodies[1], "tools.0.name").String())
 	require.Equal(t, "function_call_output", gjson.GetBytes(upstream.bodies[1], "input.0.type").String())
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "input.0.id").Exists())
+	require.Equal(t, "mcp__cua_proxy__js", gjson.GetBytes(upstream.bodies[1], "input.1.name").String())
+	require.Equal(t, "old_call", gjson.GetBytes(upstream.bodies[1], "input.2.call_id").String())
+	require.Equal(t, int64(1), gjson.GetBytes(upstream.bodies[1], "tools.#").Int())
+	state, present := gatewayhttp.OpenAIWSHTTPBridgeToolStateFromContext(c)
+	require.True(t, present)
+	require.NotContains(t, state.ClientMapping.NamespaceTools, "mcp__cua_proxy__js")
 }
 
 // TestOpenAIWSHTTPBridgeFullCustomToolHistoryWithoutPreviousResponseIDDoesNotReplay

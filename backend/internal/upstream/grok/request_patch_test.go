@@ -307,6 +307,21 @@ func TestPatchGrokResponsesBodyPromotesCodexAdditionalTools(t *testing.T) {
 	require.Equal(t, "hello", gjson.GetBytes(patched, "input.1.content.0.text").String())
 }
 
+// TestPatchGrokResponsesBodyWithClientToolsReplaysUndeclaredHistory supplies
+// retained MCP history after its declaration disappears. Grok preparation keeps
+// the call and result paired without adding that historical tool to callable state.
+func TestPatchGrokResponsesBodyWithClientToolsReplaysUndeclaredHistory(t *testing.T) {
+	body := []byte(`{"model":"grok","input":[{"type":"function_call","namespace":"mcp__cua_proxy","name":"js","call_id":"old","arguments":"{}"},{"type":"function_call_output","call_id":"old","output":"ok"}],"tools":[{"type":"tool_search"}]}`)
+	patched, mapping, err := (BodyCodec{NewID: uuid.NewString}).PatchGrokResponsesBodyWithClientTools(body, "grok-4.6")
+	require.NoError(t, err)
+	require.Equal(t, "mcp__cua_proxy__js", gjson.GetBytes(patched, "input.0.name").String())
+	require.False(t, gjson.GetBytes(patched, "input.0.namespace").Exists())
+	require.Equal(t, "old", gjson.GetBytes(patched, "input.1.call_id").String())
+	require.Equal(t, int64(1), gjson.GetBytes(patched, "tools.#").Int())
+	require.True(t, mapping.ToolSearch)
+	require.NotContains(t, mapping.NamespaceTools, "mcp__cua_proxy__js")
+}
+
 // TestPatchGrokResponsesBodyWithClientToolsLowersCodexProtocol uses the shared
 // custom, search and namespace replay fixture. It asserts matching restoration
 // maps, function declarations and choice, serialized call arguments/outputs,
