@@ -61,6 +61,7 @@ vi.mock('@/composables/useClipboard', () => ({
 
 vi.mock('@/composables/useBalanceDisplay', () => ({
   useBalanceDisplay: () => ({
+    balanceUnitName: 'Credits',
     formatBalanceAmount: (value: number) => `$${value.toFixed(2)}`,
   }),
 }))
@@ -70,7 +71,8 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key,
+      t: (key: string, params?: Record<string, string>) =>
+        key === 'admin.redeem.amount' ? `Amount (${params?.unitName})` : key,
     }),
   }
 })
@@ -300,6 +302,7 @@ describe('admin RedeemView batch update', () => {
     try {
       await flushPromises()
       await wrapper.get('[data-testid="generate-open"]').trigger('click')
+      expect(wrapper.text()).toContain('Amount (Credits)')
       const input = wrapper.get<HTMLInputElement>(
         '[placeholder="admin.redeem.customCodePlaceholder"]',
       )
@@ -354,6 +357,7 @@ describe('admin RedeemView batch update', () => {
 
     await flushPromises()
     await wrapper.get('[data-testid="generate-open"]').trigger('click')
+    expect(wrapper.text()).toContain('Amount (Credits)')
     await flushPromises()
 
     const maxUsesInput = wrapper.get('[data-testid="generate-max-uses"]')

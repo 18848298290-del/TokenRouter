@@ -1,11 +1,32 @@
 package notification
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	mailtest "github.com/TokenFlux/TokenRouter/internal/notification/testkit"
 )
+
+// alerts_test.go checks balance and provider alert bodies with captured business
+// values. Default currency, configurable account units, escaped links, and quota
+// calculations remain observable in rendered text, including the direct body
+// builder used by standalone callers.
+
+// TestBuildBalanceLowEmailBody_CustomUnit supplies a configured symbol containing
+// HTML-sensitive text. Both balance and threshold use escaped account units while
+// the standalone builder continues to format numeric values to two decimals.
+func TestBuildBalanceLowEmailBody_CustomUnit(t *testing.T) {
+	repo := mailtest.NewMemorySettings()
+	require.NoError(t, repo.Set(context.Background(), "balance_unit_symbol", "<C>%"))
+	s := NewAlertDelivery(nil, NewNotificationEmailService(repo, nil))
+	body := s.BuildBalanceLowEmailBody("Alice", 3.14, 10, "Site", "")
+	require.Contains(t, body, "&lt;C&gt;%3.14")
+	require.Contains(t, body, "&lt;C&gt;%10.00")
+	require.NotContains(t, body, "$3.14")
+}
 
 // TestBuildBalanceLowEmailBody_ContainsRequiredFields renders supplied branding, recipient, balance, and threshold values.
 // It verifies required values are present and the formatting output contains

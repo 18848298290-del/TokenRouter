@@ -365,12 +365,13 @@ export interface DashboardStats {
   today_count: number // Today's completed order count.
   total_count: number // Cumulative payment order count.
   avg_amount: CurrencyAmounts // Average purchase by currency.
-  avg_reasoning_point_purchase_unit_price: number // Average reasoning point purchase unit price.
+  avg_reasoning_point_purchase_unit_price: CurrencyAmounts // Weighted unit prices by payment currency.
   reasoning_point_purchase_order_count: number // Reasoning point purchase order count.
   daily_series: DailyPaymentStats[] // Daily payment totals.
   payment_methods: PaymentMethodStats[] // Totals by payment method.
   purchase_distribution: {
     type: OrderType // Record kind discriminator.
+    currency: string // Recorded payment currency.
     label: string // Human-readable display label.
     plan_id?: number // Subscription plan identifier.
     amount: number // Monetary payment amount.

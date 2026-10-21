@@ -312,7 +312,7 @@ export default {
     customCodeTooLong: '兑换码最长为 32 个字符',
     customCodeCountHint: '设置了自定义兑换码后，数量固定为 1。',
     codeType: '类型',
-    amount: '金额 ($)',
+    amount: '金额 ({unitName})',
     value: '面值',
     maxUses: '兑换次数',
     maxUsesHint: '填写 0 表示无兑换次数上限。',

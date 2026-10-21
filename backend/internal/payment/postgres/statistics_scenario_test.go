@@ -290,7 +290,7 @@ func TestPaymentDashboardStatsWithRangeComputesReasoningPointPurchaseUnitPrice(t
 	require.NoError(t, err)
 
 	require.Equal(t, 2, stats.ReasoningPointPurchaseOrderCount)
-	require.Equal(t, 0.5, stats.AvgReasoningPointPurchaseUnitPrice)
+	require.Equal(t, payment.CurrencyAmounts{"CNY": 0.5}, stats.AvgReasoningPointPurchaseUnitPrice)
 }
 
 // TestComputeBasicStatsGroupsAmountsByCurrency supplies CNY and USD pure order

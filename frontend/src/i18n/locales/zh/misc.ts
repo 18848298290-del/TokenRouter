@@ -317,7 +317,7 @@ export default {
       groupMultiplier: {
         title: '💰 3. 费率倍数',
         description:
-          '<div style="line-height: 1.7;"><p style="margin-bottom: 12px;">设置该分组的计费倍率，控制用户的实际扣费。</p><div style="padding: 8px 12px; background: var(--tour-warning-bg); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 13px; margin-bottom: 12px;"><b>⚙️ 计费规则：</b><ul style="margin: 8px 0 0 16px;"><li><b>1.0</b> - 原价计费（成本价）</li><li><b>1.5</b> - 用户消耗 $1，扣除 $1.5</li><li><b>2.0</b> - 用户消耗 $1，扣除 $2</li><li><b>0.8</b> - 补贴模式（亏本运营）</li></ul></div><p style="font-size: 13px; color: var(--tour-muted-color);">建议测试分组设置为 1.0</p></div>',
+          '<div style="line-height: 1.7;"><p style="margin-bottom: 12px;">设置该分组的计费倍率，控制用户的实际扣费。</p><div style="padding: 8px 12px; background: var(--tour-warning-bg); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 13px; margin-bottom: 12px;"><b>⚙️ 计费规则：</b><ul style="margin: 8px 0 0 16px;"><li><b>1.0</b> - 原价计费（成本价）</li><li><b>1.5</b> - 按基础费用的 1.5 倍扣费</li><li><b>2.0</b> - 按基础费用的 2 倍扣费</li><li><b>0.8</b> - 补贴模式（亏本运营）</li></ul></div><p style="font-size: 13px; color: var(--tour-muted-color);">建议测试分组设置为 1.0</p></div>',
         nextBtn: '下一步',
       },
       groupExclusive: {
@@ -767,6 +767,7 @@ export default {
       revenue: '收入',
       dailyRevenue: '每日收入',
       paymentDistribution: '支付方式分布',
+      purchaseCurrency: '币种',
       purchaseDistribution: '套餐/按量购买情况',
       purchaseItem: '购买项',
       amountShare: '金额占比',

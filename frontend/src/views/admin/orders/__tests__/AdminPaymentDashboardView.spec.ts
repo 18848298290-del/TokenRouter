@@ -91,7 +91,7 @@ describe('AdminPaymentDashboardView', () => {
         today_count: 0,
         total_count: 0,
         avg_amount: {},
-        avg_reasoning_point_purchase_unit_price: 0,
+        avg_reasoning_point_purchase_unit_price: {},
         reasoning_point_purchase_order_count: 0,
         daily_series: [],
         payment_methods: [],

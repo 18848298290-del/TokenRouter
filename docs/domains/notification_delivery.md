@@ -18,6 +18,8 @@ notification 支持这些事件：认证验证码、密码重置、通知邮箱�
 
 模板按事件和语言保存，包含内置模板、管理员覆盖、预览和占位符校验。HTML 变量默认转义，原始 HTML 只允许明确授权的占位符。用户自定义模板缺失或校验失败时，使用选定语言的内置模板。SMTP 发送失败或结果不明时，自动投递停止重发。Ops 提供报告的实际摘要和详情，预览用的样例数据不会出现在实际报告里。
 
+充值成功和余额不足通知使用账户余额的展示单位。预览和发送都读取 `balance_unit_symbol`，`balance_unit_name` 按邮件语言解析；缺少或空白设置分别使用 `$` 和 `USD`。这两个变量可用于自定义模板，金额变量仍保留原来的数值文本。旧模板中紧贴 `current_balance`、`recharge_amount` 或 `threshold` 占位符的 `$` 前缀在渲染时改用配置符号，数据库中的模板正文保持原样。提供商额度和上游钱包通知使用其自身的计量单位。
+
 上游余额提醒使用 `provider.upstream_balance_low`，包含提供商名称、ID、余额、阈值、单位和观测时间，模板支持英文与简体中文。provider 模块用 PostgreSQL 轮次认领控制重复执行，调用通知服务时省略来源标记，每轮可以发送一次，SMTP 失败本轮不重试。规则见[钱包余额邮件提醒](../interfaces/upstream_usage.md#钱包余额邮件提醒)。
 
 提供商额度告警使用 `provider.quota_alert`；用户审核封禁仍使用 `content_moderation.account_disabled`，管理端按相同事件名展示本地化文案。

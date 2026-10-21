@@ -1,8 +1,17 @@
 <template>
   <div class="card p-4">
-    <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
-      {{ t('payment.admin.purchaseDistribution') }}
-    </h3>
+    <div class="mb-4 flex flex-wrap items-end justify-between gap-2">
+      <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+        {{ t('payment.admin.purchaseDistribution') }}
+      </h3>
+      <Select
+        v-if="currencyOptions.length > 0"
+        v-model="selectedCurrency"
+        :options="currencyOptions"
+        :aria-label="t('payment.admin.purchaseCurrency')"
+        class="w-32"
+      />
+    </div>
     <div
       v-if="!items?.length"
       class="flex h-48 items-center justify-center text-sm text-gray-500 dark:text-gray-400"
@@ -56,7 +65,7 @@
                 </div>
               </td>
               <td class="py-2 text-right font-medium text-gray-900 dark:text-white">
-                ${{ formatMoney(item.amount) }}
+                {{ formatMoney(item.amount) }}
               </td>
               <td class="py-2 text-right text-gray-600 dark:text-gray-400">
                 {{ item.count.toLocaleString() }}
@@ -70,19 +79,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, type TooltipItem } from 'chart.js'
 import { Doughnut } from 'vue-chartjs'
 import { externalTooltipHandler, hideExternalTooltip } from '@/utils/chartExternalTooltip'
 import { CHART_PALETTE } from '@/composables/useChartTheme'
 import type { DashboardStats } from '@/api/payment.types'
+import Select from '@/components/common/Select.vue'
 
 // PurchaseDistributionChart.vue displays payment purchase distribution as amount and count
 // doughnuts alongside detail rows. Both charts derive labels, colors, and dataset
 // positions from the same sorted item sequence. Amount determines ordering first, with
 // count resolving equal amounts, so a row's color identifies the same purchase category in
-// either chart.
+// either chart. Currency selection filters both charts and the table before computing
+// totals, so monetary percentages compare purchases in the same payment currency.
 //
 // Chart tooltip percentages use the total of the active dataset, which makes amount shares
 // and purchase-count shares distinct. Balance purchases receive a translated label even
@@ -108,17 +119,41 @@ const props = defineProps<{
   items: PurchaseDistributionItem[] /* ordered display item collection */
 }>()
 
+// currencyOptions lists observed payment currencies, requestedCurrency retains the user's
+// selection, and selectedCurrency resolves the visible unit. A refreshed list that omits
+// the requested selection displays its first available currency.
+const currencyOptions = computed(() =>
+  [...new Set(props.items.map((item) => item.currency))]
+    .sort()
+    .map((currency) => ({ label: currency, value: currency })),
+)
+const requestedCurrency = ref('')
+const selectedCurrency = computed({
+  get: () =>
+    currencyOptions.value.some((option) => option.value === requestedCurrency.value)
+      ? requestedCurrency.value
+      : currencyOptions.value[0]?.value || '',
+  set: (value: string) => {
+    requestedCurrency.value = value
+    // Currency changes replace the hovered dataset, so remove its external tooltip before
+    // another chart interaction renders a value from the selected currency.
+    hideExternalTooltip()
+  },
+})
+
 // chartColors shares the dashboard palette across amount charts, count charts, and detail
 // row markers for each sorted category.
 const chartColors = CHART_PALETTE
 
-// sortedItems sorts a copied array by amount and then count so parent data remains
-// unchanged during chart preparation.
+// sortedItems filters the selected currency before sorting amounts and counts. Both chart
+// totals therefore use observations in one currency while parent data remains unchanged.
 const sortedItems = computed(() => {
-  return [...(props.items || [])].sort((a, b) => {
-    if (b.amount === a.amount) return b.count - a.count
-    return b.amount - a.amount
-  })
+  return props.items
+    .filter((item) => item.currency === selectedCurrency.value)
+    .sort((a, b) => {
+      if (b.amount === a.amount) return b.count - a.count
+      return b.amount - a.amount
+    })
 })
 
 // amountChartData assigns purchase amounts to the shared sorted category labels and colors
@@ -147,9 +182,9 @@ const countChartData = computed(() => ({
   ],
 }))
 
-// amountChartOptions formats tooltip values as dollar amounts while the shared chart
-// factory computes this dataset percentage.
-const amountChartOptions = computed(() => makeChartOptions((value) => `$${formatMoney(value)}`))
+// amountChartOptions formats tooltip values in the selected currency while the shared
+// chart factory computes this currency's dataset percentage.
+const amountChartOptions = computed(() => makeChartOptions(formatMoney))
 // countChartOptions formats tooltip values as localized counts while the shared chart
 // factory computes this dataset percentage.
 const countChartOptions = computed(() => makeChartOptions((value) => value.toLocaleString()))
@@ -193,18 +228,17 @@ function displayLabel(item: PurchaseDistributionItem): string {
   return item.label || t('payment.admin.subscriptionOrder')
 }
 
-// distributionKey combines purchase kind with plan identity for repeated detail rows. A
-// missing plan identifier uses its label, then its index, so unlabeled entries still
-// receive a key.
+// distributionKey combines payment currency, purchase kind, and plan identity for detail
+// rows. A missing plan identifier uses its label, then its index, so unnamed entries still
+// receive a key within their currency.
 function distributionKey(item: PurchaseDistributionItem, index: number): string {
-  return `${item.type}-${item.plan_id || item.label || index}`
+  return `${item.currency}-${item.type}-${item.plan_id || item.label || index}`
 }
 
-// formatMoney renders a purchase amount with two decimal places for chart details and
-// tooltips. Falsy inputs, including NaN, use zero before numeric conversion; the returned
-// text has no currency symbol.
+// formatMoney renders purchase amounts with their payment currency code. Two decimal
+// places match the dashboard aggregate precision, and the code distinguishes currencies
+// that share a symbol, such as USD and HKD. Falsy numeric values display zero.
 function formatMoney(value: number): string {
-  // Displayed purchase amounts use two decimal places for the chart details.
-  return Number(value || 0).toFixed(2)
+  return `${selectedCurrency.value} ${Number(value || 0).toFixed(2)}`
 }
 </script>

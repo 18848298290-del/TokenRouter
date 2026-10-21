@@ -314,7 +314,7 @@ export default {
     customCodeTooLong: 'Redeem codes must be 32 characters or fewer',
     customCodeCountHint: 'When a custom code is set, the count is fixed at 1.',
     codeType: 'Code Type',
-    amount: 'Amount',
+    amount: 'Amount ({unitName})',
     value: 'Value',
     maxUses: 'Redemption Limit',
     maxUsesHint: 'Set to 0 for unlimited redemptions.',

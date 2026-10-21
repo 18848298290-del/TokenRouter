@@ -329,7 +329,7 @@ export default {
       groupMultiplier: {
         title: '💰 3. Rate Multiplier',
         description:
-          '<div style="line-height: 1.7;"><p style="margin-bottom: 12px;">Set the billing multiplier to control user charges.</p><div style="padding: 8px 12px; background: var(--tour-warning-bg); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 13px; margin-bottom: 12px;"><b>⚙️ Billing Rules:</b><ul style="margin: 8px 0 0 16px;"><li><b>1.0</b> - Original price (cost price)</li><li><b>1.5</b> - User consumes $1, charged $1.5</li><li><b>2.0</b> - User consumes $1, charged $2</li><li><b>0.8</b> - Subsidy mode (loss-making)</li></ul></div><p style="font-size: 13px; color: var(--tour-muted-color);">Recommend setting test group to 1.0</p></div>',
+          '<div style="line-height: 1.7;"><p style="margin-bottom: 12px;">Set the billing multiplier to control user charges.</p><div style="padding: 8px 12px; background: var(--tour-warning-bg); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 13px; margin-bottom: 12px;"><b>⚙️ Billing Rules:</b><ul style="margin: 8px 0 0 16px;"><li><b>1.0</b> - Original price (cost price)</li><li><b>1.5</b> - Charge 1.5 times the base cost</li><li><b>2.0</b> - Charge 2 times the base cost</li><li><b>0.8</b> - Subsidy mode (loss-making)</li></ul></div><p style="font-size: 13px; color: var(--tour-muted-color);">Recommend setting test group to 1.0</p></div>',
         nextBtn: 'Next',
       },
       groupExclusive: {
@@ -801,6 +801,7 @@ export default {
       revenue: 'Revenue',
       dailyRevenue: 'Daily Revenue',
       paymentDistribution: 'Payment Distribution',
+      purchaseCurrency: 'Currency',
       purchaseDistribution: 'Plan / Pay-As-You-Go Purchases',
       purchaseItem: 'Purchase Item',
       amountShare: 'Amount Share',

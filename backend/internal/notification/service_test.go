@@ -26,6 +26,89 @@ type localeDelivery struct {
 	count                   int // recorded send count
 }
 
+// service_test.go exercises notification rendering, recipient language selection,
+// stored overrides, and coordinated delivery. In-memory settings and captured
+// messages verify customer-visible content while local SMTP fixtures cover the
+// delivery outcomes used by deduplication and retry decisions.
+
+// TestBalanceNotificationDisplayUnits sends both account balance events in both
+// supported languages. It verifies configured symbols in actual delivery and
+// preview, localized names in saved templates, and compatibility with old dollar prefixes.
+func TestBalanceNotificationDisplayUnits(t *testing.T) {
+	for _, event := range []string{NotificationEmailEventBalanceRechargeSuccess, NotificationEmailEventBalanceLow} {
+		for _, language := range []string{"en", "zh-Hans"} {
+			t.Run(event+"/"+language, func(t *testing.T) {
+				ctx := context.Background()
+				repo := mailtest.NewMemorySettings()
+				require.NoError(t, repo.SetMultiple(ctx, map[string]string{
+					"balance_unit_symbol":         " C& ",
+					"balance_unit_name":           "Credits",
+					"balance_unit_name_localized": `{"source_locale":"en","source":"Credits","source_revision":1,"translations":{"zh-Hans":{"value":"积分","source_revision":1}}}`,
+				}))
+				sender := &localeDelivery{}
+				svc := NewNotificationEmailService(repo, sender)
+				variables := map[string]string{"current_balance": "81.25", "recharge_amount": "50.00", "threshold": "100.00"}
+				require.NoError(t, svc.Send(ctx, SendRequest{Event: event, Locale: language, RecipientEmail: "units@example.com", Variables: variables}))
+				require.Contains(t, sender.body, "C&amp;81.25")
+				require.NotContains(t, sender.body, "$81.25")
+				otherAmount := "50.00"
+				if event == NotificationEmailEventBalanceLow {
+					otherAmount = "100.00"
+				}
+				require.Contains(t, sender.body, "C&amp;"+otherAmount)
+				preview, err := svc.PreviewTemplate(ctx, NotificationEmailPreviewInput{Event: event, Locale: language, Variables: variables})
+				require.NoError(t, err)
+				require.Contains(t, preview.HTML, "C&amp;81.25")
+
+				_, err = svc.UpdateTemplate(ctx, event, language, "Balance ${{ current_balance }} {{balance_unit_name}}", "<p>${{current_balance}} {{balance_unit_name}}</p>")
+				require.NoError(t, err)
+				require.NoError(t, svc.Send(ctx, SendRequest{Event: event, Locale: language, RecipientEmail: "custom@example.com", Variables: variables}))
+				name := "Credits"
+				if language == "zh-Hans" {
+					name = "积分"
+				}
+				require.Equal(t, "Balance C&81.25 "+name, sender.subject)
+				require.Equal(t, "<p>C&amp;81.25 "+name+"</p>", sender.body)
+				require.NotContains(t, variables, "balance_unit_symbol")
+			})
+		}
+	}
+}
+
+// TestBalanceNotificationDefaultUnits renders a balance message with absent and
+// whitespace-only labels. Both cases retain USD defaults without modifying the
+// caller's variable map or interpreting inserted unit text as template syntax.
+func TestBalanceNotificationDefaultUnits(t *testing.T) {
+	for _, symbol := range []string{"", " \t", "<credit>{{current_balance}}"} {
+		variables := map[string]string{"current_balance": "2.50", "balance_unit_name": " ", "balance_unit_symbol": symbol}
+		preview, err := RenderNotificationEmail(NotificationEmailEventBalanceLow, "{{balance_unit_name}}", "<p>${{current_balance}}</p>", variables, nil)
+		require.NoError(t, err)
+		require.Equal(t, "USD", preview.Subject)
+		if strings.TrimSpace(symbol) == "" {
+			require.Equal(t, "<p>$2.50</p>", preview.HTML)
+		} else {
+			require.Equal(t, "<p>&lt;credit&gt;{{current_balance}}2.50</p>", preview.HTML)
+		}
+		require.Equal(t, symbol, variables["balance_unit_symbol"])
+	}
+}
+
+// TestBalanceNotificationLegacyTemplateSize renders saved templates at both
+// source-length limits. Adding an internal unit placeholder must not reject
+// previously valid template text before its amount values are substituted.
+func TestBalanceNotificationLegacyTemplateSize(t *testing.T) {
+	amount := "${{current_balance}}"
+	subject := strings.Repeat("s", notificationEmailMaxSubjectLength-len(amount)) + amount
+	body := strings.Repeat("b", notificationEmailMaxHTMLLength-len(amount)) + amount
+	preview, err := RenderNotificationEmail(NotificationEmailEventBalanceLow, subject, body, map[string]string{
+		"balance_unit_symbol": "C",
+		"current_balance":     "2.50",
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, strings.HasSuffix(preview.Subject, "C2.50"))
+	require.True(t, strings.HasSuffix(preview.HTML, "C2.50"))
+}
+
 // TestBuildVerifyCodeEmailBody_EscapesSiteName supplies script, entity, and ordinary branding values to the verification template.
 // It verifies escaped HTML for hostile text and retention of the normal site
 // name and supplied verification code in the rendered body.

@@ -89,6 +89,9 @@ var (
 	// notificationEmailPlaceholderPattern recognizes named substitutions used
 	// by both validation and rendering when checking each event's allowed variable names.
 	notificationEmailPlaceholderPattern = regexp.MustCompile(`{{\s*([a-zA-Z][a-zA-Z0-9_]*)\s*}}`)
+	// notificationEmailBalanceDollarPattern identifies saved dollar-prefixed balance
+	// placeholders whose units follow the current account display settings during rendering.
+	notificationEmailBalanceDollarPattern = regexp.MustCompile(`\$(\{\{\s*(?:current_balance|recharge_amount|threshold)\s*\}\})`)
 	// notificationEmailLocales captures manifest language order for template
 	// listing, allowing administrator responses to follow the declared language sequence.
 	notificationEmailLocales = func() []string {
@@ -169,7 +172,7 @@ var (
 			Description:  "Optional alert sent when balance crosses the configured low-balance threshold.",
 			Category:     "billing",
 			Optional:     true,
-			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "current_balance", "threshold", "recharge_url", "unsubscribe_url"),
+			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "current_balance", "threshold", "recharge_url", "unsubscribe_url", "balance_unit_name", "balance_unit_symbol"),
 		},
 		{
 			Event:        NotificationEmailEventBalanceRechargeSuccess,
@@ -177,7 +180,7 @@ var (
 			Description:  "Sent after a balance recharge order is fulfilled.",
 			Category:     "billing",
 			Optional:     false,
-			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "recharge_amount", "current_balance", "order_id"),
+			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "recharge_amount", "current_balance", "order_id", "balance_unit_name", "balance_unit_symbol"),
 		},
 		{
 			Event:        NotificationEmailEventProviderUpstreamBalanceLow,
@@ -382,7 +385,7 @@ var (
 				Subject: "[{{site_name}}] Low balance alert",
 				HTML: notificationEmailCard("#d97706", "Low balance alert", `
 <p>Hello {{recipient_name}},</p>
-<p>Your current balance is <strong>${{current_balance}}</strong>, below the configured alert threshold of <strong>${{threshold}}</strong>.</p>
+<p>Your current balance is <strong>{{balance_unit_symbol}}{{current_balance}}</strong>, below the configured alert threshold of <strong>{{balance_unit_symbol}}{{threshold}}</strong>.</p>
 <p>Please recharge in time to avoid service interruption.</p>
 <p><a class="button" href="{{recharge_url}}">Recharge now</a></p>
 <p class="muted"><a href="{{unsubscribe_url}}">Unsubscribe from optional balance alerts</a></p>`),
@@ -391,7 +394,7 @@ var (
 				Subject: "[{{site_name}}] 余额不足提醒",
 				HTML: notificationEmailChineseCard("#d97706", "余额不足提醒", `
 <p>{{recipient_name}}，您好：</p>
-<p>您当前余额为 <strong>${{current_balance}}</strong>，已低于提醒阈值 <strong>${{threshold}}</strong>。</p>
+<p>您当前余额为 <strong>{{balance_unit_symbol}}{{current_balance}}</strong>，已低于提醒阈值 <strong>{{balance_unit_symbol}}{{threshold}}</strong>。</p>
 <p>请及时充值以免服务中断。</p>
 <p><a class="button" href="{{recharge_url}}">立即充值</a></p>
 <p class="muted"><a href="{{unsubscribe_url}}">退订此类余额提醒</a></p>`),
@@ -402,16 +405,16 @@ var (
 				Subject: "[{{site_name}}] Balance recharge successful",
 				HTML: notificationEmailCard("#16a34a", "Recharge successful", `
 <p>Hello {{recipient_name}},</p>
-<p>Your balance recharge of <strong>${{recharge_amount}}</strong> has been completed.</p>
-<p>Current balance: <strong>${{current_balance}}</strong></p>
+<p>Your balance recharge of <strong>{{balance_unit_symbol}}{{recharge_amount}}</strong> has been completed.</p>
+<p>Current balance: <strong>{{balance_unit_symbol}}{{current_balance}}</strong></p>
 <p>Order ID: {{order_id}}</p>`),
 			},
 			notificationEmailLocaleChinese: {
 				Subject: "[{{site_name}}] 余额充值成功",
 				HTML: notificationEmailChineseCard("#16a34a", "余额充值成功", `
 <p>{{recipient_name}}，您好：</p>
-<p>您的余额充值 <strong>${{recharge_amount}}</strong> 已完成。</p>
-<p>当前余额：<strong>${{current_balance}}</strong></p>
+<p>您的余额充值 <strong>{{balance_unit_symbol}}{{recharge_amount}}</strong> 已完成。</p>
+<p>当前余额：<strong>{{balance_unit_symbol}}{{current_balance}}</strong></p>
 			<p>订单号：{{order_id}}</p>`),
 			},
 		},
@@ -1188,7 +1191,7 @@ func (s *NotificationEmailService) eventInfo(event string) (NotificationEmailEve
 }
 
 // sampleVariables returns a fresh localized example map with current site branding.
-// Balance previews resolve the configured recharge link, and optional events receive
+// Balance previews resolve the configured units and recharge link, and optional events receive
 // a sample unsubscribe destination when absent. This map initializes previews
 // and runtime rendering; runtimeVariables replaces report-specific samples before delivery.
 func (s *NotificationEmailService) sampleVariables(ctx context.Context, event, languageCode string) map[string]string {
@@ -1196,6 +1199,12 @@ func (s *NotificationEmailService) sampleVariables(ctx context.Context, event, l
 	info := notificationEmailEventDefinitions[event]
 	variables := make(map[string]string, len(info.Placeholders))
 	maps.Copy(variables, notificationEmailSampleVariables(languageCode))
+	if event == NotificationEmailEventBalanceLow || event == NotificationEmailEventBalanceRechargeSuccess {
+		variables["balance_unit_name"] = locale.ReadSettingText(ctx, s.settingRepo, "balance_unit_name", "USD")
+		// Missing or unreadable symbol settings use the same dollar default as the
+		// account UI; rendering also handles empty and whitespace-only stored values.
+		variables["balance_unit_symbol"], _ = s.settingRepo.GetValue(ctx, "balance_unit_symbol")
+	}
 	if event == NotificationEmailEventBalanceLow {
 		variables["recharge_url"] = locale.ReadSettingText(ctx, s.settingRepo, "balance_low_notify_recharge_url", variables["recharge_url"])
 	}
@@ -1472,9 +1481,28 @@ func validateNotificationEmailTemplate(event, subject, htmlBody string) error {
 // ordinary _url values become empty, and subject values have CR/LF removed.
 // Callers supply an exact event identifier and keep both maps stable during
 // rendering. Unknown events with no recognized placeholders can pass validation.
+// Balance events replace dollar prefixes attached to amount placeholders in saved
+// templates, and missing unit variables use the account display defaults.
 func RenderNotificationEmail(event, subject, htmlBody string, variables map[string]string, rawHTMLVariables map[string]string) (NotificationEmailPreview, error) {
 	if err := validateNotificationEmailTemplate(event, subject, htmlBody); err != nil {
 		return NotificationEmailPreview{}, err
+	}
+	if event == NotificationEmailEventBalanceLow || event == NotificationEmailEventBalanceRechargeSuccess {
+		// Saved templates can contain the built-in dollar prefix from before unit
+		// placeholders existed. Normalize those amount prefixes without rewriting stored administrator content.
+		subject = notificationEmailBalanceDollarPattern.ReplaceAllString(subject, "{{balance_unit_symbol}}${1}")
+		htmlBody = notificationEmailBalanceDollarPattern.ReplaceAllString(htmlBody, "{{balance_unit_symbol}}${1}")
+		values := map[string]string{"balance_unit_name": "USD", "balance_unit_symbol": "$"}
+		for key, value := range variables {
+			if key == "balance_unit_name" || key == "balance_unit_symbol" {
+				value = strings.TrimSpace(value)
+				if value == "" {
+					continue
+				}
+			}
+			values[key] = value
+		}
+		variables = values
 	}
 	renderedSubject, err := renderNotificationEmailString(event, subject, variables, nil, false)
 	if err != nil {

@@ -5,8 +5,8 @@ package payment
 // Payment dashboards keep channel totals and user rankings keyed by
 // recorded currency, so their amounts retain distinct units. Current-day
 // summary values and current pending counts have different selection
-// windows from the requested historical range, and scalar purchase
-// metrics retain the raw aggregation rules of their writers.
+// windows from the requested historical range. Purchase distributions and
+// weighted unit prices retain a currency for every monetary aggregate.
 
 // OrderListParams supplies paging and optional persisted-order filters for
 // query adapters.
@@ -30,6 +30,7 @@ type OrderListParams struct {
 
 // DashboardStats retains payment totals, counts, purchase metrics, and
 // requested-range series.
+// @project-doc docs/domains/payments_and_entitlements.md#payment_statistics_units
 type DashboardStats struct {
 	// TodayAmount and TodayCount describe the current local day, while
 	// TotalAmount, TotalCount, and AvgAmount describe the requested paid
@@ -42,10 +43,10 @@ type DashboardStats struct {
 	AvgAmount   CurrencyAmounts `json:"avg_amount"`   // range average by currency
 	// AvgReasoningPointPurchaseUnitPrice and ReasoningPointPurchaseOrderCount
 	// use orders accepted by StatsPaymentDashboardReasoningPointPurchase.
-	// The ratio sums raw principal and reasoning points, then rounds
-	// to four places; it applies no cross-currency conversion.
-	AvgReasoningPointPurchaseUnitPrice float64 `json:"avg_reasoning_point_purchase_unit_price"` // raw principal per point
-	ReasoningPointPurchaseOrderCount   int     `json:"reasoning_point_purchase_order_count"`    // selected purchase record count
+	// Each currency divides paid principal after fees by purchased units
+	// and rounds to four places. The count covers all accepted currencies.
+	AvgReasoningPointPurchaseUnitPrice CurrencyAmounts `json:"avg_reasoning_point_purchase_unit_price"` // paid principal per unit by currency
+	ReasoningPointPurchaseOrderCount   int             `json:"reasoning_point_purchase_order_count"`    // selected purchase record count
 	// PendingOrders uses the store's current pending count independently
 	// of the paid-order range. The PostgreSQL adapter counts PENDING
 	// and PROCESSING orders across all users and dates.
@@ -83,18 +84,17 @@ type PaymentMethodStat struct {
 	Count  int             `json:"count"`  // matching paid-order count
 }
 
-// PurchaseDistributionStat groups paid amounts and order counts by purchase category.
+// PurchaseDistributionStat groups paid amounts and counts by currency and purchase category.
 type PurchaseDistributionStat struct {
-	Type string `json:"type"` // balance or subscription category
+	Type     string `json:"type"`     // balance or subscription category
+	Currency string `json:"currency"` // normalized payment currency code
 	// Label prefers the current plan name, then the order snapshot
 	// name, then a plan-ID or subscription label. Non-subscription
 	// orders use the balance category in StatsPurchaseDistributionKey.
 	Label  string `json:"label"`             // selected purchase display label
 	PlanID *int64 `json:"plan_id,omitempty"` // optional purchased plan identifier
-	// Amount sums PayAmount for this purchase category and rounds
-	// to two places. StatsBuildPurchaseDistribution keeps no currency
-	// key here, so a mixed-currency input retains an unconverted
-	// scalar sum.
+	// Amount sums PayAmount for this category and Currency. Separate
+	// currencies receive separate records, each rounded to two decimal places.
 	Amount float64 `json:"amount"` // summed raw channel amounts
 	Count  int     `json:"count"`  // matching purchase order count
 }

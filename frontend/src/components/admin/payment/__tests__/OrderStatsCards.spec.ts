@@ -47,7 +47,7 @@ describe('OrderStatsCards', () => {
           today_count: 2,
           total_count: 6,
           avg_amount: { CNY: 20 },
-          avg_reasoning_point_purchase_unit_price: 0.3125,
+          avg_reasoning_point_purchase_unit_price: { CNY: 0.3125, USD: 0.05 },
           reasoning_point_purchase_order_count: 4,
           daily_series: [],
           payment_methods: [],
@@ -63,7 +63,8 @@ describe('OrderStatsCards', () => {
     })
 
     expect(wrapper.text()).toContain('平均AI Credits购买单价')
-    expect(wrapper.text()).toContain('¥0.3125/AI Credits')
+    expect(wrapper.text()).toContain('CNY 0.3125/AI Credits')
+    expect(wrapper.text()).toContain('USD 0.0500/AI Credits')
     expect(wrapper.text()).toContain('4 订单')
   })
 
@@ -78,7 +79,7 @@ describe('OrderStatsCards', () => {
           today_count: 0,
           total_count: 0,
           avg_amount: {},
-          avg_reasoning_point_purchase_unit_price: 0,
+          avg_reasoning_point_purchase_unit_price: {},
           reasoning_point_purchase_order_count: 0,
           daily_series: [],
           payment_methods: [],

@@ -109,10 +109,14 @@
           <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{
             t('payment.admin.avgBalanceUnitPurchaseUnitPrice', { unitName: balanceUnitName })
           }}</p>
-          <p class="text-xl font-bold text-gray-900 dark:text-white"
-            >&yen;{{ formatUnitPrice(stats.avg_reasoning_point_purchase_unit_price) }}/{{
-              balanceUnitName
-            }}</p
+          <p
+            v-for="[currency, amount] in sortedAmounts(
+              stats.avg_reasoning_point_purchase_unit_price,
+            )"
+            :key="currency"
+            class="text-xl font-bold text-gray-900 dark:text-white"
+            >{{ formatUnitPrice(currency, amount)
+            }}<span class="inline-block text-sm font-medium">/{{ balanceUnitName }}</span></p
           >
           <p class="text-xs text-gray-500 dark:text-gray-400">
             {{ stats.reasoning_point_purchase_order_count }} {{ t('payment.admin.orders') }}
@@ -161,9 +165,10 @@ function formatMoney(currency: string, amount: number): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amount)
 }
 
-// formatUnitPrice renders a balance purchase unit price with four decimal places.
-function formatUnitPrice(value: number): string {
+// formatUnitPrice identifies the payment currency for each four-decimal balance purchase
+// price. Currency codes distinguish payments that share a displayed monetary symbol.
+function formatUnitPrice(currency: string, value: number): string {
   // Unit purchase prices retain four decimal places for fractional balance-unit costs.
-  return value.toFixed(4)
+  return `${currency} ${value.toFixed(4)}`
 }
 </script>

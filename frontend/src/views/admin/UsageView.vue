@@ -304,6 +304,7 @@ import GroupDistributionChart from '@/components/charts/GroupDistributionChart.v
 import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import type {
   AdminUsageLog,
   TrendDataPoint,
@@ -329,6 +330,8 @@ import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin
 // Translation and application notifications provide labels and request feedback for usage
 // records, filters, and export actions.
 const { t } = useI18n()
+// Export headers identify account charges and standard costs with their respective units.
+const { balanceUnitName, usdUnitName } = useBalanceDisplay()
 const appStore = useAppStore()
 // DistributionMetric selects token count or actual charge for distribution charts.
 type DistributionMetric = 'tokens' | 'actual_cost'
@@ -1021,7 +1024,8 @@ const getRequestTypeLabel = (log: AdminUsageLog): string => {
 // The first page establishes the expected total; each appended batch advances row counts
 // and sets numeric TPS precision on the corresponding spreadsheet cells. Administrator
 // columns retain provider costs, upstream identities, and diagnostic timing separately from
-// user charges. Cancellation skips saving, and final cleanup releases progress only when
+// user charges, with monetary units in column headers. Cancellation skips saving, and
+// final cleanup releases progress only when
 // the controller still belongs to this export.
 const exportToExcel = async () => {
   if (exporting.value) return
@@ -1053,15 +1057,15 @@ const exportToExcel = async () => {
       t('admin.usage.outputTokens'),
       t('admin.usage.cacheReadTokens'),
       t('admin.usage.cacheCreationTokens'),
-      t('admin.usage.inputCost'),
-      t('admin.usage.outputCost'),
-      t('admin.usage.cacheReadCost'),
-      t('admin.usage.cacheCreationCost'),
+      `${t('admin.usage.inputCost')} (${usdUnitName})`,
+      `${t('admin.usage.outputCost')} (${usdUnitName})`,
+      `${t('admin.usage.cacheReadCost')} (${usdUnitName})`,
+      `${t('admin.usage.cacheCreationCost')} (${usdUnitName})`,
       t('usage.rate'),
       t('usage.providerMultiplier'),
-      t('usage.original'),
-      t('usage.userBilled'),
-      t('usage.providerBilled'),
+      `${t('usage.original')} (${usdUnitName})`,
+      `${t('usage.userBilled')} (${balanceUnitName.value})`,
+      `${t('usage.providerBilled')} (${usdUnitName})`,
       t('usage.firstToken'),
       t('usage.ttftMode'),
       t('usage.duration'),

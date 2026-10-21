@@ -361,6 +361,7 @@ import EndpointDistributionChart from '@/components/charts/EndpointDistributionC
 import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import TeamMemberUsageCharts from '@/components/charts/TeamMemberUsageCharts.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffortMapping } from '@/utils/format'
@@ -398,6 +399,8 @@ import { COMMON_ERROR_STATUS_CODES } from '@/utils/errorBadges'
 // Translation and application notifications provide labels and request feedback for usage
 // records, filters, and export actions.
 const { t } = useI18n()
+// Export headers identify account charges and standard costs with their respective units.
+const { balanceUnitName, usdUnitName } = useBalanceDisplay()
 const appStore = useAppStore()
 
 // DistributionMetric selects token count or actual charge for distribution charts.
@@ -1032,7 +1035,8 @@ const escapeCSVValue = (value: unknown): string => {
 // Text escapes prevent delimiters and formula prefixes from changing spreadsheet
 // interpretation. Costs, request mode, and TPS follow their owning user fields and shared
 // formatters. A temporary Blob URL triggers the download and is revoked afterward;
-// settlement clears export progress.
+// settlement clears export progress. Monetary headers identify account units and USD
+// costs while each data cell retains its recorded numeric precision.
 const exportToCSV = async () => {
   if (pagination.total === 0) {
     appStore.showWarning(t('usage.noDataToExport'))
@@ -1067,8 +1071,8 @@ const exportToCSV = async () => {
       t('admin.usage.cacheReadTokens'),
       t('admin.usage.cacheCreationTokens'),
       t('usage.rate'),
-      t('usage.userBilled'),
-      t('usage.original'),
+      `${t('usage.userBilled')} (${balanceUnitName.value})`,
+      `${t('usage.original')} (${usdUnitName})`,
       t('usage.firstToken'),
       t('usage.ttftMode'),
       t('usage.duration'),

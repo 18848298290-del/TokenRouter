@@ -6,6 +6,7 @@ import (
 	"html"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/notification/contract"
@@ -31,7 +32,8 @@ const (
 	thresholdTypePercentage = "percentage"
 
 	// balanceLowEmailTemplate is the HTML template for balance low notifications.
-	// Format args: siteName, userName, userName, balance, threshold, threshold, rechargeBlock.
+	// Format args: siteName, userName, userName, formattedBalance,
+	// formattedThreshold, formattedThreshold, rechargeBlock.
 	// The recharge button is appended dynamically when rechargeURL is set.
 	balanceLowEmailTemplate = `<!DOCTYPE html>
 <html>
@@ -55,10 +57,10 @@ const (
         <div class="content">
             <p style="font-size: 18px; color: #333;">%s，您的余额不足</p>
             <p style="color: #666;">Dear %s, your balance is running low</p>
-            <div class="balance">$%.2f</div>
+            <div class="balance">%s</div>
             <div class="info">
-                <p>您的账户余额已低于提醒阈值 <strong>$%.2f</strong>。</p>
-                <p>Your account balance has fallen below the alert threshold of <strong>$%.2f</strong>.</p>
+                <p>您的账户余额已低于提醒阈值 <strong>%s</strong>。</p>
+                <p>Your account balance has fallen below the alert threshold of <strong>%s</strong>.</p>
                 <p>请及时充值以免服务中断。</p>
                 <p>Please top up to avoid service interruption.</p>
             </div>
@@ -314,7 +316,8 @@ func (s *AlertDelivery) SendQuotaAlertEmails(adminEmails []string, providerID in
 // BuildBalanceLowEmailBody formats supplied balance values and an optional recharge button into built-in HTML.
 // Callers escape userName and siteName before this direct formatting helper.
 // The recharge URL is HTML-escaped here but not scheme-validated, and numeric
-// amounts are rendered at two decimal places.
+// amounts are rendered at two decimal places. The shared notification settings
+// supply the balance symbol when available; standalone rendering uses dollars.
 func (s *AlertDelivery) BuildBalanceLowEmailBody(userName string, balance, threshold float64, siteName, rechargeURL string) string {
 	rechargeBlock := ""
 	// A supplied recharge destination adds the optional button after HTML
@@ -322,7 +325,17 @@ func (s *AlertDelivery) BuildBalanceLowEmailBody(userName string, balance, thres
 	if rechargeURL != "" {
 		rechargeBlock = fmt.Sprintf(`<a href="%s" class="recharge-btn">立即充值 / Top Up Now</a>`, html.EscapeString(rechargeURL))
 	}
-	return fmt.Sprintf(balanceLowEmailTemplate, siteName, userName, userName, balance, threshold, threshold, rechargeBlock)
+	symbol := "$"
+	if s.notificationEmailService != nil {
+		variables := s.notificationEmailService.sampleVariables(context.Background(), NotificationEmailEventBalanceLow, notificationEmailDefaultLocale)
+		if configured := strings.TrimSpace(variables["balance_unit_symbol"]); configured != "" {
+			symbol = configured
+		}
+	}
+	// Account amounts share the same two-decimal display precision.
+	formattedBalance := fmt.Sprintf("%s%.2f", html.EscapeString(symbol), balance)
+	formattedThreshold := fmt.Sprintf("%s%.2f", html.EscapeString(symbol), threshold)
+	return fmt.Sprintf(balanceLowEmailTemplate, siteName, userName, userName, formattedBalance, formattedThreshold, formattedThreshold, rechargeBlock)
 }
 
 // BuildQuotaAlertEmailBody formats provider identity, quota values, and threshold display into built-in HTML.

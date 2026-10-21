@@ -117,6 +117,10 @@ vi.mock('@/utils/format', () => ({
   formatReasoningEffort: (value: string | null | undefined) => value ?? '-',
 }))
 
+vi.mock('@/composables/useBalanceDisplay', () => ({
+  useBalanceDisplay: () => ({ balanceUnitName: { value: 'Credits' }, usdUnitName: 'USD' }),
+}))
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
@@ -353,6 +357,9 @@ describe('admin UsageView 路由筛选', () => {
     await flushPromises()
     const headers = exportMocks.headers.mock.calls[0]?.[0]?.[0] as string[]
     const rows = exportMocks.rows.mock.calls[0]?.[1] as unknown[][]
+    expect(headers).toContain('usage.userBilled (Credits)')
+    expect(headers).toContain('usage.original (USD)')
+    expect(headers).toContain('usage.providerBilled (USD)')
     const model = headers.indexOf('Upstream response model')
     const mismatch = headers.indexOf('Upstream model mismatch')
     expect(model).toBeGreaterThan(-1)

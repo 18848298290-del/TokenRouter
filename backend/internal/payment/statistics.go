@@ -16,13 +16,12 @@ import (
 // dates, so a daylight-saving day can have a different elapsed duration from
 // twenty-four hours.
 //
-// Total, average, method and user amounts keep currency groups from
-// PaymentOrderCurrency. Purchase distribution and reasoning-point unit price
-// use their supplied numeric quantities without currency conversion:
-// subscription principal comes from Amount and its positive monthly quota,
-// while balance principal comes from PayAmount minus FeeAmount. Current plan
-// names can replace snapshot labels without changing plan-ID grouping. These
-// rules distinguish display grouping from a consolidated monetary total.
+// Monetary totals, purchase distributions, and balance-unit purchase prices
+// keep currency groups from PaymentOrderCurrency. Purchase prices divide paid
+// principal after fees by credited balance or a subscription's monthly quota.
+// This keeps converted subscription payments in their channel currency while
+// plan names can change independently of plan-ID grouping. Each currency is
+// rounded independently, so consumers can display comparisons within one unit.
 
 // GetDashboardStats requests the selected number of calendar days through
 // tomorrow's midnight in the injected clock's timezone. Nonpositive days
@@ -141,65 +140,60 @@ func StatsComputeBasicStats(st *DashboardStats, orders []*Order, todayStart time
 	StatsRoundCurrencyAmounts(st.TodayAmount)
 }
 
-// StatsComputeReasoningPointPurchaseUnitPrice counts eligible point purchases
-// and computes aggregate principal divided by aggregate points to four
-// decimals. It uses StatsPaymentDashboardReasoningPointPurchase's raw numeric
-// bases without currency conversion.
+// StatsComputeReasoningPointPurchaseUnitPrice calculates average purchase prices
+// separately for each payment currency. Callers supply nonnil orders already
+// filtered by payment state and date; each call replaces the destination map
+// and contributing order count, including when no observations qualify.
 //
-// Skipped orders contribute to neither aggregate nor count. A positive total
-// point quantity writes the unit price; otherwise the existing field is
-// retained. Subscription eligibility uses monthly quota only, while
-// balance-like purchases use credited Amount and paid amount less fees. The
-// calculation therefore follows purchase snapshots and their accepted
-// comparisons, not an average of separately rounded per-order prices.
+// Each currency divides its summed principal by its summed balance units before
+// rounding. Subscription orders contribute monthly quota, and balance orders
+// contribute credited Amount, so differently sized purchases receive their
+// proportional weight without adding money from different currencies together.
 func StatsComputeReasoningPointPurchaseUnitPrice(st *DashboardStats, orders []*Order) {
-	var totalPrincipal, totalReasoningPoints float64
-	var orderCount int
+	principalTotals := make(CurrencyAmounts)
+	pointTotals := make(CurrencyAmounts)
+	st.AvgReasoningPointPurchaseUnitPrice = make(CurrencyAmounts)
+	st.ReasoningPointPurchaseOrderCount = 0
 	for _, o := range orders {
 		principal, points, ok := StatsPaymentDashboardReasoningPointPurchase(o)
 		if !ok {
 			continue
 		}
-		totalPrincipal += principal
-		totalReasoningPoints += points
-		orderCount++
+		currency := PaymentOrderCurrency(o)
+		principalTotals[currency] += principal
+		pointTotals[currency] += points
+		st.ReasoningPointPurchaseOrderCount++
 	}
-	st.ReasoningPointPurchaseOrderCount = orderCount
-	if totalReasoningPoints > 0 {
-		// Round the aggregate principal-per-point ratio to four decimals.
-		st.AvgReasoningPointPurchaseUnitPrice = math.Round(totalPrincipal/totalReasoningPoints*10000) / 10000
+	for currency, points := range pointTotals {
+		// Round each currency's weighted price to four decimal places.
+		st.AvgReasoningPointPurchaseUnitPrice[currency] = math.Round(principalTotals[currency]/points*10000) / 10000
 	}
 }
 
-// StatsPaymentDashboardReasoningPointPurchase returns principal, purchased
-// points and eligibility for a nonnil order. Subscription input uses Amount
-// and a nonnil monthly quota; other order types use PayAmount minus FeeAmount
-// and credited Amount.
+// StatsPaymentDashboardReasoningPointPurchase returns paid principal, purchased
+// balance units, and eligibility for a nonnil order. Nonpositive principal or
+// units exclude the observation; subscriptions require positive monthly quota.
 //
-// Nonpositive compared values are excluded, and daily/weekly-only or unlimited
-// subscription quotas cannot provide this metric. This helper adds no
-// finite-number validation or currency conversion. Its returned raw quantities
-// feed aggregate unit price before the final four-decimal rounding.
+// Principal uses PayAmount minus FeeAmount in the channel currency for every
+// order type. A subscription's Amount can be its unconverted plan price, so
+// using it would attach the channel currency to a different monetary quantity.
+// Balance purchases use credited Amount as their unit quantity, including any
+// configured recharge multiplier.
 func StatsPaymentDashboardReasoningPointPurchase(o *Order) (principal float64, points float64, ok bool) {
-	switch o.OrderType {
-	case OrderTypeSubscription:
-		// Use monthly snapshot quota as purchased points for this metric. Daily,
-		// weekly and unlimited quota forms lack that quantity and leave the order
-		// excluded.
-		if o.PlanSnapshot.MonthlyLimitUSD == nil || *o.PlanSnapshot.MonthlyLimitUSD <= 0 || o.Amount <= 0 {
-			return 0, 0, false
-		}
-		return o.Amount, *o.PlanSnapshot.MonthlyLimitUSD, true
-	default:
-		// Separate credited points from recharge principal by subtracting recorded
-		// fees from PayAmount. Aggregate unit price combines that principal with
-		// Amount rather than the fee-bearing gateway total.
-		principal = o.PayAmount - o.FeeAmount
-		if principal <= 0 || o.Amount <= 0 {
-			return 0, 0, false
-		}
-		return principal, o.Amount, true
+	principal = o.PayAmount - o.FeeAmount
+	if principal <= 0 {
+		return 0, 0, false
 	}
+	if o.OrderType == OrderTypeSubscription {
+		if o.PlanSnapshot.MonthlyLimitUSD == nil || *o.PlanSnapshot.MonthlyLimitUSD <= 0 {
+			return 0, 0, false
+		}
+		return principal, *o.PlanSnapshot.MonthlyLimitUSD, true
+	}
+	if o.Amount <= 0 {
+		return 0, 0, false
+	}
+	return principal, o.Amount, true
 }
 
 // StatsBuildDailySeries groups supplied PayAmount observations by paid date in
@@ -302,19 +296,21 @@ func (s *OrderQueries) StatsLoadPaymentDashboardPlanNames(ctx context.Context, o
 	return s.store.PlanNames(ctx, planIDs)
 }
 
-// StatsBuildPurchaseDistribution groups balance-like orders together and
-// subscription orders by StatsPurchaseDistributionKey, then sums raw
-// PayAmount. It receives nonnil orders and optional current plan names; its
-// scalar amount does not separate or convert currencies.
+// StatsBuildPurchaseDistribution groups paid orders by purchase category and
+// payment currency, keeping subscription plans separate within each currency.
+// Callers supply nonnil, state-filtered orders and optional current plan names.
 //
-// Each group is rounded to two decimals before sorting descending by amount,
-// with count as the secondary comparison. Equal amount/count ties retain no
-// defined map-derived order. The first order for each key supplies its label
-// metadata, while subsequent matching orders add amount and count.
+// The category key and currency jointly identify an aggregate, so payments in
+// different currencies never contribute to the same amount or share. Each
+// aggregate rounds its summed PayAmount before sorting by currency, descending
+// amount, then count. Current plan names affect display labels while category
+// identity continues to use the persisted plan identifier or snapshot name.
 func StatsBuildPurchaseDistribution(orders []*Order, planNames map[int64]string) []PurchaseDistributionStat {
 	distributionMap := make(map[string]*PurchaseDistributionStat)
 	for _, o := range orders {
 		key, item := StatsPurchaseDistributionKey(o, planNames)
+		item.Currency = PaymentOrderCurrency(o)
+		key = item.Currency + ":" + key
 		stat, ok := distributionMap[key]
 		if !ok {
 			stat = item
@@ -330,6 +326,9 @@ func StatsBuildPurchaseDistribution(orders []*Order, planNames map[int64]string)
 		items = append(items, *stat)
 	}
 	sort.Slice(items, func(i, j int) bool {
+		if items[i].Currency != items[j].Currency {
+			return items[i].Currency < items[j].Currency
+		}
 		if items[i].Amount == items[j].Amount {
 			return items[i].Count > items[j].Count
 		}

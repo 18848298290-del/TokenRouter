@@ -293,7 +293,7 @@
           <label class="input-label">
             {{
               generateForm.type === 'balance'
-                ? t('admin.redeem.amount')
+                ? t('admin.redeem.amount', { unitName: balanceUnitName })
                 : t('admin.redeem.columns.value')
             }}
           </label>
@@ -419,7 +419,7 @@
           <label class="input-label">
             {{
               editingCode.type === 'balance'
-                ? t('admin.redeem.amount')
+                ? t('admin.redeem.amount', { unitName: balanceUnitName })
                 : t('admin.redeem.columns.value')
             }}
           </label>
@@ -680,7 +680,7 @@ import SettingToggleRow from '@/components/common/settings/SettingToggleRow.vue'
 const { t } = useI18n()
 const appStore = useAppStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
-const { formatBalanceAmount } = useBalanceDisplay()
+const { balanceUnitName, formatBalanceAmount } = useBalanceDisplay()
 
 // PlanOption describes a subscription choice with its numeric identifier and optional
 // description.
