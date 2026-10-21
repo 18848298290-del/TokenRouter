@@ -163,7 +163,9 @@
   <!-- Affiliate rebate settings. -->
   <SettingsCard
     :title="t('admin.settings.features.affiliate.title')"
-    :description="t('admin.settings.features.affiliate.description')"
+    :description="
+      t('admin.settings.features.affiliate.description', { unitName: previewBalanceUnitName })
+    "
   >
     <SettingsSection>
       <SettingToggleRow
@@ -203,7 +205,11 @@
                 >
               </div>
               <p class="input-hint">
-                {{ t('admin.settings.features.affiliate.rebateRateHint') }}
+                {{
+                  t('admin.settings.features.affiliate.rebateRateHint', {
+                    unitName: previewBalanceUnitName,
+                  })
+                }}
               </p>
             </div>
             <div>
@@ -257,7 +263,11 @@
                 class="input"
               />
               <p class="input-hint">
-                {{ t('admin.settings.features.affiliate.perInviteeCapDesc') }}
+                {{
+                  t('admin.settings.features.affiliate.perInviteeCapDesc', {
+                    unitName: previewBalanceUnitName,
+                  })
+                }}
               </p>
             </div>
           </div>

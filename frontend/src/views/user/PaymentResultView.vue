@@ -106,14 +106,22 @@
               }}</span>
             </div>
             <div
-              v-if="hasAmountFields(order) && order.amount !== order.pay_amount"
+              v-if="
+                hasAmountFields(order) &&
+                (order.amount !== order.pay_amount ||
+                  (order.amount_currency && order.amount_currency !== order.currency))
+              "
               class="flex justify-between"
             >
               <span class="text-gray-500 dark:text-gray-400">{{
-                t('payment.orders.creditedAmount')
+                t(
+                  order.order_type === 'balance'
+                    ? 'payment.orders.creditedAmount'
+                    : 'payment.orders.amount',
+                )
               }}</span>
               <span class="font-medium text-gray-900 dark:text-white">{{
-                formatOrderAmount(order.amount, order.order_type)
+                formatOrderAmount(order.amount, order.order_type, order.amount_currency)
               }}</span>
             </div>
             <div v-if="hasPaymentType(order)" class="flex justify-between">
@@ -326,10 +334,11 @@ function normalizedOrderPaymentType(paymentType: string): string {
 }
 
 /**
- * formatGatewayAmount renders an order charge in its resolved currency and locale.
+ * formatGatewayAmount renders a monetary value in the supplied currency or the resolved
+ * payment currency. Empty overrides use the payment currency, and locale follows the page.
  */
-function formatGatewayAmount(value: number): string {
-  return formatPaymentAmount(value, currency.value, localeCode.value)
+function formatGatewayAmount(value: number, amountCurrency?: string): string {
+  return formatPaymentAmount(value, amountCurrency || currency.value, localeCode.value)
 }
 
 /**
@@ -620,12 +629,13 @@ function scheduleStatusRefresh(
 
 /**
  * formatOrderAmount formats balance purchases in account units and subscriptions in
- * payment currency.
+ * their saved price currency. An absent price currency uses the resolved payment
+ * currency, allowing older order responses to retain their monetary labels.
  */
-function formatOrderAmount(amount: number, orderType: string): string {
+function formatOrderAmount(amount: number, orderType: string, amountCurrency?: string): string {
   return orderType === 'balance'
     ? formatBalanceAmount(amount, { fractionDigits: 2 })
-    : formatGatewayAmount(amount)
+    : formatGatewayAmount(amount, amountCurrency)
 }
 
 onMounted(async () => {

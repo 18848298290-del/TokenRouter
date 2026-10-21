@@ -229,7 +229,7 @@ export default {
       affiliate: {
         title: '邀请返利',
         description:
-          '老用户邀请新用户注册，新用户购买推理积分后，老用户按实际购买积分数获得返利积分。',
+          '老用户邀请新用户注册，新用户购买 {unitName} 后，老用户按实际购买数量获得返利。',
         enabled: '启用邀请返利',
         enabledHint: '关闭后隐藏邀请返利入口，注册时不再绑定邀请码，新充值不再产生返利。',
         adminRechargeRebate: '管理员充值参与返利',
@@ -237,13 +237,13 @@ export default {
           '开启后，通过“用户管理 > 充值”增加的余额会产生邀请返利；设置余额和扣款不参与返利。',
         rebateRate: '全局返利比例',
         rebateRateHint:
-          '按被邀请人实际购买的推理积分数计算，0-100。例如购买 1,000 积分且比例为 20%，返利 200 积分。',
+          '按被邀请人实际购买的 {unitName} 计算，范围为 0-100。例如购买 1,000 {unitName}，比例为 20% 时返利 200 {unitName}。',
         freezeHours: '返利冻结期（小时）',
         freezeHoursDesc: '新产生的返利在冻结期内不可转出。0 = 不冻结。',
         durationDays: '返利有效期（天）',
         durationDaysDesc: '被邀请用户注册后多少天内的充值产生返利。0 = 永久有效。',
         perInviteeCap: '单人返利上限（{unitName}）',
-        perInviteeCapDesc: '每个被邀请用户最多产生的返利积分总量，单位与余额一致。0 = 无上限。',
+        perInviteeCapDesc: '每个被邀请用户最多产生的返利总量，单位为 {unitName}。0 = 无上限。',
       },
     },
     registration: {
@@ -543,9 +543,9 @@ export default {
       unitSymbol: '余额符号',
       unitSymbolPlaceholder: '$',
       unitSymbolHint: '用于金额前缀展示，例如 $、¥、C。',
-      reasoningPointRmbUnitPrice: '推理积分人民币单价',
+      reasoningPointRmbUnitPrice: '{unitName} 人民币单价',
       reasoningPointRmbUnitPricePlaceholder: '例如 1',
-      reasoningPointRmbUnitPriceHint: '用于模型广场折扣展示，表示 1 推理积分折合多少人民币。',
+      reasoningPointRmbUnitPriceHint: '用于模型广场折扣展示，表示 1 {unitName} 折合多少人民币。',
       usdExchangeRate: '美元汇率',
       usdExchangeRatePlaceholder: '例如 7.2',
       usdExchangeRateHint: '用于模型广场折扣展示，表示 1 USD 折合多少人民币。',
@@ -895,8 +895,9 @@ export default {
       maxAmount: '最高金额',
       dailyLimit: '每日限额',
       balanceRechargeMultiplier: '余额充值倍率',
-      balanceRechargeMultiplierHint: '用户每支付 1 CNY 可获得多少 {unitName} 余额',
-      balanceRechargePreview: '预览：1 CNY = {amount} {unitName}',
+      balanceRechargeMultiplierHint:
+        '按充值金额的数值计算到账 {unitName}，此倍率适用于所有支付币种。',
+      balanceRechargePreview: '例如充值金额为 1，到账 {amount} {unitName}（适用于所有支付币种）。',
       subscriptionUsdToCnyRate: '订阅 CNY 换算汇率',
       subscriptionUsdToCnyRateHint:
         'CNY 支付通道下，套餐每 1 USD 价格收取多少 CNY（如 7.15）。0 或留空 = 不换算，订阅按 price 数值直接收款。启用后所有套餐 price 必须按 USD 定价',

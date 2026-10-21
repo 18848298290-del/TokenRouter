@@ -51,8 +51,11 @@ type ForceExpireOrderRequest struct {
 // AdminPaymentOrderResult selects administrator order fields while omitting
 // the merchant identity snapshot.
 type AdminPaymentOrderResult struct {
-	ID     int64 `json:"id"`      // local payment order identity.
-	UserID int64 `json:"user_id"` // owning buyer numeric identity.
+	// AmountCurrency labels subscription Amount; balance quantities use the
+	// site's configurable unit and therefore omit this monetary currency field.
+	AmountCurrency string `json:"amount_currency,omitempty"`
+	ID             int64  `json:"id"`      // local payment order identity.
+	UserID         int64  `json:"user_id"` // owning buyer numeric identity.
 	// stored buyer email address.
 	UserEmail string `json:"user_email,omitempty"`
 	// stored buyer display name.
@@ -422,7 +425,7 @@ func AdminSanitizeAdminPaymentOrdersForResponse(orders []*payment.Order) []*Admi
 }
 
 // AdminSanitizeAdminPaymentOrderForResponse selects administrator fields and
-// resolves currency for an order, returning nil for nil input. Merchant
+// resolves price and payment currencies, returning nil for nil input. Merchant
 // ProviderSnapshot is omitted, while BillingSnapshot, optional scalar pointers
 // and PlanSnapshot quota pointers remain shared through serialization.
 func AdminSanitizeAdminPaymentOrderForResponse(order *payment.Order) *AdminPaymentOrderResult {
@@ -430,6 +433,7 @@ func AdminSanitizeAdminPaymentOrderForResponse(order *payment.Order) *AdminPayme
 		return nil
 	}
 	return &AdminPaymentOrderResult{
+		AmountCurrency:       payment.PaymentOrderAmountCurrency(order),
 		ID:                   order.ID,
 		UserID:               order.UserID,
 		UserEmail:            order.UserEmail,

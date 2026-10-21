@@ -848,42 +848,43 @@ func ClassifyCreatePaymentError(req CreateOrderRequest, providerKey string, err 
 // type. Status is literal pending even if the returned order observation has
 // progressed to another state.
 //
-// Order identity, fees and expiration come from persistence, while gateway
-// PayAmount uses the caller's calculated value and current initiation details
+// Order identity, price currency, fees and expiration come from persistence.
+// Gateway PayAmount uses the caller's calculated value and current initiation details
 // come from the provider response. OAuth and JSAPI pointers remain shared, and
 // JSAPI plus JSAPIPayload reference the same object. Resume token and Alipay
 // deep-link availability are assigned by InvokeProvider afterward; this helper
 // does not requery current state.
 func BuildCreateOrderResponse(order *Order, req CreateOrderRequest, payAmount float64, sel *InstanceSelection, pr *CreatePaymentResponse, resultType CreatePaymentResultType) *CreateOrderResponse {
 	return &CreateOrderResponse{
-		OrderID:       order.ID,
-		Amount:        order.Amount,
-		PayAmount:     payAmount,
-		FeeRate:       order.FeeRate,
-		FeeFixed:      order.FeeFixed,
-		FeeRateAmount: order.FeeRateAmount,
-		FeeAmount:     order.FeeAmount,
-		Status:        OrderStatusPending,
-		ResultType:    resultType,
-		PaymentType:   req.PaymentType,
-		OutTradeNo:    order.OutTradeNo,
-		PayURL:        pr.PayURL,
-		QRCode:        pr.QRCode,
-		ClientSecret:  pr.ClientSecret,
-		CustomerID:    pr.CustomerID,
-		InvoiceID:     pr.InvoiceID,
-		InvoiceURL:    pr.InvoiceURL,
-		InvoicePDF:    pr.InvoicePDF,
-		InvoiceStatus: pr.InvoiceStatus,
-		IntentID:      pr.IntentID,
-		Currency:      pr.Currency,
-		CountryCode:   pr.CountryCode,
-		PaymentEnv:    pr.PaymentEnv,
-		OAuth:         pr.OAuth,
-		JSAPI:         pr.JSAPI,
-		JSAPIPayload:  pr.JSAPI,
-		ExpiresAt:     order.ExpiresAt,
-		PaymentMode:   sel.PaymentMode,
+		OrderID:        order.ID,
+		Amount:         order.Amount,
+		AmountCurrency: PaymentOrderAmountCurrency(order),
+		PayAmount:      payAmount,
+		FeeRate:        order.FeeRate,
+		FeeFixed:       order.FeeFixed,
+		FeeRateAmount:  order.FeeRateAmount,
+		FeeAmount:      order.FeeAmount,
+		Status:         OrderStatusPending,
+		ResultType:     resultType,
+		PaymentType:    req.PaymentType,
+		OutTradeNo:     order.OutTradeNo,
+		PayURL:         pr.PayURL,
+		QRCode:         pr.QRCode,
+		ClientSecret:   pr.ClientSecret,
+		CustomerID:     pr.CustomerID,
+		InvoiceID:      pr.InvoiceID,
+		InvoiceURL:     pr.InvoiceURL,
+		InvoicePDF:     pr.InvoicePDF,
+		InvoiceStatus:  pr.InvoiceStatus,
+		IntentID:       pr.IntentID,
+		Currency:       pr.Currency,
+		CountryCode:    pr.CountryCode,
+		PaymentEnv:     pr.PaymentEnv,
+		OAuth:          pr.OAuth,
+		JSAPI:          pr.JSAPI,
+		JSAPIPayload:   pr.JSAPI,
+		ExpiresAt:      order.ExpiresAt,
+		PaymentMode:    sel.PaymentMode,
 	}
 }
 

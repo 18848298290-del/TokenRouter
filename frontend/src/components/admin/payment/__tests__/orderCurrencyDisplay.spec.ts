@@ -88,4 +88,25 @@ describe('admin order currency display', () => {
     expect(text).toContain('$20.00')
     expect(text).toContain('$80.00')
   })
+  // Subscription face quantities and collected payment can use different currencies. The
+  // dialog must label its face amounts with USD while keeping the channel charge in CNY.
+  it('keeps face quantities separate from the payment currency', () => {
+    const wrapper = mount(AdminRefundDialog, {
+      props: {
+        show: true,
+        order: orderFactory({
+          amount: 10,
+          amount_currency: 'USD',
+          pay_amount: 70,
+          currency: 'CNY',
+          refund_amount: 0,
+        }),
+        userBalance: 200,
+      },
+      global: { stubs: { BaseDialog: BaseDialogStub } },
+    })
+    expect(wrapper.text()).toContain('$10.00')
+    expect(wrapper.text()).toContain('¥70.00')
+    expect(wrapper.text()).not.toContain('¥10.00')
+  })
 })

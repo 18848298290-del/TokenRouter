@@ -31,8 +31,20 @@
         >
           ({{ t('payment.orders.fee') }} {{ row.fee_rate }}%)
         </span>
-        <div v-if="row.amount !== row.pay_amount" class="text-xs text-gray-500">
-          {{ t('payment.orders.creditedAmount') }}: {{ formatOrderAmount(row.amount, row) }}
+        <div
+          v-if="
+            row.amount !== row.pay_amount ||
+            (row.amount_currency && row.amount_currency !== row.currency)
+          "
+          class="text-xs text-gray-500"
+        >
+          {{
+            t(
+              row.order_type === 'balance'
+                ? 'payment.orders.creditedAmount'
+                : 'payment.orders.amount',
+            )
+          }}: {{ formatOrderAmount(row.amount, row) }}
         </div>
       </div>
     </template>
@@ -67,7 +79,7 @@ import { formatPaymentAmount } from '@/utils/payment/currency'
 /**
  * OrderTable.vue presents payment orders with currency-aware amounts, status badges, and
  * caller-provided row actions. Balance purchase quantities use the account balance unit
- * while gateway charges and subscription quantities use the currency stored on each order.
+ * while gateway charges and subscription prices retain their respective recorded currencies.
  */
 
 const { t } = useI18n()
@@ -86,11 +98,15 @@ function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleString(getLocale())
 }
 
-/** formatOrderAmount uses the configured balance unit for recharge quantities and the gateway currency for subscription purchase amounts. */
+/**
+ * formatOrderAmount uses account units for recharge quantities and saved price currency
+ * for subscriptions. Responses without a price currency use their recorded payment
+ * currency so historical orders remain displayable.
+ */
 function formatOrderAmount(amount: number, order: PaymentOrder): string {
   return order.order_type === 'balance'
     ? formatBalanceAmount(amount, { fractionDigits: 2 })
-    : formatGatewayAmount(amount, order.currency)
+    : formatGatewayAmount(amount, order.amount_currency || order.currency)
 }
 
 /**

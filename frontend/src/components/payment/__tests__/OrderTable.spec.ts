@@ -109,7 +109,30 @@ describe('OrderTable', () => {
     })
 
     expect(wrapper.text()).toContain('$108.00')
-    expect(wrapper.text()).toContain('payment.orders.creditedAmount: $100.00')
+    expect(wrapper.text()).toContain('payment.orders.amount: $100.00')
     expect(wrapper.text()).not.toContain('¥108.00')
+  })
+  // A converted subscription uses different units for its face price and collected money.
+  // Both remain visible even when their numeric values happen to be equal.
+  it.each([70, 10])('separates USD subscription prices from CNY payments of %s', (paid) => {
+    const wrapper = mount(OrderTable, {
+      props: {
+        orders: [
+          {
+            ...baseOrder,
+            order_type: 'subscription',
+            amount: 10,
+            amount_currency: 'USD',
+            pay_amount: paid,
+            currency: 'CNY',
+          },
+        ],
+        loading: false,
+      },
+      global: { stubs: { OrderStatusBadge: true } },
+    })
+    expect(wrapper.text()).toContain('payment.orders.amount: $10.00')
+    expect(wrapper.text()).toContain(`¥${paid.toFixed(2)}`)
+    expect(wrapper.text()).not.toContain('payment.orders.creditedAmount')
   })
 })

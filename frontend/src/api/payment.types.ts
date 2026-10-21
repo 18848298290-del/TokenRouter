@@ -125,6 +125,9 @@ export interface PaymentOrder {
   id: number // Record numeric identifier.
   user_id: number // Owning account identifier.
   amount: number // Purchased resource face amount.
+  // Subscription face amounts use their saved plan currency. Balance orders omit
+  // this field because the site settings define their display unit.
+  amount_currency?: string // Subscription price currency.
   pay_amount: number // Provider charge amount.
   currency?: string // Payment currency code.
   fee_rate: number // Proportional payment fee.
@@ -292,7 +295,8 @@ export interface WechatJSAPIPayload {
 // flow.
 export interface CreateOrderResult {
   order_id: number // Created order identifier.
-  amount: number // Monetary payment amount.
+  amount: number // Credited balance or subscription face amount.
+  amount_currency?: string // Persisted subscription price currency.
   pay_url?: string // Hosted checkout URL.
   qr_code?: string // QR-code payment content.
   client_secret?: string // Provider payment confirmation secret.

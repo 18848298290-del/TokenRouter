@@ -16,7 +16,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// Administrator displays must preserve selected invoice/billing values while
+// admin_test.go verifies administrator order responses, dashboard ranges,
+// and refund recovery. Administrator displays retain invoice/billing values while
 // withholding internal merchant snapshot data. These tests also use the
 // injected calendar across a daylight-saving date and verify that missing
 // refund recovery evidence reaches HTTP as a conflict requiring manual
@@ -155,4 +156,17 @@ func (missingRefundRecovery) Order(context.Context, int64) (*payment.Order, erro
 // HTTP test order.
 func (missingRefundRecovery) RefundRecovery(context.Context, *payment.Order) (*payment.RefundReceipt, error) {
 	return nil, payment.RefundRecoveryRequired("preparation record unavailable")
+}
+
+// TestAdminOrderResultSeparatesPriceCurrency supplies a USD plan collected in
+// CNY. The response must retain the original price and payment amounts while
+// publishing the correct currency for each quantity.
+func TestAdminOrderResultSeparatesPriceCurrency(t *testing.T) {
+	order := &payment.Order{OrderType: payment.OrderTypeSubscription, Amount: 10, PayAmount: 72, FeeAmount: 2, ProviderSnapshot: map[string]any{"currency": "CNY"}}
+	order.PlanSnapshot.Currency = "USD"
+	result := AdminSanitizeAdminPaymentOrderForResponse(order)
+	require.Equal(t, "USD", result.AmountCurrency)
+	require.Equal(t, "CNY", result.Currency)
+	require.Equal(t, 10.0, result.Amount)
+	require.Equal(t, 72.0, result.PayAmount)
 }

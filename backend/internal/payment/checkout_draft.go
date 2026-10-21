@@ -33,8 +33,9 @@ import (
 //
 // Provider identity and display locale/subject are recorded together with
 // optional billing details. A plan contributes its supplied display fields,
-// price currency, converted day duration, and quota pointers. The final
-// Order.Clone detaches its recognized mutable snapshot shapes and quota
+// price currency, converted day duration, and quota pointers. An unlabeled price
+// records USD when enabled CNY conversion applies. The final Order.Clone
+// detaches its recognized mutable snapshot shapes and quota
 // pointers before the value is returned. Nonpositive configured timeout
 // selects ConfigDefaultOrderTimeoutMin.
 func BuildCheckoutDraft(req CreateOrderRequest, user *Buyer, plan *SubscriptionPlan, cfg *PaymentConfig, amount, limitAmount float64, fee FeeBreakdown, sel *InstanceSelection) CheckoutDraft {
@@ -82,6 +83,13 @@ func BuildCheckoutDraft(req CreateOrderRequest, user *Buyer, plan *SubscriptionP
 			DailyLimitUSD:   plan.DailyLimitUSD,
 			WeeklyLimitUSD:  plan.WeeklyLimitUSD,
 			MonthlyLimitUSD: plan.MonthlyLimitUSD,
+		}
+		if strings.TrimSpace(order.PlanSnapshot.Currency) == "" &&
+			NormalizeSubscriptionUSDToCNYRate(cfg.SubscriptionUSDToCNYRate) > 0 &&
+			PaymentOrderCurrency(&order) == "CNY" {
+			// Enabled CNY conversion interprets an unlabeled subscription price as USD.
+			// Record that unit now so later displays do not depend on current settings.
+			order.PlanSnapshot.Currency = "USD"
 		}
 	}
 	timeout := cfg.OrderTimeoutMin

@@ -22,6 +22,8 @@ import (
 // provider binding, and paid-amount checks to their owning callers.
 // Currency lookup normalizes the recorded currency when possible and
 // uses the compatibility default when the snapshot cannot supply one.
+// Subscription face amounts retain their plan currency separately from the
+// channel currency used for collected money and payment fees.
 
 // OrderProviderSnapshot retains typed checkout merchant, channel, and currency
 // attributes.
@@ -252,4 +254,22 @@ func PaymentOrderCurrency(order *Order) string {
 	// the compatibility default lets refund and reporting consumers retain
 	// their existing currency interpretation for that row.
 	return DefaultPaymentCurrency
+}
+
+// PaymentOrderAmountCurrency returns the saved subscription price currency.
+// Balance orders and nil inputs return empty because their face amounts use
+// account units. Historical subscriptions without a usable plan currency use
+// their recorded payment currency, matching their existing display convention.
+func PaymentOrderAmountCurrency(order *Order) string {
+	if order == nil || order.OrderType != OrderTypeSubscription {
+		return ""
+	}
+	if raw := strings.TrimSpace(order.PlanSnapshot.Currency); raw != "" {
+		if currency, err := NormalizePaymentCurrency(raw); err == nil {
+			return currency
+		}
+	}
+	// Older snapshots may omit the price currency. Keep their recorded payment
+	// unit because current plan settings cannot establish the historical price denomination.
+	return PaymentOrderCurrency(order)
 }

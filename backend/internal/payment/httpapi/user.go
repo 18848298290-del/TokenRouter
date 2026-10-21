@@ -191,12 +191,15 @@ type ResolveOrderByResumeTokenRequest struct {
 // PublicOrderResult exposes selected order and refund fields after signed
 // public session resolution.
 type PublicOrderResult struct {
-	ID         int64   `json:"id"`           // local payment order identity
-	OutTradeNo string  `json:"out_trade_no"` // exact merchant order number
-	Amount     float64 `json:"amount"`       // credited points or plan price
-	PayAmount  float64 `json:"pay_amount"`   // gateway amount including fees
-	FeeRate    float64 `json:"fee_rate"`     // applied percentage fee rate
-	FeeFixed   float64 `json:"fee_fixed"`    // fixed gateway currency fee
+	// AmountCurrency labels subscription Amount; balance quantities use the
+	// site's configurable unit and therefore omit this monetary currency field.
+	AmountCurrency string  `json:"amount_currency,omitempty"`
+	ID             int64   `json:"id"`           // local payment order identity
+	OutTradeNo     string  `json:"out_trade_no"` // exact merchant order number
+	Amount         float64 `json:"amount"`       // credited points or plan price
+	PayAmount      float64 `json:"pay_amount"`   // gateway amount including fees
+	FeeRate        float64 `json:"fee_rate"`     // applied percentage fee rate
+	FeeFixed       float64 `json:"fee_fixed"`    // fixed gateway currency fee
 	// percentage component fee amount.
 	FeeRateAmount float64   `json:"fee_rate_amount"`
 	FeeAmount     float64   `json:"fee_amount"`   // total gateway currency fees
@@ -262,12 +265,15 @@ type PublicOrderVerifyResult struct {
 // PaymentOrderResult exposes selected persisted order fields to an
 // authenticated buyer.
 type PaymentOrderResult struct {
-	ID        int64   `json:"id"`         // local payment order identity
-	UserID    int64   `json:"user_id"`    // owning buyer numeric identity
-	Amount    float64 `json:"amount"`     // credited points or plan price
-	PayAmount float64 `json:"pay_amount"` // gateway amount including fees
-	FeeRate   float64 `json:"fee_rate"`   // applied percentage fee rate
-	FeeFixed  float64 `json:"fee_fixed"`  // fixed gateway currency fee
+	// AmountCurrency labels subscription Amount; balance quantities use the
+	// site's configurable unit and therefore omit this monetary currency field.
+	AmountCurrency string  `json:"amount_currency,omitempty"`
+	ID             int64   `json:"id"`         // local payment order identity
+	UserID         int64   `json:"user_id"`    // owning buyer numeric identity
+	Amount         float64 `json:"amount"`     // credited points or plan price
+	PayAmount      float64 `json:"pay_amount"` // gateway amount including fees
+	FeeRate        float64 `json:"fee_rate"`   // applied percentage fee rate
+	FeeFixed       float64 `json:"fee_fixed"`  // fixed gateway currency fee
 	// percentage component fee amount.
 	FeeRateAmount float64   `json:"fee_rate_amount"`
 	FeeAmount     float64   `json:"fee_amount"`   // total gateway currency fees
@@ -720,11 +726,12 @@ func (h *PaymentHandler) VerifyOrder(c *gin.Context) {
 }
 
 // UserBuildPublicOrderResult builds selected public order/refund fields from a
-// nonnil order after token resolution. Currency follows PaymentOrderCurrency;
-// optional pointers remain shared with the source observation and
+// nonnil order after token resolution. Price and payment currencies are
+// resolved separately; optional pointers remain shared with the source observation and
 // credentials/merchant snapshot fields are omitted from this shape.
 func UserBuildPublicOrderResult(order *payment.Order) PublicOrderResult {
 	return PublicOrderResult{
+		AmountCurrency:      payment.PaymentOrderAmountCurrency(order),
 		ID:                  order.ID,
 		OutTradeNo:          order.OutTradeNo,
 		Amount:              order.Amount,
@@ -861,14 +868,15 @@ func UserSanitizePaymentOrdersForResponse(orders []*payment.Order) []PaymentOrde
 }
 
 // UserSanitizePaymentOrderForResponse selects buyer-visible fields from an
-// order, returning nil for nil input. Currency is resolved from the order, and
-// optional timestamps/reasons/IDs remain shared; this is field selection
+// order, returning nil for nil input. Price and payment currencies are resolved
+// separately, and optional timestamps/reasons/IDs remain shared; this is field selection
 // rather than a deep copy of mutable values.
 func UserSanitizePaymentOrderForResponse(order *payment.Order) *PaymentOrderResult {
 	if order == nil {
 		return nil
 	}
 	return &PaymentOrderResult{
+		AmountCurrency:      payment.PaymentOrderAmountCurrency(order),
 		ID:                  order.ID,
 		UserID:              order.UserID,
 		Amount:              order.Amount,

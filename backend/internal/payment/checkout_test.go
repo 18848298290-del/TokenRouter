@@ -9,7 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// Checkout helper tests keep credited/display fields distinct from gateway
+// checkout_test.go checks checkout display fields separately from gateway
 // money and provider initiation details. They compare explicit response result
 // types, JSAPI pointer aliases, PostgreSQL text cleanup and currency-specific
 // fee results, using pure local fixtures without an external payment request.
@@ -475,5 +475,17 @@ func TestBuildPaymentSubjectAppliesAffixToSubscriptionPlanDefaultName(t *testing
 	got := svc.BuildPaymentSubject(plan, 0, cfg, nil)
 	if got != "PRE TokenRouter Subscription Team Monthly SUF" {
 		t.Fatalf("buildPaymentSubject() = %q, want %q", got, "PRE TokenRouter Subscription Team Monthly SUF")
+	}
+}
+
+// TestCreateOrderResponseSeparatesPriceCurrency builds initiation output for a
+// converted subscription. The recorded USD face price must remain distinct
+// from the CNY channel charge, including its collected fees.
+func TestCreateOrderResponseSeparatesPriceCurrency(t *testing.T) {
+	order := &Order{OrderType: OrderTypeSubscription, Amount: 10, PayAmount: 72, FeeAmount: 2, ProviderSnapshot: map[string]any{"currency": "CNY"}}
+	order.PlanSnapshot.Currency = "USD"
+	result := BuildCreateOrderResponse(order, CreateOrderRequest{}, 72, &InstanceSelection{}, &CreatePaymentResponse{Currency: "CNY"}, CreatePaymentResultOrderCreated)
+	if result.AmountCurrency != "USD" || result.Currency != "CNY" || result.Amount != 10 || result.PayAmount != 72 {
+		t.Fatalf("unexpected price/payment fields: amount=%v %s, paid=%v %s", result.Amount, result.AmountCurrency, result.PayAmount, result.Currency)
 	}
 }

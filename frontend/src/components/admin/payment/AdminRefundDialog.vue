@@ -275,15 +275,19 @@ const balanceInsufficient = computed(() => {
   return props.userBalance < props.order.amount
 })
 
-// refundInputSymbol uses balance units for balance orders and extracts a gateway currency
-// symbol for subscription refund inputs.
+// refundInputSymbol uses balance units for balance orders and the recorded price currency
+// for subscription quantities. Older responses use their payment currency when no price unit exists.
 const refundInputSymbol = computed(() => {
   if (!props.order) return balanceUnitSymbol
   if (props.order.order_type === 'balance') return balanceUnitSymbol
   return (
     // Currency formatting supplies a localized symbol when possible; retaining the
     // currency code or yen default keeps the refund input visibly labeled.
-    formatGatewayAmount(0, props.order.currency).replace(/[\d\s.,\u00a0]/g, '') ||
+    formatGatewayAmount(0, props.order.amount_currency || props.order.currency).replace(
+      /[\d\s.,\u00a0]/g,
+      '',
+    ) ||
+    props.order.amount_currency ||
     props.order.currency ||
     '¥'
   )
@@ -314,11 +318,11 @@ function formatDateTime(dateStr: string): string {
 
 // formatOrderAmount formats an amount according to the selected order's purchase kind.
 // Balance purchases use configured balance units; subscription purchases use the order
-// currency through the gateway formatter.
+// price currency through the monetary formatter, with payment currency for older responses.
 function formatOrderAmount(amount: number, order: PaymentOrder): string {
   return order.order_type === 'balance'
     ? formatBalanceAmount(amount, { fractionDigits: 2 })
-    : formatGatewayAmount(amount, order.currency)
+    : formatGatewayAmount(amount, order.amount_currency || order.currency)
 }
 
 // formatGatewayAmount renders an amount through the shared payment currency formatter.

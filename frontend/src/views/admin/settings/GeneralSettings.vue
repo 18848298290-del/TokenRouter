@@ -110,7 +110,11 @@
           </div>
           <div>
             <label for="reasoning-point-rmb-unit-price" class="input-label">
-              {{ t('admin.settings.balanceDisplay.reasoningPointRmbUnitPrice') }}
+              {{
+                t('admin.settings.balanceDisplay.reasoningPointRmbUnitPrice', {
+                  unitName: previewBalanceUnitName,
+                })
+              }}
             </label>
             <input
               id="reasoning-point-rmb-unit-price"
@@ -124,7 +128,11 @@
               "
             />
             <p class="input-hint">
-              {{ t('admin.settings.balanceDisplay.reasoningPointRmbUnitPriceHint') }}
+              {{
+                t('admin.settings.balanceDisplay.reasoningPointRmbUnitPriceHint', {
+                  unitName: previewBalanceUnitName,
+                })
+              }}
             </p>
           </div>
           <div>

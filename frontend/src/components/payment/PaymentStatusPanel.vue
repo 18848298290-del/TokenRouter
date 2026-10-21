@@ -41,7 +41,9 @@
         <div class="flex justify-between gap-4 py-2.5">
           <dt class="text-gray-500 dark:text-dark-400">{{ t('payment.orders.amount') }}</dt>
           <dd class="font-medium tabular-nums text-gray-900 dark:text-white">
-            {{ formatOrderAmount(paidOrder.amount, paidOrder.order_type) }}
+            {{
+              formatOrderAmount(paidOrder.amount, paidOrder.order_type, paidOrder.amount_currency)
+            }}
           </dd>
         </div>
         <div class="flex justify-between gap-4 py-2.5">
@@ -513,12 +515,13 @@ const displayOrderNumber = computed(() => props.outTradeNo || `#${props.orderId}
 
 /**
  * formatOrderAmount formats recharge quantities in balance units and subscription amounts
- * in gateway currency.
+ * in their saved price currency. An absent price currency uses the resolved payment
+ * currency, allowing older order responses to retain their monetary labels.
  */
-function formatOrderAmount(amount: number, orderType: string): string {
+function formatOrderAmount(amount: number, orderType: string, amountCurrency?: string): string {
   return orderType === 'balance'
     ? formatBalanceAmount(amount, { fractionDigits: 2 })
-    : formatGatewayAmount(amount)
+    : formatGatewayAmount(amount, amountCurrency)
 }
 
 /**

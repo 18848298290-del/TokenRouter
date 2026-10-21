@@ -671,6 +671,27 @@ describe('PaymentResultView', () => {
     expect(wrapper.text()).toContain(formatPaymentAmount(103, 'HKD'))
   })
 
+  // Public recovery resolves the original USD price and a converted CNY charge. The result
+  // page must retain both currency identities, including when their numeric amounts match.
+  it.each([70, 10])('shows the saved price currency for a CNY payment of %s', async (paid) => {
+    routeState.query = { resume_token: 'resume-converted' }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: {
+        ...orderFactory('PAID'),
+        order_type: 'subscription',
+        amount: 10,
+        amount_currency: 'USD',
+        pay_amount: paid,
+        currency: 'CNY',
+        fee_rate: 0,
+      },
+    })
+    const wrapper = mount(PaymentResultView, { global: { stubs: { OrderStatusBadge: true } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain(formatPaymentAmount(10, 'USD'))
+    expect(wrapper.text()).toContain(formatPaymentAmount(paid, 'CNY'))
+  })
+
   // The resolved order contains a provider-specific payment alias. The result label must use the
   // canonical visible method translation so wallet naming agrees with checkout.
   it('normalizes aliased payment methods before rendering the label', async () => {

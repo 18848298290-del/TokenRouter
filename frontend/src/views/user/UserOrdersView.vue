@@ -158,9 +158,9 @@ import { formatPaymentAmount } from '@/utils/payment/currency'
 
 // UserOrdersView.vue coordinates the current user's order list and its available
 // cancellation, refund, and invoice actions. Status filters and pagination feed
-// the list request, while a separately loaded provider set controls refund button
-// visibility. Cancellation and refund targets remain page-local until their
-// request succeeds or the corresponding dialog closes.
+// the list request, while order type, completion state, and a separately loaded
+// provider set control refund button visibility. Cancellation and refund targets
+// remain page-local until their request succeeds or the corresponding dialog closes.
 //
 // List loading and mutation loading use separate flags. Successful mutations
 // close their dialog and await a list refresh, whose errors are reported through
@@ -267,12 +267,12 @@ function openRefundDialog(order: PaymentOrder) {
 }
 
 // formatOrderAmount applies the account display unit to balance-type orders.
-// Other order types retain their gateway currency formatting, so a single table
-// can display recharge balances alongside paid subscription amounts.
+// Subscription quantities use their saved price currency, with the payment
+// currency retained for historical responses that lack a separate price unit.
 function formatOrderAmount(amount: number, order: PaymentOrder): string {
   return order.order_type === 'balance'
     ? formatBalanceAmount(amount, { fractionDigits: 2 })
-    : formatGatewayAmount(amount, order.currency)
+    : formatGatewayAmount(amount, order.amount_currency || order.currency)
 }
 
 // formatGatewayAmount delegates currency fallback and precision to the payment formatter.
@@ -299,10 +299,11 @@ async function confirmRefund() {
   }
 }
 
-// canRequestRefund exposes refunds for completed orders from an eligible provider.
-// Eligibility is based on the separately loaded instance-ID set; missing provider
+// canRequestRefund exposes refunds for completed balance orders from eligible providers.
+// The order-type restriction follows the backend refund rule. Missing provider
 // identity or an unavailable eligibility response leaves the action hidden.
 function canRequestRefund(order: PaymentOrder): boolean {
+  if (order.order_type !== 'balance') return false
   if (order.status !== 'COMPLETED') return false
   if (!order.provider_instance_id) return false
   return refundEligibleProviders.value.has(order.provider_instance_id)

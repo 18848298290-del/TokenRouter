@@ -193,6 +193,36 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.text()).not.toContain('¥108.00')
   })
 
+  // Polling resolves a USD subscription whose charge was converted to CNY. The terminal
+  // view must show the saved price currency and the resolved channel currency independently.
+  it('separates subscription price from converted payment after polling', async () => {
+    pollOrderStatus.mockResolvedValue({
+      ...orderFactory('COMPLETED'),
+      order_type: 'subscription',
+      amount: 10,
+      amount_currency: 'USD',
+      pay_amount: 70,
+      currency: 'CNY',
+    })
+    const wrapper = mount(PaymentStatusPanel, {
+      props: {
+        orderId: 42,
+        qrCode: 'https://pay.example.com/qr/42',
+        expiresAt: '2099-01-01T12:30:00Z',
+        paymentType: 'alipay',
+        orderType: 'subscription',
+        currency: 'USD',
+      },
+      global: { stubs: { Icon: true } },
+    })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    expect(wrapper.text()).toContain('$10.00')
+    expect(wrapper.text()).toContain('¥70.00')
+    expect(wrapper.text()).not.toContain('¥10.00')
+  })
+
   // A QR-mode order also supplies a payable browser URL. The waiting panel must expose its
   // reopen action so the user can reach the hosted destination as well.
   it('shows reopen button in QR mode when payUrl is also available', async () => {

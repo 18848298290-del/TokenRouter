@@ -594,11 +594,11 @@ function handleOrderPageSizeChange(size: number) {
 
 // formatOrderAmount formats an amount according to the selected order's purchase kind.
 // Balance purchases use configured balance units; subscription purchases use the order
-// currency through the gateway formatter.
+// price currency through the monetary formatter, with payment currency for older responses.
 function formatOrderAmount(amount: number, order: PaymentOrder): string {
   return order.order_type === 'balance'
     ? formatBalanceAmount(amount, { fractionDigits: 2 })
-    : formatGatewayAmount(amount, order.currency)
+    : formatGatewayAmount(amount, order.amount_currency || order.currency)
 }
 
 // formatGatewayAmount renders an amount through the shared payment currency formatter.

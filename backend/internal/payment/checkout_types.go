@@ -47,6 +47,9 @@ type CreateOrderRequest struct {
 // order creation and leaves OrderID and stored-order status unset.
 type CreateOrderResponse struct {
 	OrderID int64 `json:"order_id"` // created local order identifier
+	// AmountCurrency identifies a persisted subscription's face amount. Balance
+	// quantities and pre-creation authorization responses leave this field absent.
+	AmountCurrency string `json:"amount_currency,omitempty"`
 	// Amount is the created order's entitlement amount in the ordinary
 	// response. The pre-creation WeChat OAuth response instead returns
 	// the checkout base supplied to that authorization step.
