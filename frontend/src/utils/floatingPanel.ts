@@ -1,42 +1,102 @@
 import { BREAKPOINT_MD } from '@/constants/layout'
 import { MIN_COMFORTABLE_PANEL_HEIGHT } from '@/constants/overlay'
 
+/**
+ * floatingPanel.ts calculates viewport coordinates for panels mounted outside
+ * their trigger layout. Width and horizontal alignment account for viewport
+ * padding, optional trigger sizing, and mobile pinning before the vertical
+ * placement decision.
+ *
+ * Flexible-height panels compare usable space above and below against a
+ * comfortable-height threshold, then cap their height to the chosen side.
+ * Fixed-height menus instead retain the requested height and move above the
+ * trigger when they cannot fit below. That branch clamps the top coordinate
+ * but can still exceed a short viewport vertically. Callers apply either top
+ * or bottom anchoring according to the returned nullable coordinates.
+ */
+
+/**
+ * FloatingPanelPosition describes viewport offsets and panel size in CSS
+ * pixels. Top and bottom are alternative anchors; callers apply the non-null
+ * coordinate with the shared left, width, and maximum height.
+ */
 export interface FloatingPanelPosition {
+  /**
+   * Top offset in CSS pixels; null selects bottom anchoring for a flexible panel
+   * that opens above its trigger.
+   */
   top: number | null
+  /**
+   * Bottom offset in CSS pixels; null selects top anchoring, including every
+   * fixed-height placement result.
+   */
   bottom: number | null
-  left: number
-  width: number
+  left: number // viewport left pixels
+  width: number // CSS pixel width
+  /**
+   * Maximum panel height in CSS pixels; fixed-height mode retains the requested
+   * value even when the viewport is shorter.
+   */
   maxHeight: number
 }
 
+/**
+ * FloatingPanelOptions controls panel geometry, alignment, and available-space
+ * selection near its trigger.
+ */
 export interface FloatingPanelOptions {
-  viewportPadding?: number
-  gap?: number
-  maxWidth?: number
-  maxHeightRatio?: number
-  mobileBreakpoint?: number
-  minComfortableHeight?: number
-  /** 宽度跟随触发器(如下拉框与输入框等宽);默认 false,按 maxWidth 固定宽度。 */
-  matchTriggerWidth?: boolean
-  /** 面板左缘对齐触发器左缘(分组选择器等);默认 'right',右缘对齐触发器右缘。 */
-  align?: 'left' | 'right'
-  /** 窄屏(视口宽低于 mobileBreakpoint)把面板钉到视口左缘;固定尺寸菜单传 false 保持与触发器对齐。 */
-  pinLeftOnMobile?: boolean
+  viewportPadding?: number // viewport margin pixels
+  gap?: number // trigger gap pixels
+  maxWidth?: number // preferred width pixels
+  maxHeightRatio?: number // viewport height fraction
+  mobileBreakpoint?: number // mobile width threshold
+  minComfortableHeight?: number // preferred minimum pixels
+
   /**
-   * 内容高度固定的菜单(如行内操作菜单)给出预估高度:下方放不下即整体上翻,
-   * 两侧都不足时钉到视口顶缘,不做 maxHeight 收缩,返回值 top 恒非空。
+   * When true and trigger width is nonzero, selects that width and left
+   * alignment before viewport clamping.
+   */
+  matchTriggerWidth?: boolean
+
+  /**
+   * Selects left or right trigger alignment; trigger-width matching also selects
+   * left alignment before mobile pinning.
+   */
+  align?: 'left' | 'right'
+
+  /**
+   * Defaults to true on narrow viewports; false preserves trigger alignment for
+   * fixed-width action menus.
+   */
+  pinLeftOnMobile?: boolean
+
+  /**
+   * When present, preserves this height and chooses a top anchor, without
+   * shrinking to available vertical space.
    */
   fixedHeight?: number
 }
 
 /**
- * 计算挂载到 body 的浮层位置，触发按钮靠近视口边缘时将浮层限制在屏幕内。
+ * getFloatingPanelPosition calculates panel dimensions and viewport offsets
+ * from trigger geometry and options. The default placement is right aligned
+ * below the trigger, with narrow screens pinned to the padded left edge.
+ *
+ * Trigger-width matching also selects left alignment, and available viewport
+ * width caps either width strategy. Fixed-height menus retain their height and
+ * use a non-null top coordinate even when neither side fully fits. Flexible
+ * panels open above only when below is insufficient and above offers more
+ * room, then return the corresponding bottom anchor and available maximum
+ * height.
  */
 export const getFloatingPanelPosition = (
-  triggerRect: Pick<DOMRect, 'top' | 'right' | 'bottom'> & { width?: number; left?: number },
+  triggerRect: Pick<DOMRect, 'top' | 'right' | 'bottom'> & {
+    width?: number // CSS pixel width
+    left?: number // viewport left pixels
+  },
   viewportWidth: number,
   viewportHeight: number,
-  options: FloatingPanelOptions = {}
+  options: FloatingPanelOptions = {},
 ): FloatingPanelPosition => {
   const viewportPadding = options.viewportPadding ?? 16
   const gap = options.gap ?? 8
@@ -46,10 +106,11 @@ export const getFloatingPanelPosition = (
   const minComfortableHeight = options.minComfortableHeight ?? MIN_COMFORTABLE_PANEL_HEIGHT
 
   const availableWidth = Math.max(0, viewportWidth - viewportPadding * 2)
-  const width = options.matchTriggerWidth && triggerRect.width
-    ? Math.min(triggerRect.width, availableWidth)
-    : Math.min(maxWidth, availableWidth)
-  // 左对齐(面板左缘贴触发器左缘)与右对齐(面板右缘贴触发器右缘)都夹取在视口内。
+  const width =
+    options.matchTriggerWidth && triggerRect.width
+      ? Math.min(triggerRect.width, availableWidth)
+      : Math.min(maxWidth, availableWidth)
+
   const leftAligned = (options.matchTriggerWidth && triggerRect.width) || options.align === 'left'
   const rawLeft = leftAligned ? (triggerRect.left ?? viewportPadding) : triggerRect.right - width
   const pinLeft = viewportWidth < mobileBreakpoint && (options.pinLeftOnMobile ?? true)
@@ -57,24 +118,37 @@ export const getFloatingPanelPosition = (
     ? viewportPadding
     : Math.max(viewportPadding, Math.min(rawLeft, viewportWidth - width - viewportPadding))
 
-  // 固定高度菜单按指定高度整体翻转，并将顶缘限制在视口内。
+  /**
+   * Fixed-height menus keep their requested height when moved above the trigger;
+   * clamping their top does not promise the entire menu fits a short viewport.
+   */
   if (options.fixedHeight !== undefined) {
     const fixedHeight = options.fixedHeight
     const spaceBelowFixed = viewportHeight - triggerRect.bottom - gap - viewportPadding
     const fitsBelow = spaceBelowFixed >= fixedHeight
     return {
-      top: fitsBelow ? triggerRect.bottom + gap : Math.max(viewportPadding, triggerRect.top - fixedHeight - gap),
+      top: fitsBelow
+        ? triggerRect.bottom + gap
+        : Math.max(viewportPadding, triggerRect.top - fixedHeight - gap),
       bottom: null,
       left,
       width,
-      maxHeight: fixedHeight
+      maxHeight: fixedHeight,
     }
   }
 
+  /**
+   * Round the viewport height allowance down to whole pixels.
+   */
   const preferredMaxHeight = Math.max(0, Math.floor(viewportHeight * maxHeightRatio))
   const spaceBelow = Math.max(0, viewportHeight - triggerRect.bottom - gap - viewportPadding)
   const spaceAbove = Math.max(0, triggerRect.top - gap - viewportPadding)
-  const openAbove = spaceBelow < Math.min(minComfortableHeight, preferredMaxHeight) && spaceAbove > spaceBelow
+  /**
+   * Choose above only when below misses the comfortable allowance and above
+   * offers more space, then constrain height to the chosen side.
+   */
+  const openAbove =
+    spaceBelow < Math.min(minComfortableHeight, preferredMaxHeight) && spaceAbove > spaceBelow
   const maxHeight = Math.min(preferredMaxHeight, openAbove ? spaceAbove : spaceBelow)
 
   return {
@@ -82,6 +156,6 @@ export const getFloatingPanelPosition = (
     bottom: openAbove ? viewportHeight - triggerRect.top + gap : null,
     left,
     width,
-    maxHeight
+    maxHeight,
   }
 }

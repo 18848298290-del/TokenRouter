@@ -11,12 +11,25 @@
                 class="min-w-0 flex-1 sm:w-56 sm:flex-none lg:w-48 xl:w-64"
                 @search="onFilterChange"
               />
-              <FilterDropdown :active-count="activeFilterCount" :columns="2" keep-mounted @reset="resetKeyFilters">
+              <FilterDropdown
+                :active-count="activeFilterCount"
+                :columns="2"
+                keep-mounted
+                @reset="resetKeyFilters"
+              >
                 <FilterField :label="t('keys.group')">
-                  <Select :model-value="filterGroupId" :options="groupFilterOptions" @update:model-value="onGroupFilterChange" />
+                  <Select
+                    :model-value="filterGroupId"
+                    :options="groupFilterOptions"
+                    @update:model-value="onGroupFilterChange"
+                  />
                 </FilterField>
                 <FilterField :label="t('common.status')">
-                  <Select :model-value="filterStatus" :options="statusFilterOptions" @update:model-value="onStatusFilterChange" />
+                  <Select
+                    :model-value="filterStatus"
+                    :options="statusFilterOptions"
+                    @update:model-value="onStatusFilterChange"
+                  />
                 </FilterField>
               </FilterDropdown>
             </div>
@@ -39,7 +52,8 @@
                 </button>
                 <MotionTransition name="dropdown-fade">
                   <div
-                    v-if="showColumnDropdown" :inert="!(showColumnDropdown) || undefined"
+                    v-if="showColumnDropdown"
+                    :inert="!showColumnDropdown || undefined"
                     class="dropdown right-0 top-full z-50 mt-2 max-h-menu w-52 overflow-y-auto p-2"
                   >
                     <button
@@ -68,9 +82,11 @@
               </button>
             </div>
           </div>
-          <!-- 端点条和上方工具栏是一组，-mb-2 把它到表格的间距从布局默认的 16px 收到 8px，上下间距一致。 -->
+          <!-- The endpoint strip belongs to the toolbar; its negative margin reduces the default table gap to match the strip's other spacing. -->
           <EndpointPopover
-            v-if="publicSettings?.api_base_url || (publicSettings?.custom_endpoints?.length ?? 0) > 0"
+            v-if="
+              publicSettings?.api_base_url || (publicSettings?.custom_endpoints?.length ?? 0) > 0
+            "
             class="-mb-2"
             :api-base-url="publicSettings?.api_base_url || ''"
             :custom-endpoints="publicSettings?.custom_endpoints || []"
@@ -130,18 +146,28 @@
                 class="text-blue-500"
                 :title="t('keys.ipRestrictionEnabled')"
               />
-              <!-- 并发大于 0 时，名称后面显示并发数和上限。 -->
+              <!-- Show current concurrency and its cap beside the key name while active requests are present. -->
               <span
                 v-if="(row.current_concurrency ?? 0) > 0"
                 data-test="key-concurrency"
-                :class="['ml-1 inline-flex items-center gap-1 text-xs tabular-nums', concurrencyTone(row).text]"
+                :class="[
+                  'ml-1 inline-flex items-center gap-1 text-xs tabular-nums',
+                  concurrencyTone(row).text,
+                ]"
                 :title="concurrencyTitle(row)"
                 :aria-label="concurrencyTitle(row)"
               >
-                <span :class="['h-1.5 w-1.5 rounded-full', concurrencyTone(row).dot]" aria-hidden="true" />
+                <span
+                  :class="['h-1.5 w-1.5 rounded-full', concurrencyTone(row).dot]"
+                  aria-hidden="true"
+                />
                 <span>
                   <span>{{ row.current_concurrency }}</span>
-                  <span v-if="(row.concurrency_limit ?? 0) > 0" class="text-gray-400 dark:text-dark-500">/{{ row.concurrency_limit }}</span>
+                  <span
+                    v-if="(row.concurrency_limit ?? 0) > 0"
+                    class="text-gray-400 dark:text-dark-500"
+                    >/{{ row.concurrency_limit }}</span
+                  >
                 </span>
               </span>
             </div>
@@ -156,18 +182,20 @@
               :title="t('keys.composite.editMappings')"
               @click="editKey(row)"
             >
-              <!-- 复合 Key 用品牌色胶囊展示“前缀 / 分组”，超出部分折叠为计数胶囊。 -->
+              <!-- Composite mappings show prefix and group in branded chips, with excess mappings represented by the remaining count. -->
               <span
                 v-for="binding in visibleCompositeGroups(row)"
                 :key="`${row.id}-${binding.group_id}`"
                 :class="[
                   'inline-flex min-w-0 items-center gap-1.5 rounded-compact px-2 py-0.5 text-xs leading-5',
-                  compositeGroupChipClass(binding.group?.display_brand)
+                  compositeGroupChipClass(binding.group?.display_brand),
                 ]"
               >
                 <span class="max-w-24 truncate font-mono font-medium">{{ binding.prefix }}</span>
                 <span class="opacity-40">/</span>
-                <span class="max-w-28 truncate opacity-75">{{ (binding.group?.display_name || binding.group?.name) || `#${binding.group_id}` }}</span>
+                <span class="max-w-28 truncate opacity-75">{{
+                  binding.group?.display_name || binding.group?.name || `#${binding.group_id}`
+                }}</span>
               </span>
               <span
                 v-if="hiddenCompositeGroupCount(row) > 0"
@@ -185,7 +213,7 @@
               >
                 <GroupBadge
                   v-if="row.group"
-                  :name="(row.group.display_name || row.group.name)"
+                  :name="row.group.display_name || row.group.name"
                   :display-brand="row.group.display_brand"
                   :rate-multiplier="row.group.rate_multiplier"
                   :user-rate-multiplier="userGroupRates[row.group.id]"
@@ -204,9 +232,16 @@
           </template>
 
           <template #cell-usage="{ row }">
-            <!-- 窄屏卡片的用量靠右排列，桌面表格保持左对齐。 -->
+            <!-- Align usage to the trailing edge in narrow cards while keeping ordinary table cells left-aligned. -->
             <div class="text-sm">
-              <div v-if="usageLoading && !usageStats[row.id]" class="flex h-10 flex-col items-end justify-center gap-2 lg:items-start" role="status" :aria-label="t('common.loading')" aria-busy="true" data-loading-skeleton>
+              <div
+                v-if="usageLoading && !usageStats[row.id]"
+                class="flex h-10 flex-col items-end justify-center gap-2 lg:items-start"
+                role="status"
+                :aria-label="t('common.loading')"
+                aria-busy="true"
+                data-loading-skeleton
+              >
                 <Skeleton :width="96" :height="12" />
                 <Skeleton :width="112" :height="12" />
               </div>
@@ -214,14 +249,22 @@
                 <div class="flex items-center justify-end gap-1.5 lg:justify-start">
                   <span class="text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
                   <span class="font-medium text-gray-900 dark:text-white">
-                    {{ formatBalanceAmount(usageStats[row.id]?.today_actual_cost ?? 0, { fractionDigits: 4 }) }}
+                    {{
+                      formatBalanceAmount(usageStats[row.id]?.today_actual_cost ?? 0, {
+                        fractionDigits: 4,
+                      })
+                    }}
                   </span>
                 </div>
-                <!-- 批量接口的 total_actual_cost 统计近 30 天，使用对应文案标明范围。 -->
+                <!-- The batch endpoint reports total_actual_cost for the recent thirty days, so the label names that interval. -->
                 <div class="flex items-center justify-end gap-1.5 lg:justify-start">
                   <span class="text-gray-500 dark:text-gray-400">{{ t('keys.total') }}:</span>
                   <span class="font-medium text-gray-900 dark:text-white">
-                    {{ formatBalanceAmount(usageStats[row.id]?.total_actual_cost ?? 0, { fractionDigits: 4 }) }}
+                    {{
+                      formatBalanceAmount(usageStats[row.id]?.total_actual_cost ?? 0, {
+                        fractionDigits: 4,
+                      })
+                    }}
                   </span>
                 </div>
               </div>
@@ -229,22 +272,30 @@
               <div v-if="row.quota > 0" class="mt-1.5">
                 <div class="flex items-center justify-end gap-1.5 lg:justify-start">
                   <span class="text-gray-500 dark:text-gray-400">{{ t('keys.quota') }}:</span>
-                  <span :class="[
-                    'font-medium',
-                    row.quota_used >= row.quota ? 'text-red-500' :
-                    row.quota_used >= row.quota * 0.8 ? 'text-yellow-500' :
-                    'text-gray-900 dark:text-white'
-                  ]">
+                  <span
+                    :class="[
+                      'font-medium',
+                      row.quota_used >= row.quota
+                        ? 'text-red-500'
+                        : row.quota_used >= row.quota * 0.8
+                          ? 'text-yellow-500'
+                          : 'text-gray-900 dark:text-white',
+                    ]"
+                  >
                     {{ formatBalancePair(row.quota_used, row.quota, 2, 2) }}
                   </span>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div
+                  class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600"
+                >
                   <div
                     :class="[
                       'h-full rounded-full transition-[width,background-color]',
-                      row.quota_used >= row.quota ? 'bg-red-500' :
-                      row.quota_used >= row.quota * 0.8 ? 'bg-yellow-500' :
-                      'bg-primary-500'
+                      row.quota_used >= row.quota
+                        ? 'bg-red-500'
+                        : row.quota_used >= row.quota * 0.8
+                          ? 'bg-yellow-500'
+                          : 'bg-primary-500',
                     ]"
                     :style="{ width: Math.min((row.quota_used / row.quota) * 100, 100) + '%' }"
                   />
@@ -254,17 +305,24 @@
           </template>
 
           <template #cell-rate_limit="{ row }">
-            <div v-if="row.rate_limit_5h > 0 || row.rate_limit_1d > 0 || row.rate_limit_7d > 0" class="space-y-1.5 min-w-[140px]">
+            <div
+              v-if="row.rate_limit_5h > 0 || row.rate_limit_1d > 0 || row.rate_limit_7d > 0"
+              class="space-y-1.5 min-w-[140px]"
+            >
               <!-- 5h window -->
               <div v-if="row.rate_limit_5h > 0">
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-500 dark:text-gray-400">5h</span>
-                  <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_5h >= row.rate_limit_5h ? 'text-red-500' :
-                    row.usage_5h >= row.rate_limit_5h * 0.8 ? 'text-yellow-500' :
-                    'text-gray-700 dark:text-gray-300'
-                  ]">
+                  <span
+                    :class="[
+                      'font-medium tabular-nums',
+                      row.usage_5h >= row.rate_limit_5h
+                        ? 'text-red-500'
+                        : row.usage_5h >= row.rate_limit_5h * 0.8
+                          ? 'text-yellow-500'
+                          : 'text-gray-700 dark:text-gray-300',
+                    ]"
+                  >
                     {{ formatBalancePair(row.usage_5h, row.rate_limit_5h, 2, 2, false) }}
                   </span>
                 </div>
@@ -272,14 +330,21 @@
                   <div
                     :class="[
                       'h-full rounded-full transition-[width,background-color]',
-                      row.usage_5h >= row.rate_limit_5h ? 'bg-red-500' :
-                      row.usage_5h >= row.rate_limit_5h * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
+                      row.usage_5h >= row.rate_limit_5h
+                        ? 'bg-red-500'
+                        : row.usage_5h >= row.rate_limit_5h * 0.8
+                          ? 'bg-yellow-500'
+                          : 'bg-emerald-500',
                     ]"
-                    :style="{ width: Math.min((row.usage_5h / row.rate_limit_5h) * 100, 100) + '%' }"
+                    :style="{
+                      width: Math.min((row.usage_5h / row.rate_limit_5h) * 100, 100) + '%',
+                    }"
                   />
                 </div>
-                <div v-if="row.reset_5h_at && formatResetTime(row.reset_5h_at)" class="text-xs text-gray-400 dark:text-gray-500 tabular-nums">
+                <div
+                  v-if="row.reset_5h_at && formatResetTime(row.reset_5h_at)"
+                  class="text-xs text-gray-400 dark:text-gray-500 tabular-nums"
+                >
                   ⟳ {{ formatResetTime(row.reset_5h_at) }}
                 </div>
               </div>
@@ -287,12 +352,16 @@
               <div v-if="row.rate_limit_1d > 0">
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-500 dark:text-gray-400">1d</span>
-                  <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_1d >= row.rate_limit_1d ? 'text-red-500' :
-                    row.usage_1d >= row.rate_limit_1d * 0.8 ? 'text-yellow-500' :
-                    'text-gray-700 dark:text-gray-300'
-                  ]">
+                  <span
+                    :class="[
+                      'font-medium tabular-nums',
+                      row.usage_1d >= row.rate_limit_1d
+                        ? 'text-red-500'
+                        : row.usage_1d >= row.rate_limit_1d * 0.8
+                          ? 'text-yellow-500'
+                          : 'text-gray-700 dark:text-gray-300',
+                    ]"
+                  >
                     {{ formatBalancePair(row.usage_1d, row.rate_limit_1d, 2, 2, false) }}
                   </span>
                 </div>
@@ -300,14 +369,21 @@
                   <div
                     :class="[
                       'h-full rounded-full transition-[width,background-color]',
-                      row.usage_1d >= row.rate_limit_1d ? 'bg-red-500' :
-                      row.usage_1d >= row.rate_limit_1d * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
+                      row.usage_1d >= row.rate_limit_1d
+                        ? 'bg-red-500'
+                        : row.usage_1d >= row.rate_limit_1d * 0.8
+                          ? 'bg-yellow-500'
+                          : 'bg-emerald-500',
                     ]"
-                    :style="{ width: Math.min((row.usage_1d / row.rate_limit_1d) * 100, 100) + '%' }"
+                    :style="{
+                      width: Math.min((row.usage_1d / row.rate_limit_1d) * 100, 100) + '%',
+                    }"
                   />
                 </div>
-                <div v-if="row.reset_1d_at && formatResetTime(row.reset_1d_at)" class="text-xs text-gray-400 dark:text-gray-500 tabular-nums">
+                <div
+                  v-if="row.reset_1d_at && formatResetTime(row.reset_1d_at)"
+                  class="text-xs text-gray-400 dark:text-gray-500 tabular-nums"
+                >
                   ⟳ {{ formatResetTime(row.reset_1d_at) }}
                 </div>
               </div>
@@ -315,12 +391,16 @@
               <div v-if="row.rate_limit_7d > 0">
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-500 dark:text-gray-400">7d</span>
-                  <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_7d >= row.rate_limit_7d ? 'text-red-500' :
-                    row.usage_7d >= row.rate_limit_7d * 0.8 ? 'text-yellow-500' :
-                    'text-gray-700 dark:text-gray-300'
-                  ]">
+                  <span
+                    :class="[
+                      'font-medium tabular-nums',
+                      row.usage_7d >= row.rate_limit_7d
+                        ? 'text-red-500'
+                        : row.usage_7d >= row.rate_limit_7d * 0.8
+                          ? 'text-yellow-500'
+                          : 'text-gray-700 dark:text-gray-300',
+                    ]"
+                  >
                     {{ formatBalancePair(row.usage_7d, row.rate_limit_7d, 2, 2, false) }}
                   </span>
                 </div>
@@ -328,14 +408,21 @@
                   <div
                     :class="[
                       'h-full rounded-full transition-[width,background-color]',
-                      row.usage_7d >= row.rate_limit_7d ? 'bg-red-500' :
-                      row.usage_7d >= row.rate_limit_7d * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
+                      row.usage_7d >= row.rate_limit_7d
+                        ? 'bg-red-500'
+                        : row.usage_7d >= row.rate_limit_7d * 0.8
+                          ? 'bg-yellow-500'
+                          : 'bg-emerald-500',
                     ]"
-                    :style="{ width: Math.min((row.usage_7d / row.rate_limit_7d) * 100, 100) + '%' }"
+                    :style="{
+                      width: Math.min((row.usage_7d / row.rate_limit_7d) * 100, 100) + '%',
+                    }"
                   />
                 </div>
-                <div v-if="row.reset_7d_at && formatResetTime(row.reset_7d_at)" class="text-xs text-gray-400 dark:text-gray-500 tabular-nums">
+                <div
+                  v-if="row.reset_7d_at && formatResetTime(row.reset_7d_at)"
+                  class="text-xs text-gray-400 dark:text-gray-500 tabular-nums"
+                >
                   ⟳ {{ formatResetTime(row.reset_7d_at) }}
                 </div>
               </div>
@@ -354,27 +441,44 @@
           </template>
 
           <template #cell-expires_at="{ value }">
-            <span v-if="value" :class="[
-              'text-sm',
-              new Date(value) < new Date() ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'
-            ]">
+            <span
+              v-if="value"
+              :class="[
+                'text-sm',
+                new Date(value) < new Date()
+                  ? 'text-red-500 dark:text-red-400'
+                  : 'text-gray-500 dark:text-dark-400',
+              ]"
+            >
               {{ formatDateTime(value) }}
             </span>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{ t('keys.noExpiration') }}</span>
+            <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
+              t('keys.noExpiration')
+            }}</span>
           </template>
 
           <template #cell-status="{ value, row }">
-            <span :class="[
-              'badge gap-1',
-              row.team_owner_disabled ? 'badge-danger' :
-              value === 'active' ? 'badge-success' :
-              value === 'quota_exhausted' ? 'badge-warning' :
-              value === 'expired' ? 'badge-danger' :
-              'badge-gray'
-            ]">
+            <span
+              :class="[
+                'badge gap-1',
+                row.team_owner_disabled
+                  ? 'badge-danger'
+                  : value === 'active'
+                    ? 'badge-success'
+                    : value === 'quota_exhausted'
+                      ? 'badge-warning'
+                      : value === 'expired'
+                        ? 'badge-danger'
+                        : 'badge-gray',
+              ]"
+            >
               <Icon v-if="row.team_owner_disabled" name="lock" size="xs" />
-              <!-- 状态文字加 self-baseline，前面有锁图标时，移动卡片的标签仍对齐文字。 -->
-              <span class="self-baseline">{{ row.team_owner_disabled ? t('keys.status.team_owner_disabled') : t('keys.status.' + value) }}</span>
+              <!-- Baseline alignment keeps status text level with the mobile field label when a lock icon precedes it. -->
+              <span class="self-baseline">{{
+                row.team_owner_disabled
+                  ? t('keys.status.team_owner_disabled')
+                  : t('keys.status.' + value)
+              }}</span>
             </span>
           </template>
 
@@ -393,12 +497,14 @@
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
+            <span class="text-sm text-gray-500 dark:text-dark-400">{{
+              formatDateTime(value)
+            }}</span>
           </template>
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
-              <!-- 高频操作固定展示，低频和危险操作收进更多菜单。 -->
+              <!-- Keep frequent actions visible and collect less frequent or destructive actions in the overflow menu. -->
               <button
                 @click="editKey(row)"
                 class="flex flex-col items-center gap-0.5 rounded-control p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
@@ -406,7 +512,7 @@
                 <Icon name="edit" size="sm" />
                 <span class="text-xs">{{ t('common.edit') }}</span>
               </button>
-              <!-- Owner 锁定由团队管理员解除。 -->
+              <!-- A team administrator must release an owner-imposed lock. -->
               <span
                 v-if="row.team_owner_disabled"
                 class="flex cursor-not-allowed flex-col items-center gap-0.5 rounded-control p-1.5 text-amber-600 dark:text-amber-400"
@@ -423,19 +529,26 @@
                   'flex flex-col items-center gap-0.5 rounded-control p-1.5 transition-colors',
                   row.status === 'active'
                     ? 'text-gray-500 hover:bg-yellow-50 hover:text-yellow-600 dark:hover:bg-yellow-900/20 dark:hover:text-yellow-400'
-                    : 'text-gray-500 hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400'
+                    : 'text-gray-500 hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400',
                 ]"
               >
                 <Icon v-if="row.status === 'active'" name="ban" size="sm" />
                 <Icon v-else name="checkCircle" size="sm" :animate-on-hover="false" />
-                <span class="text-xs">{{ row.status === 'active' ? t('keys.disable') : t('keys.enable') }}</span>
+                <span class="text-xs">{{
+                  row.status === 'active' ? t('keys.disable') : t('keys.enable')
+                }}</span>
               </button>
               <button
                 class="key-action-menu-trigger flex flex-col items-center gap-0.5 rounded-control p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
-                :class="{ 'bg-gray-100 text-gray-900 dark:bg-dark-700 dark:text-white': actionMenuKey?.id === row.id }"
+                :class="{
+                  'bg-gray-100 text-gray-900 dark:bg-dark-700 dark:text-white':
+                    actionMenuKey?.id === row.id,
+                }"
                 aria-haspopup="menu"
                 :aria-expanded="actionMenuKey?.id === row.id"
-                :aria-controls="actionMenuKey?.id === row.id ? `key-action-menu-${row.id}` : undefined"
+                :aria-controls="
+                  actionMenuKey?.id === row.id ? `key-action-menu-${row.id}` : undefined
+                "
                 @click="openKeyActionMenu(row, $event)"
               >
                 <Icon name="more" size="sm" />
@@ -467,14 +580,18 @@
       </template>
     </TablePageLayout>
 
-    <!-- 创建和编辑密钥共用弹窗，表单随窄屏收缩。 -->
+    <!-- Creation and editing share a dialog whose controls shrink with narrow viewports. -->
     <BaseDialog
       :show="showCreateModal || showEditModal"
       :title="showEditModal ? t('keys.editKey') : t('keys.createKey')"
       width="normal"
       @close="closeModals"
     >
-      <form id="key-form" @submit.prevent="handleSubmit" class="key-form-controls min-w-0 max-w-full space-y-5">
+      <form
+        id="key-form"
+        @submit.prevent="handleSubmit"
+        class="key-form-controls min-w-0 max-w-full space-y-5"
+      >
         <div>
           <label class="input-label">{{ t('keys.nameLabel') }}</label>
           <input
@@ -487,11 +604,13 @@
           />
         </div>
 
-        <!-- 复合模式使用项目 Toggle，切换后改为完整映射编辑。 -->
+        <!-- The shared toggle switches composite routing into the full mapping editor. -->
         <div class="flex items-center justify-between gap-4">
           <div>
             <label class="input-label mb-0">{{ t('keys.composite.label') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('keys.composite.hint') }}</p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+              {{ t('keys.composite.hint') }}
+            </p>
           </div>
           <Toggle
             :model-value="formData.is_composite"
@@ -574,7 +693,9 @@
           @move="moveCompositeBinding"
         >
           <template #row="{ item: binding, index }">
-            <div class="grid min-w-0 grid-cols-1 items-start gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(7rem,0.65fr)]">
+            <div
+              class="grid min-w-0 grid-cols-1 items-start gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(7rem,0.65fr)]"
+            >
               <Select
                 v-model="binding.group_id"
                 :options="formGroupOptions"
@@ -600,7 +721,7 @@
           </template>
         </RuleListEditor>
 
-        <!-- 单 Key Fast 策略使用项目统一选择框，系统策略仍在服务端最终裁决。 -->
+        <!-- The shared selector sets this key's Fast policy; server policy still decides the effective request behavior. -->
         <div>
           <label class="input-label">{{ t('keys.fastModePolicyLabel') }}</label>
           <Select
@@ -611,13 +732,13 @@
           />
         </div>
 
-        <!-- 分组停用时的请求级自动降级开关。 -->
+        <!-- This switch allows request routing to fall back when the chosen group is unavailable. -->
         <div class="flex items-center justify-between">
           <label class="input-label mb-0">{{ t('keys.fallbackWhenGroupUnavailable') }}</label>
           <Toggle v-model="formData.fallback_when_group_unavailable" size="sm" />
         </div>
 
-        <!-- 模型重定向按行编辑，删除全部行会在更新时提交空对象。 -->
+        <!-- Model redirects are edited as rows; removing every row submits an empty mapping object during update. -->
         <ModelMappingEditor
           v-model="formData.model_mapping_rows"
           :title="t('keys.modelRedirect.label')"
@@ -664,7 +785,9 @@
               :model-value="formData.status === 'active'"
               :disabled="Boolean(selectedKey?.team_owner_disabled)"
               :aria-label="t('keys.statusLabel')"
-              :aria-describedby="selectedKey?.team_owner_disabled ? 'team-owner-disabled-hint' : undefined"
+              :aria-describedby="
+                selectedKey?.team_owner_disabled ? 'team-owner-disabled-hint' : undefined
+              "
               data-test="key-status-toggle"
               @update:model-value="onStatusToggle"
             />
@@ -763,16 +886,36 @@
           </div>
         </div>
 
-        <!-- Key 请求限制与金额限额分别配置。 -->
+        <!-- Request-count limits and spending limits have separate controls and units. -->
         <div class="space-y-3">
           <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label for="key-concurrency-limit" class="input-label">{{ t('keys.concurrencyLimit') }}</label>
-              <input id="key-concurrency-limit" v-model.number="formData.concurrency_limit" type="number" min="0" max="2147483647" step="1" class="input" placeholder="0" />
+              <label for="key-concurrency-limit" class="input-label">{{
+                t('keys.concurrencyLimit')
+              }}</label>
+              <input
+                id="key-concurrency-limit"
+                v-model.number="formData.concurrency_limit"
+                type="number"
+                min="0"
+                max="2147483647"
+                step="1"
+                class="input"
+                placeholder="0"
+              />
             </div>
             <div>
               <label for="key-rpm-limit" class="input-label">{{ t('keys.rpmLimit') }}</label>
-              <input id="key-rpm-limit" v-model.number="formData.rpm_limit" type="number" min="0" max="2147483647" step="1" class="input" placeholder="0" />
+              <input
+                id="key-rpm-limit"
+                v-model.number="formData.rpm_limit"
+                type="number"
+                min="0"
+                max="2147483647"
+                step="1"
+                class="input"
+                placeholder="0"
+              />
             </div>
           </div>
           <p class="input-hint">{{ t('keys.requestLimitsHint') }}</p>
@@ -802,15 +945,24 @@
                 />
               </div>
               <!-- Usage info (edit mode only) -->
-              <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_5h > 0" class="mt-2">
+              <div
+                v-if="showEditModal && selectedKey && selectedKey.rate_limit_5h > 0"
+                class="mt-2"
+              >
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 h-9 rounded-control bg-gray-100 px-3 py-1.5 text-sm dark:bg-dark-700">
-                    <span :class="[
-                      'font-medium',
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'text-red-500' :
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8 ? 'text-yellow-500' :
-                      'text-gray-900 dark:text-white'
-                    ]">
+                  <div
+                    class="flex-1 h-9 rounded-control bg-gray-100 px-3 py-1.5 text-sm dark:bg-dark-700"
+                  >
+                    <span
+                      :class="[
+                        'font-medium',
+                        selectedKey.usage_5h >= selectedKey.rate_limit_5h
+                          ? 'text-red-500'
+                          : selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8
+                            ? 'text-yellow-500'
+                            : 'text-gray-900 dark:text-white',
+                      ]"
+                    >
                       {{ formatBalanceAmount(selectedKey.usage_5h, { fractionDigits: 4 }) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
@@ -819,15 +971,23 @@
                     </span>
                   </div>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div
+                  class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600"
+                >
                   <div
                     :class="[
                       'h-full rounded-full transition-[width,background-color]',
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'bg-red-500' :
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
+                      selectedKey.usage_5h >= selectedKey.rate_limit_5h
+                        ? 'bg-red-500'
+                        : selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8
+                          ? 'bg-yellow-500'
+                          : 'bg-green-500',
                     ]"
-                    :style="{ width: Math.min((selectedKey.usage_5h / selectedKey.rate_limit_5h) * 100, 100) + '%' }"
+                    :style="{
+                      width:
+                        Math.min((selectedKey.usage_5h / selectedKey.rate_limit_5h) * 100, 100) +
+                        '%',
+                    }"
                   />
                 </div>
               </div>
@@ -848,15 +1008,24 @@
                 />
               </div>
               <!-- Usage info (edit mode only) -->
-              <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_1d > 0" class="mt-2">
+              <div
+                v-if="showEditModal && selectedKey && selectedKey.rate_limit_1d > 0"
+                class="mt-2"
+              >
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 h-9 rounded-control bg-gray-100 px-3 py-1.5 text-sm dark:bg-dark-700">
-                    <span :class="[
-                      'font-medium',
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'text-red-500' :
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8 ? 'text-yellow-500' :
-                      'text-gray-900 dark:text-white'
-                    ]">
+                  <div
+                    class="flex-1 h-9 rounded-control bg-gray-100 px-3 py-1.5 text-sm dark:bg-dark-700"
+                  >
+                    <span
+                      :class="[
+                        'font-medium',
+                        selectedKey.usage_1d >= selectedKey.rate_limit_1d
+                          ? 'text-red-500'
+                          : selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8
+                            ? 'text-yellow-500'
+                            : 'text-gray-900 dark:text-white',
+                      ]"
+                    >
                       {{ formatBalanceAmount(selectedKey.usage_1d, { fractionDigits: 4 }) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
@@ -865,15 +1034,23 @@
                     </span>
                   </div>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div
+                  class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600"
+                >
                   <div
                     :class="[
                       'h-full rounded-full transition-[width,background-color]',
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'bg-red-500' :
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
+                      selectedKey.usage_1d >= selectedKey.rate_limit_1d
+                        ? 'bg-red-500'
+                        : selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8
+                          ? 'bg-yellow-500'
+                          : 'bg-green-500',
                     ]"
-                    :style="{ width: Math.min((selectedKey.usage_1d / selectedKey.rate_limit_1d) * 100, 100) + '%' }"
+                    :style="{
+                      width:
+                        Math.min((selectedKey.usage_1d / selectedKey.rate_limit_1d) * 100, 100) +
+                        '%',
+                    }"
                   />
                 </div>
               </div>
@@ -894,15 +1071,24 @@
                 />
               </div>
               <!-- Usage info (edit mode only) -->
-              <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_7d > 0" class="mt-2">
+              <div
+                v-if="showEditModal && selectedKey && selectedKey.rate_limit_7d > 0"
+                class="mt-2"
+              >
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 h-9 rounded-control bg-gray-100 px-3 py-1.5 text-sm dark:bg-dark-700">
-                    <span :class="[
-                      'font-medium',
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'text-red-500' :
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8 ? 'text-yellow-500' :
-                      'text-gray-900 dark:text-white'
-                    ]">
+                  <div
+                    class="flex-1 h-9 rounded-control bg-gray-100 px-3 py-1.5 text-sm dark:bg-dark-700"
+                  >
+                    <span
+                      :class="[
+                        'font-medium',
+                        selectedKey.usage_7d >= selectedKey.rate_limit_7d
+                          ? 'text-red-500'
+                          : selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8
+                            ? 'text-yellow-500'
+                            : 'text-gray-900 dark:text-white',
+                      ]"
+                    >
                       {{ formatBalanceAmount(selectedKey.usage_7d, { fractionDigits: 4 }) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
@@ -911,22 +1097,38 @@
                     </span>
                   </div>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div
+                  class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600"
+                >
                   <div
                     :class="[
                       'h-full rounded-full transition-[width,background-color]',
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'bg-red-500' :
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
+                      selectedKey.usage_7d >= selectedKey.rate_limit_7d
+                        ? 'bg-red-500'
+                        : selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8
+                          ? 'bg-yellow-500'
+                          : 'bg-green-500',
                     ]"
-                    :style="{ width: Math.min((selectedKey.usage_7d / selectedKey.rate_limit_7d) * 100, 100) + '%' }"
+                    :style="{
+                      width:
+                        Math.min((selectedKey.usage_7d / selectedKey.rate_limit_7d) * 100, 100) +
+                        '%',
+                    }"
                   />
                 </div>
               </div>
             </div>
 
             <!-- Reset Rate Limit button (edit mode only) -->
-            <div v-if="showEditModal && selectedKey && (selectedKey.rate_limit_5h > 0 || selectedKey.rate_limit_1d > 0 || selectedKey.rate_limit_7d > 0)">
+            <div
+              v-if="
+                showEditModal &&
+                selectedKey &&
+                (selectedKey.rate_limit_5h > 0 ||
+                  selectedKey.rate_limit_1d > 0 ||
+                  selectedKey.rate_limit_7d > 0)
+              "
+            >
               <button
                 type="button"
                 @click="confirmResetRateLimit"
@@ -957,10 +1159,12 @@
                   'rounded-control px-3 py-1.5 text-sm transition-colors',
                   formData.expiration_preset === days
                     ? 'bg-primary-100 text-primary-700 dark:bg-primary-500/8 dark:text-primary-500'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600',
                 ]"
               >
-                {{ showEditModal ? t('keys.extendDays', { days }) : t('keys.expiresInDays', { days }) }}
+                {{
+                  showEditModal ? t('keys.extendDays', { days }) : t('keys.expiresInDays', { days })
+                }}
               </button>
               <button
                 type="button"
@@ -969,7 +1173,7 @@
                   'rounded-control px-3 py-1.5 text-sm transition-colors',
                   formData.expiration_preset === 'custom'
                     ? 'bg-primary-100 text-primary-700 dark:bg-primary-500/8 dark:text-primary-500'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600',
                 ]"
               >
                 {{ t('keys.customDate') }}
@@ -979,17 +1183,15 @@
             <!-- Date picker (always show for precise adjustment) -->
             <div>
               <label class="input-label">{{ t('keys.expirationDate') }}</label>
-              <input
-                v-model="formData.expiration_date"
-                type="datetime-local"
-                class="input"
-              />
+              <input v-model="formData.expiration_date" type="datetime-local" class="input" />
               <p class="input-hint">{{ t('keys.expirationDateHint') }}</p>
             </div>
 
             <!-- Current expiration display (only in edit mode) -->
             <div v-if="showEditModal && selectedKey?.expires_at" class="text-sm">
-              <span class="text-gray-500 dark:text-gray-400">{{ t('keys.currentExpiration') }}: </span>
+              <span class="text-gray-500 dark:text-gray-400"
+                >{{ t('keys.currentExpiration') }}:
+              </span>
               <span class="font-medium text-gray-900 dark:text-white">
                 {{ formatDateTime(selectedKey.expires_at) }}
               </span>
@@ -1028,7 +1230,7 @@
       </template>
     </BaseDialog>
 
-    <!-- 轮换前明确告知旧凭据失效，提交期间保留弹窗以防重复操作。 -->
+    <!-- Rotation confirmation explains credential invalidation and stays open while submission prevents repeated operations. -->
     <ConfirmDialog
       :show="rotationKey !== null"
       :title="t('keys.rotateKey')"
@@ -1040,7 +1242,7 @@
       @cancel="cancelRotate"
     />
 
-    <!-- 轮换成功后展示新凭据，便于立即复制到客户端。 -->
+    <!-- Show the returned secret after rotation so the user can copy it into clients immediately. -->
     <BaseDialog
       :show="rotatedKey !== null"
       :title="t('keys.keyRotatedSuccess')"
@@ -1049,7 +1251,9 @@
     >
       <div class="space-y-4">
         <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('keys.rotatedKeyHint') }}</p>
-        <code class="block break-all rounded-surface bg-gray-50 p-4 text-sm text-gray-900 dark:bg-dark-800 dark:text-gray-100">
+        <code
+          class="block break-all rounded-surface bg-gray-50 p-4 text-sm text-gray-900 dark:bg-dark-800 dark:text-gray-100"
+        >
           {{ rotatedKey?.key }}
         </code>
       </div>
@@ -1085,7 +1289,12 @@
     <ConfirmDialog
       :show="showResetQuotaDialog"
       :title="t('keys.resetQuotaTitle')"
-      :message="t('keys.resetQuotaConfirmMessage', { name: selectedKey?.name, used: formatBalanceAmount(selectedKey?.quota_used, { fractionDigits: 4 }) })"
+      :message="
+        t('keys.resetQuotaConfirmMessage', {
+          name: selectedKey?.name,
+          used: formatBalanceAmount(selectedKey?.quota_used, { fractionDigits: 4 }),
+        })
+      "
       :confirm-text="t('keys.reset')"
       :cancel-text="t('common.cancel')"
       :danger="true"
@@ -1134,7 +1343,7 @@
       @delete="confirmDelete"
     />
 
-    <!-- 按可用协议选择客户端和模型。 -->
+    <!-- Client and model choices follow the available protocols. -->
     <BaseDialog
       :show="showCcsClientSelect"
       :title="t('keys.ccsClientSelect.title')"
@@ -1142,11 +1351,25 @@
       @close="closeCcsClientSelect"
     >
       <div class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('keys.ccsClientSelect.description') }}</p>
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          {{ t('keys.ccsClientSelect.description') }}
+        </p>
         <Select v-model="ccClient" :options="ccClientOptions" />
-        <Select v-model="ccModel" :options="ccModelOptions" searchable :placeholder="t('keys.useKeyModal.selectModel')" />
+        <Select
+          v-model="ccModel"
+          :options="ccModelOptions"
+          searchable
+          :placeholder="t('keys.useKeyModal.selectModel')"
+        />
         <p v-if="!ccModelOptions.length" class="input-hint">{{ t('keys.useKeyModal.noModels') }}</p>
-        <button type="button" class="btn btn-primary" :disabled="!ccModel" @click="handleCcsClientSelect(ccClient)">{{ t('common.confirm') }}</button>
+        <button
+          type="button"
+          class="btn btn-primary"
+          :disabled="!ccModel"
+          @click="handleCcsClientSelect(ccClient)"
+        >
+          {{ t('common.confirm') }}
+        </button>
       </div>
       <template #footer>
         <div class="flex justify-end">
@@ -1161,17 +1384,19 @@
     <Teleport to="body">
       <MotionTransition name="dropdown-fade">
         <div
-          v-if="groupSelectorKeyId !== null && dropdownPosition" :inert="!(groupSelectorKeyId !== null && dropdownPosition) || undefined"
+          v-if="groupSelectorKeyId !== null && dropdownPosition"
+          :inert="!(groupSelectorKeyId !== null && dropdownPosition) || undefined"
           ref="dropdownRef"
           class="dropdown animate-in fade-in slide-in-from-top-2 fixed z-teleport-dropdown w-max max-w-[calc(100vw-16px)] overflow-hidden duration-normal sm:min-w-[380px] py-0"
-          style="pointer-events: auto !important;"
+          style="pointer-events: auto !important"
           :style="{
             top: dropdownPosition.top !== undefined ? dropdownPosition.top + 'px' : undefined,
-            bottom: dropdownPosition.bottom !== undefined ? dropdownPosition.bottom + 'px' : undefined,
-            left: dropdownPosition.left + 'px'
+            bottom:
+              dropdownPosition.bottom !== undefined ? dropdownPosition.bottom + 'px' : undefined,
+            left: dropdownPosition.left + 'px',
           }"
         >
-          <!-- 分组搜索与页头共用输入框组件，背景和焦点样式随全局主题更新。 -->
+          <!-- Group search uses the shared input so its surface and focus treatment follow the current global theme. -->
           <div class="border-b border-gray-100 p-2 dark:border-dark-700">
             <SearchInput
               v-model="groupSearchQuery"
@@ -1191,7 +1416,7 @@
                 selectedKeyForGroup?.group_id === option.value ||
                 (!selectedKeyForGroup?.group_id && option.value === null)
                   ? 'bg-primary-50 dark:bg-primary-500/8 dark:text-primary-500'
-                  : 'hover:bg-gray-100 dark:hover:bg-dark-700'
+                  : 'hover:bg-gray-100 dark:hover:bg-dark-700',
               ]"
               :title="option.description || undefined"
             >
@@ -1208,7 +1433,10 @@
               />
             </button>
             <!-- Empty state when search has no results -->
-            <div v-if="filteredGroupOptions.length === 0" class="py-4 text-center text-sm text-gray-400 dark:text-gray-500">
+            <div
+              v-if="filteredGroupOptions.length === 0"
+              class="py-4 text-center text-sm text-gray-400 dark:text-gray-500"
+            >
               {{ t('keys.noGroupFound') }}
             </div>
           </div>
@@ -1222,87 +1450,122 @@
 import { useLocaleRefresh } from '@/composables/useLocaleRefresh'
 import Skeleton from '@/components/common/Skeleton.vue'
 import MotionTransition from '@/components/common/MotionTransition.vue'
-	import { watch, ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
-	import { useI18n } from 'vue-i18n'
-	import { useRoute } from 'vue-router'
-	import { useAppStore } from '@/stores/app'
+import {
+  watch,
+  ref,
+  reactive,
+  computed,
+  onMounted,
+  onUnmounted,
+  type ComponentPublicInstance,
+} from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
+import { useAppStore } from '@/stores/app'
 import { useOnboardingStore } from '@/stores/onboarding'
 import { useClipboard } from '@/composables/useClipboard'
 import { COPY_FEEDBACK_MS } from '@/constants/ui'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-
-const { t } = useI18n()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
-	import DataTable from '@/components/common/DataTable.vue'
-	import Pagination from '@/components/common/Pagination.vue'
-	import BaseDialog from '@/components/common/BaseDialog.vue'
-	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-	import EmptyState from '@/components/common/EmptyState.vue'
-	import Select from '@/components/common/Select.vue'
-	import FilterDropdown from '@/components/common/FilterDropdown.vue'
-	import FilterField from '@/components/common/FilterField.vue'
-	import Toggle from '@/components/common/Toggle.vue'
-	import SearchInput from '@/components/common/SearchInput.vue'
-	import RuleListEditor from '@/components/common/RuleListEditor.vue'
-	import ModelMappingEditor from '@/components/common/ModelMappingEditor.vue'
-	import Icon from '@/components/icons/Icon.vue'
-	import KeyActionMenu from '@/components/keys/KeyActionMenu.vue'
-	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
-	import ModelRedirectHelp from '@/components/keys/ModelRedirectHelp.vue'
-	import TfCliImportDialog from '@/components/keys/TfCliImportDialog.vue'
-	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
-	import GroupBadge from '@/components/common/GroupBadge.vue'
-	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
-	import ScopeDropdown, { type DataScope } from '@/components/team/ScopeDropdown.vue'
-	import type {
-	  ApiKey,
-	  ApiKeyBillingMode,
-	  ApiKeyBillingSubscriptionOption,
-	  ApiKeyFastModePolicy,
-	  CreateApiKeyRequest,
-	  Group,
-	  PublicSettings,
-	  UpdateApiKeyRequest
-	} from '@/types'
-import type { Column } from '@/components/common/types'
+import DataTable from '@/components/common/table/DataTable.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import Select from '@/components/common/Select.vue'
+import FilterDropdown from '@/components/common/FilterDropdown.vue'
+import FilterField from '@/components/common/FilterField.vue'
+import Toggle from '@/components/common/Toggle.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
+import RuleListEditor from '@/components/common/RuleListEditor.vue'
+import ModelMappingEditor from '@/components/common/ModelMappingEditor.vue'
+import Icon from '@/components/icons/Icon.vue'
+import KeyActionMenu from '@/components/keys/KeyActionMenu.vue'
+import { buildKeyFormPayload } from '@/components/keys/keyForm'
+import UseKeyModal from '@/components/keys/UseKeyModal.vue'
+import ModelRedirectHelp from '@/components/keys/ModelRedirectHelp.vue'
+import TfCliImportDialog from '@/components/keys/TfCliImportDialog.vue'
+import EndpointPopover from '@/components/keys/EndpointPopover.vue'
+import GroupBadge from '@/components/common/GroupBadge.vue'
+import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+import ScopeDropdown, { type DataScope } from '@/components/team/ScopeDropdown.vue'
+import type {
+  ApiKey,
+  ApiKeyBillingMode,
+  ApiKeyBillingSubscriptionOption,
+  ApiKeyFastModePolicy,
+  CreateApiKeyRequest,
+  UpdateApiKeyRequest,
+} from '@/api/keys.types'
+import type { Group } from '@/api/groups.types'
+import type { PublicSettings } from '@/api/settings.types'
+import type { Column } from '@/components/common/table/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import {
   KEY_REDIRECT_RULES,
   firstModelMappingIssue,
-  mappingRowsToRecord,
   validateModelMappingRows,
-  type ModelMappingRow
+  type ModelMappingRow,
 } from '@/utils/modelMappingRules'
 import { resolveProviderBrand } from '@/utils/providerBrand'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import {
   buildCcSwitchImportDeeplink,
   buildCcSwitchUsageScript,
-  type CcSwitchClientType
+  type CcSwitchClientType,
 } from '@/utils/ccswitchImport'
-import { availableClients, CLIENT_LABELS, clientProtocol, modelsForProtocol, groupForKeyConfig } from '@/utils/clientConfig'
+import {
+  availableClients,
+  CLIENT_LABELS,
+  clientProtocol,
+  modelsForProtocol,
+  groupForKeyConfig,
+} from '@/utils/clientConfig'
 
-// Helper to format date for datetime-local input
+// KeysView.vue manages API-key listings and the forms used to create, update,
+// rotate, and remove keys for the selected ownership scope. The page coordinates
+// group choices, billing options, usage observations, and per-key dialogs while
+// keeping table column preferences in browser storage. Restriction conversion
+// belongs to keyForm.ts, where creation and update expiry values remain distinct.
+//
+// List queries and usage reads complete independently, so the page maintains
+// request and selection state around refreshes. Credential rotation replaces the
+// displayed key before starting another list refresh, allowing subsequent copy
+// actions to use the returned credential. Dialog visibility and selected records
+// remain page-owned so user actions retain their intended target during updates.
+
+// Translation setup supplies localized labels and validation messages for the
+// page's subsequent computed values, handlers, and template rendering.
+const { t } = useI18n()
+
+// formatDateTimeLocal converts a parseable API timestamp to browser-local date
+// and time with minute precision. Callers provide valid date text; invalid input
+// produces NaN components because this formatter performs no date validation.
 const formatDateTimeLocal = (isoDate: string): string => {
   const date = new Date(isoDate)
+  // pad formats one local date component with at least two digits.
   const pad = (n: number) => n.toString().padStart(2, '0')
+  // Omit seconds and milliseconds to match the datetime-local control's precision.
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+// GroupOption combines a routing-group identity with labels and rates used by the selector.
 interface GroupOption {
-  search_terms?: string[]
-  value: number
-  label: string
-  description: string | null
-  displayBrand: string | null
-  rate: number
-  userRate: number | null
+  search_terms?: string[] // Additional group search aliases.
+  value: number // Routing-group numeric identity.
+  label: string // Group display name.
+  description: string | null // Optional group description text.
+  displayBrand: string | null // Optional badge brand identifier.
+  rate: number // Default group billing multiplier.
+  userRate: number | null // Account-specific multiplier when present.
 }
 
+// Route scope, account presentation, clipboard support, and onboarding state connect key-
+// list actions to their shared page dependencies.
 const appStore = useAppStore()
 const route = useRoute()
 const scope = ref<DataScope>(route?.query?.scope === 'team' ? 'team' : 'personal')
@@ -1310,22 +1573,27 @@ const onboardingStore = useOnboardingStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 const { balanceUnitName, balanceUnitSymbol, formatBalanceAmount } = useBalanceDisplay()
 
+// formatBalancePair formats used and limit amounts with independently selected precision.
+// The caller can omit spaces around the separator for compact table cells while retaining
+// the configured balance formatter.
 const formatBalancePair = (
   used: number | null | undefined,
   limit: number | null | undefined,
   usedDigits: number,
   limitDigits: number,
-  spaced: boolean = true
+  spaced: boolean = true,
 ) => {
   const separator = spaced ? ' / ' : '/'
   return `${formatBalanceAmount(used, { fractionDigits: usedDigits })}${separator}${formatBalanceAmount(limit, { fractionDigits: limitDigits })}`
 }
 
-// COMPOSITE_GROUP_PREVIEW_LIMIT 是列表中复合 Key 直接展示的映射胶囊数量上限。
+// COMPOSITE_GROUP_PREVIEW_LIMIT bounds ordinary inline mapping previews, while a single
+// extra mapping is shown directly to avoid a one-item remainder.
 const COMPOSITE_GROUP_PREVIEW_LIMIT = 4
 
-// visibleCompositeGroups 返回表格中需要直接展示的复合映射。
-// 比预览上限多一条时展示全部映射。
+// visibleCompositeGroups selects the inline composite mapping preview from a key row. At
+// most one mapping above the nominal limit remains fully visible; larger sets show the
+// leading slice.
 const visibleCompositeGroups = (row: ApiKey) => {
   const groups = row.composite_groups ?? []
   if (groups.length <= COMPOSITE_GROUP_PREVIEW_LIMIT + 1) {
@@ -1334,8 +1602,9 @@ const visibleCompositeGroups = (row: ApiKey) => {
   return groups.slice(0, COMPOSITE_GROUP_PREVIEW_LIMIT)
 }
 
-// compositeGroupChipClass 返回复合映射胶囊的配色，与 GroupBadge 共用分组展示品牌的色板。
-// 未配置展示品牌时使用中性底色和内描边，与普通分组徽章保持一致。
+// compositeGroupChipClass chooses the same provider-brand palette used by ordinary group
+// badges. An absent or whitespace-only brand uses the neutral badge surface and inset border
+// for the composite mapping chip.
 const compositeGroupChipClass = (displayBrand?: string | null) => {
   const brand = displayBrand?.trim()
   if (!brand) {
@@ -1344,7 +1613,9 @@ const compositeGroupChipClass = (displayBrand?: string | null) => {
   return `ring-1 ring-inset ${resolveProviderBrand(brand).badgeClass}`
 }
 
-// concurrencyTone 按 Key 并发上限的占用比例取颜色：用满为红，达到八成为琥珀，其余为绿点灰字。
+// concurrencyTone colors key occupancy using the configured concurrency cap. Full occupancy
+// is red, eighty percent is amber, and unlimited or lower occupancy uses the ordinary green
+// indicator and muted text.
 const concurrencyTone = (row: ApiKey) => {
   const current = row.current_concurrency ?? 0
   const limit = row.concurrency_limit ?? 0
@@ -1357,7 +1628,7 @@ const concurrencyTone = (row: ApiKey) => {
   return { dot: 'bg-emerald-500', text: 'text-gray-500 dark:text-dark-300' }
 }
 
-// concurrencyTitle 返回并发标记的悬停说明。
+// concurrencyTitle formats the active request count against a finite cap or unlimited label.
 const concurrencyTitle = (row: ApiKey) => {
   const current = row.current_concurrency ?? 0
   const limit = row.concurrency_limit ?? 0
@@ -1366,11 +1637,13 @@ const concurrencyTitle = (row: ApiKey) => {
     : t('keys.concurrencyInUseUnlimited', { current })
 }
 
-// hiddenCompositeGroupCount 返回被折叠的复合映射数量。
+// hiddenCompositeGroupCount reports how many mappings remain outside the inline row preview.
 const hiddenCompositeGroupCount = (row: ApiKey) => {
   return (row.composite_groups?.length ?? 0) - visibleCompositeGroups(row).length
 }
 
+// allColumns supplies localized table definitions; the visibility configuration below
+// retains fixed action and name columns while allowing other columns to be hidden.
 const allColumns = computed<Column[]>(() => [
   { key: 'name', label: t('common.name'), sortable: true },
   { key: 'id', label: t('keys.id'), sortable: true },
@@ -1383,9 +1656,11 @@ const allColumns = computed<Column[]>(() => [
   { key: 'last_used_at', label: t('keys.lastUsedAt'), sortable: true },
   { key: 'last_used_ip', label: t('keys.lastUsedIP'), sortable: false },
   { key: 'created_at', label: t('keys.created'), sortable: true },
-  { key: 'actions', label: t('common.actions'), sortable: false }
+  { key: 'actions', label: t('common.actions'), sortable: false },
 ])
 
+// Column preference constants define fixed columns, first-visit defaults, storage keys, and
+// versioned additions to the default-hidden set for returning users.
 const ALWAYS_VISIBLE_COLUMNS = new Set(['name', 'actions'])
 const DEFAULT_HIDDEN_COLUMNS = ['id', 'rate_limit', 'last_used_at', 'last_used_ip']
 const HIDDEN_COLUMNS_KEY = 'api-key-hidden-columns'
@@ -1393,15 +1668,22 @@ const COLUMN_SETTINGS_VERSION_KEY = 'api-key-column-settings-version'
 const COLUMN_SETTINGS_VERSION = 3
 const VERSION_NEW_HIDDEN_COLUMNS: Record<number, string[]> = {
   2: ['last_used_ip'],
-  3: ['id']
+  3: ['id'],
 }
 
+// toggleableColumns excludes mandatory identity and action columns; hiddenColumns holds the
+// current in-memory preference set consumed by the table.
 const toggleableColumns = computed(() =>
-  allColumns.value.filter((column) => !ALWAYS_VISIBLE_COLUMNS.has(column.key))
+  allColumns.value.filter((column) => !ALWAYS_VISIBLE_COLUMNS.has(column.key)),
 )
 const hiddenColumns = reactive<Set<string>>(new Set())
 
-// 加载 API Key 表格列设置；新列默认展示，低频列首次加载默认隐藏。
+// loadSavedColumns restores valid hidden-column preferences and applies versioned defaults
+// for newly introduced low-frequency fields. Mandatory columns stay visible and unknown
+// saved keys are removed from the in-memory set. A missing preference starts with default
+// hidden columns; older versions add only their documented migrations before persistence.
+// Invalid storage or parsing reports an error and adds default hidden fields, keeping the
+// table usable when preferences cannot be restored.
 const loadSavedColumns = () => {
   hiddenColumns.clear()
   try {
@@ -1410,17 +1692,15 @@ const loadSavedColumns = () => {
     if (saved) {
       const parsed = JSON.parse(saved) as string[]
       parsed
-        .filter((key) =>
-          typeof key === 'string' &&
-          validColumnKeys.has(key) &&
-          !ALWAYS_VISIBLE_COLUMNS.has(key)
+        .filter(
+          (key) =>
+            typeof key === 'string' && validColumnKeys.has(key) && !ALWAYS_VISIBLE_COLUMNS.has(key),
         )
         .forEach((key) => hiddenColumns.add(key))
       const rawStoredVersion = Number(localStorage.getItem(COLUMN_SETTINGS_VERSION_KEY) ?? '1')
-      // 无效版本值按版本 1 处理，低频列按版本迁移规则隐藏。
-      const storedVersion = Number.isInteger(rawStoredVersion) && rawStoredVersion >= 1
-        ? rawStoredVersion
-        : 1
+      // Treat invalid stored versions as version one so the defined hidden-column migrations still apply to returning users with unusable preference metadata.
+      const storedVersion =
+        Number.isInteger(rawStoredVersion) && rawStoredVersion >= 1 ? rawStoredVersion : 1
       if (storedVersion < COLUMN_SETTINGS_VERSION) {
         for (let version = storedVersion + 1; version <= COLUMN_SETTINGS_VERSION; version++) {
           for (const key of VERSION_NEW_HIDDEN_COLUMNS[version] ?? []) {
@@ -1438,20 +1718,30 @@ const loadSavedColumns = () => {
       localStorage.setItem(COLUMN_SETTINGS_VERSION_KEY, String(COLUMN_SETTINGS_VERSION))
     }
   } catch (error) {
+    // Restore default hidden columns after storage or parsing failure so table
+    // presentation remains usable even when saved preferences cannot be read.
     console.error('Failed to load API key table columns:', error)
     DEFAULT_HIDDEN_COLUMNS.forEach((key) => hiddenColumns.add(key))
   }
 }
 
+// saveColumnsToStorage persists the current hidden set and settings version. Storage failure
+// is logged while the reactive preference remains active for the current page, so column
+// toggles still affect the visible table.
 const saveColumnsToStorage = () => {
   try {
     localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
     localStorage.setItem(COLUMN_SETTINGS_VERSION_KEY, String(COLUMN_SETTINGS_VERSION))
   } catch (error) {
+    // Keep the current reactive column choices after persistence failure;
+    // logging the error lets the user continue working with this page's layout.
     console.error('Failed to save API key table columns:', error)
   }
 }
 
+// toggleColumn changes visibility for a nonmandatory column and saves the resulting
+// preference. Name and action columns are ignored because the table requires them for record
+// identity and operations.
 const toggleColumn = (key: string) => {
   if (ALWAYS_VISIBLE_COLUMNS.has(key)) return
   if (hiddenColumns.has(key)) {
@@ -1462,44 +1752,60 @@ const toggleColumn = (key: string) => {
   saveColumnsToStorage()
 }
 
+// isColumnVisible reports whether the current hidden-column set excludes this key.
 const isColumnVisible = (key: string) => !hiddenColumns.has(key)
 
+// columns filters localized definitions using the current preferences while preserving
+// mandatory columns and their existing order in the table.
 const columns = computed<Column[]>(() =>
-  allColumns.value.filter((column) => ALWAYS_VISIBLE_COLUMNS.has(column.key) || !hiddenColumns.has(column.key))
+  allColumns.value.filter(
+    (column) => ALWAYS_VISIBLE_COLUMNS.has(column.key) || !hiddenColumns.has(column.key),
+  ),
 )
 
+// apiKeys and groups retain the current scope's fetched records; formGroups and billing
+// subscriptions separately constrain editing choices without narrowing list filters.
 const apiKeys = ref<ApiKey[]>([])
 const groups = ref<Group[]>([])
-// 表单分组独立于列表筛选分组，指定订阅时只收窄表单选择范围。
+// formGroups is separate from list-filter groups so a selected subscription narrows form
+// bindings while the table retains all visible routing groups.
 const formGroups = ref<Group[]>([])
 const billingSubscriptions = ref<ApiKeyBillingSubscriptionOption[]>([])
 const billingOptionsLoading = ref(false)
 const formGroupsLoading = ref(false)
-// 加载态从公共设置请求开始，持续到首次 Key 请求完成。
+// loading begins before public settings resolve and ends after the first key list response;
+// usageLoading tracks its separately fetched usage cells.
 const loading = ref(true)
 const usageLoading = ref(false)
 const submitting = ref(false)
+// now and resetTimer update reset countdown labels each minute, while usageStats and
+// userGroupRates retain usage observations and account-specific group multipliers.
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
 const userGroupRates = ref<Record<number, number>>({})
 
+// pagination stores the selected page and persisted page size alongside server totals;
+// sortState supplies the request ordering for that list.
 const pagination = ref({
   page: 1,
   page_size: getPersistedPageSize(),
   total: 0,
-  pages: 0
+  pages: 0,
 })
 const sortState = ref({
   sort_by: 'created_at',
-  sort_order: 'desc' as 'asc' | 'desc'
+  sort_order: 'desc' as 'asc' | 'desc',
 })
 
-// Filter state
+// Search, status, and group filters belong to the list request; an empty group value means
+// all groups while numeric zero requests ungrouped keys.
 const filterSearch = ref('')
 const filterStatus = ref('')
 const filterGroupId = ref<string | number>('')
 
+// Dialog flags and selected records retain the target for each page operation, separating
+// rotation, local CLI import, client import, and general key editing.
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const showDeleteDialog = ref(false)
@@ -1515,33 +1821,57 @@ const showColumnDropdown = ref(false)
 const pendingCcsRow = ref<ApiKey | null>(null)
 const tfImportKey = ref<ApiKey | null>(null)
 const selectedKey = ref<ApiKey | null>(null)
+// Action-menu and group-selector state retains the row target and viewport position, while
+// copiedKeyId marks the latest successful row copy.
 const actionMenuKey = ref<ApiKey | null>(null)
-const actionMenuPosition = ref<{ top: number; left: number } | null>(null)
+const actionMenuPosition = ref<{
+  top: number // Viewport menu top pixels.
+  left: number // Viewport menu left pixels.
+} | null>(null)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
+// Public settings control team scope and import visibility; element refs support teleported
+// panels and per-key group-button positioning.
 const publicSettings = ref<PublicSettings | null>(null)
 const teamFeatureEnabled = computed(() => publicSettings.value?.team_enabled !== false)
 const dropdownRef = ref<HTMLElement | null>(null)
 const columnDropdownRef = ref<HTMLElement | null>(null)
-const dropdownPosition = ref<{ top?: number; bottom?: number; left: number } | null>(null)
+const dropdownPosition = ref<{
+  // top measures pixels from the viewport top; upward placement omits this
+  // anchor and uses bottom to position the panel.
+  top?: number
+  // bottom measures pixels from the viewport bottom when the positioning helper
+  // selects available space above the panel's trigger.
+  bottom?: number
+  left: number // Viewport panel left pixels.
+} | null>(null)
 const groupButtonRefs = ref<Map<number, HTMLElement>>(new Map())
+// abortController owns the latest list and usage batch; compositeBindingSequence supplies
+// stable draft identities, and formGroupsRequestID orders subscription-specific group
+// lookups.
 let abortController: AbortController | null = null
 let compositeBindingSequence = 0
 let formGroupsRequestID = 0
 
-// 新建本地映射行时使用稳定 ID，排序不会导致输入框重建。
+// newCompositeBinding creates a draft mapping with a monotonically increasing local
+// identity. Reordering keeps that identity so the editor retains its input elements; prefix
+// defaults empty for user confirmation.
 const newCompositeBinding = (groupId: number | null = null, prefix = '') => ({
   local_id: ++compositeBindingSequence,
   group_id: groupId,
-  prefix
+  prefix,
 })
 
-// 获取当前正在切换分组的 API Key。
+// selectedKeyForGroup resolves the open inline group selector against the current key list,
+// returning null when its target row is absent.
 const selectedKeyForGroup = computed(() => {
   if (groupSelectorKeyId.value === null) return null
   return apiKeys.value.find((k) => k.id === groupSelectorKeyId.value) || null
 })
 
+// setGroupButtonRef registers a row's actual button element for floating-panel positioning.
+// Component instances and null remove the entry so stale elements are not used after table
+// rows unmount.
 const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance | null) => {
   if (el instanceof HTMLElement) {
     groupButtonRefs.value.set(keyId, el)
@@ -1550,49 +1880,81 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
   }
 }
 
+// formData holds the shared create/edit draft; request conversion uses keyForm.ts for
+// restrictions while this page owns identity, billing, composite bindings, and status rules.
 const formData = ref({
-  name: '',
-  group_id: null as number | null,
-  is_composite: false,
-  composite_groups: [] as Array<ReturnType<typeof newCompositeBinding>>,
-  status: 'active' as 'active' | 'inactive',
-  fast_mode_policy: 'follow_request' as ApiKeyFastModePolicy,
-  billing_mode: 'auto' as ApiKeyBillingMode,
-  preferred_subscription_id: null as number | null,
-  model_mapping_rows: [] as ModelMappingRow[],
-  use_custom_key: false,
-  custom_key: '',
-  enable_ip_restriction: false,
-  ip_whitelist: '',
-  ip_blacklist: '',
-  // Quota settings (empty = unlimited)
-  enable_quota: false,
-  quota: null as number | null,
-  // Rate limit settings
-  enable_rate_limit: false,
-  concurrency_limit: 0,
-  rpm_limit: 0,
-  rate_limit_5h: null as number | null,
-  rate_limit_1d: null as number | null,
-  rate_limit_7d: null as number | null,
-  enable_expiration: false,
-  expiration_preset: '30' as '7' | '30' | '90' | 'custom',
-  expiration_date: '',
-  fallback_when_group_unavailable: true
+  name: '', // Editable key display name.
+  // group_id and composite_groups retain the single-group and prefix-mapping
+  // drafts. is_composite selects which submitKeyForm sends and which it omits.
+  // Inactive mappings remain available when switching modes. Enabling composite
+  // mode adds its first row when the list is empty; disabling an originally
+  // composite key clears group_id for a fresh single-group choice.
+  group_id: null as number | null, // Single routing-group identity.
+  is_composite: false, // Prefix-routing mode enabled flag.
+  composite_groups: [] as Array<ReturnType<typeof newCompositeBinding>>, // Stable prefix-to-group draft rows.
+  status: 'active' as 'active' | 'inactive', // Editable active/inactive selection.
+  fast_mode_policy: 'follow_request' as ApiKeyFastModePolicy, // Request Fast-mode override policy.
+  // billing_mode selects how preferred_subscription_id is submitted: subscription
+  // mode sends the chosen ID, and other modes send null. Editing omits both
+  // fields when their draft values match the selected key's stored billing values.
+  billing_mode: 'auto' as ApiKeyBillingMode, // Selected funding strategy.
+  preferred_subscription_id: null as number | null, // Chosen subscription identity or null.
+  model_mapping_rows: [] as ModelMappingRow[], // Editable source-to-target model rows.
+  // use_custom_key controls whether creation submits custom_key. Disabling the
+  // switch retains the draft text, while submitKeyForm omits it; updates do not
+  // submit custom secrets through these fields.
+  use_custom_key: false, // Custom creation secret enabled.
+  custom_key: '', // Optional user-chosen creation secret.
+  // enable_ip_restriction controls how buildKeyFormPayload consumes ip_whitelist
+  // and ip_blacklist. Disabled inputs keep their draft text but submit empty
+  // arrays, clearing previously stored address restrictions when editing.
+  enable_ip_restriction: false, // Address-filter controls enabled flag.
+  ip_whitelist: '', // Newline-separated allowed addresses.
+  ip_blacklist: '', // Newline-separated denied addresses.
+  // quota alone controls the lifetime cap in buildKeyFormPayload; enable_quota
+  // is retained draft state and does not gate conversion. Null and nonpositive
+  // quota values submit zero for unlimited usage.
+  enable_quota: false, // Retained unused quota switch.
+  quota: null as number | null, // Balance-unit lifetime quota input.
+  // enable_rate_limit gates rate_limit_5h, rate_limit_1d, and rate_limit_7d during
+  // buildKeyFormPayload conversion. Disabled controls retain draft amounts but
+  // submit zero for all windows; nonpositive individual amounts also submit zero.
+  enable_rate_limit: false, // Spending-window controls enabled flag.
+  // concurrency_limit and rpm_limit submit independently of enable_rate_limit.
+  // Their inputs remain visible when spending-window controls are disabled;
+  // each uses zero for an unlimited request count in its corresponding limit.
+  concurrency_limit: 0, // Concurrent request count cap.
+  rpm_limit: 0, // Requests per minute cap.
+  rate_limit_5h: null as number | null, // Five-hour spending amount cap.
+  rate_limit_1d: null as number | null, // One-day spending amount cap.
+  rate_limit_7d: null as number | null, // Seven-day spending amount cap.
+  // enable_expiration gates expiration_date in buildKeyFormPayload, while
+  // expiration_preset identifies the shortcut that fills that date or custom
+  // input. Disabling retains the draft date; disabled or empty dates omit
+  // creation expiry and submit an empty string to clear expiry when editing.
+  enable_expiration: false, // Expiration input enabled flag.
+  expiration_preset: '30' as '7' | '30' | '90' | 'custom', // Selected day shortcut or custom.
+  expiration_date: '', // Browser-local expiration datetime text.
+  fallback_when_group_unavailable: true, // Group-unavailable routing fallback flag.
 })
 
+// MODEL_REDIRECT_MAX_RULES bounds the redirect editor before submission so the page rejects
+// oversized mapping lists alongside per-row validation errors.
 const MODEL_REDIRECT_MAX_RULES = 100
 
-// 前端与后端共享相同的大小写敏感、单尾通配符和长度约束。
+// modelMappingIssues applies the shared case-sensitive redirect rules, including trailing-
+// wildcard and length constraints, to the current editable mapping rows.
 const modelMappingIssues = computed(() =>
-  validateModelMappingRows(formData.value.model_mapping_rows, KEY_REDIRECT_RULES)
+  validateModelMappingRows(formData.value.model_mapping_rows, KEY_REDIRECT_RULES),
 )
 
+// modelMappingFieldErrors localizes each row issue for its source and destination inputs
+// while modelMappingFormError selects the first submission-blocking error.
 const modelMappingFieldErrors = computed(() =>
   modelMappingIssues.value.map((issue) => ({
     from: issue.from ? t(`keys.modelRedirect.${issue.from}`) : undefined,
-    to: issue.to ? t(`keys.modelRedirect.${issue.to}`) : undefined
-  }))
+    to: issue.to ? t(`keys.modelRedirect.${issue.to}`) : undefined,
+  })),
 )
 
 const modelMappingFormError = computed(() => {
@@ -1603,7 +1965,8 @@ const modelMappingFormError = computed(() => {
   return issue ? t(`keys.modelRedirect.${issue}`) : ''
 })
 
-// 自定义Key验证
+// customKeyError validates an enabled nonempty custom secret for minimum length and allowed
+// characters; required-input handling remains in handleSubmit.
 const customKeyError = computed(() => {
   if (!formData.value.use_custom_key || !formData.value.custom_key) {
     return ''
@@ -1612,58 +1975,71 @@ const customKeyError = computed(() => {
   if (key.length < 16) {
     return t('keys.customKeyTooShort')
   }
-  // 检查字符：只允许字母、数字、下划线、连字符
+  // Custom secrets allow ASCII letters, digits, underscores, and hyphens.
   if (!/^[a-zA-Z0-9_-]+$/.test(key)) {
     return t('keys.customKeyInvalidChars')
   }
   return ''
 })
 
-// 单 Key Fast 策略选项；Select 组件负责键盘与弹层交互。
+// fastModePolicyOptions offers request-following, forced-on, and forced-off policies while
+// the shared Select component owns keyboard and popup interaction.
 const fastModePolicyOptions = computed(() => [
   { value: 'follow_request', label: t('keys.fastModePolicy.followRequest') },
   { value: 'force_on', label: t('keys.fastModePolicy.forceOn') },
-  { value: 'force_off', label: t('keys.fastModePolicy.forceOff') }
+  { value: 'force_off', label: t('keys.fastModePolicy.forceOff') },
 ])
 
-// 结算模式由服务端最终校验；这里保持存量 Key 的自动模式可见且可恢复。
+// billingModeOptions retains auto alongside subscription and balance choices so existing
+// keys can display and restore automatic billing before server validation.
 const billingModeOptions = computed(() => [
   { value: 'auto', label: t('keys.billing.modes.auto') },
   { value: 'subscription', label: t('keys.billing.modes.subscription') },
-  { value: 'balance', label: t('keys.billing.modes.balance') }
+  { value: 'balance', label: t('keys.billing.modes.balance') },
 ])
 
-const billingSubscriptionOptions = computed<Array<{
-  value: number
-  label: string
-  description?: string
-  disabled?: boolean
-}>>(() => {
+// billingSubscriptionOptions presents eligible subscription records and retains an
+// unavailable selected ID as a disabled entry so editing does not silently replace its
+// identity.
+const billingSubscriptionOptions = computed<
+  Array<{
+    value: number /* Subscription numeric identity. */
+    label: string /* Plan name and subscription ID. */
+    description?: string /* Optional group restriction summary. */
+    disabled?: boolean /* Unavailable selection disabled flag. */
+  }>
+>(() => {
   const options: Array<{
-    value: number
-    label: string
-    description?: string
-    disabled?: boolean
+    value: number /* Subscription numeric identity. */
+    label: string /* Plan name and subscription ID. */
+    description?: string /* Optional group restriction summary. */
+    disabled?: boolean /* Unavailable selection disabled flag. */
   }> = billingSubscriptions.value.map((subscription) => ({
     value: subscription.id,
     label: `${subscription.plan_name} #${subscription.id}`,
     description: subscription.groups_restricted
       ? t('keys.billing.groupsRestricted')
-      : t('keys.billing.allGroups')
+      : t('keys.billing.allGroups'),
   }))
   const selectedID = formData.value.preferred_subscription_id
   if (selectedID && !options.some((option) => option.value === selectedID)) {
     options.unshift({
       value: selectedID,
       label: t('keys.billing.unavailableSubscription', { id: selectedID }),
-      disabled: true
+      disabled: true,
     })
   }
   return options
 })
 
+// shouldSubmitEditStatus decides whether an ordinary update may include the editable active
+// or inactive value. A team-owner lock prohibits every status write even though unrelated
+// fields remain editable. Quota-exhausted and expired server states collapse to inactive in
+// the form, so leaving that display untouched must not overwrite their terminal reason. Only
+// an explicit active choice submits status for those records, allowing the server to
+// evaluate reactivation.
 const shouldSubmitEditStatus = (key: ApiKey, status: 'active' | 'inactive') => {
-  // Owner 锁定期间仍允许编辑其它字段，但不能通过普通更新接口触碰状态。
+  // An owner lock still permits unrelated edits, but status must be omitted so an ordinary update cannot bypass the owner's disable decision.
   if (key.team_owner_disabled) return false
   if (key.status === 'quota_exhausted' || key.status === 'expired') {
     return status === 'active'
@@ -1671,11 +2047,12 @@ const shouldSubmitEditStatus = (key: ApiKey, status: 'active' | 'inactive') => {
   return true
 }
 
-// 筛选下拉选项。
+// List filter options include unrestricted choices, numeric-zero ungrouped selection,
+// visible groups, and server key statuses used by the list endpoint.
 const groupFilterOptions = computed(() => [
   { value: '', label: t('keys.allGroups') },
   { value: 0, label: t('keys.noGroup') },
-  ...groups.value.map((g) => ({ value: g.id, label: g.name }))
+  ...groups.value.map((g) => ({ value: g.id, label: g.name })),
 ])
 
 const statusFilterOptions = computed(() => [
@@ -1684,11 +2061,16 @@ const statusFilterOptions = computed(() => [
   { value: 'inactive', label: t('keys.status.inactive') },
   { value: 'disabled', label: t('keys.status.disabled') },
   { value: 'quota_exhausted', label: t('keys.status.quota_exhausted') },
-  { value: 'expired', label: t('keys.status.expired') }
+  { value: 'expired', label: t('keys.status.expired') },
 ])
 
-const activeFilterCount = computed(() => [filterGroupId.value !== '', filterStatus.value !== ''].filter(Boolean).length)
+// activeFilterCount counts selected group and status filters for the toolbar badge,
+// excluding the separate text-search field from that count.
+const activeFilterCount = computed(
+  () => [filterGroupId.value !== '', filterStatus.value !== ''].filter(Boolean).length,
+)
 
+// resetKeyFilters clears status and group conditions and reloads the first list page.
 const resetKeyFilters = () => {
   filterGroupId.value = ''
   filterStatus.value = ''
@@ -1696,22 +2078,26 @@ const resetKeyFilters = () => {
   loadApiKeys()
 }
 
+// onFilterChange resets pagination before reloading keys for the current filter values.
 const onFilterChange = () => {
   pagination.value.page = 1
   loadApiKeys()
 }
 
+// onGroupFilterChange stores the group choice and reloads the first filtered page.
 const onGroupFilterChange = (value: string | number | boolean | null) => {
   filterGroupId.value = value as string | number
   onFilterChange()
 }
 
+// onStatusFilterChange stores the status choice and reloads the first filtered page.
 const onStatusFilterChange = (value: string | number | boolean | null) => {
   filterStatus.value = value as string
   onFilterChange()
 }
 
-// 用户侧分组选项包含名称、描述、品牌和倍率。
+// buildGroupOptions adds display branding and account-specific rates to selectable routing
+// groups.
 const buildGroupOptions = (source: Group[]) =>
   source.map((group) => ({
     value: group.id,
@@ -1723,11 +2109,17 @@ const buildGroupOptions = (source: Group[]) =>
     userRate: userGroupRates.value[group.id] ?? null,
   }))
 
-// 指定订阅时仅使用服务端返回的权限与套餐分组交集。
+// formGroupOptions uses server-approved form groups while allGroupOptions retains the
+// broader list for filtering and ordinary inline group selection.
 const formGroupOptions = computed(() => buildGroupOptions(formGroups.value))
 const allGroupOptions = computed(() => buildGroupOptions(groups.value))
 
-// 切换复合模式时保留普通 Key 的原分组，前缀仍要求用户明确填写。
+// onCompositeModeChange switches between single-group and prefix-mapped form
+// representations. Enabling creates an initial mapping from the current group when needed,
+// keeping its prefix empty for the user. Disabling an originally composite key clears the
+// single group so it must be selected; other drafts can recover their first mapping's group
+// when none is already selected. Existing mapping objects remain available for later mode
+// switches.
 const onCompositeModeChange = (enabled: boolean) => {
   if (enabled) {
     if (formData.value.composite_groups.length === 0) {
@@ -1744,23 +2136,34 @@ const onCompositeModeChange = (enabled: boolean) => {
   }
 }
 
+// addCompositeBinding adds an empty mapping while the draft contains fewer than twenty rows.
+// Its stable local ID is assigned by newCompositeBinding for later editor movement and field
+// retention.
 const addCompositeBinding = () => {
   if (formData.value.composite_groups.length >= 20) return
   formData.value.composite_groups.push(newCompositeBinding())
 }
 
+// removeCompositeBinding removes the requested row while retaining at least one mapping. The
+// caller supplies a current editor index so removal targets the row displayed by that
+// action.
 const removeCompositeBinding = (index: number) => {
   if (formData.value.composite_groups.length <= 1) return
   formData.value.composite_groups.splice(index, 1)
 }
 
+// moveCompositeBinding relocates a mapping while preserving its object identity and local
+// ID. Out-of-range target positions are ignored; the editor supplies the current source
+// index for the requested move.
 const moveCompositeBinding = (index: number, target: number) => {
   if (target < 0 || target >= formData.value.composite_groups.length) return
   const [binding] = formData.value.composite_groups.splice(index, 1)
   if (binding) formData.value.composite_groups.splice(target, 0, binding)
 }
 
-// compositeBindingError 即时检查前缀和分组的行内错误。
+// compositeBindingError returns the first validation issue for a draft mapping. It requires
+// a selected group and a trimmed valid prefix, then rejects case-insensitive duplicate
+// prefixes and duplicate group identities across other rows.
 const compositeBindingError = (index: number) => {
   const binding = formData.value.composite_groups[index]
   if (!binding?.group_id) return t('keys.composite.groupRequired')
@@ -1768,16 +2171,19 @@ const compositeBindingError = (index: number) => {
   if (!prefix) return t('keys.composite.prefixRequired')
   if (!/^[A-Za-z0-9_-]{1,32}$/.test(prefix)) return t('keys.composite.prefixInvalid')
   const duplicatePrefix = formData.value.composite_groups.some(
-    (item, itemIndex) => itemIndex !== index && item.prefix.trim().toLowerCase() === prefix.toLowerCase()
+    (item, itemIndex) =>
+      itemIndex !== index && item.prefix.trim().toLowerCase() === prefix.toLowerCase(),
   )
   if (duplicatePrefix) return t('keys.composite.prefixDuplicate')
   const duplicateGroup = formData.value.composite_groups.some(
-    (item, itemIndex) => itemIndex !== index && item.group_id === binding.group_id
+    (item, itemIndex) => itemIndex !== index && item.group_id === binding.group_id,
   )
   if (duplicateGroup) return t('keys.composite.groupDuplicate')
   return ''
 }
 
+// compositeFormError validates mapping count and row rules only in composite mode, allowing
+// the inactive mapping draft to remain while editing a single-group key.
 const compositeFormError = computed(() => {
   if (!formData.value.is_composite) return ''
   if (formData.value.composite_groups.length === 0) return t('keys.composite.mappingRequired')
@@ -1789,28 +2195,37 @@ const compositeFormError = computed(() => {
   return ''
 })
 
-// 分组下拉搜索。
+// groupSearchQuery filters the inline selector across search terms, display labels,
+// branding, and descriptions while retaining all options for an empty query.
 const groupSearchQuery = ref('')
 const filteredGroupOptions = computed(() => {
   const query = groupSearchQuery.value.trim().toLowerCase()
   if (!query) return allGroupOptions.value
   return allGroupOptions.value.filter((opt) => {
-    return opt.search_terms?.some(text => text.toLowerCase().includes(query)) || opt.label.toLowerCase().includes(query) ||
+    return (
+      opt.search_terms?.some((text) => text.toLowerCase().includes(query)) ||
+      opt.label.toLowerCase().includes(query) ||
       (opt.displayBrand && opt.displayBrand.toLowerCase().includes(query)) ||
       (opt.description && opt.description.toLowerCase().includes(query))
+    )
   })
 })
 
-// 指定订阅切换后，普通 Key 与复合 Key 都不能继续保留套餐未覆盖的分组。
+// pruneFormGroupBindings clears a disallowed single group and removes composite bindings
+// outside the supplied allowed set. Subscription changes use it to prevent submitting
+// mappings no longer covered by the selected plan.
 const pruneFormGroupBindings = (allowedGroupIDs: Set<number>) => {
   if (formData.value.group_id !== null && !allowedGroupIDs.has(formData.value.group_id)) {
     formData.value.group_id = null
   }
-  formData.value.composite_groups = formData.value.composite_groups.filter((binding) =>
-    binding.group_id !== null && allowedGroupIDs.has(binding.group_id)
+  formData.value.composite_groups = formData.value.composite_groups.filter(
+    (binding) => binding.group_id !== null && allowedGroupIDs.has(binding.group_id),
   )
 }
 
+// onBillingModeChange normalizes the selected billing mode and clears a preferred
+// subscription. Automatic or balance mode reloads ordinary form groups; subscription mode
+// starts empty until a subscription is chosen.
 const onBillingModeChange = (value: string | number | boolean | null) => {
   const mode: ApiKeyBillingMode = value === 'subscription' || value === 'balance' ? value : 'auto'
   formData.value.billing_mode = mode
@@ -1820,11 +2235,14 @@ const onBillingModeChange = (value: string | number | boolean | null) => {
     return
   }
 
-  // 选定订阅后按兼容性裁剪分组，仍可用的映射继续保留。
+  // Wait for a selected subscription before offering its groups; compatible existing mappings are pruned when that selection supplies its allowed intersection.
   formData.value.preferred_subscription_id = null
   formGroups.value = []
 }
 
+// onPreferredSubscriptionChange records a positive subscription ID and prunes known
+// restricted groups immediately. It then requests the server-approved form groups, which can
+// further restrict bindings using the current payer permissions.
 const onPreferredSubscriptionChange = (value: string | number | boolean | null) => {
   const subscriptionID = typeof value === 'number' && value > 0 ? value : null
   formData.value.preferred_subscription_id = subscriptionID
@@ -1835,11 +2253,17 @@ const onPreferredSubscriptionChange = (value: string | number | boolean | null) 
   void loadFormGroups()
 }
 
+// maskKey abbreviates long secrets to their leading eight and trailing four characters.
+// Secrets of twelve characters or fewer remain visible because no middle segment can be
+// hidden by that format.
 const maskKey = (key: string): string => {
   if (key.length <= 12) return key
   return `${key.slice(0, 8)}...${key.slice(-4)}`
 }
 
+// copyToClipboard copies a secret and marks its row after browser success. Each successful
+// call schedules a reset independently, so an earlier timeout can clear feedback from a
+// later copy.
 const copyToClipboard = async (text: string, keyId: number) => {
   const success = await clipboardCopy(text, t('keys.copied'))
   if (success) {
@@ -1850,30 +2274,43 @@ const copyToClipboard = async (text: string, keyId: number) => {
   }
 }
 
+// isAbortError recognizes browser aborts and Axios cancellation codes among request errors.
 const isAbortError = (error: unknown) => {
   if (!error || typeof error !== 'object') return false
-  const { name, code } = error as { name?: string; code?: string }
+  const { name, code } = error as {
+    name?: string // Browser exception category name.
+    code?: string // HTTP-client cancellation category code.
+  }
   return name === 'AbortError' || code === 'ERR_CANCELED'
 }
 
+// loadApiKeys replaces the current list request and clears usage cells from the prior page.
+// The new AbortController is shared with its later usage query, so another list load cancels
+// both phases together. A successful list publishes rows and pagination before usage
+// finishes, allowing the table to become interactive while cells populate. Cancellation
+// remains silent, and only the owning controller clears loading during completion.
 const loadApiKeys = async () => {
+  // Cancel the prior list and its usage batch before assigning a new owner,
+  // preventing those requests from publishing after the filter or page changes.
   abortController?.abort()
   const controller = new AbortController()
   abortController = controller
   const { signal } = controller
   loading.value = true
-  // 新一轮列表请求立即清理上一页用量状态，取消竞态不会留下过期单元格。
+  // Clear prior-page usage immediately when replacing a list request so a cancellation race cannot attach old amounts to newly displayed keys.
   usageLoading.value = false
   usageStats.value = {}
   try {
-    // 构建筛选条件。
+    // Build the request from selected list filters and ordering.
     const filters: {
-      search?: string
-      status?: string
-      group_id?: number | string
-      sort_by?: string
-      sort_order?: 'asc' | 'desc'
-      scope?: DataScope
+      search?: string /* Optional name-or-secret search text. */
+      status?: string /* Selected server status filter. */
+      group_id?:
+        | number
+        | string /* Group identity; numeric zero selects keys without a group, while omission leaves the group unrestricted. */
+      sort_by?: string /* Selected sortable field identity. */
+      sort_order?: 'asc' | 'desc' /* Requested ascending/descending order. */
+      scope?: DataScope /* Personal or team ownership. */
     } = {}
     if (filterSearch.value) filters.search = filterSearch.value
     if (filterStatus.value) filters.status = filterStatus.value
@@ -1882,28 +2319,44 @@ const loadApiKeys = async () => {
     filters.sort_order = sortState.value.sort_order
     filters.scope = scope.value
 
-    const response = await keysAPI.list(pagination.value.page, pagination.value.page_size, filters, {
-      signal
-    })
+    const response = await keysAPI.list(
+      pagination.value.page,
+      pagination.value.page_size,
+      filters,
+      {
+        signal,
+      },
+    )
+    // An aborted list can still settle after replacement; reject its rows before
+    // publishing pagination or starting a usage request for that obsolete page.
     if (signal.aborted) return
     apiKeys.value = response.items
     pagination.value.total = response.total
     pagination.value.pages = response.pages
-    // Key 列表先解除加载态，用量单元格在后台独立填充。
+    // Publish the key list before usage arrives so table actions are usable while independently loaded usage cells retain their own loading indicators.
     loading.value = false
     void loadUsageStats(response.items, controller)
   } catch (error) {
+    // Replacing a request cancels its transport intentionally, so keep that
+    // completion quiet instead of presenting it as a failed key-list load.
     if (isAbortError(error)) {
       return
     }
     appStore.showError(t('keys.failedToLoad'))
   } finally {
+    // Only this controller's completion can clear the shared list spinner;
+    // a superseding load still needs its own visible loading state.
     if (abortController === controller) {
       loading.value = false
     }
   }
 }
 
+// loadUsageStats fetches usage for the supplied key rows under their list controller. Empty
+// lists finish immediately. Abortion or a replacement controller prevents response
+// publication, and completion clears the usage spinner only while that batch still owns the
+// page. Noncancellation failure logs the cause and leaves the cleared usage map, so stale
+// usage from another page cannot remain attached to newly listed keys.
 const loadUsageStats = async (items: ApiKey[], controller: AbortController) => {
   usageStats.value = {}
   if (items.length === 0) {
@@ -1913,34 +2366,52 @@ const loadUsageStats = async (items: ApiKey[], controller: AbortController) => {
   usageLoading.value = true
   try {
     const keyIds = items.map((key) => key.id)
-    const usageResponse = await usageAPI.getDashboardApiKeysUsage(keyIds, { signal: controller.signal })
+    const usageResponse = await usageAPI.getDashboardApiKeysUsage(keyIds, {
+      signal: controller.signal,
+    })
+    // Usage belongs to the list controller that selected these IDs; reject
+    // cancelled or superseded batches before attaching amounts to current rows.
     if (controller.signal.aborted || abortController !== controller) return
     usageStats.value = usageResponse.stats
   } catch (error) {
+    // Cancellation is expected during list replacement. Other failures remain
+    // logged while the cleared usage map prevents old amounts from reappearing.
     if (!isAbortError(error)) {
       console.error('Failed to load usage stats:', error)
     }
   } finally {
+    // A replacement controller owns its usage spinner independently, so an
+    // older batch finishing cannot hide that replacement's pending usage request.
     if (abortController === controller) {
       usageLoading.value = false
     }
   }
 }
 
+// loadGroups fetches groups visible to the selected ownership scope. Automatic and balance
+// forms reuse them, while subscription forms retain their separately filtered list; failures
+// log the error and keep previous groups.
 const loadGroups = async () => {
   try {
     const available = await userGroupsAPI.getAvailable(scope.value)
     groups.value = available
-    // 自动与余额模式使用用户已选分组，表单打开时的重复请求也保留该选择。
+    // Automatic and balance modes reuse the visible scope groups; subscription mode keeps its separately restricted choices when the general list reloads.
     if (formData.value.billing_mode !== 'subscription') {
       formGroups.value = available
     }
   } catch (error) {
+    // Retain the last successful group choices when retrieval fails, allowing
+    // existing list labels and automatic or balance drafts to remain populated.
     console.error('Failed to load groups:', error)
   }
 }
 
-// 指定订阅时由服务端返回付款主体权限与套餐分组的交集，表格筛选不受影响。
+// loadFormGroups updates edit choices for the current billing selection using an independent
+// request sequence. Automatic and balance modes reuse the general group list; subscription
+// mode requires a chosen subscription before requesting its allowed intersection. Only the
+// latest lookup publishes or clears loading. A successful response prunes incompatible
+// bindings, while a latest failure clears choices and logs the error, preventing unavailable
+// subscription groups from being offered.
 const loadFormGroups = async () => {
   const requestID = ++formGroupsRequestID
   if (formData.value.billing_mode !== 'subscription') {
@@ -1959,26 +2430,37 @@ const loadFormGroups = async () => {
   formGroupsLoading.value = true
   try {
     const available = await userGroupsAPI.getAvailable(scope.value, subscriptionID)
+    // Subscription changes and dialog closure invalidate this sequence; discard
+    // the obsolete result before pruning bindings in a later form draft.
     if (requestID !== formGroupsRequestID) return
     formGroups.value = available
     pruneFormGroupBindings(new Set(available.map((group) => group.id)))
   } catch (error) {
+    // A current failed lookup clears its choices so unavailable subscription
+    // groups cannot remain selectable; stale failures leave the newer form intact.
     if (requestID === formGroupsRequestID) {
       formGroups.value = []
     }
     console.error('Failed to load API key form groups:', error)
   } finally {
+    // Keep a newer lookup's loading state until that lookup finishes;
+    // completion of an obsolete sequence cannot release its spinner.
     if (requestID === formGroupsRequestID) {
       formGroupsLoading.value = false
     }
   }
 }
 
+// loadBillingOptions loads subscription choices for the current ownership scope. Failure
+// clears the candidate list and logs the cause, while the computed options retain an
+// unavailable currently selected ID for display.
 const loadBillingOptions = async () => {
   billingOptionsLoading.value = true
   try {
     billingSubscriptions.value = await keysAPI.getBillingOptions(scope.value)
   } catch (error) {
+    // Remove stale candidates after retrieval failure; the options computation
+    // still shows an unavailable selected ID so its stored identity remains visible.
     billingSubscriptions.value = []
     console.error('Failed to load API key billing options:', error)
   } finally {
@@ -1986,54 +2468,71 @@ const loadBillingOptions = async () => {
   }
 }
 
+// loadUserGroupRates loads account-specific group multipliers for the selected scope.
+// Request failure logs the cause and retains previously loaded rates until another
+// successful response replaces them.
 const loadUserGroupRates = async () => {
   try {
     userGroupRates.value = await userGroupsAPI.getUserGroupRates(scope.value)
   } catch (error) {
+    // Retain the last loaded account rates when refresh fails, so displayed
+    // multipliers continue using that snapshot until a later successful request.
     console.error('Failed to load user group rates:', error)
   }
 }
 
+// loadPublicSettings retrieves feature and endpoint settings used by key actions. A disabled
+// team feature switches an active team scope to personal; failed settings retrieval leaves
+// current defaults in place.
 const loadPublicSettings = async () => {
   try {
     publicSettings.value = await authAPI.getPublicSettings()
     if (!teamFeatureEnabled.value && scope.value === 'team') scope.value = 'personal'
   } catch (error) {
+    // Leave settings and derived visibility defaults in place when retrieval
+    // fails, allowing key actions to continue using their current endpoint configuration.
     console.error('Failed to load public settings:', error)
   }
 }
 
+// openUseKeyModal selects the key and opens its generated client setup instructions.
 const openUseKeyModal = (key: ApiKey) => {
   selectedKey.value = key
   showUseKeyModal.value = true
 }
 
+// closeUseKeyModal hides client instructions and releases their selected key record.
 const closeUseKeyModal = () => {
   showUseKeyModal.value = false
   selectedKey.value = null
 }
 
+// openTfCliImportDialog selects the key for local TokenFlux CLI discovery and import.
 const openTfCliImportDialog = (key: ApiKey) => {
   tfImportKey.value = key
   showTfCliImportDialog.value = true
 }
 
+// closeTfCliImportDialog closes CLI import and releases its selected key record.
 const closeTfCliImportDialog = () => {
   showTfCliImportDialog.value = false
   tfImportKey.value = null
 }
 
+// handlePageChange selects the requested list page and reloads its key records.
 const handlePageChange = (page: number) => {
   pagination.value.page = page
   loadApiKeys()
 }
 
+// handlePageSizeChange stores the page size and reloads the first key page.
 const handlePageSizeChange = (pageSize: number) => {
   pagination.value.page_size = pageSize
   pagination.value.page = 1
   loadApiKeys()
 }
 
+// handleSort selects list ordering and reloads keys from the first page.
 const handleSort = (key: string, order: 'asc' | 'desc') => {
   sortState.value.sort_by = key
   sortState.value.sort_order = order
@@ -2041,23 +2540,32 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
   loadApiKeys()
 }
 
+// openCreateModal opens the create draft and starts billing and group-choice loading. Those
+// loaders handle their own errors, leaving the dialog available while candidate lists
+// resolve.
 const openCreateModal = () => {
   showCreateModal.value = true
   void Promise.all([loadBillingOptions(), loadFormGroups()])
 }
 
+// editKey converts a persisted key into the shared edit draft and loads its billing choices.
+// Composite bindings receive stable local IDs, model mappings become sorted rows, and expiry
+// uses browser-local datetime text. Server terminal statuses display as inactive, with
+// shouldSubmitEditStatus later deciding whether a status write is permitted. Missing
+// billing, Fast, and restriction values receive the defaults expected by the form controls
+// before it opens.
 const editKey = (key: ApiKey) => {
   selectedKey.value = key
-  const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
+  const hasIPRestriction = key.ip_whitelist?.length > 0 || key.ip_blacklist?.length > 0
   const hasExpiration = !!key.expires_at
   formData.value = {
     name: key.name,
     group_id: key.group_id,
     is_composite: key.is_composite ?? false,
     composite_groups: (key.composite_groups || []).map((binding) =>
-      newCompositeBinding(binding.group_id, binding.prefix)
+      newCompositeBinding(binding.group_id, binding.prefix),
     ),
-    // 后端的终态统一映射为不可用，编辑表单只提交 active/inactive。
+    // Terminal server states display as inactive in this two-state editor; submission separately decides whether a status update is allowed for the persisted state.
     status: key.status === 'active' ? 'active' : 'inactive',
     fast_mode_policy: key.fast_mode_policy ?? 'follow_request',
     billing_mode: key.billing_mode ?? 'auto',
@@ -2072,7 +2580,7 @@ const editKey = (key: ApiKey) => {
     ip_blacklist: (key.ip_blacklist || []).join('\n'),
     enable_quota: key.quota > 0,
     quota: key.quota > 0 ? key.quota : null,
-    enable_rate_limit: (key.rate_limit_5h > 0) || (key.rate_limit_1d > 0) || (key.rate_limit_7d > 0),
+    enable_rate_limit: key.rate_limit_5h > 0 || key.rate_limit_1d > 0 || key.rate_limit_7d > 0,
     concurrency_limit: key.concurrency_limit ?? 0,
     rpm_limit: key.rpm_limit ?? 0,
     rate_limit_5h: key.rate_limit_5h || null,
@@ -2081,21 +2589,26 @@ const editKey = (key: ApiKey) => {
     enable_expiration: hasExpiration,
     expiration_preset: 'custom',
     expiration_date: key.expires_at ? formatDateTimeLocal(key.expires_at) : '',
-    fallback_when_group_unavailable: key.fallback_when_group_unavailable ?? false
+    fallback_when_group_unavailable: key.fallback_when_group_unavailable ?? false,
   }
   formGroups.value = []
   showEditModal.value = true
   void Promise.all([loadBillingOptions(), loadFormGroups()])
 }
 
-// 状态开关只维护编辑表单的 active/inactive 两种可提交值。
+// onStatusToggle updates the editable active or inactive value unless a team-owner lock
+// prohibits status changes. The final request still checks shouldSubmitEditStatus before
+// including that field.
 const onStatusToggle = (enabled: boolean) => {
   if (selectedKey.value?.team_owner_disabled) return
   formData.value.status = enabled ? 'active' : 'inactive'
 }
 
+// toggleKeyStatus switches an ordinary row between active and inactive and refreshes the
+// list after success. Team-owner-disabled rows reject the action locally, including calls
+// outside the hidden template button.
 const toggleKeyStatus = async (key: ApiKey) => {
-  // 模板已经隐藏恢复按钮，这里保留防御检查避免其它调用路径误触发请求。
+  // Enforce the owner lock in the handler as well as the template so another invocation path cannot accidentally submit a reactivation request.
   if (key.team_owner_disabled) {
     appStore.showError(t('keys.teamOwnerDisabledHint'))
     return
@@ -2104,7 +2617,7 @@ const toggleKeyStatus = async (key: ApiKey) => {
   try {
     await keysAPI.toggleStatus(key.id, newStatus)
     appStore.showSuccess(
-      newStatus === 'active' ? t('keys.keyEnabledSuccess') : t('keys.keyDisabledSuccess')
+      newStatus === 'active' ? t('keys.keyEnabledSuccess') : t('keys.keyDisabledSuccess'),
     )
     loadApiKeys()
   } catch {
@@ -2112,7 +2625,9 @@ const toggleKeyStatus = async (key: ApiKey) => {
   }
 }
 
-// 更多菜单按视口坐标定位并挂载到 body，脱离固定操作列的裁剪区域。
+// openKeyActionMenu positions the selected row menu in viewport coordinates for teleporting
+// outside clipped table cells. Repeated activation of the same row closes it, while menu
+// height includes the optional client-import action.
 const openKeyActionMenu = (key: ApiKey, event: MouseEvent) => {
   if (actionMenuKey.value?.id === key.id) {
     closeKeyActionMenu()
@@ -2121,29 +2636,33 @@ const openKeyActionMenu = (key: ApiKey, event: MouseEvent) => {
   const target = event.currentTarget as HTMLElement | null
   if (!target) return
   const rect = target.getBoundingClientRect()
-  // 固定高菜单(高度随 CCS 导入项显隐):下方放不下即整体上翻;窄屏保持右缘对齐触发器。
+  // The menu's fixed height includes optional import actions. Positioning can flip the complete panel upward while keeping its trailing edge aligned on narrow screens.
   const position = getFloatingPanelPosition(rect, window.innerWidth, window.innerHeight, {
     maxWidth: 192,
     fixedHeight: publicSettings.value?.hide_ccs_import_button ? 178 : 218,
     viewportPadding: 8,
     gap: 4,
-    pinLeftOnMobile: false
+    pinLeftOnMobile: false,
   })
-  // fixedHeight 模式下 top 恒非空。
+  // Fixed-height positioning supplies a top coordinate for the teleported menu.
   actionMenuPosition.value = { top: position.top ?? 8, left: position.left }
   actionMenuKey.value = key
 }
 
+// closeKeyActionMenu releases the action target and its viewport positioning state.
 const closeKeyActionMenu = () => {
   actionMenuKey.value = null
   actionMenuPosition.value = null
 }
 
+// openGroupSelector opens an inline selector for ordinary non-subscription keys and routes
+// other keys into the full editor. It positions the panel from the registered row button and
+// clears search on a newly selected row.
 const openGroupSelector = (key: ApiKey) => {
-	if (key.is_composite || key.billing_mode === 'subscription') {
-		editKey(key)
-		return
-	}
+  if (key.is_composite || key.billing_mode === 'subscription') {
+    editKey(key)
+    return
+  }
   if (groupSelectorKeyId.value === key.id) {
     groupSelectorKeyId.value = null
     dropdownPosition.value = null
@@ -2151,20 +2670,20 @@ const openGroupSelector = (key: ApiKey) => {
     const buttonEl = groupButtonRefs.value.get(key.id)
     if (buttonEl) {
       const rect = buttonEl.getBoundingClientRect()
-      // 面板左缘对齐触发器,预估最大高度 400 决定翻转;窄屏面板近满宽,钉到视口左缘。
+      // Estimate a comfortable group-panel height before choosing its side, and allow the positioning helper to use near-full viewport width on narrow screens.
       const position = getFloatingPanelPosition(rect, window.innerWidth, window.innerHeight, {
         align: 'left',
         maxWidth: 380,
         viewportPadding: 8,
         gap: 4,
         maxHeightRatio: 1,
-        minComfortableHeight: 400
+        minComfortableHeight: 400,
       })
       if (position.bottom !== null) {
-        // 下方空间不足时向上弹出。
+        // Anchor upward when the positioning helper selects space above the trigger.
         dropdownPosition.value = { bottom: position.bottom, left: position.left }
       } else {
-        // 默认向下弹出。
+        // Otherwise use the helper's downward top coordinate.
         dropdownPosition.value = { top: position.top ?? undefined, left: position.left }
       }
     }
@@ -2173,15 +2692,18 @@ const openGroupSelector = (key: ApiKey) => {
   }
 }
 
-const submitGroupChange = async (
-  key: ApiKey,
-  newGroupId: number | null
-) => {
+// submitGroupChange saves a key's single-group assignment and starts a list refresh after
+// success. Request failures propagate to changeGroup, which owns the user-facing error
+// notification for this action.
+const submitGroupChange = async (key: ApiKey, newGroupId: number | null) => {
   await keysAPI.update(key.id, { group_id: newGroupId })
   appStore.showSuccess(t('keys.groupChangedSuccess'))
   loadApiKeys()
 }
 
+// changeGroup closes the inline selector before saving a different group assignment.
+// Selecting the existing group skips the request, while failed updates report a localized
+// error and leave server state authoritative.
 const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
   groupSelectorKeyId.value = null
   dropdownPosition.value = null
@@ -2194,9 +2716,12 @@ const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
   }
 }
 
+// closeGroupSelector dismisses group and column menus when a document click falls outside
+// their controls. Group trigger ancestors count as inside so their click handlers can manage
+// their own open state.
 const closeGroupSelector = (event: MouseEvent) => {
   const target = event.target as HTMLElement
-  // 判断点击是否发生在下拉框或触发按钮内，同时关闭列设置菜单。
+  // Treat group triggers and panel contents as internal clicks while independently dismissing column settings when the click leaves its own root.
   if (!target.closest('.group\\/dropdown') && !dropdownRef.value?.contains(target)) {
     groupSelectorKeyId.value = null
     dropdownPosition.value = null
@@ -2206,27 +2731,37 @@ const closeGroupSelector = (event: MouseEvent) => {
   }
 }
 
+// confirmDelete selects the key and opens its deletion confirmation dialog.
 const confirmDelete = (key: ApiKey) => {
   selectedKey.value = key
   showDeleteDialog.value = true
 }
 
+// confirmRotate selects the key whose secret will require rotation confirmation.
 const confirmRotate = (key: ApiKey) => {
   rotationKey.value = key
 }
 
+// cancelRotate releases the rotation target when no rotation request is active. The current
+// target remains while busy so request completion can publish the returned secret
+// consistently.
 const cancelRotate = () => {
   if (!rotatingKey.value) rotationKey.value = null
 }
 
+// handleRotate replaces the confirmed key secret and publishes it before refreshing the
+// list. It updates matching row and selected-key records, clears old copy feedback, and
+// opens the returned-secret result. Publishing first keeps copy operations on the newly
+// issued credential even if a later list refresh fails. Missing targets or an active
+// rotation skip submission, and the rotation guard resets after the mutation settles.
 const handleRotate = async () => {
   if (!rotationKey.value || rotatingKey.value) return
   rotatingKey.value = true
   try {
     const updated = await keysAPI.rotate(rotationKey.value.id)
-    // 先将页面凭据替换为新值，列表刷新失败时复制功能也能取得新凭据。
-    apiKeys.value = apiKeys.value.map(key =>
-      key.id === updated.id ? { ...key, key: updated.key, updated_at: updated.updated_at } : key
+    // Publish the returned credential before the asynchronous list refresh so copying uses the new secret even if that later refresh fails to replace rows.
+    apiKeys.value = apiKeys.value.map((key) =>
+      key.id === updated.id ? { ...key, key: updated.key, updated_at: updated.updated_at } : key,
     )
     if (selectedKey.value?.id === updated.id) selectedKey.value = updated
     if (copiedKeyId.value === updated.id) copiedKeyId.value = null
@@ -2234,64 +2769,27 @@ const handleRotate = async () => {
     rotatedKey.value = updated
     void loadApiKeys()
   } catch (error: unknown) {
-    const message = error instanceof Error
-      ? error.message
-      : (error as { message?: string } | null)?.message
+    const message =
+      error instanceof Error
+        ? error.message
+        : (error as { message?: string /* Optional rotation failure explanation. */ } | null)
+            ?.message
     appStore.showError(message || t('keys.failedToRotate'))
   } finally {
     rotatingKey.value = false
   }
 }
 
-const buildKeyFormPayload = () => {
-  // 仅在启用 IP 限制时解析名单。
-  const parseIPList = (text: string): string[] =>
-    text.split('\n').map(ip => ip.trim()).filter(ip => ip.length > 0)
-  const ipWhitelist = formData.value.enable_ip_restriction ? parseIPList(formData.value.ip_whitelist) : []
-  const ipBlacklist = formData.value.enable_ip_restriction ? parseIPList(formData.value.ip_blacklist) : []
-
-  // 计算额度值，空值和 0 都按不限额处理。
-  const quota = formData.value.quota && formData.value.quota > 0 ? formData.value.quota : 0
-
-  // 计算过期时间。
-  let expiresInDays: number | undefined
-  let expiresAt: string | null | undefined
-  if (formData.value.enable_expiration && formData.value.expiration_date) {
-    if (!showEditModal.value) {
-      // 创建模式：按选择日期换算剩余天数。
-      const expDate = new Date(formData.value.expiration_date)
-      const now = new Date()
-      const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-      expiresInDays = diffDays > 0 ? diffDays : 1
-    } else {
-      // 编辑模式：直接提交自定义日期。
-      expiresAt = new Date(formData.value.expiration_date).toISOString()
-    }
-  } else if (showEditModal.value) {
-    // 编辑模式：关闭过期或清空日期时发送空字符串以清除。
-    expiresAt = ''
-  }
-
-  // 计算限速值，关闭开关时提交 0。
-  const rateLimitData = formData.value.enable_rate_limit ? {
-    rate_limit_5h: formData.value.rate_limit_5h && formData.value.rate_limit_5h > 0 ? formData.value.rate_limit_5h : 0,
-    rate_limit_1d: formData.value.rate_limit_1d && formData.value.rate_limit_1d > 0 ? formData.value.rate_limit_1d : 0,
-    rate_limit_7d: formData.value.rate_limit_7d && formData.value.rate_limit_7d > 0 ? formData.value.rate_limit_7d : 0,
-  } : { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }
-
-  return {
-    ipWhitelist,
-    ipBlacklist,
-    quota,
-    expiresInDays,
-    expiresAt,
-    rateLimitData,
-    modelMapping: mappingRowsToRecord(formData.value.model_mapping_rows)
-  }
-}
-
+// submitKeyForm converts validated restriction inputs and submits either a create or update
+// payload. Editing sends billing fields only when the mode or preferred subscription
+// changed, and includes status only when server-state rules permit it. Composite mappings
+// submit trimmed prefixes and suppress the single-group field. Creation carries ownership
+// scope and optional custom secret, then advances onboarding only after success at the
+// matching submission step. Successful requests close and reset the draft before refreshing
+// the list.
 const submitKeyForm = async () => {
-  const { ipWhitelist, ipBlacklist, quota, expiresInDays, expiresAt, rateLimitData, modelMapping } = buildKeyFormPayload()
+  const { ipWhitelist, ipBlacklist, quota, expiresInDays, expiresAt, rateLimitData, modelMapping } =
+    buildKeyFormPayload(formData.value, showEditModal.value)
   submitting.value = true
   try {
     if (showEditModal.value && selectedKey.value) {
@@ -2302,7 +2800,7 @@ const submitKeyForm = async () => {
         composite_groups: formData.value.is_composite
           ? formData.value.composite_groups.map((binding) => ({
               group_id: binding.group_id!,
-              prefix: binding.prefix.trim()
+              prefix: binding.prefix.trim(),
             }))
           : undefined,
         fast_mode_policy: formData.value.fast_mode_policy,
@@ -2316,7 +2814,7 @@ const submitKeyForm = async () => {
         rate_limit_5h: rateLimitData.rate_limit_5h,
         rate_limit_1d: rateLimitData.rate_limit_1d,
         rate_limit_7d: rateLimitData.rate_limit_7d,
-        fallback_when_group_unavailable: formData.value.fallback_when_group_unavailable
+        fallback_when_group_unavailable: formData.value.fallback_when_group_unavailable,
       }
       const originalBillingMode = selectedKey.value.billing_mode ?? 'auto'
       const originalPreferredSubscriptionID = selectedKey.value.preferred_subscription_id ?? null
@@ -2325,9 +2823,10 @@ const submitKeyForm = async () => {
         formData.value.preferred_subscription_id !== originalPreferredSubscriptionID
       ) {
         updates.billing_mode = formData.value.billing_mode
-        updates.preferred_subscription_id = formData.value.billing_mode === 'subscription'
-          ? formData.value.preferred_subscription_id
-          : null
+        updates.preferred_subscription_id =
+          formData.value.billing_mode === 'subscription'
+            ? formData.value.preferred_subscription_id
+            : null
       }
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
@@ -2344,14 +2843,15 @@ const submitKeyForm = async () => {
         composite_groups: formData.value.is_composite
           ? formData.value.composite_groups.map((binding) => ({
               group_id: binding.group_id!,
-              prefix: binding.prefix.trim()
+              prefix: binding.prefix.trim(),
             }))
           : undefined,
         fast_mode_policy: formData.value.fast_mode_policy,
         billing_mode: formData.value.billing_mode,
-        preferred_subscription_id: formData.value.billing_mode === 'subscription'
-          ? formData.value.preferred_subscription_id
-          : null,
+        preferred_subscription_id:
+          formData.value.billing_mode === 'subscription'
+            ? formData.value.preferred_subscription_id
+            : null,
         model_mapping: modelMapping,
         custom_key: customKey,
         ip_whitelist: ipWhitelist,
@@ -2363,11 +2863,11 @@ const submitKeyForm = async () => {
         rate_limit_5h: rateLimitData.rate_limit_5h,
         rate_limit_1d: rateLimitData.rate_limit_1d,
         rate_limit_7d: rateLimitData.rate_limit_7d,
-        fallback_when_group_unavailable: formData.value.fallback_when_group_unavailable
+        fallback_when_group_unavailable: formData.value.fallback_when_group_unavailable,
       }
       await keysAPI.createWithPayload(payload)
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
-      // 仅在引导进行到提交步骤且创建成功后推进引导。
+      // Advance onboarding only after a successful create response and while its active step still points to this submit control.
       if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
         onboardingStore.nextStep(500)
       }
@@ -2375,56 +2875,76 @@ const submitKeyForm = async () => {
     closeModals()
     loadApiKeys()
   } catch (error: any) {
-    const errorMsg = error?.reason === 'API_KEY_LIMIT_REACHED'
-      ? t('keys.apiKeyLimitReached', {
-          current: error?.metadata?.current ?? '?',
-          limit: error?.metadata?.limit ?? '?'
-        })
-      : error?.message || t('keys.failedToSave')
+    const errorMsg =
+      error?.reason === 'API_KEY_LIMIT_REACHED'
+        ? t('keys.apiKeyLimitReached', {
+            current: error?.metadata?.current ?? '?',
+            limit: error?.metadata?.limit ?? '?',
+          })
+        : error?.message || t('keys.failedToSave')
     appStore.showError(errorMsg)
-    // 创建失败时不推进引导。
+    // A rejected create leaves onboarding at the submission step for correction.
   } finally {
     submitting.value = false
   }
 }
 
-// 切换作用域后清空分页与筛选缓存，并只重新加载当前内容区域的数据。
+// onScopeChange returns to the first page and clears the group filter before reloading
+// scope-dependent keys, groups, rates, and billing options. Other filter values remain
+// available across the ownership switch.
 const onScopeChange = () => {
   pagination.value.page = 1
   filterGroupId.value = ''
-  void Promise.all([loadApiKeys(), loadGroups(), loadUserGroupRates(), loadBillingOptions(), loadFormGroups()])
+  void Promise.all([
+    loadApiKeys(),
+    loadGroups(),
+    loadUserGroupRates(),
+    loadBillingOptions(),
+    loadFormGroups(),
+  ])
 }
 
+// handleSubmit validates integer request limits, model redirects, composite mappings,
+// billing selection, and required group identity before submission. Custom-secret checks
+// apply only to creation; accepted drafts delegate payload conversion and persistence to
+// submitKeyForm.
 const handleSubmit = async () => {
-  // 空输入按 0 提交，其余值需满足数据库整数范围。
+  // Empty numeric controls submit zero; other request caps must fit the nonnegative signed 32-bit integer range accepted by persistence.
   const requestLimits = [formData.value.concurrency_limit, formData.value.rpm_limit]
-  if (requestLimits.some(value => !Number.isInteger(Number(value || 0)) || Number(value || 0) < 0 || Number(value || 0) > 2147483647)) {
+  if (
+    requestLimits.some(
+      (value) =>
+        !Number.isInteger(Number(value || 0)) ||
+        Number(value || 0) < 0 ||
+        Number(value || 0) > 2147483647,
+    )
+  ) {
     appStore.showError(t('keys.requestLimitsInvalid'))
     return
   }
 
-	if (modelMappingFormError.value) {
-		appStore.showError(modelMappingFormError.value)
-		return
-	}
+  if (modelMappingFormError.value) {
+    appStore.showError(modelMappingFormError.value)
+    return
+  }
 
-	if (formData.value.is_composite && compositeFormError.value) {
-		appStore.showError(compositeFormError.value)
-		return
-	}
+  if (formData.value.is_composite && compositeFormError.value) {
+    appStore.showError(compositeFormError.value)
+    return
+  }
 
   if (formData.value.billing_mode === 'subscription' && !formData.value.preferred_subscription_id) {
     appStore.showError(t('keys.billing.subscriptionRequired'))
     return
   }
 
-  // 普通模式必须显式选择单个分组，复合转普通时同样不沿用隐式值。
+  // Single-group keys require a selected group, including drafts converted from composite mode, so an implicit stale binding cannot enter the submitted payload.
   if (!formData.value.is_composite && formData.value.group_id === null) {
     appStore.showError(t('keys.groupRequired'))
     return
   }
 
-  // 启用自定义 Key 时校验输入。
+  // Creation validates the custom secret when its optional control is enabled.
   if (!showEditModal.value && formData.value.use_custom_key) {
     if (!formData.value.custom_key) {
       appStore.showError(t('keys.customKeyRequired'))
@@ -2439,11 +2959,9 @@ const handleSubmit = async () => {
   await submitKeyForm()
 }
 
-/**
- * 处理删除 API Key 的操作
- * 优化：错误处理改进，优先显示后端返回的具体错误消息（如权限不足等），
- * 若后端未返回消息则显示默认的国际化文本
- */
+// handleDelete removes the selected key and closes its confirmation after success. Missing
+// selection skips the request, and failures prefer the API message while retaining the
+// dialog for another attempt.
 const handleDelete = async () => {
   if (!selectedKey.value) return
 
@@ -2453,16 +2971,24 @@ const handleDelete = async () => {
     showDeleteDialog.value = false
     loadApiKeys()
   } catch (error: any) {
-    // 优先使用后端返回的错误消息，提供更具体的错误信息给用户
+    // Use the server's actionable failure message when available, otherwise use the localized deletion failure label so the dialog still explains the failed request.
     const errorMsg = error?.message || t('keys.failedToDelete')
     appStore.showError(errorMsg)
   }
 }
 
+// closeModals hides create and edit dialogs and restores their shared draft
+// defaults. It advances the group-request sequence before clearing choices, so
+// a subscription lookup already in flight loses permission to publish or prune
+// bindings when it finishes. Reopening the editor can then start a new lookup
+// against the reset draft. The request itself keeps running, but its completion
+// checks the captured sequence before updating choices or releasing loading.
 const closeModals = () => {
   showCreateModal.value = false
   showEditModal.value = false
   selectedKey.value = null
+  // Invalidate lookup ownership before clearing groups and resetting the draft,
+  // so pending results cannot repopulate a closed or subsequently reopened editor.
   formGroupsRequestID++
   formGroups.value = []
   formData.value = {
@@ -2491,16 +3017,18 @@ const closeModals = () => {
     enable_expiration: false,
     expiration_preset: '30',
     expiration_date: '',
-    fallback_when_group_unavailable: true
+    fallback_when_group_unavailable: true,
   }
 }
 
-// 展示重置额度确认弹窗。
+// confirmResetQuota opens the quota-reset confirmation for the currently selected edit key.
 const confirmResetQuota = () => {
   showResetQuotaDialog.value = true
 }
 
-// 根据快捷天数设置过期日期。
+// setExpirationDays stores the shortcut and derives a local datetime expiration from today.
+// Calendar-day arithmetic follows the browser date before formatting the result for the
+// datetime-local input.
 const setExpirationDays = (days: number) => {
   formData.value.expiration_preset = days.toString() as '7' | '30' | '90'
   const expDate = new Date()
@@ -2508,14 +3036,16 @@ const setExpirationDays = (days: number) => {
   formData.value.expiration_date = formatDateTimeLocal(expDate.toISOString())
 }
 
-// 重置 API Key 已用额度。
+// resetQuotaUsed clears used quota for the selected key and closes its confirmation before
+// requesting. Success updates the local selected record to zero, while API failure reports
+// the server detail or default message.
 const resetQuotaUsed = async () => {
   if (!selectedKey.value) return
   showResetQuotaDialog.value = false
   try {
     await keysAPI.update(selectedKey.value.id, { reset_quota: true })
     appStore.showSuccess(t('keys.quotaResetSuccess'))
-    // 同步更新本地状态。
+    // Update selected quota usage after persistence succeeds so the edit dialog reflects the reset immediately, before another list refresh is required.
     if (selectedKey.value) {
       selectedKey.value.quota_used = 0
     }
@@ -2525,28 +3055,32 @@ const resetQuotaUsed = async () => {
   }
 }
 
-// 从编辑弹窗展示重置限速确认弹窗。
+// confirmResetRateLimit opens spending-window reset confirmation for the current edit
+// selection.
 const confirmResetRateLimit = () => {
   showResetRateLimitDialog.value = true
 }
 
-// 从表格行展示重置限速确认弹窗。
+// confirmResetRateLimitFromTable selects the table key before opening spending-window reset
+// confirmation.
 const confirmResetRateLimitFromTable = (row: ApiKey) => {
   selectedKey.value = row
   showResetRateLimitDialog.value = true
 }
 
-// 重置 API Key 限速用量。
+// resetRateLimitUsage resets the selected key's spending-window usage and reloads the key
+// list. After refresh it replaces the selected edit object with the matching returned row,
+// while failures report API detail or a localized message.
 const resetRateLimitUsage = async () => {
   if (!selectedKey.value) return
   showResetRateLimitDialog.value = false
   try {
     await keysAPI.update(selectedKey.value.id, { reset_rate_limit_usage: true })
     appStore.showSuccess(t('keys.rateLimitResetSuccess'))
-    // 刷新 Key 数据。
+    // Reload list data after the spending-window reset because the server determines the resulting window values and timestamps used by the table.
     await loadApiKeys()
-    // 用刷新后的数据更新当前编辑对象。
-    const refreshedKey = apiKeys.value.find(k => k.id === selectedKey.value!.id)
+    // Replace the current edit record with its refreshed counterpart so its displayed window usage comes from the same server response as the list.
+    const refreshedKey = apiKeys.value.find((k) => k.id === selectedKey.value!.id)
     if (refreshedKey) {
       selectedKey.value = refreshedKey
     }
@@ -2556,31 +3090,64 @@ const resetRateLimitUsage = async () => {
   }
 }
 
-// Key 内嵌分组缺少目录时，从已加载的可见分组中读取。
+// groupWithModels resolves the group catalog used by client configuration and applies key
+// redirects through groupForKeyConfig. Available group data overrides embedded key metadata;
+// ungrouped or missing keys return undefined.
 const groupWithModels = (key: ApiKey | null): Group | undefined => {
   if (!key?.group_id) return undefined
-  const available = groups.value.find(group => group.id === key.group_id)
-  return groupForKeyConfig(available ? { ...key.group, ...available } : key.group ?? undefined, key.model_mapping)
+  const available = groups.value.find((group) => group.id === key.group_id)
+  return groupForKeyConfig(
+    available ? { ...key.group, ...available } : (key.group ?? undefined),
+    key.model_mapping,
+  )
 }
+// Selected single and composite group views combine loaded catalog metadata with key
+// redirects before passing capabilities to client configuration instructions.
 const selectedKeyGroup = computed(() => groupWithModels(selectedKey.value))
-const selectedCompositeGroups = computed(() => (selectedKey.value?.composite_groups ?? []).map(binding => ({
-  ...binding, group: groupForKeyConfig(groups.value.find(group => group.id === binding.group_id) ?? binding.group, selectedKey.value?.model_mapping),
-})))
+const selectedCompositeGroups = computed(() =>
+  (selectedKey.value?.composite_groups ?? []).map((binding) => ({
+    ...binding,
+    group: groupForKeyConfig(
+      groups.value.find((group) => group.id === binding.group_id) ?? binding.group,
+      selectedKey.value?.model_mapping,
+    ),
+  })),
+)
+// Client-import state retains its chosen client and model, deriving options from the pending
+// key's effective group capabilities before opening an external protocol link.
 const ccClient = ref<CcSwitchClientType>('claude')
 const ccModel = ref('')
 const ccGroup = computed(() => groupWithModels(pendingCcsRow.value))
-const ccClientOptions = computed(() => availableClients(ccGroup.value?.allowed_protocols ?? []).filter(client => client !== 'opencode').map(client => ({ value: client, label: CLIENT_LABELS[client] })))
+const ccClientOptions = computed(() =>
+  availableClients(ccGroup.value?.allowed_protocols ?? [])
+    .filter((client) => client !== 'opencode')
+    .map((client) => ({ value: client, label: CLIENT_LABELS[client] })),
+)
 const ccModelOptions = computed(() => {
   const protocol = clientProtocol(ccClient.value, ccGroup.value?.allowed_protocols ?? [])
-  return protocol ? modelsForProtocol(ccGroup.value, protocol).map(model => ({ value: model, label: model })) : []
+  return protocol
+    ? modelsForProtocol(ccGroup.value, protocol).map((model) => ({ value: model, label: model }))
+    : []
 })
-watch(ccClientOptions, options => { if (!options.some(option => option.value === ccClient.value)) ccClient.value = options[0]?.value as CcSwitchClientType ?? 'claude' })
-watch(ccModelOptions, options => { if (!options.some(option => option.value === ccModel.value)) ccModel.value = options[0]?.value ?? '' })
+watch(ccClientOptions, (options) => {
+  if (!options.some((option) => option.value === ccClient.value))
+    ccClient.value = (options[0]?.value as CcSwitchClientType) ?? 'claude'
+})
+watch(ccModelOptions, (options) => {
+  if (!options.some((option) => option.value === ccModel.value))
+    ccModel.value = options[0]?.value ?? ''
+})
+// importToCcswitch retains the key and opens the client-import choice dialog.
 const importToCcswitch = (row: ApiKey) => {
   pendingCcsRow.value = row
   showCcsClientSelect.value = true
 }
 
+// executeCcsImport builds the external client link using the selected model, key, endpoint,
+// and balance usage script. It opens that custom protocol in the current window and
+// schedules a focus-based installation hint. The focus probe is a heuristic: remaining focus
+// after the delay reports the client-not-installed message, while synchronous open failures
+// use the same feedback. The timer is not owned by the component cleanup.
 const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
   const baseUrl = publicSettings.value?.api_base_url || window.location.origin
 
@@ -2592,16 +3159,16 @@ const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
     clientType,
     providerName,
     apiKey: row.key,
-    usageScript
+    usageScript,
   })
 
   try {
     window.open(deeplink, '_self')
 
-    // 通过窗口焦点粗略判断协议处理器是否拉起成功。
+    // Probe focus after opening the custom protocol as an installation hint; browser focus behavior is only an approximation of whether a handler launched.
     setTimeout(() => {
       if (document.hasFocus()) {
-        // 仍然聚焦通常说明协议处理器未成功拉起。
+        // Remaining page focus triggers the installation hint, although it is not definitive proof that the external application failed to open.
         appStore.showError(t('keys.ccSwitchNotInstalled'))
       }
     }, 100)
@@ -2610,23 +3177,34 @@ const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
   }
 }
 
+// handleCcsClientSelect launches import only when a pending key and currently offered model
+// remain selected. It closes the choice dialog and clears the pending record whether import
+// runs or is skipped.
 const handleCcsClientSelect = (clientType: CcSwitchClientType) => {
-  if (pendingCcsRow.value && ccModelOptions.value.some(option => option.value === ccModel.value)) {
+  if (
+    pendingCcsRow.value &&
+    ccModelOptions.value.some((option) => option.value === ccModel.value)
+  ) {
     executeCcsImport(pendingCcsRow.value, clientType)
   }
   showCcsClientSelect.value = false
   pendingCcsRow.value = null
 }
 
+// closeCcsClientSelect closes the client chooser and releases its pending key record.
 const closeCcsClientSelect = () => {
   showCcsClientSelect.value = false
   pendingCcsRow.value = null
 }
 
+// formatResetTime formats a reset timestamp against the page's minute-updated clock. Missing
+// timestamps return empty text, elapsed windows report reset-now, and future durations
+// display days, hours, or remaining minutes.
 function formatResetTime(resetAt: string | null): string {
   if (!resetAt) return ''
   const diff = new Date(resetAt).getTime() - now.value.getTime()
   if (diff <= 0) return t('keys.resetNow')
+  // Truncate elapsed milliseconds to complete units for the compact countdown.
   const days = Math.floor(diff / 86400000)
   const hours = Math.floor((diff % 86400000) / 3600000)
   const mins = Math.floor((diff % 3600000) / 60000)
@@ -2638,22 +3216,41 @@ function formatResetTime(resetAt: string | null): string {
 onMounted(async () => {
   loadSavedColumns()
   document.addEventListener('click', closeGroupSelector)
-  resetTimer = setInterval(() => { now.value = new Date() }, 60000)
+  // Refresh the display clock each minute because reset labels show whole
+  // minutes; the mounted page releases this recurring timer during unmount.
+  resetTimer = setInterval(() => {
+    now.value = new Date()
+  }, 60000)
   await loadPublicSettings()
-  await Promise.all([loadApiKeys(), loadGroups(), loadUserGroupRates(), loadBillingOptions(), loadFormGroups()])
+  await Promise.all([
+    loadApiKeys(),
+    loadGroups(),
+    loadUserGroupRates(),
+    loadBillingOptions(),
+    loadFormGroups(),
+  ])
 })
 
 onUnmounted(() => {
+  // Release the page's outside-click listener, current list/usage controller,
+  // and recurring clock timer so these existing resources stop reacting after navigation.
   document.removeEventListener('click', closeGroupSelector)
   abortController?.abort()
-	if (resetTimer) clearInterval(resetTimer)
+  if (resetTimer) clearInterval(resetTimer)
 })
-useLocaleRefresh(() => Promise.all([loadApiKeys(), loadGroups(), loadFormGroups(), loadBillingOptions(), loadPublicSettings()]))
+useLocaleRefresh(() =>
+  Promise.all([
+    loadApiKeys(),
+    loadGroups(),
+    loadFormGroups(),
+    loadBillingOptions(),
+    loadPublicSettings(),
+  ]),
+)
 </script>
 
 <style scoped>
-/* 创建密钥弹窗的单行控件统一为 36px，多行文本域保留自然高度。
-   下拉触发器已由 .input 基线(min-h-9、py-1.5)提供同一尺寸，不再单列。 */
+/* Single-line controls share a 36-pixel height while textareas retain natural height. Select triggers already receive that size from the common input rules. */
 .key-form-controls :deep(input.input),
 .key-form-controls :deep(.btn) {
   height: 2.25rem;

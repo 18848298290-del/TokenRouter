@@ -1,10 +1,12 @@
-/**
- * UI 交互时长的共享常量(ms)。
- * 同类交互共用这里的时长，调用方需要不同取值时通过参数覆盖。
- */
+// ui.ts defines shared copy-feedback and search-debounce durations in milliseconds.
+// These values control how long feedback remains visible and when list searches begin;
+// animation transitions use the separate motion variables supplied by the global
+// stylesheet.
 
-/** “已复制”反馈的展示时长;所有复制按钮/复制行共用。 */
+// COPY_FEEDBACK_MS controls the shared copied-state display duration used by clipboard
+// buttons and copyable value rows.
 export const COPY_FEEDBACK_MS = 2000
 
-/** 列表搜索输入的防抖时长;各列表页搜索框共用。 */
+// SEARCH_DEBOUNCE_MS controls how long list search inputs wait after typing before
+// starting another search request.
 export const SEARCH_DEBOUNCE_MS = 300

@@ -7,5 +7,10 @@
 </template>
 
 <script setup lang="ts">
-// 开关打开后展开的依赖字段放在子面板中，与上方设置行形成层级。
+/**
+ * SettingsSubpanel.vue groups dependent settings within an inset panel beneath their
+ * controlling setting row. Its border, background, and internal spacing distinguish
+ * nested controls from the containing card; the parent decides when to render or hide
+ * the panel.
+ */
 </script>

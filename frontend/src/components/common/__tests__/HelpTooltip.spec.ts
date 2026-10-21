@@ -4,6 +4,14 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 
+// HelpTooltip.spec.ts tests tooltip activation, dismissal, and placement through
+// rendered document panels. Measured rectangles exercise edge clamping and scrolling,
+// while interactive content uses observer notifications and keyboard events to verify
+// positioning and focus return.
+
+// getTooltipElement returns the document tooltip as an HTMLDivElement for assertions.
+// It throws when the expected panel is absent or has another element type, giving
+// setup failures a direct message.
 function getTooltipElement(): HTMLDivElement {
   const tooltip = document.body.querySelector('[role="tooltip"]')
   if (!(tooltip instanceof HTMLDivElement)) {
@@ -13,50 +21,69 @@ function getTooltipElement(): HTMLDivElement {
 }
 
 describe('HelpTooltip', () => {
+  // Release the resources retained by this case before the next one, keeping browser
+  // state and component lifecycle observations isolated across assertions.
   afterEach(() => {
     vi.restoreAllMocks()
     document.body.innerHTML = ''
   })
 
-  it.each(['pointerdown', 'touchstart', 'click', 'Escape'])('手动提示受控显示，并通过外部 %s 关闭', async (eventName) => {
-    const wrapper = mount(HelpTooltip, {
-      attachTo: document.body,
-      props: { trigger: 'manual', open: false, closable: false, content: '请同意条款' },
-      slots: { trigger: '<input type="checkbox" />' },
-    })
-    const trigger = wrapper.get('.group')
-    await trigger.trigger('mouseenter')
-    await trigger.trigger('click')
-    await nextMotionFrame()
-    expect(getTooltipElement().style.display).toBe('none')
-    await wrapper.setProps({ open: true })
-    await nextTick()
-    expect(getTooltipElement().style.display).not.toBe('none')
-    expect(getTooltipElement().querySelector('button')).toBeNull()
-    if (eventName === 'Escape') {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    } else {
-      document.body.dispatchEvent(new Event(eventName, { bubbles: true }))
-    }
-    expect(wrapper.emitted('update:open')?.at(-1)).toEqual([false])
-    await wrapper.setProps({ open: false })
-    await nextMotionFrame()
-    expect(getTooltipElement().style.display).toBe('none')
-    await wrapper.setProps({ open: true })
-    expect(getTooltipElement().style.display).not.toBe('none')
-    wrapper.unmount()
-  })
+  // A manual tooltip receives controlled open updates and each supported outside
+  // dismissal event. Hover and trigger clicks keep it hidden initially, while
+  // dismissal requests permit a later controlled reopening.
+  it.each(['pointerdown', 'touchstart', 'click', 'Escape'])(
+    '手动提示受控显示，并通过外部 %s 关闭',
+    async (eventName) => {
+      const wrapper = mount(HelpTooltip, {
+        attachTo: document.body,
+        props: { trigger: 'manual', open: false, closable: false, content: '请同意条款' },
+        slots: { trigger: '<input type="checkbox" />' },
+      })
+      const trigger = wrapper.get('.group')
+      await trigger.trigger('mouseenter')
+      await trigger.trigger('click')
+      await nextMotionFrame()
+      expect(getTooltipElement().style.display).toBe('none')
+      await wrapper.setProps({ open: true })
+      await nextTick()
+      expect(getTooltipElement().style.display).not.toBe('none')
+      expect(getTooltipElement().querySelector('button')).toBeNull()
+      if (eventName === 'Escape') {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      } else {
+        document.body.dispatchEvent(new Event(eventName, { bubbles: true }))
+      }
+      expect(wrapper.emitted('update:open')?.at(-1)).toEqual([false])
+      await wrapper.setProps({ open: false })
+      await nextMotionFrame()
+      expect(getTooltipElement().style.display).toBe('none')
+      await wrapper.setProps({ open: true })
+      expect(getTooltipElement().style.display).not.toBe('none')
+      wrapper.unmount()
+    },
+  )
 
+  // A controlled tooltip is measured near the left viewport edge and shifted inward.
+  // Its caret must still point at the checkbox center after the panel center is
+  // clamped.
   it('提示框在左侧边缘避让时，箭头仍指向复选框', async () => {
     const wrapper = mount(HelpTooltip, {
       attachTo: document.body,
       props: { trigger: 'manual', open: false },
     })
-    wrapper.get('.group').element.getBoundingClientRect = vi.fn(() => ({
-      left: 30, top: 200, width: 16, height: 16, right: 46, bottom: 216,
-    } as DOMRect))
+    wrapper.get('.group').element.getBoundingClientRect = vi.fn(
+      () =>
+        ({
+          left: 30,
+          top: 200,
+          width: 16,
+          height: 16,
+          right: 46,
+          bottom: 216,
+        }) as DOMRect,
+    )
     const tooltip = getTooltipElement()
-    tooltip.getBoundingClientRect = vi.fn(() => ({ width: 288, height: 60 } as DOMRect))
+    tooltip.getBoundingClientRect = vi.fn(() => ({ width: 288, height: 60 }) as DOMRect)
     await wrapper.setProps({ open: true })
     await nextTick()
     await nextTick()
@@ -66,6 +93,9 @@ describe('HelpTooltip', () => {
     wrapper.unmount()
   })
 
+  // The tooltip uses its default trigger mode while the pointer enters and leaves its
+  // trigger. It opens for hover and becomes hidden again after the outgoing motion
+  // frame.
   it('keeps the existing hover interaction by default', async () => {
     const wrapper = mount(HelpTooltip, {
       attachTo: document.body,
@@ -93,6 +123,9 @@ describe('HelpTooltip', () => {
     wrapper.unmount()
   })
 
+  // The pointer moves from the trigger into the tooltip and then back before leaving
+  // both. The panel remains visible across internal moves and hides after the final
+  // outside departure.
   it('keeps a hover tooltip open while the pointer moves between the trigger and the tooltip', async () => {
     const wrapper = mount(HelpTooltip, {
       attachTo: document.body,
@@ -124,6 +157,9 @@ describe('HelpTooltip', () => {
     wrapper.unmount()
   })
 
+  // A click-mode tooltip opens, closes through its button, opens again, and receives
+  // an outside click. Each dismissal must hide the panel after its motion frame
+  // completes.
   it('supports click-to-toggle details and closes on outside click', async () => {
     const wrapper = mount(HelpTooltip, {
       attachTo: document.body,
@@ -166,6 +202,9 @@ describe('HelpTooltip', () => {
     wrapper.unmount()
   })
 
+  // A combined-mode tooltip is first hovered and then pinned by clicking. Hover exit
+  // dismisses the unpinned panel, while a pinned panel stays open until an outside
+  // click.
   it('supports hover and click together, with click keeping details open', async () => {
     const wrapper = mount(HelpTooltip, {
       attachTo: document.body,
@@ -204,6 +243,9 @@ describe('HelpTooltip', () => {
     wrapper.unmount()
   })
 
+  // A bottom-preferred tooltip has insufficient space below its measured trigger and
+  // enough space above. The resulting top coordinate and translation class must
+  // position the panel above the trigger.
   it('flips a bottom tooltip above the trigger when the viewport has no space below', async () => {
     vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(720)
 
@@ -249,6 +291,9 @@ describe('HelpTooltip', () => {
     wrapper.unmount()
   })
 
+  // The page has nonzero scroll offsets while the trigger exposes viewport-relative
+  // bounds. Panel coordinates follow those bounds before and after scrolling without
+  // adding document scroll offsets.
   it('uses viewport coordinates and follows the trigger after scrolling', async () => {
     vi.spyOn(window, 'scrollX', 'get').mockReturnValue(240)
     vi.spyOn(window, 'scrollY', 'get').mockReturnValue(600)
@@ -302,9 +347,9 @@ describe('HelpTooltip', () => {
   })
 })
 
-// A protocol switch can change panel height without a viewport event. The
-// interactive panel must remeasure that content and release its observer when
-// removed, while reverse tab navigation returns to the trigger.
+// An interactive panel changes height through a ResizeObserver notification after
+// keyboard entry. Placement is recalculated, reverse Tab returns to the trigger, and
+// unmount disconnects the observer exactly once.
 it('repositions interactive content and supports keyboard return to its trigger', async () => {
   let notify: ResizeObserverCallback | undefined
   const disconnect = vi.fn()
@@ -314,13 +359,20 @@ it('repositions interactive content and supports keyboard return to its trigger'
   })
   const wrapper = mount(HelpTooltip, {
     attachTo: document.body,
-    props: { trigger: 'both', interactive: true, accessibleLabel: 'Model attributes', closable: false },
+    props: {
+      trigger: 'both',
+      interactive: true,
+      accessibleLabel: 'Model attributes',
+      closable: false,
+    },
     slots: { trigger: '<button>Details</button>', default: '<button>All protocols</button>' },
   })
   const panel = document.body.querySelector<HTMLElement>('[role="dialog"]')!
-  wrapper.get('.group').element.getBoundingClientRect = vi.fn(() => ({ left: 200, right: 220, top: 300, bottom: 320, width: 20, height: 20 } as DOMRect))
+  wrapper.get('.group').element.getBoundingClientRect = vi.fn(
+    () => ({ left: 200, right: 220, top: 300, bottom: 320, width: 20, height: 20 }) as DOMRect,
+  )
   let height = 40
-  panel.getBoundingClientRect = vi.fn(() => ({ width: 288, height } as DOMRect))
+  panel.getBoundingClientRect = vi.fn(() => ({ width: 288, height }) as DOMRect)
   await wrapper.get('.group').trigger('keydown', { key: 'ArrowDown' })
   await nextTick()
   expect(document.activeElement).toBe(panel.querySelector('button'))
@@ -329,7 +381,9 @@ it('repositions interactive content and supports keyboard return to its trigger'
   notify!([], {} as ResizeObserver)
   await nextTick()
   expect(panel.style.top).not.toBe('calc(292px)')
-  panel.querySelector('button')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }))
+  panel
+    .querySelector('button')!
+    .dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }))
   expect(document.activeElement).toBe(wrapper.get('button').element)
   wrapper.unmount()
   expect(disconnect).toHaveBeenCalledOnce()

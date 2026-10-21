@@ -331,15 +331,19 @@ Vue 的 `<style scoped>` 中，深色后代规则写成 `.dark .component-class`
 - 营销页和落地页（`HomeView`、`KeyUsageView` 等公开页）的 hero 标题可以用展示级字号。
 - `onboarding.css` 覆盖 driver.js 第三方样式时使用的 `!important`。
 - i18n 文案里内嵌的导览 HTML（`src/i18n/**`）属于内容字符串，它的 inline style 不参与 token 校验。
-- 测试文件里断言"某个类名不存在"的负断言会被扫描命中，在行尾加 `check-ui-allow` 豁免。
-- 保留手写外壳的弹窗：BackupView 的 R2Guide 和 SubscriptionsView 的指南弹窗（max-w-2xl，BaseDialog 没有对应档位）、AnnouncementPopup 和 AnnouncementBell 的弹窗（独立的层级和定制过渡）、ProviderTestModal 的图片灯箱（媒体覆盖层，用强遮罩档）。新增弹窗默认用 BaseDialog，不要照搬这些结构。
+- 测试文件里断言"某个类名不存在"的负断言会被扫描命中，在该语句旁加 `check-ui-allow` 注释豁免。
+- 保留手写外壳的弹窗：BackupSettings 的 R2Guide 和 SubscriptionsView 的指南弹窗（max-w-2xl，BaseDialog 没有对应档位）、AnnouncementPopup 和 AnnouncementBell 的弹窗（独立的层级和定制过渡）、ProviderTestModal 的图片灯箱（媒体覆盖层，用强遮罩档）。新增弹窗默认用 BaseDialog，不要照搬这些结构。
 - RiskControlView 搜索框的 `pl-9` 图标留白（和 `input-icon-*` 的各档数值都不同，局部保留）。
 - ProvidersView 跟随鼠标的操作菜单（定位方式特殊，不使用 `getFloatingPanelPosition`）。
 - textarea 按内容决定高度、GroupBadge 的方角造型、OpsDashboard 250ms 的路由同步防抖（用途和搜索防抖不同）、CreativeCanvas 工具条和 CreativeRunHistory 条目详情的结构性展开动画，都是局部写法，保持原样。
 
 ## 校验
 
-在 `frontend/` 下运行 `npm run check:ui`（`scripts/check-ui-tokens.mjs`）检查上述规则，它和 `lint:check` 一起作为提交前检查。具体的拦截规则和正则写在脚本头部的注释里，包括：旧圆角、任意值的圆角、字号和 z 值、36px 冗余、手写开关、max-h 任意像素、非响应式的暗色判断、z-index 字面量、JS 断点字面量和 `tailwind.config` 的键约束。新增组件样式前对照本文；确实需要偏离时，在 PR 里说明理由，并考虑把它补进例外清单。
+在 `frontend/` 下运行 `npm run check:ui`（`scripts/check-ui-tokens.mjs`）检查上述规则，`lint:check`、推送检查和 CI 都会执行。具体规则维护在脚本的规则表中，包括旧圆角、任意值的圆角、字号和 z 值、36px 冗余、手写开关、max-h 任意像素、非响应式的暗色判断、z-index 字面量、JS 断点字面量和 `tailwind.config` 的键约束。
+
+`check-ui-allow` 必须写在真实注释中，并附英文理由。解析器把注释绑定到对应的 HTML 元素起始标签、CSS 声明或 apply 指令、JavaScript 语句；绑定范围可以跨行，父元素的豁免不会传给子元素。格式化前后应覆盖同一处语法，字符串中的标记不产生豁免。新增特殊写法时核对作用范围，并在 PR 中解释其实际约束。
+
+HTML 注释放在元素起始标签后时，绑定该起始标签；放在同级元素之间时，优先绑定后一个元素。JavaScript 语句之间的块注释同样优先绑定后一个语句；要豁免前一个语句，使用行尾 `// check-ui-allow: ...`。这项约定避免格式化把块注释移到下一行后改变豁免对象。CSS 豁免放在目标声明行尾或紧前方；新增回归测试应比较实际被报告的语句或元素，不能只比较违规数量。
 
 ## 相关文档
 

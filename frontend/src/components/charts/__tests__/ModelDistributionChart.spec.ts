@@ -3,6 +3,13 @@ import { mount } from '@vue/test-utils'
 
 import ModelDistributionChart from '../ModelDistributionChart.vue'
 
+// ModelDistributionChart.spec.ts tests model metric ordering and the alternate user-
+// spending ranking. Mounted chart substitutes expose datasets and tooltip callbacks so
+// the tests can compare table identities, synthetic Others totals, and dedicated
+// remainder colors.
+
+// messages supplies stable English labels for rendered assertions, with unknown keys
+// passed through by the local translation substitute during each component test.
 const messages: Record<string, string> = {
   'admin.dashboard.modelDistribution': 'Model Distribution',
   'admin.dashboard.spendingRankingTitle': 'User Spending Ranking',
@@ -48,6 +55,8 @@ vi.mock('vue-chartjs', () => ({
 }))
 
 describe('ModelDistributionChart', () => {
+  // Shared aggregate fixtures give token and spending metrics different sort orders so
+  // each test can observe which metric controls the chart and table.
   const modelStats = [
     {
       model: 'model-a',
@@ -73,6 +82,9 @@ describe('ModelDistributionChart', () => {
     },
   ]
 
+  // Default props receive models with opposite token and spending order. Chart inputs,
+  // table rows, desktop alignment, and tooltip shares must follow descending token
+  // usage.
   it('uses total_tokens and token ordering by default', () => {
     const wrapper = mount(ModelDistributionChart, {
       props: {
@@ -106,6 +118,9 @@ describe('ModelDistributionChart', () => {
     expect(label).toBe('model-a: 1.00K (66.7%)')
   })
 
+  // Actual-cost mode receives model records with opposing token order. The table and
+  // chart must both reorder by spending, and the tooltip must report the spending
+  // percentage.
   it('uses actual_cost and reorders rows in actual cost mode', () => {
     const wrapper = mount(ModelDistributionChart, {
       props: {
@@ -135,6 +150,9 @@ describe('ModelDistributionChart', () => {
     expect(label).toBe('model-b: $1.40 (87.5%)')
   })
 
+  // User-facing model statistics disable provider-cost display while omitting provider
+  // charges. The table must hide that heading and keep header and data column counts
+  // consistent.
   it('can hide provider cost for user usage stats without provider_cost', () => {
     const wrapper = mount(ModelDistributionChart, {
       props: {
@@ -153,14 +171,31 @@ describe('ModelDistributionChart', () => {
     expect(wrapper.findAll('tbody tr')[0].findAll('td')).toHaveLength(5)
   })
 
+  // Ranking entries include usernames, blank identities, and totals exceeding the listed
+  // users. The selected ranking view must use readable identities and append a
+  // separately colored Others remainder to both chart and table.
   it('uses the dashboard user label policy and renders Others with a dedicated chart color', async () => {
     const wrapper = mount(ModelDistributionChart, {
       props: {
         modelStats: [],
         enableRankingView: true,
         rankingItems: [
-          { user_id: 1, email: 'alpha@example.com', username: 'alpha', actual_cost: 12, requests: 10, tokens: 1000 },
-          { user_id: 2, email: 'beta@example.com', username: '   ', actual_cost: 8, requests: 6, tokens: 600 },
+          {
+            user_id: 1,
+            email: 'alpha@example.com',
+            username: 'alpha',
+            actual_cost: 12,
+            requests: 10,
+            tokens: 1000,
+          },
+          {
+            user_id: 2,
+            email: 'beta@example.com',
+            username: '   ',
+            actual_cost: 8,
+            requests: 6,
+            tokens: 600,
+          },
           { user_id: 3, email: '   ', username: '', actual_cost: 0, requests: 0, tokens: 0 },
         ],
         rankingTotalActualCost: 30,
@@ -174,27 +209,28 @@ describe('ModelDistributionChart', () => {
       },
     })
 
-    const rankingButton = wrapper.findAll('button').find((button) => button.text() === 'User Spending Ranking')
+    const rankingButton = wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'User Spending Ranking')
     expect(rankingButton).toBeTruthy()
     await rankingButton!.trigger('click')
 
     const chartData = JSON.parse(wrapper.find('.chart-data').text())
-    expect(chartData.labels).toEqual([
-      '#1 alpha',
-      '#2 beta@example.com',
-      '#3 User #3',
-      'Others',
-    ])
+    expect(chartData.labels).toEqual(['#1 alpha', '#2 beta@example.com', '#3 User #3', 'Others'])
     expect(chartData.datasets[0].data).toEqual([12, 8, 0, 10])
 
     const options = (wrapper.vm as any).$?.setupState.rankingDoughnutOptions
-    expect(options.plugins.tooltip.callbacks.label({ label: '#1 alpha', dataIndex: 0 }))
-      .toBe('#1 alpha: $12.00 (40.0%)')
-    expect(options.plugins.tooltip.callbacks.label({ label: 'Others', dataIndex: 3 }))
-      .toBe('Others: $10.00 (33.3%)')
+    expect(options.plugins.tooltip.callbacks.label({ label: '#1 alpha', dataIndex: 0 })).toBe(
+      '#1 alpha: $12.00 (40.0%)',
+    )
+    expect(options.plugins.tooltip.callbacks.label({ label: 'Others', dataIndex: 3 })).toBe(
+      'Others: $10.00 (33.3%)',
+    )
     expect(chartData.datasets[0].backgroundColor[0]).toBe('#3b82f6')
     expect(chartData.datasets[0].backgroundColor[3]).toBe('#94a3b8')
-    expect(chartData.datasets[0].backgroundColor[3]).not.toBe(chartData.datasets[0].backgroundColor[0])
+    expect(chartData.datasets[0].backgroundColor[3]).not.toBe(
+      chartData.datasets[0].backgroundColor[0],
+    )
 
     const chartTableLayout = wrapper.find('table').element.parentElement?.parentElement
     expect(chartTableLayout?.className).toContain('sm:items-start')

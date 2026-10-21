@@ -9,13 +9,8 @@
           {{ errorMessage || callbackProcessingText }}
         </p>
 
-        <div
-          v-if="!errorMessage"
-          class="mt-6 flex items-center justify-center py-10"
-        >
-          <div
-            class="spinner h-8 w-8 text-primary-500"
-          ></div>
+        <div v-if="!errorMessage" class="mt-6 flex items-center justify-center py-10">
+          <div class="spinner h-8 w-8 text-primary-500"></div>
         </div>
 
         <div
@@ -25,11 +20,7 @@
           <p class="text-sm text-gray-700 dark:text-gray-300">
             {{ errorMessage }}
           </p>
-          <button
-            class="btn btn-primary mt-4"
-            type="button"
-            @click="goBackToPayment"
-          >
+          <button class="btn btn-primary mt-4" type="button" @click="goBackToPayment">
             {{ backToPaymentText }}
           </button>
         </div>
@@ -46,11 +37,28 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores'
 
+/**
+ * WechatPaymentCallbackView.vue transfers WeChat authorization return data to the purchase
+ * page. Fragment values take precedence over query values, and the callback supports both
+ * backend resume tokens and older OpenID-based return data.
+ *
+ * The return destination is normalized to an application path before navigation. A resume
+ * token is forwarded on its own, while OpenID returns also carry the available purchase
+ * and authorization fields. Existing destination query fields remain available and the
+ * resume marker signals that checkout should consume authorization before creating an
+ * order. Missing authorization identity or an upstream error stays on the callback page
+ * with an error message.
+ */
+
+// Translation, route, navigation, and toast bindings read authorization return
+// data and present the callback result before resuming checkout.
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 
+// The callback page retains its error locally and publishes nonempty failures through the
+// application toast before the user chooses another purchase attempt.
 const errorMessage = ref('')
 
 watch(errorMessage, (message) => {
@@ -59,10 +67,17 @@ watch(errorMessage, (message) => {
   }
 })
 
+// Callback labels stay reactive to locale changes while the route and fragment parsing
+// determine whether payment resume can continue.
 const callbackProcessingText = computed(() => t('auth.wechatPayment.callbackProcessing'))
 const callbackTitleText = computed(() => t('auth.wechatPayment.callbackTitle'))
 const backToPaymentText = computed(() => t('auth.wechatPayment.backToPayment'))
 
+/**
+ * readQueryString reads a scalar query value or the first array value. Non-string and
+ * absent values become empty strings, letting fragment lookup fall back to a consistent
+ * query representation.
+ */
 function readQueryString(key: string): string {
   const value = route.query[key]
   if (Array.isArray(value)) {
@@ -71,12 +86,22 @@ function readQueryString(key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
+/**
+ * parseFragmentParams parses the browser fragment as OAuth return parameters. It removes
+ * the leading hash when present and returns an empty parameter collection when there is no
+ * browser location.
+ */
 function parseFragmentParams(): URLSearchParams {
   const raw = typeof window !== 'undefined' ? window.location.hash : ''
   const hash = raw.startsWith('#') ? raw.slice(1) : raw
   return new URLSearchParams(hash)
 }
 
+/**
+ * normalizeRedirectPath accepts an application path and maps payment aliases to purchase.
+ * Empty, relative, protocol-relative, and scheme-containing destinations return the
+ * purchase path, keeping callback navigation inside the application route space.
+ */
 function normalizeRedirectPath(path: string | null | undefined): string {
   const value = (path || '').trim()
   if (!value) return '/purchase'
@@ -87,18 +112,31 @@ function normalizeRedirectPath(path: string | null | undefined): string {
   return value
 }
 
+/**
+ * appendQueryParam copies a nonempty callback field into the destination query. Empty
+ * values are omitted so optional authorization metadata does not overwrite usable
+ * destination fields with empty strings.
+ */
 function appendQueryParam(query: Record<string, string>, key: string, value: string) {
   if (value) {
     query[key] = value
   }
 }
 
+/**
+ * goBackToPayment replaces the callback route with the purchase page.
+ */
 function goBackToPayment() {
   void router.replace('/purchase')
 }
 
 onMounted(async () => {
   const fragment = parseFragmentParams()
+  /**
+   * readParam prefers a nonempty fragment value and otherwise reads the route query.
+   */
+  // Fragment values carry the authorization response when present; query values keep older
+  // return URLs usable for the same callback route.
   const readParam = (key: string) => fragment.get(key) || readQueryString(key)
 
   const error = readParam('error') || readParam('err_msg') || readParam('errmsg')
@@ -117,10 +155,7 @@ onMounted(async () => {
   const amount = readParam('amount')
   const orderType = readParam('order_type')
   const planId = readParam('plan_id')
-  const redirectURL = new URL(
-    normalizeRedirectPath(readParam('redirect')),
-    window.location.origin,
-  )
+  const redirectURL = new URL(normalizeRedirectPath(readParam('redirect')), window.location.origin)
 
   if (!resumeToken && !openid) {
     errorMessage.value = t('auth.wechatPayment.callbackMissingResumeToken')

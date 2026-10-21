@@ -2,39 +2,58 @@ import { ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 
-export type AddMethod = 'oauth' | 'setup-token'
-export type AuthInputMethod =
-  | 'manual'
-  | 'cookie'
-  | 'refresh_token'
-  | 'mobile_refresh_token'
-  | 'session_token'
-  | 'access_token'
-  | 'codex_session'
-  | 'agent_identity'
-  | 'codex_pat'
-  | 'sso_cookie'
-  | 'email_password'
+// useProviderOAuth.ts handles provider OAuth and setup-token authorization
+// forms. The selected add method chooses matching generation and exchange
+// endpoints, while manual codes and cookie sessions share status reporting
+// and return token metadata for the caller to save.
 
+// AddMethod selects OAuth or setup-token endpoints for provider
+// authorization.
+export type AddMethod = 'oauth' | 'setup-token'
+
+// AuthInputMethod identifies credential input forms offered by provider
+// authorization dialogs.
+export type AuthInputMethod =
+  | 'manual' // Pasted authorization callback.
+  | 'cookie' // Browser session cookie.
+  | 'refresh_token' // Provider refresh token.
+  | 'mobile_refresh_token' // Mobile client refresh.
+  | 'session_token' // Browser session token.
+  | 'access_token' // Direct access token.
+  | 'codex_session' // Codex session credentials.
+  | 'agent_identity' // Agent identity credentials.
+  | 'codex_pat' // Codex personal token.
+  | 'sso_cookie' // Single sign-on cookie.
+  | 'email_password' // Email password credentials.
+
+// TokenInfo describes account metadata returned by provider authorization
+// endpoints.
 export interface TokenInfo {
-  org_uuid?: string
-  account_uuid?: string
-  email_address?: string
-  [key: string]: unknown
+  org_uuid?: string // Account organization UUID.
+  account_uuid?: string // Authorized account UUID.
+  email_address?: string // Account email address.
+  [key: string]: unknown // Additional response fields.
 }
 
+// useProviderOAuth exposes reactive authorization fields and request helpers
+// for the provider form. Call it during component setup with an active
+// application store. The caller saves returned token information.
 export function useProviderOAuth() {
   const appStore = useAppStore()
 
-  // State
-  const authUrl = ref('')
-  const authCode = ref('')
-  const sessionId = ref('')
-  const sessionKey = ref('')
-  const loading = ref(false)
-  const error = ref('')
+  // Authorization refs belong to this form instance. Request helpers update
+  // loading and error for the form, and URL generation publishes the session
+  // fields used for exchange.
+  const authUrl = ref('') // Displayed authorization URL.
+  const authCode = ref('') // Pasted authorization code.
+  const sessionId = ref('') // Current backend session.
+  const sessionKey = ref('') // Entered cookie credential.
+  const loading = ref(false) // Request activity indicator.
+  const error = ref('') // Current form feedback.
 
-  // Reset state
+  // resetState clears authorization fields and the current request feedback.
+  // Callers use it when resetting the form; pending HTTP requests continue
+  // and may subsequently publish their results.
   const resetState = () => {
     authUrl.value = ''
     authCode.value = ''
@@ -44,10 +63,12 @@ export function useProviderOAuth() {
     error.value = ''
   }
 
-  // Generate auth URL
+  // generateAuthUrl requests a fresh authorization URL and replaces the
+  // displayed session. A truthy proxy identifier is forwarded; request
+  // failures update local feedback, show an error toast, and return false.
   const generateAuthUrl = async (
     addMethod: AddMethod,
-    proxyId?: number | null
+    proxyId?: number | null,
   ): Promise<boolean> => {
     loading.value = true
     authUrl.value = ''
@@ -66,6 +87,9 @@ export function useProviderOAuth() {
       sessionId.value = response.session_id
       return true
     } catch (err: any) {
+      // The server detail supplies generation feedback when present. A fixed
+      // message covers transport failures that arrive without a structured
+      // response body.
       error.value = err.response?.data?.detail || 'Failed to generate auth URL'
       appStore.showError(error.value)
       return false
@@ -74,10 +98,12 @@ export function useProviderOAuth() {
     }
   }
 
-  // Exchange auth code for tokens
+  // exchangeAuthCode submits the current form code and session to the
+  // selected authorization endpoint. Missing input returns null locally;
+  // request failures show an error toast and return null to the form.
   const exchangeAuthCode = async (
     addMethod: AddMethod,
-    proxyId?: number | null
+    proxyId?: number | null,
   ): Promise<TokenInfo | null> => {
     if (!authCode.value.trim() || !sessionId.value) {
       error.value = 'Missing auth code or session ID'
@@ -97,11 +123,14 @@ export function useProviderOAuth() {
       const tokenInfo = await adminAPI.providers.exchangeCode(endpoint, {
         session_id: sessionId.value,
         code: authCode.value.trim(),
-        ...proxyConfig
+        ...proxyConfig,
       })
 
       return tokenInfo as TokenInfo
     } catch (err: any) {
+      // The server detail supplies exchange feedback when present. The form
+      // keeps its current inputs while a fixed message covers failures
+      // without response detail.
       error.value = err.response?.data?.detail || 'Failed to exchange auth code'
       appStore.showError(error.value)
       return null
@@ -110,11 +139,13 @@ export function useProviderOAuth() {
     }
   }
 
-  // Cookie-based authentication
+  // cookieAuth submits a trimmed session key to the selected cookie
+  // authorization endpoint. Blank input and request failures return null with
+  // local feedback, allowing callers to report individual batch failures.
   const cookieAuth = async (
     addMethod: AddMethod,
     sessionKeyValue: string,
-    proxyId?: number | null
+    proxyId?: number | null,
   ): Promise<TokenInfo | null> => {
     if (!sessionKeyValue.trim()) {
       error.value = 'Please enter sessionKey'
@@ -134,11 +165,14 @@ export function useProviderOAuth() {
       const tokenInfo = await adminAPI.providers.exchangeCode(endpoint, {
         session_id: '',
         code: sessionKeyValue.trim(),
-        ...proxyConfig
+        ...proxyConfig,
       })
 
       return tokenInfo as TokenInfo
     } catch (err: any) {
+      // Cookie authorization can run for several submitted session keys.
+      // Keep each failure in local state so the caller can summarize the
+      // batch results.
       error.value = err.response?.data?.detail || 'Cookie authorization failed'
       return null
     } finally {
@@ -146,7 +180,7 @@ export function useProviderOAuth() {
     }
   }
 
-  // Parse multiple session keys
+  // parseSessionKeys returns trimmed nonempty session keys from newline-separated input.
   const parseSessionKeys = (input: string): string[] => {
     return input
       .split('\n')
@@ -154,7 +188,9 @@ export function useProviderOAuth() {
       .filter((k) => k)
   }
 
-  // Build extra info from token response
+  // buildExtraInfo selects optional account metadata for the provider form.
+  // The returned record contains the available fields; an empty result is
+  // represented by undefined so callers can omit extra metadata.
   const buildExtraInfo = (tokenInfo: TokenInfo): Record<string, string> | undefined => {
     const extra: Record<string, string> = {}
     if (tokenInfo.org_uuid) {
@@ -170,19 +206,17 @@ export function useProviderOAuth() {
   }
 
   return {
-    // State
     authUrl,
     authCode,
     sessionId,
     sessionKey,
     loading,
     error,
-    // Methods
     resetState,
     generateAuthUrl,
     exchangeAuthCode,
     cookieAuth,
     parseSessionKeys,
-    buildExtraInfo
+    buildExtraInfo,
   }
 }

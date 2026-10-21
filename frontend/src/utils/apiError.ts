@@ -1,32 +1,41 @@
 /**
- * Centralized API error message extraction
+ * apiError.ts extracts display messages and localization metadata from API
+ * rejection shapes. Flat interceptor objects and nested response data use
+ * different fields, so the helpers define their precedence before falling back
+ * to a supplied message.
  *
- * The API client interceptor rejects with a plain object: { status, code, message, error }
- * This utility extracts the user-facing message from any error shape.
+ * Localized errors first select a reason or code, translate payment field
+ * identifiers in a shallow metadata copy, and resolve the namespaced message.
+ * Missing translations fall back to the original error-message selection.
+ * Metadata localization preserves unrelated values and does not mutate the
+ * received object. Error strings remain user-facing data; these helpers do not
+ * log, sanitize, or classify them as trusted HTML.
  */
 
+/**
+ * ApiErrorLike represents the flat and nested rejection fields consumed by
+ * error-message selection.
+ */
 interface ApiErrorLike {
-  status?: number
-  code?: number | string
-  message?: string
-  error?: string
-  reason?: string
-  metadata?: Record<string, unknown>
+  status?: number // HTTP or lookup status
+  code?: number | string // machine-readable error code
+  message?: string // displayable error message
+  error?: string // reported error description
+  reason?: string // granular backend reason
+  metadata?: Record<string, unknown> // error interpolation values
   response?: {
     data?: {
-      detail?: string
-      message?: string
-      code?: number | string
-    }
-  }
+      detail?: string // detailed response message
+      message?: string // displayable error message
+      code?: number | string // machine-readable error code
+    } // response payload fields
+  } // nested response wrapper
 }
 
 /**
- * Extract the error code from an API error object.
- *
- * Prefers the string `reason` (e.g. "PAYMENT_PROVIDER_MISCONFIGURED") over the
- * numeric HTTP `code`, because reason is granular enough to drive i18n lookup
- * while HTTP code is not.
+ * extractApiErrorCode selects a reason, flat code, or nested response code in
+ * that order. Nullish fields fall through, and the selected value becomes a
+ * string; nonobjects return undefined.
  */
 export function extractApiErrorCode(err: unknown): string | undefined {
   if (!err || typeof err !== 'object') return undefined
@@ -36,8 +45,10 @@ export function extractApiErrorCode(err: unknown): string | undefined {
 }
 
 /**
- * Extract metadata (interpolation params) from an API error object.
- * Backend errors carry `metadata` with template variables that fill i18n placeholders.
+ * extractApiErrorMetadata returns metadata from an object-shaped API
+ * rejection. The object is returned by reference without validation or
+ * copying, so consumers that rewrite interpolation values should copy it
+ * first.
  */
 export function extractApiErrorMetadata(err: unknown): Record<string, unknown> | undefined {
   if (!err || typeof err !== 'object') return undefined
@@ -45,15 +56,31 @@ export function extractApiErrorMetadata(err: unknown): Record<string, unknown> |
   return e.metadata
 }
 
+/**
+ * TranslateFn translates an error key with optional interpolation metadata
+ * values.
+ */
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string
-type TranslateWithExistsFn = TranslateFn & { te?: (key: string) => boolean }
+/**
+ * TranslateWithExistsFn adds an optional translation-existence check to the
+ * translator callable.
+ */
+type TranslateWithExistsFn = TranslateFn & {
+  te?: (key: string) => boolean // optional translation-existence check
+}
 
 /**
- * Translate a value via i18n if a matching key exists, otherwise return the original.
- * Example: "certSerial" → t('admin.settings.payment.field_certSerial') → "证书序列号".
+ * tryTranslate resolves a translation key or returns the caller fallback. A
+ * translation equal to its key or rejected by an optional existence check
+ * preserves the original display value.
  */
 function tryTranslate(t: TranslateFn, key: string, fallback: string): string {
   const translated = t(key)
+  /**
+   * An untranslated key is not a useful configuration-field label; retain the
+   * original field name before attempting the optional translation-existence
+   * check.
+   */
   if (translated === key) return fallback
   const te = (t as TranslateWithExistsFn).te
   if (te && !te(key)) return fallback
@@ -61,11 +88,15 @@ function tryTranslate(t: TranslateFn, key: string, fallback: string): string {
 }
 
 /**
- * Replace raw config field names in metadata (e.g. "certSerial") with their
- * localized UI labels (e.g. "证书序列号"), using the provider-config field i18n namespace.
- * Handles both single `key` and `/`-joined `keys` patterns used by wxpay errors.
+ * localizeMetadata copies metadata and translates payment configuration key
+ * labels for interpolation. The key field is translated once, while
+ * slash-separated keys are translated individually; unrelated nested values
+ * remain shared.
  */
-function localizeMetadata(metadata: Record<string, unknown>, t: TranslateFn): Record<string, unknown> {
+function localizeMetadata(
+  metadata: Record<string, unknown>,
+  t: TranslateFn,
+): Record<string, unknown> {
   const out: Record<string, unknown> = { ...metadata }
   if (typeof out.key === 'string') {
     out.key = tryTranslate(t, `admin.settings.payment.field_${out.key}`, out.key)
@@ -73,24 +104,17 @@ function localizeMetadata(metadata: Record<string, unknown>, t: TranslateFn): Re
   if (typeof out.keys === 'string') {
     out.keys = out.keys
       .split('/')
-      .map(k => tryTranslate(t, `admin.settings.payment.field_${k}`, k))
+      .map((k) => tryTranslate(t, `admin.settings.payment.field_${k}`, k))
       .join(' / ')
   }
   return out
 }
 
 /**
- * Extract a localized error message from an API error by looking up
- * `<namespace>.<REASON>` in i18n and substituting metadata as placeholders.
- *
- * Config-field names in metadata (`key` / `keys`) are automatically translated
- * to their UI labels before substitution, so error messages read like
- * "缺少必填项：证书序列号" instead of "缺少必填项：certSerial".
- *
- * @param err      - The caught error
- * @param t        - Vue i18n translate function
- * @param namespace- i18n key prefix, e.g. "payment.errors"
- * @param fallback - Fallback key or plain string if no localized mapping exists
+ * extractI18nErrorMessage resolves a namespaced API error translation with
+ * localized metadata. Missing mappings use extractApiErrorMessage with the
+ * supplied fallback; a translator existence check can accept a translation
+ * identical to its key.
  */
 export function extractI18nErrorMessage(
   err: unknown,
@@ -98,15 +122,20 @@ export function extractI18nErrorMessage(
   namespace: string,
   fallback: string,
 ): string {
+  /**
+   * Try the namespaced error translation with copied, localized interpolation
+   * metadata before falling back to the message-selection rules for the original
+   * rejection.
+   */
   const code = extractApiErrorCode(err)
   if (code) {
     const key = `${namespace}.${code}`
     const rawMetadata = extractApiErrorMetadata(err) ?? {}
     const metadata = localizeMetadata(rawMetadata, t)
     const translated = t(key, metadata)
-    // Vue i18n returns the key itself when missing; detect that and fall back.
+
     if (translated !== key) return translated
-    // If the framework exposes `te`, use it to double-check.
+
     const te = (t as TranslateWithExistsFn).te
     if (te && te(key)) return translated
   }
@@ -114,11 +143,10 @@ export function extractI18nErrorMessage(
 }
 
 /**
- * Extract a displayable error message from an API error.
- *
- * @param err - The caught error (unknown type)
- * @param fallback - Fallback message if none can be extracted (use t('common.error') or similar)
- * @param i18nMap - Optional map of error codes to i18n translated strings
+ * extractApiErrorMessage selects mapped text, flat messages, or nested
+ * response messages for display. Falsy errors use the fallback immediately;
+ * otherwise unknown values are stringified, with an ordinary object string
+ * replaced by the fallback.
  */
 export function extractApiErrorMessage(
   err: unknown,
@@ -127,27 +155,31 @@ export function extractApiErrorMessage(
 ): string {
   if (!err) return fallback
 
-  // Try i18n mapping by error code first
+  /**
+   * An explicit code-to-message mapping takes priority over server prose so
+   * callers can supply their already-localized text for known backend failures.
+   */
   if (i18nMap) {
     const code = extractApiErrorCode(err)
     if (code && i18nMap[code]) return i18nMap[code]
   }
 
-  // Plain object from API client interceptor (most common case)
   if (typeof err === 'object' && err !== null) {
     const e = err as ApiErrorLike
-    // Interceptor shape: { message, error }
+
     if (e.message) return e.message
     if (e.error) return e.error
-    // Legacy axios shape: { response.data.detail }
+
     if (e.response?.data?.detail) return e.response.data.detail
     if (e.response?.data?.message) return e.response.data.message
   }
 
-  // Standard Error
   if (err instanceof Error) return err.message
 
-  // Last resort
+  /**
+   * Unknown error values are stringified only after recognized message shapes
+   * fail; replace the unhelpful plain-object string with the caller fallback.
+   */
   const str = String(err)
   return str === '[object Object]' ? fallback : str
 }

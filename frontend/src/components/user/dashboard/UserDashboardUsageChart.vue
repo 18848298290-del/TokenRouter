@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-4" :aria-busy="loading">
-    <!-- 指标卡展示所选范围的合计与环比，点击后在下方折线图中查看该指标 -->
+    <!-- Metric cards select the trend while showing totals and comparison changes for the selected interval. -->
     <div
       class="dash-rise-item grid grid-cols-2 gap-4 lg:grid-cols-4"
       :style="{ '--rise-i': 0 }"
@@ -15,9 +15,11 @@
         :data-testid="`usage-metric-${item.key}`"
         :aria-selected="metric === item.key"
         class="metric-card card flex min-w-0 flex-col gap-1 overflow-hidden p-4 text-left transition-colors duration-fast sm:gap-3"
-        :class="metric === item.key
-          ? 'border-primary-600 dark:border-primary-500/70'
-          : 'hover:border-black/20 dark:hover:border-dark-500'"
+        :class="
+          metric === item.key
+            ? 'border-primary-600 dark:border-primary-500/70'
+            : 'hover:border-black/20 dark:hover:border-dark-500'
+        "
         @click="selectMetric(item.key)"
       >
         <div class="flex min-w-0 items-center gap-2">
@@ -27,26 +29,39 @@
           >
             <Icon :name="item.icon" size="sm" />
           </span>
-          <span class="truncate text-xs font-medium text-gray-500 dark:text-dark-400">{{ item.label }}</span>
+          <span class="truncate text-xs font-medium text-gray-500 dark:text-dark-400">{{
+            item.label
+          }}</span>
         </div>
         <div class="flex min-w-0 items-end justify-between gap-3">
           <Skeleton v-if="!loaded" :width="96" :height="32" />
-          <span v-else class="min-w-0 truncate text-2xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-dark-50">
-            <!-- 滚动中的数字只做视觉展示，读屏读取最终值 -->
+          <span
+            v-else
+            class="min-w-0 truncate text-2xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-dark-50"
+          >
+            <!-- Keep animated digits visual and expose the settled value to screen readers. -->
             <span aria-hidden="true">{{ item.animatedValue }}</span>
             <span class="sr-only">{{ item.value }}</span>
           </span>
-          <!-- 只画走势线，选中的指标用品牌色 -->
+          <!-- Use the brand color for the selected metric's small trend. -->
           <UsageSparkline
             v-if="loaded"
             class="metric-sparkline h-8 w-20 shrink-0"
-            :class="metric === item.key ? 'text-primary-600 dark:text-primary-500' : 'text-gray-400 dark:text-dark-500'"
+            :class="
+              metric === item.key
+                ? 'text-primary-600 dark:text-primary-500'
+                : 'text-gray-400 dark:text-dark-500'
+            "
             :values="item.series"
             :data-testid="`usage-sparkline-${item.key}`"
           />
         </div>
         <Skeleton v-if="!loaded" :width="120" :height="20" />
-        <span v-else class="flex min-w-0 flex-wrap items-center gap-1 text-xs text-gray-500 dark:text-dark-400 sm:gap-2" :data-testid="`usage-delta-${item.key}`">
+        <span
+          v-else
+          class="flex min-w-0 flex-wrap items-center gap-1 text-xs text-gray-500 dark:text-dark-400 sm:gap-2"
+          :data-testid="`usage-delta-${item.key}`"
+        >
           <template v-if="item.delta">
             <span
               class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-medium tabular-nums"
@@ -63,15 +78,24 @@
       </button>
     </div>
 
-    <!-- 折线图与模型排行并排，窄于 xl 时排行排到图表下方 -->
+    <!-- Place the ranking below the chart until the xl layout has room for both. -->
     <div class="dash-rise-item grid grid-cols-1 gap-4 xl:grid-cols-3" :style="{ '--rise-i': 1 }">
-      <div ref="chartCardRef" class="card flex min-w-0 flex-col p-4 xl:col-span-2" data-testid="usage-chart-card">
+      <div
+        ref="chartCardRef"
+        class="card flex min-w-0 flex-col p-4 xl:col-span-2"
+        data-testid="usage-chart-card"
+      >
         <div class="mb-4 flex min-h-7 flex-wrap items-center justify-between gap-2">
           <div class="flex items-baseline gap-2">
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-dark-50" data-testid="usage-chart-title">{{ chartTitle }}</h3>
+            <h3
+              class="text-sm font-semibold text-gray-900 dark:text-dark-50"
+              data-testid="usage-chart-title"
+            >
+              {{ chartTitle }}
+            </h3>
             <span class="text-xs text-gray-500 dark:text-dark-400">{{ granularityHint }}</span>
           </div>
-          <!-- 图例兼开关：Token 按分项开关，其余指标开关上一周期对比线 -->
+          <!-- Legend controls toggle individual token categories or the previous-period comparison for other metrics. -->
           <div class="flex flex-wrap gap-2">
             <template v-if="metric === 'tokens'">
               <button
@@ -79,7 +103,9 @@
                 :key="series.key"
                 type="button"
                 class="legend-chip"
-                :class="hiddenTokenSeries.includes(series.key) ? 'legend-chip-off' : 'legend-chip-on'"
+                :class="
+                  hiddenTokenSeries.includes(series.key) ? 'legend-chip-off' : 'legend-chip-on'
+                "
                 :aria-pressed="!hiddenTokenSeries.includes(series.key)"
                 :data-testid="`usage-series-${series.key}`"
                 @click="toggleTokenSeries(series.key)"
@@ -105,7 +131,11 @@
                 data-testid="usage-series-previous"
                 @click="showPrevious = !showPrevious"
               >
-                <span class="w-3 border-t-2 border-dashed" :style="{ borderColor: themeColors.muted }" :class="{ 'opacity-30': !showPrevious }"></span>
+                <span
+                  class="w-3 border-t-2 border-dashed"
+                  :style="{ borderColor: themeColors.muted }"
+                  :class="{ 'opacity-30': !showPrevious }"
+                ></span>
                 {{ t('dashboard.usageChart.previousPeriod') }}
               </button>
             </template>
@@ -123,9 +153,15 @@
             {{ t('dashboard.usageChart.empty') }}
           </div>
           <template v-else>
-            <!-- 切换指标或重新取数时重建图表，与首次打开播放同一套入场动画 -->
-            <Line ref="lineRef" :key="chartKey" :data="chartData" :options="chartOptions" :plugins="chartPlugins" />
-            <!-- 未结束时段的末端呼吸点，位置由图表插件在每次绘制后写入 -->
+            <!-- Recreate the chart after metric or data changes so the entrance reveal starts from the beginning. -->
+            <Line
+              ref="lineRef"
+              :key="chartKey"
+              :data="chartData"
+              :options="chartOptions"
+              :plugins="chartPlugins"
+            />
+            <!-- The drawing plugin publishes the incomplete bucket position for this decorative endpoint after each redraw. -->
             <span
               v-if="livePoint"
               data-testid="usage-live-point"
@@ -133,8 +169,12 @@
               :style="{ left: `${livePoint.x}px`, top: `${livePoint.y}px`, color: mainColor }"
               aria-hidden="true"
             >
-              <span class="live-point-ping absolute -left-1.5 -top-1.5 h-3 w-3 animate-ping rounded-full bg-current opacity-60 motion-reduce:animate-none"></span>
-              <span class="absolute -left-1 -top-1 h-2 w-2 rounded-full bg-current ring-2 ring-white dark:ring-dark-900"></span>
+              <span
+                class="live-point-ping absolute -left-1.5 -top-1.5 h-3 w-3 animate-ping rounded-full bg-current opacity-60 motion-reduce:animate-none"
+              ></span>
+              <span
+                class="absolute -left-1 -top-1 h-2 w-2 rounded-full bg-current ring-2 ring-white dark:ring-dark-900"
+              ></span>
             </span>
           </template>
         </div>
@@ -170,11 +210,15 @@ import type { IconName } from '@/components/icons/registry'
 import UsageSparkline from './UsageSparkline.vue'
 import UserDashboardTopModels from './UserDashboardTopModels.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-import { useChartTheme, CHART_SERIES_COLORS, CHART_TICK_FONT_SIZE } from '@/composables/useChartTheme'
+import {
+  useChartTheme,
+  CHART_SERIES_COLORS,
+  CHART_TICK_FONT_SIZE,
+} from '@/composables/useChartTheme'
 import { useCountUp } from '@/composables/useCountUp'
 import { externalTooltipHandler, hideExternalTooltip } from '@/utils/chartExternalTooltip'
 import { formatNumberLocaleString as formatNumber, formatTokensK } from '@/utils/format'
-import type { TrendDataPoint } from '@/types'
+import type { TrendDataPoint } from '@/api/usage.types'
 import { cacheHitRateOf } from './usageChartData'
 import { CHART_REVEAL_MS, COUNT_UP_MS } from './dashboardMotion'
 import { METRIC_TONES } from './metricTones'
@@ -194,25 +238,35 @@ import { injectUsageChartState, type UsageMetric } from './usageChartState'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip)
 
-type TokenSeriesKey = 'input_tokens' | 'output_tokens' | 'cache_creation_tokens' | 'cache_read_tokens'
+// TokenSeriesKey identifies one separately toggleable token category in the usage trend.
+type TokenSeriesKey =
+  'input_tokens' | 'output_tokens' | 'cache_creation_tokens' | 'cache_read_tokens'
 
-// 数据集上的自定义标记：previous 表示上一周期对比线。
+// UsageDataset extends Chart.js line data with a comparison-period tooltip marker.
 type UsageDataset = ChartDataset<'line', Array<number | null>> & {
+  // previous marks the comparison dataset so tooltip labels can include its own
+  // date while the horizontal axis remains aligned to current-period bucket positions.
   previous?: boolean
 }
 
-// 请求数和消费折线使用品牌色，浅色取 primary-600，深色取 primary-500。
+// BRAND_LINE_COLOR supplies the theme-specific request and spending line color shared with
+// selected metric controls.
 const BRAND_LINE_COLOR = { light: '#12A7E8', dark: '#00D2FF' }
-// 卡片底色，悬停点和峰值环的描边与之相同，看起来像镂空。
+// CARD_SURFACE matches card backgrounds so hover points and peak rings appear hollow against
+// the surrounding plot.
 const CARD_SURFACE = { light: '#FFFFFF', dark: '#0F0F10' }
-// 未结束时段与上一周期对比线的虚线样式。
+// OPEN_SEGMENT_DASH and PREVIOUS_DASH distinguish incomplete live data and comparison
+// periods from completed current-period line segments.
 const OPEN_SEGMENT_DASH = [4, 4]
 const PREVIOUS_DASH = [4, 4]
-// 峰值与均值标签胶囊的尺寸。
+// LABEL_HEIGHT, LABEL_PADDING_X, and LABEL_GAP size annotation capsules and separate their
+// text from the plotted peak.
 const LABEL_HEIGHT = 18
 const LABEL_PADDING_X = 6
 const LABEL_GAP = 10
 
+// Translations, balance formatting, chart theme, and injected usage state supply the metric
+// cards and their shared trend selection.
 const { t } = useI18n()
 const { formatBalanceAmount } = useBalanceDisplay()
 const { colors: themeColors, isDark } = useChartTheme()
@@ -229,20 +283,33 @@ const {
   selectMetric,
 } = injectUsageChartState()
 
+// hiddenTokenSeries and showPrevious retain local legend choices; chart element refs and
+// livePoint connect canvas drawing with positioned HTML decorations.
 const hiddenTokenSeries = ref<TokenSeriesKey[]>([])
 const showPrevious = ref(true)
-const lineRef = ref<{ chart?: Chart } | null>(null)
+const lineRef = ref<{ chart?: Chart /* Mounted Chart.js drawing instance. */ } | null>(null)
 const chartCardRef = ref<HTMLElement | null>(null)
-const livePoint = ref<{ x: number; y: number } | null>(null)
+const livePoint = ref<{
+  x: number // Canvas endpoint horizontal pixels.
+  y: number // Canvas endpoint vertical pixels.
+} | null>(null)
 
-const chartTitle = computed(() => t('dashboard.usageChart.trendTitle', {
-  metric: t(`dashboard.usageChart.metrics.${metric.value}`),
-}))
+// chartTitle and granularityHint label the selected metric and bucket precision using the
+// current dashboard query state.
+const chartTitle = computed(() =>
+  t('dashboard.usageChart.trendTitle', {
+    metric: t(`dashboard.usageChart.metrics.${metric.value}`),
+  }),
+)
 
-const granularityHint = computed(() => (
-  activeRange.value.granularity === 'hour' ? t('dashboard.usageChart.byHour') : t('dashboard.usageChart.byDay')
-))
+const granularityHint = computed(() =>
+  activeRange.value.granularity === 'hour'
+    ? t('dashboard.usageChart.byHour')
+    : t('dashboard.usageChart.byDay'),
+)
 
+// deltaToneClasses and deltaIcons describe increase, decrease, and unchanged comparisons;
+// non-cache metrics use neutral badge colors regardless of direction.
 const deltaToneClasses = {
   up: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
   down: 'bg-red-500/10 text-red-600 dark:text-red-400',
@@ -255,9 +322,15 @@ const deltaIcons: Record<keyof typeof deltaToneClasses, IconName> = {
   flat: 'minus',
 }
 
-type Delta = { text: string; tone: keyof typeof deltaToneClasses }
+// Delta pairs formatted comparison text with its directional icon and tone category.
+type Delta = {
+  text: string // Formatted change amount.
+  tone: keyof typeof deltaToneClasses // Rounded comparison direction.
+}
 
-// percentDelta 计算环比百分比；上一周期为 0 时无法比较。
+// percentDelta computes the rounded percentage change from a positive comparison value.
+// Missing or nonpositive prior values return null because a relative percentage cannot
+// describe their comparison baseline.
 const percentDelta = (currentValue: number, previousValue: number | undefined): Delta | null => {
   if (previousValue === undefined || previousValue <= 0) return null
   const change = ((currentValue - previousValue) / previousValue) * 100
@@ -266,36 +339,56 @@ const percentDelta = (currentValue: number, previousValue: number | undefined): 
   return { text: `${percent > 0 ? '+' : ''}${percent}%`, tone: percent > 0 ? 'up' : 'down' }
 }
 
-// pointDelta 计算命中率的百分点差值。
-const pointDelta = (currentValue: number | null, previousValue: number | null | undefined): Delta | null => {
+// pointDelta computes the cache-hit change in percentage points to one decimal place.
+// Missing rates return null, while a rounded zero produces the neutral badge and unchanged-
+// direction icon.
+const pointDelta = (
+  currentValue: number | null,
+  previousValue: number | null | undefined,
+): Delta | null => {
   if (currentValue === null || previousValue === null || previousValue === undefined) return null
   const change = Math.round((currentValue - previousValue) * 10) / 10
   if (change === 0) return { text: '0 pt', tone: 'flat' }
-  return { text: `${change > 0 ? '+' : ''}${change.toFixed(1)} pt`, tone: change > 0 ? 'up' : 'down' }
+  return {
+    text: `${change > 0 ? '+' : ''}${change.toFixed(1)} pt`,
+    tone: change > 0 ? 'up' : 'down',
+  }
 }
 
-const formatPercent = (value: number | null): string => (value === null ? '—' : `${value.toFixed(1)}%`)
+// formatPercent renders one decimal percentage or a dash for an undefined rate. Null
+// represents missing input-side usage, which the card distinguishes from a measured zero
+// cache-hit percentage.
+const formatPercent = (value: number | null): string =>
+  value === null ? '—' : `${value.toFixed(1)}%`
 
-// 小额消费显示 4 位小数。
-const formatCostTotal = (value: number): string => formatBalanceAmount(value, { fractionDigits: value >= 1 ? 2 : 4 })
+// formatCostTotal retains four decimal places for spending below one balance unit.
+const formatCostTotal = (value: number): string =>
+  formatBalanceAmount(value, { fractionDigits: value >= 1 ? 2 : 4 })
 
-// metricValueOf 取某个时段在指定指标下的值，命中率没有输入时为 null。
+// metricValueOf selects the requested metric from one usage bucket. Cache-hit rate delegates
+// input-side calculation and returns null when the bucket has no positive input total for a
+// defined percentage.
 const metricValueOf = (point: TrendDataPoint, key: UsageMetric): number | null => {
   if (key === 'tokens') return point.total_tokens
   if (key === 'cost') return point.actual_cost
-  if (key === 'cacheHitRate') return cacheHitRateOf(point.input_tokens, point.cache_creation_tokens, point.cache_read_tokens)
+  if (key === 'cacheHitRate')
+    return cacheHitRateOf(point.input_tokens, point.cache_creation_tokens, point.cache_read_tokens)
   return point.requests
 }
 
-// 指标卡数字从旧值滚动到新值，请求数在动画中取整。
+// Animated card values follow totals while the template exposes final values separately for
+// screen readers and rounds displayed request counts.
 const animatedRequests = useCountUp(() => totals.value.requests, COUNT_UP_MS)
 const animatedTokens = useCountUp(() => totals.value.tokens, COUNT_UP_MS)
 const animatedCost = useCountUp(() => totals.value.cost, COUNT_UP_MS)
 const animatedHitRate = useCountUp(() => totals.value.cacheHitRate ?? 0, COUNT_UP_MS)
 
+// metricTabs pairs each total with its animated value, period comparison, and bucket series
+// for the dashboard metric selector.
 const metricTabs = computed(() => {
   const now = totals.value
   const prev = previousTotals.value
+  // seriesOf collects one metric across current buckets for its small trend.
   const seriesOf = (key: UsageMetric) => current.value.map((point) => metricValueOf(point, key))
   return [
     {
@@ -337,40 +430,73 @@ const metricTabs = computed(() => {
   ]
 })
 
+// tokenSeries assigns labels and colors to the four independently displayed input, output,
+// cache-creation, and cache-read quantities.
 const tokenSeries = computed(() => [
-  { key: 'input_tokens' as const, label: t('dashboard.usageChart.series.input'), color: CHART_SERIES_COLORS.input },
-  { key: 'output_tokens' as const, label: t('dashboard.usageChart.series.output'), color: CHART_SERIES_COLORS.output },
-  { key: 'cache_creation_tokens' as const, label: t('dashboard.usageChart.series.cacheCreation'), color: CHART_SERIES_COLORS.cacheCreation },
-  { key: 'cache_read_tokens' as const, label: t('dashboard.usageChart.series.cacheRead'), color: CHART_SERIES_COLORS.cacheRead },
+  {
+    key: 'input_tokens' as const,
+    label: t('dashboard.usageChart.series.input'),
+    color: CHART_SERIES_COLORS.input,
+  },
+  {
+    key: 'output_tokens' as const,
+    label: t('dashboard.usageChart.series.output'),
+    color: CHART_SERIES_COLORS.output,
+  },
+  {
+    key: 'cache_creation_tokens' as const,
+    label: t('dashboard.usageChart.series.cacheCreation'),
+    color: CHART_SERIES_COLORS.cacheCreation,
+  },
+  {
+    key: 'cache_read_tokens' as const,
+    label: t('dashboard.usageChart.series.cacheRead'),
+    color: CHART_SERIES_COLORS.cacheRead,
+  },
 ])
 
-const hasUsage = computed(() => totals.value.requests > 0 || totals.value.tokens > 0 || totals.value.cost > 0)
-
-// 横轴按粒度只显示时分或月日，完整时间留给提示标题。
-const shortLabel = (date: string): string => (
-  activeRange.value.granularity === 'hour' ? date.slice(11, 16) : date.slice(5, 10)
+// hasUsage selects the plot when any additive total is positive, otherwise the chart card
+// displays its empty state.
+const hasUsage = computed(
+  () => totals.value.requests > 0 || totals.value.tokens > 0 || totals.value.cost > 0,
 )
+
+// shortLabel abbreviates a bucket timestamp to hours or month-day according to query
+// precision. The tooltip title retains the full timestamp so abbreviated axis labels remain
+// distinguishable.
+const shortLabel = (date: string): string =>
+  activeRange.value.granularity === 'hour' ? date.slice(11, 16) : date.slice(5, 10)
+// axisLabels follows current bucket order, while theme colors below supply the plot line and
+// annotation surface colors.
 const axisLabels = computed(() => current.value.map((point) => shortLabel(point.date)))
 
 const brandColor = computed(() => (isDark.value ? BRAND_LINE_COLOR.dark : BRAND_LINE_COLOR.light))
 const surfaceColor = computed(() => (isDark.value ? CARD_SURFACE.dark : CARD_SURFACE.light))
 
-// 单指标主线的颜色，命中率沿用序列色。
-const mainColor = computed(() => (metric.value === 'cacheHitRate' ? CHART_SERIES_COLORS.cacheHitRate : brandColor.value))
+// mainColor uses the cache-rate series color for that metric and the theme-specific brand
+// color for other single lines.
+const mainColor = computed(() =>
+  metric.value === 'cacheHitRate' ? CHART_SERIES_COLORS.cacheHitRate : brandColor.value,
+)
 
-// 窗口包含当前时刻时，最后一个时段（今天或当前小时）还没结束，数据不完整。
-const openBucketIndex = computed(() => (
-  activeRange.value.endAt.getTime() > Date.now() && current.value.length > 1 ? current.value.length - 1 : null
-))
+// openBucketIndex identifies the final still-accumulating bucket when the interval includes
+// the current instant and contains multiple points.
+const openBucketIndex = computed(() =>
+  activeRange.value.endAt.getTime() > Date.now() && current.value.length > 1
+    ? current.value.length - 1
+    : null,
+)
 
-// 尚在累计的末段使用虚线标记。
+// segmentStyle marks the line segment entering the incomplete final bucket, distinguishing
+// its provisional value from completed bucket observations.
 const segmentStyle = {
-  borderDash: (context: ScriptableLineSegmentContext) => (
-    context.p1DataIndex === openBucketIndex.value ? OPEN_SEGMENT_DASH : undefined
-  ),
+  borderDash: (context: ScriptableLineSegmentContext) =>
+    context.p1DataIndex === openBucketIndex.value ? OPEN_SEGMENT_DASH : undefined,
 }
 
-// lineDataset 生成统一样式的折线数据集；monotone 插值保证曲线不越过真实数据点，线下不填充。
+// lineDataset builds a current-period dataset with gap spanning and monotone interpolation.
+// Missing values connect surrounding observations, and shared segment styling identifies an
+// incomplete final bucket in the active interval.
 const lineDataset = (label: string, data: Array<number | null>, color: string): UsageDataset => ({
   label,
   data,
@@ -388,28 +514,44 @@ const lineDataset = (label: string, data: Array<number | null>, color: string): 
   spanGaps: true,
 })
 
+// chartData renders visible token categories or one selected metric with an optional
+// comparison line. Comparison points align by index with the current period, so its axis
+// labels continue to describe current dates.
 const chartData = computed(() => {
   const points = current.value
   if (metric.value === 'tokens') {
-    const visible = tokenSeries.value.filter((series) => !hiddenTokenSeries.value.includes(series.key))
+    const visible = tokenSeries.value.filter(
+      (series) => !hiddenTokenSeries.value.includes(series.key),
+    )
     return {
       labels: axisLabels.value,
       datasets: visible.map((series) => ({
-        ...lineDataset(series.label, points.map((point) => point[series.key]), series.color),
+        ...lineDataset(
+          series.label,
+          points.map((point) => point[series.key]),
+          series.color,
+        ),
         borderWidth: 1.75,
       })),
     }
   }
-  const datasets: UsageDataset[] = [lineDataset(
-    metric.value === 'cost' ? t('dashboard.usageChart.series.actualCost') : t(`dashboard.usageChart.metrics.${metric.value}`),
-    points.map((point) => metricValueOf(point, metric.value)),
-    mainColor.value,
-  )]
+  const datasets: UsageDataset[] = [
+    lineDataset(
+      metric.value === 'cost'
+        ? t('dashboard.usageChart.series.actualCost')
+        : t(`dashboard.usageChart.metrics.${metric.value}`),
+      points.map((point) => metricValueOf(point, metric.value)),
+      mainColor.value,
+    ),
+  ]
   if (showPrevious.value && previous.value.length > 0) {
-    // 上一周期按下标与本期对齐，只取本期已有的时段；order 更大的数据集画在下层。
+    // Align comparison data by bucket position and truncate to available current
+    // buckets; the higher order draws that comparison beneath the current line.
     datasets.push({
       label: t('dashboard.usageChart.previousPeriod'),
-      data: previous.value.slice(0, points.length).map((point) => metricValueOf(point, metric.value)),
+      data: previous.value
+        .slice(0, points.length)
+        .map((point) => metricValueOf(point, metric.value)),
       borderColor: themeColors.value.muted,
       backgroundColor: themeColors.value.muted,
       borderWidth: 1.5,
@@ -428,7 +570,9 @@ const chartData = computed(() => {
   return { labels: axisLabels.value, datasets }
 })
 
-// formatAxisValue 格式化纵轴刻度，消费刻度不带货币符号以免挤占宽度。
+// formatAxisValue formats vertical ticks according to the selected metric. Cost ticks omit
+// the currency symbol to save axis space, while token and request ticks use their shared
+// display formatters.
 const formatAxisValue = (value: number): string => {
   if (metric.value === 'tokens') return formatTokensK(value)
   if (metric.value === 'cacheHitRate') return `${value}%`
@@ -436,47 +580,57 @@ const formatAxisValue = (value: number): string => {
   return formatNumber(value)
 }
 
-// formatValue 格式化提示和标注中的单个数值。
+// formatValue formats tooltip and annotation amounts for the selected metric. Missing values
+// use a dash; request averages retain one decimal below one hundred and round to whole
+// requests above it.
 const formatValue = (value: number | null): string => {
   if (value === null) return '—'
   if (metric.value === 'tokens') return formatTokensK(value)
   if (metric.value === 'cacheHitRate') return formatPercent(value)
   if (metric.value === 'cost') return formatBalanceAmount(value, { fractionDigits: 4 })
-  // 请求数的均值可能带小数，较大时取整，较小时保留一位。
+  // Request averages can be fractional; retain tenths below one hundred requests.
   return formatNumber(value >= 100 ? Math.round(value) : Math.round(value * 10) / 10)
 }
 
-// annotation 是单指标的峰值与均值；均值只统计已结束的时段，未结束的时段还在累计。
+// annotation derives a peak from present values and a mean from completed buckets; token
+// breakdowns and empty usage do not receive these single-series annotations.
 const annotation = computed(() => {
   if (metric.value === 'tokens' || !hasUsage.value) return null
   const values = current.value.map((point) => metricValueOf(point, metric.value))
   let peakIndex = -1
   values.forEach((value, index) => {
-    if (value !== null && (peakIndex < 0 || value > (values[peakIndex] as number))) peakIndex = index
+    if (value !== null && (peakIndex < 0 || value > (values[peakIndex] as number)))
+      peakIndex = index
   })
   if (peakIndex < 0 || !values[peakIndex]) return null
-  const closed = values.filter((value, index): value is number => value !== null && index !== openBucketIndex.value)
-  const average = closed.length > 0 ? closed.reduce((sum, value) => sum + value, 0) / closed.length : null
+  const closed = values.filter(
+    (value, index): value is number => value !== null && index !== openBucketIndex.value,
+  )
+  const average =
+    closed.length > 0 ? closed.reduce((sum, value) => sum + value, 0) / closed.length : null
   return { peakIndex, peakValue: values[peakIndex] as number, average }
 })
 
+// chartOptions combines theme-aware axes with external tooltip rendering and metric-specific
+// formatting, ordering, and totals for the visible datasets.
 const chartOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
   interaction: { intersect: false, mode: 'index' as const },
-  // 标签胶囊画在绘图区上方，留出空间避免被裁切。
+  // Annotation capsules can extend above the plot, so reserve half their height
+  // in the chart layout before the canvas clips the outer drawing area.
   layout: { padding: { top: LABEL_HEIGHT / 2 } },
   plugins: {
     legend: { display: false },
     tooltip: {
       enabled: false,
       external: externalTooltipHandler,
-      // Token 按数值从大到小列出；单指标本期排在上一周期之前。
-      itemSort: (a: TooltipItem<'line'>, b: TooltipItem<'line'>) => (
+      // Sort token categories by their hovered amounts for comparison; single-metric
+      // tooltips retain dataset order so the current period precedes its comparison.
+      itemSort: (a: TooltipItem<'line'>, b: TooltipItem<'line'>) =>
         metric.value === 'tokens'
           ? ((b.raw as number | null) ?? 0) - ((a.raw as number | null) ?? 0)
-          : a.datasetIndex - b.datasetIndex
-      ),
+          : a.datasetIndex - b.datasetIndex,
       callbacks: {
         title: (items: TooltipItem<'line'>[]) => current.value[items[0]?.dataIndex]?.date ?? '',
         label: (context: TooltipItem<'line'>) => {
@@ -507,7 +661,8 @@ const chartOptions = computed(() => ({
     },
     y: {
       beginAtZero: true,
-      // 顶部留白，峰值标签不贴着图表上沿；命中率固定 0-100%。
+      // Percentages share a fixed upper bound; additive metrics reserve headroom
+      // so peak labels can sit near their points without crowding the plot edge.
       ...(metric.value === 'cacheHitRate' ? { max: 100 } : { grace: '15%' }),
       grid: { color: themeColors.value.grid, drawTicks: false },
       border: { display: false, dash: [3, 3] },
@@ -522,9 +677,13 @@ const chartOptions = computed(() => ({
   },
 }))
 
-// crosshairPlugin 在悬停的时间点画一条贯穿绘图区的竖线，画在折线下层。
+// crosshairPlugin draws the active bucket guide beneath datasets so the hover position
+// remains visible without covering the plotted points.
 const crosshairPlugin: Plugin<'line'> = {
   id: 'usageCrosshair',
+  // beforeDatasetsDraw paints a guide for the active hover position before chart datasets
+  // render. It saves and restores canvas drawing state so guide styling does not leak into
+  // the lines.
   beforeDatasetsDraw(chart) {
     const active = chart.getActiveElements()
     if (!active.length) return
@@ -543,44 +702,71 @@ const crosshairPlugin: Plugin<'line'> = {
   },
 }
 
-// drawLabel 画一个圆角标签胶囊，x 为左边缘，y 为上边缘。
-const drawLabel = (ctx: CanvasRenderingContext2D, text: string, x: number, y: number, fill: string, color: string) => {
+// drawLabel paints an annotation capsule at the supplied canvas position using measured text
+// width. The caller supplies drawing font and baseline; canvases without roundRect receive a
+// rectangular capsule.
+const drawLabel = (
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  fill: string,
+  color: string,
+) => {
   const width = ctx.measureText(text).width + LABEL_PADDING_X * 2
   ctx.fillStyle = fill
   ctx.beginPath()
-  if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, width, LABEL_HEIGHT, LABEL_HEIGHT / 2)
+  if (typeof ctx.roundRect === 'function')
+    ctx.roundRect(x, y, width, LABEL_HEIGHT, LABEL_HEIGHT / 2)
   else ctx.rect(x, y, width, LABEL_HEIGHT)
   ctx.fill()
   ctx.fillStyle = color
   ctx.fillText(text, x + LABEL_PADDING_X, y + LABEL_HEIGHT / 2)
 }
 
-// 描线进度 0-1，绘图区按进度从左向右裁剪；减少动态效果时始终为 1。
+// revealProgress and revealFrame track the active left-to-right reveal; a completed or
+// reduced-motion reveal uses progress one and no scheduled frame.
 let revealProgress = 1
 let revealFrame = 0
 
-// revealPlugin 按描线进度裁剪数据集，并在裁剪范围内画峰值与均值标注；描线完成后记录末端呼吸点的位置。
+// revealPlugin brackets dataset drawing with a saved canvas clip, then restores it after
+// annotations and updates the positioned live endpoint.
 const revealPlugin: Plugin<'line'> = {
   id: 'usageReveal',
+  // beforeDatasetsDraw saves canvas state and clips the active reveal region.
+  // afterDatasetsDraw owns the matching restore so current lines and annotations share
+  // the same reveal progress while subsequent chart drawing regains the full canvas.
   beforeDatasetsDraw(chart) {
     const { ctx, chartArea } = chart
     ctx.save()
     if (revealProgress < 1) {
       ctx.beginPath()
-      ctx.rect(chartArea.left - LABEL_GAP, 0, (chartArea.width + LABEL_GAP * 2) * revealProgress, chart.height)
+      ctx.rect(
+        chartArea.left - LABEL_GAP,
+        0,
+        (chartArea.width + LABEL_GAP * 2) * revealProgress,
+        chart.height,
+      )
       ctx.clip()
     }
   },
+  // afterDatasetsDraw paints annotations inside the saved reveal region and restores canvas
+  // state. It pairs with this plugin's beforeDatasetsDraw so later chart drawing is not left
+  // clipped.
   afterDatasetsDraw(chart) {
     drawAnnotations(chart)
     chart.ctx.restore()
   },
+  // afterDraw refreshes the HTML endpoint position after the canvas layout and datasets
+  // settle.
   afterDraw(chart) {
     updateLivePoint(chart)
   },
 }
 
-// drawAnnotations 画均值虚线与峰值环，标签胶囊限制在绘图区内。
+// drawAnnotations paints a closed-bucket average line and a peak ring for the current
+// dataset. Missing, hidden, or nonfinite points skip their annotations, and label placement
+// uses chart-area measurements to limit overflow.
 const drawAnnotations = (chart: Chart) => {
   const info = annotation.value
   const meta = chart.getDatasetMeta(0)
@@ -603,7 +789,14 @@ const drawAnnotations = (chart: Chart) => {
     ctx.restore()
     const text = `${t('dashboard.usageChart.average')} · ${formatValue(info.average)}`
     const width = ctx.measureText(text).width + LABEL_PADDING_X * 2
-    drawLabel(ctx, text, chartArea.right - width, y - LABEL_HEIGHT / 2, surfaceColor.value, themeColors.value.muted)
+    drawLabel(
+      ctx,
+      text,
+      chartArea.right - width,
+      y - LABEL_HEIGHT / 2,
+      surfaceColor.value,
+      themeColors.value.muted,
+    )
   }
 
   const point = meta.data[info.peakIndex]
@@ -620,17 +813,21 @@ const drawAnnotations = (chart: Chart) => {
   const text = `${t('dashboard.usageChart.peak')} · ${formatValue(info.peakValue)}`
   const width = ctx.measureText(text).width + LABEL_PADDING_X * 2
   const x = Math.min(Math.max(point.x - width / 2, chartArea.left), chartArea.right - width)
-  // 上方放不下时改放在峰值点下方。
+  // Move the capsule below a high peak when the upper position would exceed the
+  // annotation margin, keeping its text within the chart's reserved drawing area.
   const above = point.y - LABEL_GAP - LABEL_HEIGHT
   const y = above >= chartArea.top - LABEL_HEIGHT / 2 ? above : point.y + LABEL_GAP
   drawLabel(ctx, text, x, y, `${mainColor.value}26`, mainColor.value)
 }
 
-// updateLivePoint 记录未结束时段末端点的位置；描线未完成或该时段不存在时隐藏。
+// updateLivePoint publishes the canvas location of the incomplete current bucket for its
+// HTML marker. Token breakdowns, unfinished reveals, hidden datasets, and missing points
+// clear the marker until a drawable single-series endpoint exists.
 const updateLivePoint = (chart: Chart) => {
   const index = openBucketIndex.value
   const meta = chart.getDatasetMeta(0)
-  const point = index === null || metric.value === 'tokens' || revealProgress < 1 ? null : meta?.data[index]
+  const point =
+    index === null || metric.value === 'tokens' || revealProgress < 1 ? null : meta?.data[index]
   if (!point || meta.hidden || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
     if (livePoint.value) livePoint.value = null
     return
@@ -639,14 +836,24 @@ const updateLivePoint = (chart: Chart) => {
   livePoint.value = { x: point.x, y: point.y }
 }
 
+// chartPlugins preserves crosshair drawing before reveal clipping so the guide and datasets
+// use their intended canvas layering.
 const chartPlugins = [crosshairPlugin, revealPlugin]
 
+// cancelReveal cancels the scheduled reveal frame and clears its handle. Repeated calls are
+// safe during replacement animation setup and component disposal, when a frame may already
+// have completed.
 const cancelReveal = () => {
   if (revealFrame) cancelAnimationFrame(revealFrame)
   revealFrame = 0
 }
 
-// playReveal 从左向右描线，各帧沿用当前布局重绘。
+// playReveal restarts the left-to-right chart reveal using the current layout for every
+// frame. It first cancels the previous frame chain so metric and data changes cannot animate
+// the same chart concurrently. Reduced-motion preference or missing animation-frame support
+// immediately selects full progress. Otherwise a cubic easing curve advances a clipped
+// redraw until completion, with the component owning cancellation of the latest frame handle
+// during disposal.
 const playReveal = () => {
   cancelReveal()
   if (reducedMotion.value === 'reduce' || typeof requestAnimationFrame !== 'function') {
@@ -655,9 +862,12 @@ const playReveal = () => {
   }
   revealProgress = 0
   const startedAt = performance.now()
+  // tick advances reveal progress and redraws the current chart at this animation timestamp.
+  // It schedules another frame while incomplete and clears the frame handle when the reveal
+  // finishes.
   const tick = (now: number) => {
     const progress = Math.min((now - startedAt) / CHART_REVEAL_MS, 1)
-    // 三次缓出：开头快，收尾放慢。
+    // Cubic easing advances quickly and slows toward completion.
     revealProgress = 1 - Math.pow(1 - progress, 3)
     lineRef.value?.chart?.draw()
     revealFrame = progress < 1 ? requestAnimationFrame(tick) : 0
@@ -665,7 +875,8 @@ const playReveal = () => {
   revealFrame = requestAnimationFrame(tick)
 }
 
-// 图表的 key：切换指标或重新取数（范围、筛选、刷新）时递增，图表重建后从头播放入场动画，与首次打开一致。
+// chartVersion increments when current data changes; chartKey also includes the metric so
+// either change recreates the chart for a fresh entrance.
 const chartVersion = ref(0)
 const chartKey = computed(() => `${metric.value}-${chartVersion.value}`)
 
@@ -675,23 +886,27 @@ watch(current, () => {
 })
 watch(metric, playReveal)
 
+// Cancel the owned animation frame and hide the shared external tooltip before navigation
+// removes this chart from the document.
 onBeforeUnmount(() => {
   cancelReveal()
   hideExternalTooltip()
 })
 
+// toggleTokenSeries adds or removes a token category from the local hidden list.
 const toggleTokenSeries = (key: TokenSeriesKey) => {
   hiddenTokenSeries.value = hiddenTokenSeries.value.includes(key)
     ? hiddenTokenSeries.value.filter((item) => item !== key)
     : [...hiddenTokenSeries.value, key]
 }
 
-// 供页面在热力图选中某天后把图表滚动到可见区域。
+// DashboardView uses chartCardRef to scroll this card into view after a heatmap date selects
+// hourly details.
 defineExpose({ chartCardRef })
 </script>
 
 <style scoped>
-/* 卡片内容宽度够放下数字和走势线时才显示走势线，窄卡片优先保证数字完整。 */
+/* Show the sparkline when its card has enough inline space for both numbers and the trend, preserving numeric readability in narrower cards. */
 .metric-card {
   container-type: inline-size;
 }
@@ -706,7 +921,7 @@ defineExpose({ chartCardRef })
   }
 }
 
-/* 图例兼开关的胶囊 */
+/* Legend capsules are also dataset visibility controls. */
 .legend-chip {
   @apply inline-flex items-center gap-2 rounded-full border border-gray-200 px-3 py-1 text-xs transition-colors duration-fast dark:border-dark-600;
 }

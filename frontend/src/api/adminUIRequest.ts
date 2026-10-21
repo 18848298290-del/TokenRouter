@@ -1,6 +1,25 @@
+/**
+ * adminUIRequest.ts classifies browser requests for administrator and user
+ * timing headers. Administrator classification considers both the target URL and
+ * current page, while user classification uses a route allowlist that excludes
+ * public payment verification and webhook endpoints.
+ */
+
+/**
+ * ADMIN_UI_REQUEST_HEADER names the browser marker attached when request or page
+ * paths identify an administrator operation.
+ */
 export const ADMIN_UI_REQUEST_HEADER = 'X-Admin-UI-Request'
+
+/**
+ * USER_UI_REQUEST_HEADER names the browser marker attached to requests covered
+ * by the user timing route allowlist.
+ */
 export const USER_UI_REQUEST_HEADER = 'X-User-UI-Request'
 
+/**
+ * isAdminPath reports whether a path belongs to an administrator route family.
+ */
 function isAdminPath(path: string): boolean {
   return (
     path === '/admin' ||
@@ -10,6 +29,11 @@ function isAdminPath(path: string): boolean {
   )
 }
 
+/**
+ * requestPath extracts a pathname from a relative or absolute URL. Empty input
+ * stays empty, and failed URL parsing strips query or fragment text so
+ * classification can continue with the available path.
+ */
 function requestPath(rawURL: string): string {
   const value = rawURL.trim()
   if (!value) return ''
@@ -17,11 +41,17 @@ function requestPath(rawURL: string): string {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
     return new URL(value, origin).pathname
   } catch {
+    // Malformed URL input can still contain a recognizable route; remove query
+    // and fragment text before the caller applies path-family classification.
     return value.split(/[?#]/, 1)[0]
   }
 }
 
-/** 将 Axios 相对路径与 API 绝对路径归一化为可比较格式。 */
+/**
+ * normalizeAPIPath normalizes Axios-relative and API-prefixed paths for browser
+ * timing classification. Empty paths stay empty; recognized /api/v1 prefixes are
+ * removed before comparisons with the local route allowlist.
+ */
 function normalizeAPIPath(path: string): string {
   const raw = requestPath(path)
   if (!raw) return ''
@@ -34,7 +64,11 @@ function normalizeAPIPath(path: string): string {
   return `/${raw}`
 }
 
-/** 启用 ENABLE_SERVER_TIMING 后允许返回耗时信息的用户 Web API，与后端 allowlist 保持一致。 */
+/**
+ * isUserTimingAPIPath reports whether a request belongs to the user timing
+ * allowlist. Public payment and webhook routes are excluded, while authenticated
+ * payment routes and the listed user API families qualify.
+ */
 export function isUserTimingAPIPath(requestURL: string): boolean {
   const path = normalizeAPIPath(requestURL)
   if (!path) return false
@@ -64,12 +98,20 @@ export function isUserTimingAPIPath(requestURL: string): boolean {
   return false
 }
 
+/**
+ * shouldMarkAdminUIRequest reports whether the target or current page is
+ * administrative. Callers may supply pagePath for classification; otherwise the
+ * browser pathname is used, with an empty page outside a browser.
+ */
 export function shouldMarkAdminUIRequest(requestURL: string, pagePath?: string): boolean {
-  const currentPath =
-    pagePath ?? (typeof window !== 'undefined' ? window.location.pathname : '')
+  const currentPath = pagePath ?? (typeof window !== 'undefined' ? window.location.pathname : '')
   return isAdminPath(requestPath(requestURL)) || isAdminPath(currentPath)
 }
 
+/**
+ * shouldMarkUserUIRequest reports whether the request qualifies for user timing
+ * metadata.
+ */
 export function shouldMarkUserUIRequest(requestURL: string): boolean {
   return isUserTimingAPIPath(requestURL)
 }

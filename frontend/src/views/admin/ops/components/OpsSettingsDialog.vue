@@ -8,40 +8,80 @@ import { opsAPI } from '@/api/admin/ops'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
-import type { OpsAlertRuntimeSettings, EmailNotificationConfig, AlertSeverity, OpsAdvancedSettings, OpsMetricThresholds } from '../types'
+import type {
+  OpsAlertRuntimeSettings,
+  EmailNotificationConfig,
+  AlertSeverity,
+  OpsAdvancedSettings,
+  OpsMetricThresholds,
+} from '../types'
 
+// OpsSettingsDialog.vue edits alert evaluation, email delivery, retention,
+// dashboard display, and metric threshold settings. Each settings family has its
+// own API response and update endpoint, while the dialog presents one validation
+// result and one save action. Missing status-code configuration receives the
+// standard ignored-code defaults when loaded.
+//
+// Save normalizes ignored codes and disables enabled email sections with no
+// recipients before issuing independent updates in parallel. A failed update
+// does not roll back successful sibling writes, and the dialog stays open with
+// an error message. Saved and close events are emitted after every requested
+// update succeeds so the dashboard can reload its presentation settings.
+
+// Translation and application notifications supply dialog labels, validation
+// feedback, and settings persistence results for this editor.
 const { t } = useI18n()
 const appStore = useAppStore()
 
+// props controls dialog visibility, while close and saved events tell the parent
+// when to hide or refresh it.
 const props = defineProps<{
-  show: boolean
+  show: boolean // owner-controlled dialog visibility
 }>()
 
+// emit publishes successful persistence and dismissal events after the
+// corresponding dialog action completes for the parent.
 const emit = defineEmits<{
-  close: []
-  saved: []
+  close: [] // dialog dismissal event payload
+  saved: [] // successful settings persistence event
 }>()
 
+// Loading and saving flags track request phases separately, while the
+// ignored-code input retains editable text until validation.
 const loading = ref(false)
 const saving = ref(false)
 const ignoredStatusCodesInput = ref('401, 403')
 
-// 运行时设置
+// runtimeSettings holds the loaded alert evaluator settings; null means that
+// settings family has not been populated.
 const runtimeSettings = ref<OpsAlertRuntimeSettings | null>(null)
-// 邮件通知配置
+// emailConfig owns editable alert and report recipient lists and enablement
+// flags before the combined save action.
 const emailConfig = ref<EmailNotificationConfig | null>(null)
-// 高级设置
+// advancedSettings holds retention and dashboard options, including the
+// normalized ignored status codes sent on save.
 const advancedSettings = ref<OpsAdvancedSettings | null>(null)
-// 指标阈值配置
+// metricThresholds begins with dashboard defaults and accepts individually
+// supplied server values when threshold settings load.
 const metricThresholds = ref<OpsMetricThresholds>({
   sla_percent_min: 99.5,
   ttft_p99_ms_max: 500,
   request_error_rate_percent_max: 5,
-  upstream_error_rate_percent_max: 5
+  upstream_error_rate_percent_max: 5,
 })
 
-// 解析管理员输入的客户端侧忽略状态码；空输入表示不按状态码忽略。
-function parseIgnoredStatusCodes(raw: string): { valid: boolean; codes: number[]; error?: string } {
+// parseIgnoredStatusCodes validates comma- or whitespace-separated decimal HTTP
+// statuses. Empty text returns an empty accepted list; invalid tokens reject the
+// whole input, while valid codes are deduplicated and sorted numerically.
+function parseIgnoredStatusCodes(raw: string): {
+  // valid distinguishes an accepted empty list from rejected input; callers consult this flag
+  // before using codes.
+  valid: boolean // input acceptance flag
+  // codes contains sorted unique statuses when valid is true; rejected input returns
+  // an empty list alongside a validation error.
+  codes: number[] // normalized HTTP status list
+  error?: string // optional translated validation explanation
+} {
   const text = raw.trim()
   if (!text) return { valid: true, codes: [] }
   const parts = text
@@ -52,11 +92,21 @@ function parseIgnoredStatusCodes(raw: string): { valid: boolean; codes: number[]
   const codes: number[] = []
   for (const part of parts) {
     if (!/^\d+$/.test(part)) {
-      return { valid: false, codes: [], error: t('admin.ops.settings.validation.ignoredStatusCodesRange') }
+      return {
+        valid: false,
+        codes: [],
+        error: t('admin.ops.settings.validation.ignoredStatusCodesRange'),
+      }
     }
     const code = Number.parseInt(part, 10)
+    // Reject statuses outside the HTTP response range before saving, so one
+    // malformed entry cannot enter the ignored-status configuration.
     if (!Number.isFinite(code) || code < 100 || code > 599) {
-      return { valid: false, codes: [], error: t('admin.ops.settings.validation.ignoredStatusCodesRange') }
+      return {
+        valid: false,
+        codes: [],
+        error: t('admin.ops.settings.validation.ignoredStatusCodesRange'),
+      }
     }
     if (!seen.has(code)) {
       seen.add(code)
@@ -67,13 +117,19 @@ function parseIgnoredStatusCodes(raw: string): { valid: boolean; codes: number[]
   return { valid: true, codes }
 }
 
+// formatIgnoredStatusCodes formats validated status codes as comma-separated
+// text for editing. Missing arrays use 401 and 403, and an invalid supplied list
+// also falls back to that displayed default.
 function formatIgnoredStatusCodes(codes: number[] | null | undefined): string {
   const fallback = Array.isArray(codes) ? codes : [401, 403]
   const parsed = parseIgnoredStatusCodes(fallback.join(', '))
   return parsed.valid ? parsed.codes.join(', ') : '401, 403'
 }
 
-// 加载所有配置
+// loadAllSettings retrieves four settings families together before publishing
+// their editable values. Missing ignored-code arrays and omitted threshold
+// fields receive defaults, while a failed request reports an error and leaves
+// previous drafts available.
 async function loadAllSettings() {
   loading.value = true
   try {
@@ -81,23 +137,28 @@ async function loadAllSettings() {
       opsAPI.getAlertRuntimeSettings(),
       opsAPI.getEmailNotificationConfig(),
       opsAPI.getAdvancedSettings(),
-      opsAPI.getMetricThresholds()
+      opsAPI.getMetricThresholds(),
     ])
     runtimeSettings.value = runtime
     emailConfig.value = email
     advancedSettings.value = advanced
+    // Older or incomplete settings responses can omit the ignored-code array;
+    // seed the editable list so saving has a concrete status selection.
     if (!Array.isArray(advancedSettings.value.ignored_status_codes)) {
       advancedSettings.value.ignored_status_codes = [401, 403]
     }
-    ignoredStatusCodesInput.value = formatIgnoredStatusCodes(advancedSettings.value.ignored_status_codes)
-    // 如果后端返回了阈值，使用后端的值；否则保持默认值
+    ignoredStatusCodesInput.value = formatIgnoredStatusCodes(
+      advancedSettings.value.ignored_status_codes,
+    )
+    // Apply supplied threshold fields individually so partially populated
+    // settings retain usable defaults for the remaining metric badges.
     if (thresholds && Object.keys(thresholds).length > 0) {
-        metricThresholds.value = {
-          sla_percent_min: thresholds.sla_percent_min ?? 99.5,
-          ttft_p99_ms_max: thresholds.ttft_p99_ms_max ?? 500,
-          request_error_rate_percent_max: thresholds.request_error_rate_percent_max ?? 5,
-          upstream_error_rate_percent_max: thresholds.upstream_error_rate_percent_max ?? 5
-        }
+      metricThresholds.value = {
+        sla_percent_min: thresholds.sla_percent_min ?? 99.5,
+        ttft_p99_ms_max: thresholds.ttft_p99_ms_max ?? 500,
+        request_error_rate_percent_max: thresholds.request_error_rate_percent_max ?? 5,
+        upstream_error_rate_percent_max: thresholds.upstream_error_rate_percent_max ?? 5,
+      }
     }
   } catch (err: any) {
     console.error('[OpsSettingsDialog] Failed to load settings', err)
@@ -107,31 +168,43 @@ async function loadAllSettings() {
   }
 }
 
-// 监听弹窗打开
-watch(() => props.show, (show) => {
-  if (show) {
-    loadAllSettings()
-  }
-})
+// Opening the dialog reloads persisted settings into its drafts before the next
+// edit, while hidden state remains mounted.
+watch(
+  () => props.show,
+  (show) => {
+    if (show) {
+      loadAllSettings()
+    }
+  },
+)
 
-// 邮件输入
+// Recipient inputs remain separate from persisted lists until an add action
+// validates and appends a normalized email address.
 const alertRecipientInput = ref('')
 const reportRecipientInput = ref('')
 
-// 严重级别选项
-const severityOptions: Array<{ value: AlertSeverity | ''; label: string }> = [
+// severityOptions maps notification severity names to translated labels; its
+// empty value leaves email severity unrestricted.
+const severityOptions: Array<{
+  value: AlertSeverity | '' // notification severity selector value
+  label: string // translated display label text
+}> = [
   { value: '', label: t('admin.ops.email.minSeverityAll') },
   { value: 'critical', label: t('common.critical') },
   { value: 'warning', label: t('common.warning') },
-  { value: 'info', label: t('common.info') }
+  { value: 'info', label: t('common.info') },
 ]
 
-// 验证邮箱
+// isValidEmailAddress checks the editor email shape for whitespace and domain
+// separators.
 function isValidEmailAddress(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 }
 
-// 添加收件人
+// addRecipient validates the selected email input and appends a lowercase
+// address to its recipient list. Existing exact normalized addresses are not
+// duplicated, and accepted input is cleared after processing.
 function addRecipient(target: 'alert' | 'report') {
   if (!emailConfig.value) return
   const raw = (target === 'alert' ? alertRecipientInput.value : reportRecipientInput.value).trim()
@@ -142,8 +215,11 @@ function addRecipient(target: 'alert' | 'report') {
     return
   }
 
+  // Normalize newly entered addresses before comparing against the recipient list so
+  // repeated lowercase entries do not create duplicate destinations.
   const normalized = raw.toLowerCase()
-  const list = target === 'alert' ? emailConfig.value.alert.recipients : emailConfig.value.report.recipients
+  const list =
+    target === 'alert' ? emailConfig.value.alert.recipients : emailConfig.value.report.recipients
   if (!list.includes(normalized)) {
     list.push(normalized)
   }
@@ -151,19 +227,24 @@ function addRecipient(target: 'alert' | 'report') {
   else reportRecipientInput.value = ''
 }
 
-// 移除收件人
+// removeRecipient removes the first exact address match from the chosen
+// recipient list. An unloaded email configuration or an absent address leaves
+// the current lists unchanged for the caller.
 function removeRecipient(target: 'alert' | 'report', email: string) {
   if (!emailConfig.value) return
-  const list = target === 'alert' ? emailConfig.value.alert.recipients : emailConfig.value.report.recipients
+  const list =
+    target === 'alert' ? emailConfig.value.alert.recipients : emailConfig.value.report.recipients
   const idx = list.indexOf(email)
   if (idx >= 0) list.splice(idx, 1)
 }
 
-// 验证
+// validation collects evaluator, retention, ignored-code, and metric errors
+// before saving; enabled email lists with no recipients are handled during
+// normalization.
 const validation = computed(() => {
   const errors: string[] = []
 
-  // 验证运行时设置
+  // Evaluation intervals range from one second to one day.
   if (runtimeSettings.value) {
     const evalSeconds = runtimeSettings.value.evaluation_interval_seconds
     if (!Number.isFinite(evalSeconds) || evalSeconds < 1 || evalSeconds > 86400) {
@@ -171,11 +252,18 @@ const validation = computed(() => {
     }
   }
 
-  // 邮件配置: 启用但无收件人时不阻断保存, 保存时会自动禁用
+  // Recipient-free email sections pass validation because saveAllSettings
+  // disables their delivery flags before sending the corresponding configuration
+  // updates.
 
-  // 验证高级设置
+  // Retention and cleanup inputs are checked against the supported day,
+  // batch-count, and pause-duration limits before requests are sent.
   if (advancedSettings.value) {
-    const { error_log_retention_days, minute_metrics_retention_days, hourly_metrics_retention_days } = advancedSettings.value.data_retention
+    const {
+      error_log_retention_days,
+      minute_metrics_retention_days,
+      hourly_metrics_retention_days,
+    } = advancedSettings.value.data_retention
     if (error_log_retention_days < 0 || error_log_retention_days > 365) {
       errors.push(t('admin.ops.settings.validation.retentionDaysRange'))
     }
@@ -186,7 +274,11 @@ const validation = computed(() => {
       errors.push(t('admin.ops.settings.validation.retentionDaysRange'))
     }
     const { cleanup_batch_size, cleanup_pause_ms } = advancedSettings.value.data_retention
-    if (!Number.isInteger(cleanup_batch_size) || cleanup_batch_size < 100 || cleanup_batch_size > 5000) {
+    if (
+      !Number.isInteger(cleanup_batch_size) ||
+      cleanup_batch_size < 100 ||
+      cleanup_batch_size > 5000
+    ) {
       errors.push(t('admin.ops.settings.validation.cleanupBatchSizeRange'))
     }
     if (!Number.isInteger(cleanup_pause_ms) || cleanup_pause_ms < 1 || cleanup_pause_ms > 2000) {
@@ -195,27 +287,52 @@ const validation = computed(() => {
   }
   const ignoredStatusCodes = parseIgnoredStatusCodes(ignoredStatusCodesInput.value)
   if (!ignoredStatusCodes.valid) {
-    errors.push(ignoredStatusCodes.error || t('admin.ops.settings.validation.ignoredStatusCodesRange'))
+    errors.push(
+      ignoredStatusCodes.error || t('admin.ops.settings.validation.ignoredStatusCodesRange'),
+    )
   }
 
-  // 验证指标阈值
-  if (metricThresholds.value.sla_percent_min != null && (metricThresholds.value.sla_percent_min < 0 || metricThresholds.value.sla_percent_min > 100)) {
+  // Percentage thresholds use zero to one hundred, while first-token duration
+  // accepts nonnegative milliseconds when supplied by the editor.
+  if (
+    metricThresholds.value.sla_percent_min != null &&
+    (metricThresholds.value.sla_percent_min < 0 || metricThresholds.value.sla_percent_min > 100)
+  ) {
     errors.push(t('admin.ops.settings.validation.slaMinPercentRange'))
   }
-  if (metricThresholds.value.ttft_p99_ms_max != null && metricThresholds.value.ttft_p99_ms_max < 0) {
+  if (
+    metricThresholds.value.ttft_p99_ms_max != null &&
+    metricThresholds.value.ttft_p99_ms_max < 0
+  ) {
     errors.push(t('admin.ops.settings.validation.ttftP99MaxRange'))
   }
-  if (metricThresholds.value.request_error_rate_percent_max != null && (metricThresholds.value.request_error_rate_percent_max < 0 || metricThresholds.value.request_error_rate_percent_max > 100)) {
+  if (
+    metricThresholds.value.request_error_rate_percent_max != null &&
+    (metricThresholds.value.request_error_rate_percent_max < 0 ||
+      metricThresholds.value.request_error_rate_percent_max > 100)
+  ) {
     errors.push(t('admin.ops.settings.validation.requestErrorRateMaxRange'))
   }
-  if (metricThresholds.value.upstream_error_rate_percent_max != null && (metricThresholds.value.upstream_error_rate_percent_max < 0 || metricThresholds.value.upstream_error_rate_percent_max > 100)) {
+  if (
+    metricThresholds.value.upstream_error_rate_percent_max != null &&
+    (metricThresholds.value.upstream_error_rate_percent_max < 0 ||
+      metricThresholds.value.upstream_error_rate_percent_max > 100)
+  ) {
     errors.push(t('admin.ops.settings.validation.upstreamErrorRateMaxRange'))
   }
 
   return { valid: errors.length === 0, errors }
 })
 
-// 保存所有配置
+// saveAllSettings validates the dialog and persists each loaded settings family.
+// Email sections with no recipients are disabled, and ignored HTTP codes are
+// normalized before requests begin.
+//
+// The four update operations run independently in Promise.all, so one rejection
+// can leave other server updates completed and the local drafts already
+// normalized. Failure keeps the dialog open and reports available API detail.
+// Saved and close events follow complete success, and the saving flag resets on
+// either path.
 async function saveAllSettings() {
   if (!validation.value.valid) {
     appStore.showError(validation.value.errors[0])
@@ -224,7 +341,8 @@ async function saveAllSettings() {
 
   saving.value = true
   try {
-    // 无收件人时自动禁用邮件通知
+    // Disable delivery for empty recipient lists before persistence so enabled
+    // email sections do not request notifications with no destination.
     if (emailConfig.value) {
       if (emailConfig.value.alert.enabled && emailConfig.value.alert.recipients.length === 0) {
         emailConfig.value.alert.enabled = false
@@ -238,18 +356,31 @@ async function saveAllSettings() {
       advancedSettings.value.ignored_status_codes = ignoredStatusCodes.codes
       ignoredStatusCodesInput.value = ignoredStatusCodes.codes.join(', ')
     }
+    // These independent updates can partly succeed before another rejects; success
+    // events wait for all results, while failures leave drafts available for
+    // correction.
     await Promise.all([
-      runtimeSettings.value ? opsAPI.updateAlertRuntimeSettings(runtimeSettings.value) : Promise.resolve(),
-      emailConfig.value ? opsAPI.updateEmailNotificationConfig(emailConfig.value) : Promise.resolve(),
-      advancedSettings.value ? opsAPI.updateAdvancedSettings(advancedSettings.value) : Promise.resolve(),
-      opsAPI.updateMetricThresholds(metricThresholds.value)
+      runtimeSettings.value
+        ? opsAPI.updateAlertRuntimeSettings(runtimeSettings.value)
+        : Promise.resolve(),
+      emailConfig.value
+        ? opsAPI.updateEmailNotificationConfig(emailConfig.value)
+        : Promise.resolve(),
+      advancedSettings.value
+        ? opsAPI.updateAdvancedSettings(advancedSettings.value)
+        : Promise.resolve(),
+      opsAPI.updateMetricThresholds(metricThresholds.value),
     ])
     appStore.showSuccess(t('admin.ops.settings.saveSuccess'))
     emit('saved')
     emit('close')
   } catch (err: any) {
     console.error('[OpsSettingsDialog] Failed to save settings', err)
-    appStore.showError(err?.response?.data?.message || err?.response?.data?.detail || t('admin.ops.settings.saveFailed'))
+    appStore.showError(
+      err?.response?.data?.message ||
+        err?.response?.data?.detail ||
+        t('admin.ops.settings.saveFailed'),
+    )
   } finally {
     saving.value = false
   }
@@ -257,23 +388,33 @@ async function saveAllSettings() {
 </script>
 
 <template>
-  <BaseDialog :show="show" :title="t('admin.ops.settings.title')" width="extra-wide" @close="emit('close')">
+  <BaseDialog
+    :show="show"
+    :title="t('admin.ops.settings.title')"
+    width="extra-wide"
+    @close="emit('close')"
+  >
     <div v-if="loading" class="py-10 text-center text-sm text-gray-500">
       {{ t('common.loading') }}
     </div>
 
     <div v-else-if="runtimeSettings && emailConfig && advancedSettings" class="space-y-6">
-      <!-- 验证错误 -->
-      <div v-if="!validation.valid" class="rounded-control border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
+      <!-- Configuration validation errors -->
+      <div
+        v-if="!validation.valid"
+        class="rounded-control border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200"
+      >
         <div class="font-bold">{{ t('admin.ops.settings.validation.title') }}</div>
         <ul class="mt-1 list-disc space-y-1 pl-4">
           <li v-for="msg in validation.errors" :key="msg">{{ msg }}</li>
         </ul>
       </div>
 
-      <!-- 数据采集频率 -->
+      <!-- Collection and evaluation frequency -->
       <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-        <h4 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.ops.settings.dataCollection') }}</h4>
+        <h4 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">{{
+          t('admin.ops.settings.dataCollection')
+        }}</h4>
         <div>
           <label class="input-label">{{ t('admin.ops.settings.evaluationInterval') }}</label>
           <input
@@ -283,18 +424,24 @@ async function saveAllSettings() {
             max="86400"
             class="input"
           />
-          <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.settings.evaluationIntervalHint') }}</p>
+          <p class="mt-1 text-xs text-gray-500">{{
+            t('admin.ops.settings.evaluationIntervalHint')
+          }}</p>
         </div>
       </div>
 
-      <!-- 预警配置 -->
+      <!-- Alert email configuration -->
       <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-        <h4 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.ops.settings.alertConfig') }}</h4>
+        <h4 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">{{
+          t('admin.ops.settings.alertConfig')
+        }}</h4>
 
         <div class="space-y-4">
           <div class="flex items-center justify-between">
             <div>
-              <label class="font-medium text-gray-900 dark:text-white">{{ t('admin.ops.settings.enableAlert') }}</label>
+              <label class="font-medium text-gray-900 dark:text-white">{{
+                t('admin.ops.settings.enableAlert')
+              }}</label>
             </div>
             <Toggle v-model="emailConfig.alert.enabled" />
           </div>
@@ -309,7 +456,11 @@ async function saveAllSettings() {
                 :placeholder="t('admin.ops.settings.emailPlaceholder')"
                 @keydown.enter.prevent="addRecipient('alert')"
               />
-              <button class="btn btn-secondary whitespace-nowrap" type="button" @click="addRecipient('alert')">
+              <button
+                class="btn btn-secondary whitespace-nowrap"
+                type="button"
+                @click="addRecipient('alert')"
+              >
                 {{ t('common.add') }}
               </button>
             </div>
@@ -320,7 +471,12 @@ async function saveAllSettings() {
                 class="inline-flex items-center gap-2 rounded-full bg-primary-100 px-3 py-1 text-xs font-medium text-primary-700 dark:bg-primary-500/8 dark:text-primary-500"
               >
                 {{ email }}
-                <button type="button" class="text-primary-700/80 hover:text-primary-900" @click="removeRecipient('alert', email)">×</button>
+                <button
+                  type="button"
+                  class="text-primary-700/80 hover:text-primary-900"
+                  @click="removeRecipient('alert', email)"
+                  >×</button
+                >
               </span>
             </div>
             <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
@@ -335,14 +491,18 @@ async function saveAllSettings() {
         </div>
       </div>
 
-      <!-- 评估报告配置 -->
+      <!-- Scheduled report configuration -->
       <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-        <h4 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.ops.settings.reportConfig') }}</h4>
+        <h4 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">{{
+          t('admin.ops.settings.reportConfig')
+        }}</h4>
 
         <div class="space-y-4">
           <div class="flex items-center justify-between">
             <div>
-              <label class="font-medium text-gray-900 dark:text-white">{{ t('admin.ops.settings.enableReport') }}</label>
+              <label class="font-medium text-gray-900 dark:text-white">{{
+                t('admin.ops.settings.enableReport')
+              }}</label>
             </div>
             <Toggle v-model="emailConfig.report.enabled" />
           </div>
@@ -357,7 +517,11 @@ async function saveAllSettings() {
                 :placeholder="t('admin.ops.settings.emailPlaceholder')"
                 @keydown.enter.prevent="addRecipient('report')"
               />
-              <button class="btn btn-secondary whitespace-nowrap" type="button" @click="addRecipient('report')">
+              <button
+                class="btn btn-secondary whitespace-nowrap"
+                type="button"
+                @click="addRecipient('report')"
+              >
                 {{ t('common.add') }}
               </button>
             </div>
@@ -368,7 +532,12 @@ async function saveAllSettings() {
                 class="inline-flex items-center gap-2 rounded-full bg-primary-100 px-3 py-1 text-xs font-medium text-primary-700 dark:bg-primary-500/8 dark:text-primary-500"
               >
                 {{ email }}
-                <button type="button" class="text-primary-700/80 hover:text-primary-900" @click="removeRecipient('report', email)">×</button>
+                <button
+                  type="button"
+                  class="text-primary-700/80 hover:text-primary-900"
+                  @click="removeRecipient('report', email)"
+                  >×</button
+                >
               </span>
             </div>
             <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
@@ -378,27 +547,45 @@ async function saveAllSettings() {
 
           <div v-if="emailConfig.report.enabled" class="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div class="flex items-center justify-between">
-              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.dailySummary') }}</label>
+              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{
+                t('admin.ops.settings.dailySummary')
+              }}</label>
               <Toggle v-model="emailConfig.report.daily_summary_enabled" />
             </div>
             <div v-if="emailConfig.report.daily_summary_enabled">
-              <input v-model="emailConfig.report.daily_summary_schedule" type="text" class="input" placeholder="0 9 * * *" />
+              <input
+                v-model="emailConfig.report.daily_summary_schedule"
+                type="text"
+                class="input"
+                placeholder="0 9 * * *"
+              />
             </div>
             <div class="flex items-center justify-between">
-              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.weeklySummary') }}</label>
+              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{
+                t('admin.ops.settings.weeklySummary')
+              }}</label>
               <Toggle v-model="emailConfig.report.weekly_summary_enabled" />
             </div>
             <div v-if="emailConfig.report.weekly_summary_enabled">
-              <input v-model="emailConfig.report.weekly_summary_schedule" type="text" class="input" placeholder="0 9 * * 1" />
+              <input
+                v-model="emailConfig.report.weekly_summary_schedule"
+                type="text"
+                class="input"
+                placeholder="0 9 * * 1"
+              />
             </div>
           </div>
         </div>
       </div>
 
-      <!-- 指标阈值配置 -->
+      <!-- Metric threshold settings -->
       <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950">
-        <h4 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.ops.settings.metricThresholds') }}</h4>
-        <p class="mb-4 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.ops.settings.metricThresholdsHint') }}</p>
+        <h4 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">{{
+          t('admin.ops.settings.metricThresholds')
+        }}</h4>
+        <p class="mb-4 text-xs text-gray-500 dark:text-gray-400">{{
+          t('admin.ops.settings.metricThresholdsHint')
+        }}</p>
 
         <div class="space-y-4">
           <div>
@@ -411,9 +598,10 @@ async function saveAllSettings() {
               step="0.1"
               class="input"
             />
-            <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.settings.slaMinPercentHint') }}</p>
+            <p class="mt-1 text-xs text-gray-500">{{
+              t('admin.ops.settings.slaMinPercentHint')
+            }}</p>
           </div>
-
 
           <div>
             <label class="input-label">{{ t('admin.ops.settings.ttftP99MaxMs') }}</label>
@@ -428,7 +616,9 @@ async function saveAllSettings() {
           </div>
 
           <div>
-            <label class="input-label">{{ t('admin.ops.settings.requestErrorRateMaxPercent') }}</label>
+            <label class="input-label">{{
+              t('admin.ops.settings.requestErrorRateMaxPercent')
+            }}</label>
             <input
               v-model.number="metricThresholds.request_error_rate_percent_max"
               type="number"
@@ -437,11 +627,15 @@ async function saveAllSettings() {
               step="0.1"
               class="input"
             />
-            <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.settings.requestErrorRateMaxPercentHint') }}</p>
+            <p class="mt-1 text-xs text-gray-500">{{
+              t('admin.ops.settings.requestErrorRateMaxPercentHint')
+            }}</p>
           </div>
 
           <div>
-            <label class="input-label">{{ t('admin.ops.settings.upstreamErrorRateMaxPercent') }}</label>
+            <label class="input-label">{{
+              t('admin.ops.settings.upstreamErrorRateMaxPercent')
+            }}</label>
             <input
               v-model.number="metricThresholds.upstream_error_rate_percent_max"
               type="number"
@@ -450,23 +644,32 @@ async function saveAllSettings() {
               step="0.1"
               class="input"
             />
-            <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.settings.upstreamErrorRateMaxPercentHint') }}</p>
+            <p class="mt-1 text-xs text-gray-500">{{
+              t('admin.ops.settings.upstreamErrorRateMaxPercentHint')
+            }}</p>
           </div>
         </div>
       </div>
 
-      <!-- 高级设置 -->
-      <Disclosure summary-class="cursor-pointer p-4 text-sm font-semibold text-gray-900 dark:text-white" class="rounded-surface bg-gray-50 dark:bg-dark-950">
+      <!-- Advanced dashboard settings -->
+      <Disclosure
+        summary-class="cursor-pointer p-4 text-sm font-semibold text-gray-900 dark:text-white"
+        class="rounded-surface bg-gray-50 dark:bg-dark-950"
+      >
         <template #summary>
           {{ t('admin.ops.settings.advancedSettings') }}
         </template>
         <div class="space-y-4 px-4 pb-4">
-          <!-- 数据保留策略 -->
+          <!-- Observation retention settings -->
           <div class="space-y-3">
-            <h5 class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.dataRetention') }}</h5>
+            <h5 class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{
+              t('admin.ops.settings.dataRetention')
+            }}</h5>
 
             <div class="flex items-center justify-between">
-              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.enableCleanup') }}</label>
+              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{
+                t('admin.ops.settings.enableCleanup')
+              }}</label>
               <Toggle v-model="advancedSettings.data_retention.cleanup_enabled" />
             </div>
 
@@ -478,7 +681,9 @@ async function saveAllSettings() {
                 class="input"
                 placeholder="0 3 * * *"
               />
-              <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.settings.cleanupScheduleHint') }}</p>
+              <p class="mt-1 text-xs text-gray-500">{{
+                t('admin.ops.settings.cleanupScheduleHint')
+              }}</p>
             </div>
 
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -509,7 +714,9 @@ async function saveAllSettings() {
 
             <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div>
-                <label class="input-label">{{ t('admin.ops.settings.errorLogRetentionDays') }}</label>
+                <label class="input-label">{{
+                  t('admin.ops.settings.errorLogRetentionDays')
+                }}</label>
                 <input
                   v-model.number="advancedSettings.data_retention.error_log_retention_days"
                   type="number"
@@ -519,7 +726,9 @@ async function saveAllSettings() {
                 />
               </div>
               <div>
-                <label class="input-label">{{ t('admin.ops.settings.minuteMetricsRetentionDays') }}</label>
+                <label class="input-label">{{
+                  t('admin.ops.settings.minuteMetricsRetentionDays')
+                }}</label>
                 <input
                   v-model.number="advancedSettings.data_retention.minute_metrics_retention_days"
                   type="number"
@@ -529,7 +738,9 @@ async function saveAllSettings() {
                 />
               </div>
               <div>
-                <label class="input-label">{{ t('admin.ops.settings.hourlyMetricsRetentionDays') }}</label>
+                <label class="input-label">{{
+                  t('admin.ops.settings.hourlyMetricsRetentionDays')
+                }}</label>
                 <input
                   v-model.number="advancedSettings.data_retention.hourly_metrics_retention_days"
                   type="number"
@@ -544,7 +755,9 @@ async function saveAllSettings() {
 
           <!-- Error Filtering -->
           <div class="space-y-3">
-            <h5 class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.errorFiltering') }}</h5>
+            <h5 class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{
+              t('admin.ops.settings.errorFiltering')
+            }}</h5>
 
             <div>
               <label class="input-label">{{ t('admin.ops.settings.ignoredStatusCodes') }}</label>
@@ -561,7 +774,9 @@ async function saveAllSettings() {
 
             <div class="flex items-center justify-between">
               <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.ignoreCountTokensErrors') }}</label>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{
+                  t('admin.ops.settings.ignoreCountTokensErrors')
+                }}</label>
                 <p class="mt-1 text-xs text-gray-500">
                   {{ t('admin.ops.settings.ignoreCountTokensErrorsHint') }}
                 </p>
@@ -571,7 +786,9 @@ async function saveAllSettings() {
 
             <div class="flex items-center justify-between">
               <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.ignoreContextCanceled') }}</label>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{
+                  t('admin.ops.settings.ignoreContextCanceled')
+                }}</label>
                 <p class="mt-1 text-xs text-gray-500">
                   {{ t('admin.ops.settings.ignoreContextCanceledHint') }}
                 </p>
@@ -581,7 +798,9 @@ async function saveAllSettings() {
 
             <div class="flex items-center justify-between">
               <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.ignoreNoAvailableProviders') }}</label>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{
+                  t('admin.ops.settings.ignoreNoAvailableProviders')
+                }}</label>
                 <p class="mt-1 text-xs text-gray-500">
                   {{ t('admin.ops.settings.ignoreNoAvailableProvidersHint') }}
                 </p>
@@ -591,7 +810,9 @@ async function saveAllSettings() {
 
             <div class="flex items-center justify-between">
               <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.ignoreInsufficientBalanceErrors') }}</label>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{
+                  t('admin.ops.settings.ignoreInsufficientBalanceErrors')
+                }}</label>
                 <p class="mt-1 text-xs text-gray-500">
                   {{ t('admin.ops.settings.ignoreInsufficientBalanceErrorsHint') }}
                 </p>
@@ -602,11 +823,15 @@ async function saveAllSettings() {
 
           <!-- Auto Refresh -->
           <div class="space-y-3">
-            <h5 class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.autoRefresh') }}</h5>
+            <h5 class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{
+              t('admin.ops.settings.autoRefresh')
+            }}</h5>
 
             <div class="flex items-center justify-between">
               <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.enableAutoRefresh') }}</label>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{
+                  t('admin.ops.settings.enableAutoRefresh')
+                }}</label>
                 <p class="mt-1 text-xs text-gray-500">
                   {{ t('admin.ops.settings.enableAutoRefreshHint') }}
                 </p>
@@ -621,7 +846,7 @@ async function saveAllSettings() {
                 :options="[
                   { value: 15, label: t('admin.ops.settings.refreshInterval15s') },
                   { value: 30, label: t('admin.ops.settings.refreshInterval30s') },
-                  { value: 60, label: t('admin.ops.settings.refreshInterval60s') }
+                  { value: 60, label: t('admin.ops.settings.refreshInterval60s') },
                 ]"
               />
             </div>
@@ -629,18 +854,21 @@ async function saveAllSettings() {
 
           <!-- Dashboard Cards -->
           <div class="space-y-3">
-            <h5 class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.dashboardCards') }}</h5>
+            <h5 class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{
+              t('admin.ops.settings.dashboardCards')
+            }}</h5>
 
             <div class="flex items-center justify-between">
               <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.displayAlertEvents') }}</label>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{
+                  t('admin.ops.settings.displayAlertEvents')
+                }}</label>
                 <p class="mt-1 text-xs text-gray-500">
                   {{ t('admin.ops.settings.displayAlertEventsHint') }}
                 </p>
               </div>
               <Toggle v-model="advancedSettings.display_alert_events" />
             </div>
-
           </div>
         </div>
       </Disclosure>
@@ -649,7 +877,11 @@ async function saveAllSettings() {
     <template #footer>
       <div class="flex justify-end gap-2">
         <button class="btn btn-secondary" @click="emit('close')">{{ t('common.cancel') }}</button>
-        <button class="btn btn-primary" :disabled="saving || !validation.valid" @click="saveAllSettings">
+        <button
+          class="btn btn-primary"
+          :disabled="saving || !validation.valid"
+          @click="saveAllSettings"
+        >
           {{ saving ? t('common.saving') : t('common.save') }}
         </button>
       </div>

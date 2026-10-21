@@ -1,7 +1,9 @@
 <template>
   <SettingsSubpanel>
     <div>
-      <label :for="`${uid}-base`" class="input-label">{{ t('admin.providers.quotaControl.rpmLimit.baseRpm') }}</label>
+      <label :for="`${uid}-base`" class="input-label">{{
+        t('admin.providers.quotaControl.rpmLimit.baseRpm')
+      }}</label>
       <input
         :id="`${uid}-base`"
         v-model.number="baseRpm"
@@ -27,7 +29,9 @@
     </div>
 
     <div v-if="strategy === 'tiered'" v-content-reveal>
-      <label :for="`${uid}-buffer`" class="input-label">{{ t('admin.providers.quotaControl.rpmLimit.stickyBuffer') }}</label>
+      <label :for="`${uid}-buffer`" class="input-label">{{
+        t('admin.providers.quotaControl.rpmLimit.stickyBuffer')
+      }}</label>
       <input
         :id="`${uid}-buffer`"
         v-model.number="stickyBuffer"
@@ -50,21 +54,41 @@ import SettingsSubpanel from '@/components/common/settings/SettingsSubpanel.vue'
 import { vContentReveal } from '@/directives/contentReveal'
 import type { RpmStrategy } from './providerFormOptions'
 
-// RPM 限制的基础值、策略和粘性缓冲，单个编辑与批量编辑共用。
+// RpmLimitPanel.vue edits the base request rate, enforcement strategy, and sticky-session
+// buffer for provider forms. Strategy descriptions follow the selected option, while the
+// owner retains the nullable numeric drafts and decides how enabled limits are persisted.
+
+// baseRpm binds the parent-owned base requests-per-minute limit to the shared controls
+// through its model update event.
 const baseRpm = defineModel<number | null>('baseRpm', { required: true })
+// strategy binds the parent-owned request-rate enforcement strategy to the shared
+// controls through its model update event.
 const strategy = defineModel<RpmStrategy>('strategy', { required: true })
+// stickyBuffer binds the parent-owned sticky-session request-rate buffer to the shared
+// controls through its model update event.
 const stickyBuffer = defineModel<number | null>('stickyBuffer', { required: true })
 
+// t resolves interface labels from the active component locale while reactive consumers
+// update their displayed text.
 const { t } = useI18n()
+// uid supplies one stable instance ID so labels target their own input when several
+// editors are mounted.
 const uid = useId()
+// strategyOptions presents tiered and sticky-exempt rate enforcement choices with
+// localized labels for the segmented selector.
 const strategyOptions = computed(() => [
   { value: 'tiered' as const, label: t('admin.providers.quotaControl.rpmLimit.strategyTiered') },
-  { value: 'sticky_exempt' as const, label: t('admin.providers.quotaControl.rpmLimit.strategyStickyExempt') }
+  {
+    value: 'sticky_exempt' as const,
+    label: t('admin.providers.quotaControl.rpmLimit.strategyStickyExempt'),
+  },
 ])
-// 两种策略的说明放在控件下方，分段按钮只保留名称。
+
+// strategyHint explains the selected enforcement mode beneath the selector while the
+// button labels remain short and comparable.
 const strategyHint = computed(() =>
   strategy.value === 'tiered'
     ? t('admin.providers.quotaControl.rpmLimit.strategyTieredHint')
-    : t('admin.providers.quotaControl.rpmLimit.strategyStickyExemptHint')
+    : t('admin.providers.quotaControl.rpmLimit.strategyStickyExemptHint'),
 )
 </script>

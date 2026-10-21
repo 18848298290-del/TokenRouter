@@ -3,7 +3,6 @@
     class="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--page-bg)] px-4"
   >
     <div v-content-reveal="motionRoute?.path" class="relative z-10 w-full max-w-md text-center">
-      <!-- 404 Display -->
       <div class="mb-8">
         <div class="relative inline-block">
           <span class="text-[12rem] font-bold leading-none text-gray-100 dark:text-dark-800"
@@ -19,7 +18,6 @@
         </div>
       </div>
 
-      <!-- Text Content -->
       <div class="mb-8">
         <h1 class="mb-3 text-2xl font-bold text-gray-900 dark:text-white">
           {{ t('errors.pageNotFound') }}
@@ -29,7 +27,6 @@
         </p>
       </div>
 
-      <!-- Action Buttons -->
       <div class="flex flex-col justify-center gap-3 sm:flex-row">
         <button @click="goBack" class="btn btn-secondary">
           <Icon name="arrowLeft" size="sm" class="mr-2" />
@@ -41,7 +38,6 @@
         </router-link>
       </div>
 
-      <!-- Help Link -->
       <p class="mt-8 text-sm text-gray-400 dark:text-dark-500">
         {{ t('notFoundPage.help') }}
         <a
@@ -66,11 +62,13 @@ import Icon from '@/components/icons/Icon.vue'
 // background. Unmatched routes offer browser-history navigation and a dashboard
 // link, while the central content uses the shared route-driven reveal animation.
 
-// motionRoute supplies the path used to replay the content animation after navigation.
+// Route state supplies the content-reveal trigger, while translation and router
+// services provide the missing-page labels and browser-history action for this view.
 const motionRoute = useMotionRoute()
 const { t } = useI18n()
 const router = useRouter()
 
+// goBack requests the previous browser-history entry through the active router.
 function goBack(): void {
   router.back()
 }

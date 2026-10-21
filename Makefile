@@ -1,69 +1,109 @@
-# TokenRouter 的开发、检查和构建入口。CI 的每个 job 调用这里的同名目标。
+# Makefile defines repository development, verification, and release-build commands.
+# CI jobs invoke the same targets used locally. Go formatting supports a comparison
+# base, frontend checks run against the full frontend, and integration acceptance
+# requires the external tools and container services described in development docs.
+# GOTOOLCHAIN follows the backend module requirement; Python checks suppress bytecode
+# artifacts so validation leaves source directories free of interpreter cache files.
 export GOTOOLCHAIN := go$(shell sed -n 's/^go //p' backend/go.mod)
 export PYTHONDONTWRITEBYTECODE := 1
 
-# pnpm 版本由 frontend/package.json 的 packageManager 字段决定。
+# PNPM uses the packageManager version recorded in frontend/package.json; GOLANGCI
+# runs the pinned backend linter wrapper from its expected module directory.
 PNPM := pnpm --dir frontend
 GOLANGCI := cd backend && bash ../tools/golangci-lint.sh
-# 带 integration 构建约束的包依赖 Docker，test-integration 只编译和运行这些包。
+# INTEGRATION_PKGS selects packages carrying the integration build constraint;
+# test-integration runs these packages with Docker-backed service dependencies.
 INTEGRATION_PKGS = $(shell cd backend && grep -rlE '^//go:build integration$$' --include='*.go' . | xargs -n1 dirname | sort -u)
 
 .PHONY: build build-frontend build-backend generate \
-	fmt fmt-check lint lint-go lint-frontend \
-	test test-go test-frontend test-integration test-embed test-scripts test-installer test-tools test-e2e \
+	fmt fmt-check fmt-go fmt-go-check fmt-frontend fmt-frontend-check lint lint-go lint-frontend \
+	test test-go test-frontend test-frontend-tools test-integration test-embed test-scripts test-installer test-tools test-e2e \
 	check verify security security-go security-frontend hooks
 
-# 先打包前端，再编译嵌入前端资源的发布形态服务端。
+# build packages frontend assets before compiling the server that embeds those assets.
 build: build-frontend
 	cd backend && CGO_ENABLED=0 go build -tags=embed -trimpath -o bin/server ./cmd/server
 
+# build-frontend bundles the browser assets used by the embedded server.
 build-frontend:
 	$(PNPM) run build:assets
 
-# 编译不含前端资源的后端，开发时配合 Vite 使用。
+# build-backend compiles the development server used with a separate Vite process.
 build-backend:
 	$(MAKE) -C backend build
 
+# generate runs the backend generators from their owning module directory.
 generate:
 	$(MAKE) -C backend generate
 
-# 格式化改动的手写 Go 文件。fmt-check 传入 BASE 时比较 BASE 到 HEAD 的提交。
-fmt:
+# Go formatting selects changed files and honors BASE; frontend formatting covers
+# every handwritten file selected by its configuration and resource exclusions.
+# fmt applies the formatters for both repository implementation languages.
+fmt: fmt-go fmt-frontend
+
+# fmt-check checks Go selection and all included frontend source files.
+fmt-check: fmt-go-check fmt-frontend-check
+
+# fmt-go formats changed handwritten Go files through the repository selector.
+fmt-go:
 	python3 tools/format_go.py
 
-fmt-check:
+# fmt-go-check checks selected Go files and accepts the optional BASE revision.
+fmt-go-check:
 	python3 tools/format_go.py --check $(if $(BASE),--base "$(BASE)")
 
+# fmt-frontend formats all frontend files included by the pinned formatter.
+fmt-frontend:
+	$(PNPM) run format
+
+# fmt-frontend-check validates frontend layout while leaving source files unchanged.
+fmt-frontend-check:
+	$(PNPM) run format:check
+
+# lint runs static verification for both backend and frontend source.
 lint: lint-go lint-frontend
 
-# integration 标签同时覆盖无标签文件和集成测试文件，embed 文件由 test-embed 检查。
+# lint-go checks architecture and Go sources with the integration build tag.
+# This includes ordinary and integration files; test-embed covers embedded-resource files.
 lint-go:
 	cd tools/architecture && GOWORK=off go test -count=1 ./...
 	$(GOLANGCI) config verify
 	$(GOLANGCI) run --build-tags=integration ./...
 
+# lint-frontend checks formatting, source policies, syntax, and frontend types.
 lint-frontend:
 	$(PNPM) run lint:check
 	$(PNPM) run typecheck
 
+# test runs the default backend and frontend regression suites.
 test: test-go test-frontend
 
+# test-go runs backend tests selected by the default build tags.
 test-go:
 	cd backend && go test ./...
 
-test-frontend:
+# test-frontend runs tool fixtures before the complete application test suite.
+test-frontend: test-frontend-tools
 	$(PNPM) run test:run
 
-# 包级并发限制为 4，控制同时运行的 PostgreSQL 和 Redis 容器数量。
+# test-frontend-tools runs parser and formatter fixtures independently from application tests.
+test-frontend-tools:
+	$(PNPM) run test:tools
+
+# test-integration limits package concurrency to control simultaneously running
+# PostgreSQL and Redis containers used by integration fixture suites.
 test-integration:
 	cd backend && go test -tags=integration -p=4 $(INTEGRATION_PKGS)
 
-# embed 构建读取 build-frontend 生成的 dist，.keep 占位文件不能代替生产资源。
+# test-embed checks the server variant that embeds compiled frontend assets.
+# A missing build aborts before tests because the placeholder cannot represent
+# the production resource tree consumed by the embedded server.
 test-embed:
 	@test -s backend/internal/web/dist/index.html || { echo '缺少前端构建产物，请先运行 make build-frontend'; exit 1; }
 	$(GOLANGCI) run --build-tags=embed ./internal/web/... ./cmd/server/...
 	cd backend && go test -tags=embed ./internal/web/...
 
+# test-scripts verifies deployment shell syntax and platform-compatible script fixtures.
 test-scripts:
 	/bin/bash -n deploy/apple-container.sh deploy/install.sh
 	/bin/bash deploy/tests/install-github-token-test.sh
@@ -76,34 +116,43 @@ test-scripts:
 	/bin/sh deploy/test-caddyfile-cache.sh
 	/bin/sh tools/goreleaser_prebuilt_test.sh
 
-# Linux 安装器依赖 Bash 4+ 和 sha256sum，macOS 上借 Ubuntu 容器运行。
+# test-installer runs installer fixtures in Linux with Bash 4 and sha256sum.
+# macOS uses an Ubuntu container because its bundled Bash lacks the required
+# shell features used by the Linux installer and its fixtures.
 test-installer:
 	@if [ "$$(uname -s)" = Linux ]; then bash deploy/tests/install-brand-test.sh; else docker run --rm -v "$(CURDIR):/source:ro" -w /source ubuntu:24.04 bash deploy/tests/install-brand-test.sh; fi
 
-# 仓库工具的单元测试，格式化测试需要 golangci-lint。
+# test-tools runs Python tooling and declaration-order regressions; formatter
+# fixtures invoke the pinned golangci-lint installation used by normal repository commands.
 test-tools:
 	python3 -m unittest discover -s tools -p 'test_*.py'
 	cd tools/declorder && GOWORK=off go test ./...
 
-# 外部 E2E 测试连接已运行的服务，地址和凭据从环境变量读取。
+# test-e2e connects to a running service using addresses and credentials from
+# environment variables; callers provide an isolated test environment before invocation.
 test-e2e:
 	cd backend && go test -count=1 -tags=e2e -v -timeout=300s ./tests/integration/...
 
-# 推送前快检，pre-push hook 调用同一个脚本。BASE 默认取上游分支的共同祖先。
+# check selects pre-push checks from changed files in the working tree.
+# BASE defaults to the upstream common ancestor, matching the hook entry point.
 check:
 	python3 tools/check_changed.py $(if $(BASE),--base "$(BASE)")
 
-# 本地跑完 CI 的全部检查，需要 Docker。
+# verify runs the CI acceptance targets locally and requires Docker services.
 verify: lint test-tools test test-integration build test-embed test-scripts test-installer
 
+# security checks both dependency graphs against current vulnerability reports.
 security: security-go security-frontend
 
+# security-go scans backend dependencies with the pinned govulncheck tool.
 security-go:
 	cd backend && go run golang.org/x/vuln/cmd/govulncheck@$$(cat ../.govulncheck-version) ./...
 
+# security-frontend installs the frozen graph and verifies audit exceptions.
 security-frontend:
 	$(PNPM) install --frozen-lockfile
 	python3 tools/check_pnpm_audit_exceptions.py --run --exceptions .github/audit-exceptions.yml
 
+# hooks enables repository pre-push checks for this local checkout.
 hooks:
 	git config --local core.hooksPath .githooks

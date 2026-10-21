@@ -1,3 +1,8 @@
+// team.ts supplies Simplified Chinese labels for team membership, shared API
+// keys, limits, and usage. Owner and member actions share the team namespace so
+// management dialogs and usage views can display their roles, permissions, and
+// operation results consistently.
+
 export default {
   team: {
     title: '团队',
@@ -91,7 +96,8 @@ export default {
     transferMessage: '目标成员需在 24 小时内确认。',
     saveLimits: '保存限额',
     defaultMemberLimits: '成员默认限额',
-    defaultMemberLimitsDescription: '新成员加入时自动继承这里的限额；已有成员的自定义限额不受影响，填 0 表示不限额。',
+    defaultMemberLimitsDescription:
+      '新成员加入时自动继承这里的限额；已有成员的自定义限额不受影响，填 0 表示不限额。',
     defaultDailyLimit: '默认日限额',
     defaultWeeklyLimit: '默认周限额',
     defaultMonthlyLimit: '默认月限额',
@@ -129,6 +135,6 @@ export default {
     noUsage: '暂无团队用量',
     noKeys: '暂无团队密钥',
     noMembers: '暂无成员',
-    noInvitations: '暂无邀请'
-  }
+    noInvitations: '暂无邀请',
+  },
 }

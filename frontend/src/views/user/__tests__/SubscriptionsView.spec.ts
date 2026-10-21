@@ -5,6 +5,13 @@ import { createI18n } from 'vue-i18n'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import SubscriptionsView from '../SubscriptionsView.vue'
 
+// SubscriptionsView.spec.ts checks plan-chain grouping and exhausted-subscription revocation
+// through the production page. Real stores and routing surround mocked subscription
+// requests, while a controllable confirmation shell verifies eligibility, required
+// confirmation, and duplicate-submit prevention.
+
+// Subscription request mocks independently control list retrieval, active-store refresh, and
+// the exhausted-subscription mutation used by confirmation scenarios.
 const mockGetMySubscriptions = vi.fn()
 const mockGetActiveSubscriptions = vi.fn()
 const mockRevokeExhaustedSubscription = vi.fn()
@@ -13,10 +20,13 @@ vi.mock('@/api/subscriptions', () => ({
   default: {
     getMySubscriptions: (...args: unknown[]) => mockGetMySubscriptions(...args),
     getActiveSubscriptions: (...args: unknown[]) => mockGetActiveSubscriptions(...args),
-    revokeExhaustedSubscription: (...args: unknown[]) => mockRevokeExhaustedSubscription(...args)
-  }
+    revokeExhaustedSubscription: (...args: unknown[]) => mockRevokeExhaustedSubscription(...args),
+  },
 }))
 
+// createTestI18n supplies the subscription and confirmation labels used by this page
+// fixture. Missing runtime compilation can leave keys visible, so assertions accept the
+// specific labels exercised by each case.
 function createTestI18n() {
   return createI18n({
     legacy: false,
@@ -24,14 +34,14 @@ function createTestI18n() {
     messages: {
       en: {
         payment: {
-          renewNow: 'Renew now'
+          renewNow: 'Renew now',
         },
         common: {
           today: 'Today',
           tomorrow: 'Tomorrow',
           cancel: 'Cancel',
           confirm: 'Confirm',
-          processing: 'Processing...'
+          processing: 'Processing...',
         },
         userSubscriptions: {
           noActiveSubscriptions: 'No active subscriptions',
@@ -63,21 +73,24 @@ function createTestI18n() {
           status: {
             active: 'Active',
             pending: 'Pending',
-            expired: 'Expired'
-          }
-        }
-      }
-    }
+            expired: 'Expired',
+          },
+        },
+      },
+    },
   })
 }
 
+// mountView creates isolated stores, locale, and an initialized memory router before
+// mounting the production subscription page. The confirmation stub preserves visibility,
+// busy state, and emitted confirm or cancel actions.
 async function mountView() {
   const pinia = createPinia()
   setActivePinia(pinia)
   const i18n = createTestI18n()
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/', component: { template: '<div />' } }]
+    routes: [{ path: '/', component: { template: '<div />' } }],
   })
   await router.push('/')
   await router.isReady()
@@ -97,10 +110,10 @@ async function mountView() {
               <button data-testid="revoke-dialog-confirm" :disabled="loading" @click="$emit('confirm')">{{ confirmText }}</button>
               <button data-testid="revoke-dialog-cancel" :disabled="loading" @click="$emit('cancel')">{{ cancelText }}</button>
             </div>
-          `
-        }
-      }
-    }
+          `,
+        },
+      },
+    },
   })
 }
 
@@ -111,6 +124,8 @@ describe('SubscriptionsView', () => {
     mockRevokeExhaustedSubscription.mockReset()
   })
 
+  // Active and pending records share one plan while another plan has its own active record.
+  // The test protects one card per plan and the queued-pack indication.
   it('groups same-plan active and pending subscriptions into one chain card', async () => {
     mockGetMySubscriptions.mockResolvedValue([
       {
@@ -143,8 +158,8 @@ describe('SubscriptionsView', () => {
           weekly_limit_usd: null,
           monthly_limit_usd: null,
           for_sale: true,
-          sort_order: 0
-        }
+          sort_order: 0,
+        },
       },
       {
         id: 2,
@@ -176,8 +191,8 @@ describe('SubscriptionsView', () => {
           weekly_limit_usd: null,
           monthly_limit_usd: null,
           for_sale: true,
-          sort_order: 0
-        }
+          sort_order: 0,
+        },
       },
       {
         id: 3,
@@ -209,9 +224,9 @@ describe('SubscriptionsView', () => {
           weekly_limit_usd: 40,
           monthly_limit_usd: null,
           for_sale: true,
-          sort_order: 0
-        }
-      }
+          sort_order: 0,
+        },
+      },
     ])
 
     const wrapper = await mountView()
@@ -224,27 +239,43 @@ describe('SubscriptionsView', () => {
     expect(text).toMatch(/Queued 1|userSubscriptions\.queuedPacks/)
   })
 
+  // Lower quota windows are exhausted while the highest configured window still has
+  // capacity. The test protects revocation visibility only after that highest window also
+  // reaches its limit.
   it('shows revoke only when the highest configured quota is exhausted', async () => {
     const now = Date.now()
     const subscription = {
-        id: 9,
-        user_id: 7,
-        plan_id: 101,
-        starts_at: new Date(now - 60 * 60 * 1000).toISOString(),
-        expires_at: new Date(now + 24 * 60 * 60 * 1000).toISOString(),
-        status: 'active',
+      id: 9,
+      user_id: 7,
+      plan_id: 101,
+      starts_at: new Date(now - 60 * 60 * 1000).toISOString(),
+      expires_at: new Date(now + 24 * 60 * 60 * 1000).toISOString(),
+      status: 'active',
+      daily_limit_usd: 1,
+      daily_usage_usd: 1,
+      weekly_limit_usd: 10,
+      weekly_usage_usd: 10,
+      monthly_limit_usd: 100,
+      monthly_usage_usd: 99,
+      daily_window_start: new Date(now - 30 * 60 * 1000).toISOString(),
+      weekly_window_start: new Date(now - 30 * 60 * 1000).toISOString(),
+      monthly_window_start: new Date(now - 30 * 60 * 1000).toISOString(),
+      created_at: new Date(now - 60 * 60 * 1000).toISOString(),
+      updated_at: new Date(now - 60 * 60 * 1000).toISOString(),
+      plan: {
+        id: 101,
+        name: 'Plan Alpha',
+        description: '',
+        price: 10,
+        features: [],
+        validity_days: 30,
+        validity_unit: 'day',
         daily_limit_usd: 1,
-        daily_usage_usd: 1,
         weekly_limit_usd: 10,
-        weekly_usage_usd: 10,
         monthly_limit_usd: 100,
-        monthly_usage_usd: 99,
-        daily_window_start: new Date(now - 30 * 60 * 1000).toISOString(),
-        weekly_window_start: new Date(now - 30 * 60 * 1000).toISOString(),
-        monthly_window_start: new Date(now - 30 * 60 * 1000).toISOString(),
-        created_at: new Date(now - 60 * 60 * 1000).toISOString(),
-        updated_at: new Date(now - 60 * 60 * 1000).toISOString(),
-        plan: { id: 101, name: 'Plan Alpha', description: '', price: 10, features: [], validity_days: 30, validity_unit: 'day', daily_limit_usd: 1, weekly_limit_usd: 10, monthly_limit_usd: 100, for_sale: true, sort_order: 0 }
+        for_sale: true,
+        sort_order: 0,
+      },
     }
     mockGetMySubscriptions.mockResolvedValue([subscription])
 
@@ -259,6 +290,9 @@ describe('SubscriptionsView', () => {
     expect(exhaustedWrapper.find('[data-testid="revoke-subscription"]').exists()).toBe(true)
   })
 
+  // A revocation request remains pending after user confirmation. The test protects the
+  // selected subscription identity, busy confirmation controls, and omission of duplicate
+  // mutation requests.
   it('requires confirmation and prevents duplicate revoke submissions', async () => {
     const now = Date.now()
     mockGetMySubscriptions.mockResolvedValue([
@@ -280,11 +314,34 @@ describe('SubscriptionsView', () => {
         monthly_window_start: new Date(now - 30 * 60 * 1000).toISOString(),
         created_at: new Date(now - 60 * 60 * 1000).toISOString(),
         updated_at: new Date(now - 60 * 60 * 1000).toISOString(),
-        plan: { id: 303, name: 'Plan Gamma', description: '', price: 10, features: [], validity_days: 30, validity_unit: 'day', daily_limit_usd: null, weekly_limit_usd: null, monthly_limit_usd: 50, for_sale: true, sort_order: 0 }
-      }
+        plan: {
+          id: 303,
+          name: 'Plan Gamma',
+          description: '',
+          price: 10,
+          features: [],
+          validity_days: 30,
+          validity_unit: 'day',
+          daily_limit_usd: null,
+          weekly_limit_usd: null,
+          monthly_limit_usd: 50,
+          for_sale: true,
+          sort_order: 0,
+        },
+      },
     ])
-    let resolveRevoke!: (value: { revoked_subscription_id: number; replacement_subscription_id: number | null; rebound_api_key_count: number }) => void
-    mockRevokeExhaustedSubscription.mockReturnValue(new Promise((resolve) => { resolveRevoke = resolve }))
+    let resolveRevoke!: (value: {
+      revoked_subscription_id: number /* Revoked subscription record identity. */
+      replacement_subscription_id:
+        | number
+        | null /* Replacement record identity; null indicates that the server activated no queued subscription after revocation. */
+      rebound_api_key_count: number /* Number of rebound API keys. */
+    }) => void
+    mockRevokeExhaustedSubscription.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRevoke = resolve
+      }),
+    )
 
     const wrapper = await mountView()
     await flushPromises()
@@ -296,11 +353,17 @@ describe('SubscriptionsView', () => {
     await wrapper.vm.$nextTick()
     expect(mockRevokeExhaustedSubscription).toHaveBeenCalledTimes(1)
     expect(mockRevokeExhaustedSubscription).toHaveBeenCalledWith(12)
-    expect(wrapper.get('[data-testid="revoke-dialog-confirm"]').attributes('disabled')).toBeDefined()
+    expect(
+      wrapper.get('[data-testid="revoke-dialog-confirm"]').attributes('disabled'),
+    ).toBeDefined()
 
     await wrapper.get('[data-testid="revoke-dialog-confirm"]').trigger('click')
     expect(mockRevokeExhaustedSubscription).toHaveBeenCalledTimes(1)
-    resolveRevoke({ revoked_subscription_id: 12, replacement_subscription_id: null, rebound_api_key_count: 0 })
+    resolveRevoke({
+      revoked_subscription_id: 12,
+      replacement_subscription_id: null,
+      rebound_api_key_count: 0,
+    })
     await flushPromises()
   })
 })

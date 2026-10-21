@@ -2,13 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
-import type { DashboardStats } from '@/types'
+import type { DashboardStats } from '@/api/admin/dashboard.types'
 import DashboardView from '../DashboardView.vue'
 
+// DashboardView.spec.ts checks administrator dashboard initialization and its
+// pending-data presentation. Mocked snapshot, trend, and ranking endpoints isolate the
+// initial date-range request, while a deferred snapshot lets the test observe the
+// layout skeleton before summary cards become available.
+
+// Hoisted dashboard endpoint mocks provide independently controlled summary, user
+// trend, and ranking responses for component initialization tests.
 const { getSnapshotV2, getUserUsageTrend, getUserSpendingRanking } = vi.hoisted(() => ({
   getSnapshotV2: vi.fn(),
   getUserUsageTrend: vi.fn(),
-  getUserSpendingRanking: vi.fn()
+  getUserSpendingRanking: vi.fn(),
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -16,21 +23,21 @@ vi.mock('@/api/admin', () => ({
     dashboard: {
       getSnapshotV2,
       getUserUsageTrend,
-      getUserSpendingRanking
-    }
-  }
+      getUserSpendingRanking,
+    },
+  },
 }))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: vi.fn()
-  })
+    showError: vi.fn(),
+  }),
 }))
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({
-    push: vi.fn()
-  })
+    push: vi.fn(),
+  }),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -38,11 +45,13 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
-    })
+      t: (key: string) => key,
+    }),
   }
 })
 
+// formatLocalDate builds local calendar dates used by expected dashboard query
+// parameters.
 const formatLocalDate = (date: Date): string => {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -50,6 +59,8 @@ const formatLocalDate = (date: Date): string => {
   return `${year}-${month}-${day}`
 }
 
+// createDashboardStats returns a complete zero-valued summary for dashboard rendering
+// tests.
 const createDashboardStats = (): DashboardStats => ({
   total_users: 0,
   today_new_users: 0,
@@ -83,9 +94,11 @@ const createDashboardStats = (): DashboardStats => ({
   average_duration_ms: 0,
   uptime: 0,
   rpm: 0,
-  tpm: 0
+  tpm: 0,
 })
 
+// pinia holds the fresh store container installed before each test mounts the dashboard
+// component and its composables.
 let pinia: ReturnType<typeof createPinia>
 
 describe('admin DashboardView', () => {
@@ -100,13 +113,13 @@ describe('admin DashboardView', () => {
     getSnapshotV2.mockResolvedValue({
       stats: createDashboardStats(),
       trend: [],
-      models: []
+      models: [],
     })
     getUserUsageTrend.mockResolvedValue({
       trend: [],
       start_date: '',
       end_date: '',
-      granularity: 'hour'
+      granularity: 'hour',
     })
     getUserSpendingRanking.mockResolvedValue({
       ranking: [],
@@ -114,13 +127,21 @@ describe('admin DashboardView', () => {
       total_requests: 0,
       total_tokens: 0,
       start_date: '',
-      end_date: ''
+      end_date: '',
     })
   })
 
+  // The snapshot request remains pending while the mounted dashboard initializes. The
+  // layout skeleton must stay visible until the deferred response resolves, then give
+  // way to summary cards.
   it('数据未返回时显示布局骨架，返回后渲染统计卡', async () => {
     let resolveSnapshot!: (value: unknown) => void
-    getSnapshotV2.mockImplementationOnce(() => new Promise(resolve => { resolveSnapshot = resolve }))
+    getSnapshotV2.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSnapshot = resolve
+        }),
+    )
     const wrapper = mount(DashboardView, {
       global: {
         plugins: [pinia],
@@ -131,9 +152,9 @@ describe('admin DashboardView', () => {
           Select: true,
           ModelDistributionChart: true,
           TokenUsageTrend: true,
-          Line: true
-        }
-      }
+          Line: true,
+        },
+      },
     })
     await flushPromises()
     expect(wrapper.find('[data-testid="dashboard-skeleton"]').exists()).toBe(true)
@@ -146,6 +167,8 @@ describe('admin DashboardView', () => {
     wrapper.unmount()
   })
 
+  // The dashboard mounts without a selected custom date range. Its first snapshot
+  // request must use local dates spanning the previous 24 hours and hourly granularity.
   it('uses last 24 hours as default dashboard range', async () => {
     mount(DashboardView, {
       global: {
@@ -158,9 +181,9 @@ describe('admin DashboardView', () => {
           Select: true,
           ModelDistributionChart: true,
           TokenUsageTrend: true,
-          Line: true
-        }
-      }
+          Line: true,
+        },
+      },
     })
 
     await flushPromises()
@@ -169,10 +192,12 @@ describe('admin DashboardView', () => {
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
 
     expect(getSnapshotV2).toHaveBeenCalledTimes(1)
-    expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({
-      start_date: formatLocalDate(yesterday),
-      end_date: formatLocalDate(now),
-      granularity: 'hour'
-    }))
+    expect(getSnapshotV2).toHaveBeenCalledWith(
+      expect.objectContaining({
+        start_date: formatLocalDate(yesterday),
+        end_date: formatLocalDate(now),
+        granularity: 'hour',
+      }),
+    )
   })
 })

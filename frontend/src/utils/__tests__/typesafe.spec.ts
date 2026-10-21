@@ -1,14 +1,30 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defaultProviderBrandOptions, providerBrandFilterKey, resolveProviderBrandKey } from '../providerBrand'
+import {
+  defaultProviderBrandOptions,
+  providerBrandFilterKey,
+  resolveProviderBrandKey,
+} from '../providerBrand'
 import { isUpstreamUsageQueryEnabled } from '../upstreamUsage'
-import { providerTestProtocolPlan } from '@/components/admin/provider/providerTestProtocols'
+import { providerTestProtocolPlan } from '@/views/admin/providers/testing/providerTestProtocols'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
-import type { Provider } from '@/types'
+import type { Provider } from '@/api/admin/providers.types'
+
+/**
+ * typesafe.spec.ts tests TypeSafe branding across aliases, icons, and the Jev
+ * platform. Component fixtures use the bundled mask, provider configuration
+ * controls usage-query availability, and the protocol test plan supplies the
+ * native SystemOne option.
+ */
 
 describe('TypeSafe 品牌与 Jev 平台', () => {
+  /**
+   * TypeSafe and Jev aliases include compound model names. They resolve to one TypeSafe
+   * filter identity, unrelated names remain unmatched, and the default choices include
+   * TypeSafe.
+   */
   it('品牌别名和型号共用 TypeSafe 筛选键', () => {
     for (const alias of ['typesafe', 'TypeSafe AI', 'jev', 'jev-latest', 'typesafe/jev-latest']) {
       expect(resolveProviderBrandKey(alias)).toBe('typesafe')
@@ -18,6 +34,11 @@ describe('TypeSafe 品牌与 Jev 平台', () => {
     expect(defaultProviderBrandOptions).toContainEqual({ value: 'TypeSafe', label: 'TypeSafe' })
   })
 
+  /**
+   * Model, provider, and platform icon components render TypeSafe identities. Every
+   * wrapper uses the bundled PNG mask with currentColor and is unmounted after its
+   * markup assertions.
+   */
   it('平台和模型使用本地 TypeSafe 蒙版图标', () => {
     const wrappers = [
       mount(ModelIcon, { props: { model: 'typesafe/jev-latest' } }),
@@ -27,15 +48,26 @@ describe('TypeSafe 品牌与 Jev 平台', () => {
     for (const wrapper of wrappers) {
       expect(wrapper.html()).toContain('typesafe.png')
       expect(wrapper.html()).toContain('currentcolor')
+      /**
+       * Unmount each icon after inspecting its markup so mounted component
+       * instances do not persist beyond their corresponding fixture assertions.
+       */
       wrapper.unmount()
     }
   })
 
+  /**
+   * A Jev API-key provider starts without usage-query configuration, then enables a
+   * compatible adapter. Query availability follows that setting and protocol testing
+   * exposes the SystemOne native endpoint.
+   */
   it('默认关闭余额查询，允许管理员选用兼容适配器', () => {
     const provider = { platform: 'jev', type: 'apikey', credentials: {}, extra: {} } as Provider
     expect(isUpstreamUsageQueryEnabled(provider)).toBe(false)
     provider.extra = { upstream_usage_query: { enabled: true, adapter: 'sub2api' } }
     expect(isUpstreamUsageQueryEnabled(provider)).toBe(true)
-    expect(providerTestProtocolPlan(provider).options).toEqual([{ value: 'native', label: 'SystemOne', path: '/v1/systemone' }])
+    expect(providerTestProtocolPlan(provider).options).toEqual([
+      { value: 'native', label: 'SystemOne', path: '/v1/systemone' },
+    ])
   })
 })

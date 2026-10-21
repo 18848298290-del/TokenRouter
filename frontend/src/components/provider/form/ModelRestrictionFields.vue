@@ -47,45 +47,70 @@ import type { ModelMappingRow } from '@/utils/modelMappingRules'
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 import ProviderModelMappingEditor from '../ProviderModelMappingEditor.vue'
 
+// ModelRestrictionFields.vue switches between model whitelist and mapping editors while
+// keeping both parent-owned drafts available. Whitelist suggestions may come from
+// explicit candidates or the catalog, and provider identity or preview credentials are
+// forwarded to the selector for upstream synchronization.
+
+// ModelRestrictionMode selects the whitelist editor or request-to-upstream mapping
+// editor.
 export type ModelRestrictionMode = 'whitelist' | 'mapping'
 
-// 白名单与映射二选一的模型限制区域，覆盖各平台和各账号类型的副本。
 defineProps<{
-  platform?: string
-  platforms?: string[]
+  platform?: string // Provider platform identifier.
+  platforms?: string[] // Candidate provider platform identifiers.
+  // Saved provider identifier; when present, upstream synchronization uses it before any
+  // preview credentials.
   providerId?: number
+  // Explicit candidates override catalog lookup, including an empty array that
+  // intentionally supplies no suggestions.
   models?: string[]
+  // Unsaved credentials used for preview synchronization when a saved provider identifier
+  // is unavailable.
   syncCredentials?: {
-    platform: string
-    type: string
-    base_url?: string
-    api_key: string
+    platform: string // Provider platform identifier.
+    type: string // Provider authentication type.
+    base_url?: string // Optional preview upstream address.
+    api_key: string // Preview API credential value.
   }
-  sourcePlaceholder?: string
-  targetPlaceholder?: string
-  hint?: string
+  sourcePlaceholder?: string // Request model input placeholder.
+  targetPlaceholder?: string // Upstream model input placeholder.
+  hint?: string // Supplemental field help text.
 }>()
+// mode binds the parent-owned whitelist or model-mapping editor mode to the shared
+// controls through its model update event.
 const mode = defineModel<ModelRestrictionMode>('mode', { required: true })
+// allowedModels binds the parent-owned selected allowed model ID array to the shared
+// controls through its model update event.
+// An empty allowedModels array is the form unlimited-model draft; it is distinct from
+// an empty models prop, which supplies zero suggestions to the selector.
 const allowedModels = defineModel<string[]>('allowedModels', { required: true })
+// mappings binds the parent-owned request-to-upstream model mapping rows to the shared
+// controls through its model update event.
 const mappings = defineModel<ModelMappingRow[]>('mappings', { required: true })
+// emit publishes typed draft changes and actions to the parent that owns this component.
 const emit = defineEmits<{
-  add: []
-  remove: []
+  add: [] // Mapping row addition notification.
+  remove: [] // Mapping row removal notification.
 }>()
 
+// t resolves interface labels from the active component locale while reactive consumers
+// update their displayed text.
 const { t } = useI18n()
+// modeOptions supplies whitelist and mapping labels with stable test selectors for
+// switching between the two retained draft editors.
 const modeOptions = computed(() => [
   {
     value: 'whitelist' as const,
     label: t('admin.providers.modelWhitelist'),
     icon: 'checkCircle' as const,
-    testid: 'model-restriction-mode-whitelist'
+    testid: 'model-restriction-mode-whitelist',
   },
   {
     value: 'mapping' as const,
     label: t('admin.providers.modelMapping'),
     icon: 'swap' as const,
-    testid: 'model-restriction-mode-mapping'
-  }
+    testid: 'model-restriction-mode-mapping',
+  },
 ])
 </script>

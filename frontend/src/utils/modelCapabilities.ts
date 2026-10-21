@@ -1,42 +1,98 @@
-import type { MarketplaceModelPricing, ModelModality } from '@/types'
+import type { MarketplaceModelPricing } from '@/api/marketplace.types'
+import type { ModelModality } from '@/api/models.types'
 
-// 模型能力（输入/输出模态）解析：模型广场卡片右上角能力标签的数据源。
-// 优先使用后端从定价元数据下发的 input_modalities/output_modalities；
-// 接口缺失或非空校验失败时，回退到按模型 ID 模式识别的本地规则（与 ModelIcon 同一思路），
-// 其中定价数据（图片计费、图片输入价）比 ID 模式更可靠，ID 模式仅作为兜底。
+/**
+ * modelCapabilities.ts resolves input and output modality badges for model displays.
+ * Supplied capability metadata is accepted when both sides retain recognized modalities
+ * after filtering. Otherwise the resolver starts with text input and output, then
+ * applies local model-name patterns and selected pricing fields to infer presentation
+ * values.
+ *
+ * Those heuristics interact: image and video generation remove text output, audio
+ * patterns alter their respective sides, and gpt-image editing adds image input.
+ * Ordinary vision inference is suppressed for generative and audio models so a shared
+ * name fragment such as gpt-4o does not automatically add vision. The resulting
+ * modalities are deduplicated and ordered for consistent badge layout.
+ */
 
-export type { ModelModality } from '@/types'
+export type { ModelModality } from '@/api/models.types'
 
+/**
+ * ModelCapabilities holds the resolved modality lists used by model badges.
+ */
 export interface ModelCapabilities {
-  input: ModelModality[]
-  output: ModelModality[]
+  /**
+   * input and output contain recognized modalities in MODEL_MODALITY_ORDER.
+   * resolveModelCapabilities allocates both lists from accepted metadata or from
+   * its combined local inference rules.
+   */
+  input: ModelModality[] // input modality badges
+  output: ModelModality[] // output modality badges
 }
 
-// 后端下发的能力入参：两侧都非空才视为可信数据。
+/**
+ * ApiModelCapabilities carries optional supplied modalities before recognized-value
+ * filtering and selection.
+ */
 export interface ApiModelCapabilities {
-  input?: ModelModality[]
-  output?: ModelModality[]
+  /**
+   * input and output are considered together after recognized-value filtering.
+   * Both sides must remain nonempty to select supplied metadata; otherwise
+   * resolveModelCapabilities infers both sides locally.
+   */
+  input?: ModelModality[] // input modality badges
+  output?: ModelModality[] // output modality badges
 }
 
-// 标签固定按该顺序渲染，保证不同卡片之间可扫读对比。
+/**
+ * MODEL_MODALITY_ORDER fixes recognized modality membership and display order so model
+ * cards show comparable input and output badges.
+ */
 export const MODEL_MODALITY_ORDER: ModelModality[] = ['text', 'image', 'audio', 'video', 'pdf']
 
-// 已知生图模型的 ID 特征（定价模式缺失时兜底，命中后只输出图片）。
-const IMAGE_OUTPUT_PATTERNS = [/dall-e/, /flux/, /stable-diffusion/, /imagen/, /cogview/, /midjourney/, /mj-/, /gpt-image/]
+/**
+ * IMAGE_OUTPUT_PATTERNS identifies model names that replace the default text output
+ * with image output during display inference.
+ */
+const IMAGE_OUTPUT_PATTERNS = [
+  /dall-e/,
+  /flux/,
+  /stable-diffusion/,
+  /imagen/,
+  /cogview/,
+  /midjourney/,
+  /mj-/,
+  /gpt-image/,
+]
 
-// 已知视频生成模型的 ID 特征（命中后只输出视频）。
+/**
+ * VIDEO_OUTPUT_PATTERNS identifies model names that add video output and remove the
+ * default text output during display inference.
+ */
 const VIDEO_OUTPUT_PATTERNS = [/veo/, /sora/, /cogvideo/]
 
-// 音频输入输出双通的对话模型（如 gpt-4o-audio、realtime 系列）。
+/**
+ * AUDIO_IO_PATTERNS adds audio to both modality lists and suppresses ordinary
+ * vision-name inference for matching model identifiers.
+ */
 const AUDIO_IO_PATTERNS = [/gpt-4o-audio/, /gpt-audio/, /realtime/]
 
-// 仅音频输入的模型（语音识别类，输入只有音频）。
+/**
+ * AUDIO_INPUT_PATTERNS replaces text input with audio input and suppresses ordinary
+ * vision-name inference for matching model identifiers.
+ */
 const AUDIO_INPUT_PATTERNS = [/whisper/, /voxtral/, /qwen-audio/]
 
-// 仅音频输出的模型（语音合成类）。
+/**
+ * AUDIO_OUTPUT_PATTERNS replaces default text output with audio output and marks
+ * matching models as generative for vision inference.
+ */
 const AUDIO_OUTPUT_PATTERNS = [/tts/]
 
-// 已知支持图片理解（视觉输入）的模型 ID 特征。
+/**
+ * IMAGE_INPUT_PATTERNS supplies vision-name matches after the resolver excludes
+ * generative output and audio input or output combinations.
+ */
 const IMAGE_INPUT_PATTERNS = [
   /claude/,
   /gemini/,
@@ -51,18 +107,31 @@ const IMAGE_INPUT_PATTERNS = [
   /llama-4/,
 ]
 
-// 支持图片编辑（图生图）的生图模型：输入除文字外还有图片。
+/**
+ * IMAGE_EDIT_PATTERNS adds image input for editing models even when image generation
+ * has already selected their output modalities.
+ */
 const IMAGE_EDIT_PATTERNS = [/gpt-image/]
 
+/**
+ * hasPositivePrice reports whether a supplied amount is finite and positive.
+ */
 function hasPositivePrice(value?: number): boolean {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
+/**
+ * sortedModalities returns selected recognized modalities in the shared display order.
+ */
 function sortedModalities(modalities: Set<ModelModality>): ModelModality[] {
   return MODEL_MODALITY_ORDER.filter((modality) => modalities.has(modality))
 }
 
-// 过滤接口下发值中的非法模态，并按固定顺序输出；空数组/缺失返回空。
+/**
+ * sanitizeApiModalities filters supplied modalities into the recognized display order.
+ * Non-arrays and empty arrays produce an empty list, duplicates collapse, and unknown
+ * values cannot contribute a capability badge.
+ */
 function sanitizeApiModalities(modalities?: ModelModality[]): ModelModality[] {
   if (!Array.isArray(modalities)) {
     return []
@@ -70,12 +139,26 @@ function sanitizeApiModalities(modalities?: ModelModality[]): ModelModality[] {
   return MODEL_MODALITY_ORDER.filter((modality) => modalities.includes(modality))
 }
 
+/**
+ * resolveModelCapabilities chooses supplied modalities or infers model badge values
+ * from pricing and identifier patterns. Supplied input and output must both remain
+ * nonempty after sanitization; otherwise both sides are inferred together.
+ *
+ * Inference begins with text on each side. Image, video, and audio rules then modify
+ * those sets, while ordinary image-input inference requires a nongenerative, nonaudio
+ * model. gpt-image names receive image input through the editing rule even when
+ * generation selected image output. Sorted results describe this display heuristic;
+ * callers needing execution capabilities must obtain those separately.
+ */
 export function resolveModelCapabilities(
   modelId: string,
   pricing?: MarketplaceModelPricing,
   apiCapabilities?: ApiModelCapabilities,
 ): ModelCapabilities {
-  // 后端下发的能力元数据优先：过滤非法取值后，两侧都非空就直接采用。
+  /**
+   * Sanitize both sides before selecting metadata so a partially populated or wholly
+   * invalid side cannot create a half-inferred capability pair.
+   */
   const apiInput = sanitizeApiModalities(apiCapabilities?.input)
   const apiOutput = sanitizeApiModalities(apiCapabilities?.output)
   if (apiInput.length > 0 && apiOutput.length > 0) {
@@ -84,7 +167,10 @@ export function resolveModelCapabilities(
 
   const id = modelId.toLowerCase()
 
-  // 大部分模型至少支持文字输入输出，作为默认值；命中更具体的能力时再调整。
+  /**
+   * When metadata is incomplete, text provides the initial display assumption and the
+   * following pattern rules refine both modality sets together.
+   */
   const input = new Set<ModelModality>(['text'])
   const output = new Set<ModelModality>(['text'])
 
@@ -95,13 +181,19 @@ export function resolveModelCapabilities(
   const audioOutput = AUDIO_OUTPUT_PATTERNS.some((pattern) => pattern.test(id))
   const videoOutput = VIDEO_OUTPUT_PATTERNS.some((pattern) => pattern.test(id))
 
-  // 生图模型只输出图片，纯生成类模型没有对话输出。
+  /**
+   * Image generation selects image output and removes the initial text assumption;
+   * other matching modality rules can still add further outputs.
+   */
   if (imageOutputByPricing || imageOutputById) {
     output.delete('text')
     output.add('image')
   }
 
-  // 视频生成模型只输出视频。
+  /**
+   * Video-name inference removes text output but retains any image or audio output
+   * already selected by another matching pattern.
+   */
   if (videoOutput) {
     output.delete('text')
     output.add('video')
@@ -112,20 +204,18 @@ export function resolveModelCapabilities(
     output.add('audio')
   }
   if (audioInput) {
-    // 语音识别类模型输入只有音频。
     input.delete('text')
     input.add('audio')
   }
   if (audioOutput) {
-    // 语音合成类模型输出只有音频。
     output.delete('text')
     output.add('audio')
   }
 
-  // 图片输入：优先看定价数据里的图片输入价，其次按已知视觉模型兜底；
-  // 纯生成类模型（已判定为图片/视频/音频输出）默认只有文字输入；
-  // 但 gpt-image 系列支持图片编辑（图生图），输入需要叠加图片；
-  // 音频对话/识别模型（如 gpt-4o-audio）不按 gpt-4o 视觉模式叠加图片输入。
+  /**
+   * Suppress ordinary vision inference for generation and audio patterns, while
+   * allowing the dedicated image-editing rule to add image input.
+   */
   const generativeOnly = imageOutputByPricing || imageOutputById || videoOutput || audioOutput
   if (IMAGE_EDIT_PATTERNS.some((pattern) => pattern.test(id))) {
     input.add('image')

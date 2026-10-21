@@ -5,7 +5,11 @@
       :model-value="active"
       :disabled="!supported"
       :label="t('admin.providers.balanceAlert.title')"
-      :hint="supported ? t('admin.providers.balanceAlert.hint') : t('admin.providers.balanceAlert.unsupported')"
+      :hint="
+        supported
+          ? t('admin.providers.balanceAlert.hint')
+          : t('admin.providers.balanceAlert.unsupported')
+      "
       testid="balance-alert-enabled"
       @update:model-value="update({ enabled: $event })"
     />
@@ -18,7 +22,9 @@
 
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <label :for="`${uid}-threshold`" class="input-label">{{ t('admin.providers.balanceAlert.threshold') }}</label>
+            <label :for="`${uid}-threshold`" class="input-label">{{
+              t('admin.providers.balanceAlert.threshold')
+            }}</label>
             <input
               :id="`${uid}-threshold`"
               v-model.number="threshold"
@@ -32,7 +38,9 @@
             <p class="input-hint">{{ t('admin.providers.balanceAlert.thresholdHint') }}</p>
           </div>
           <div>
-            <label :for="`${uid}-interval`" class="input-label">{{ t('admin.providers.balanceAlert.interval') }}</label>
+            <label :for="`${uid}-interval`" class="input-label">{{
+              t('admin.providers.balanceAlert.interval')
+            }}</label>
             <div class="input-icon-wrap">
               <input
                 :id="`${uid}-interval`"
@@ -45,14 +53,18 @@
                 class="input pr-16"
                 data-testid="balance-alert-interval"
               />
-              <span class="input-icon-right text-sm text-gray-500 dark:text-gray-400">{{ t('common.minutes') }}</span>
+              <span class="input-icon-right text-sm text-gray-500 dark:text-gray-400">{{
+                t('common.minutes')
+              }}</span>
             </div>
             <p class="input-hint">{{ t('admin.providers.balanceAlert.intervalHint') }}</p>
           </div>
         </div>
 
         <div>
-          <label :for="`${uid}-email`" class="input-label">{{ t('admin.providers.balanceAlert.email') }}</label>
+          <label :for="`${uid}-email`" class="input-label">{{
+            t('admin.providers.balanceAlert.email')
+          }}</label>
           <input
             :id="`${uid}-email`"
             v-model="recipientEmail"
@@ -96,16 +108,34 @@
           </p>
           <template v-else>
             <div class="grid grid-cols-[minmax(4rem,auto)_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
-              <span class="text-gray-500 dark:text-gray-400">{{ t('admin.providers.balanceAlert.checkedAt') }}</span>
-              <span class="break-words text-gray-900 dark:text-white">{{ formatTime(status.last_checked_at) }}</span>
-              <span class="text-gray-500 dark:text-gray-400">{{ t('admin.providers.balanceAlert.balance') }}</span>
-              <span class="break-words tabular-nums text-gray-900 dark:text-white">{{ balanceLabel }}</span>
-              <span class="text-gray-500 dark:text-gray-400">{{ t('admin.providers.balanceAlert.sentAt') }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{
+                t('admin.providers.balanceAlert.checkedAt')
+              }}</span>
+              <span class="break-words text-gray-900 dark:text-white">{{
+                formatTime(status.last_checked_at)
+              }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{
+                t('admin.providers.balanceAlert.balance')
+              }}</span>
+              <span class="break-words tabular-nums text-gray-900 dark:text-white">{{
+                balanceLabel
+              }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{
+                t('admin.providers.balanceAlert.sentAt')
+              }}</span>
               <span class="break-words text-gray-900 dark:text-white">
-                {{ status.sent_at ? formatTime(status.sent_at) : t('admin.providers.balanceAlert.notSent') }}
+                {{
+                  status.sent_at
+                    ? formatTime(status.sent_at)
+                    : t('admin.providers.balanceAlert.notSent')
+                }}
               </span>
-              <span class="text-gray-500 dark:text-gray-400">{{ t('admin.providers.balanceAlert.nextCheckAt') }}</span>
-              <span class="break-words text-gray-900 dark:text-white">{{ formatTime(status.next_check_at) }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{
+                t('admin.providers.balanceAlert.nextCheckAt')
+              }}</span>
+              <span class="break-words text-gray-900 dark:text-white">{{
+                formatTime(status.next_check_at)
+              }}</span>
             </div>
             <p
               v-if="status.error_code"
@@ -132,63 +162,94 @@ import SettingsSection from '@/components/common/settings/SettingsSection.vue'
 import SettingsSubpanel from '@/components/common/settings/SettingsSubpanel.vue'
 import SettingToggleRow from '@/components/common/settings/SettingToggleRow.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { UpstreamBalanceAlertConfig, UpstreamBalanceAlertStatus } from '@/types'
+import type {
+  UpstreamBalanceAlertConfig,
+  UpstreamBalanceAlertStatus,
+} from '@/api/admin/providers.types'
 import { formatDateTime } from '@/utils/format'
 import {
   BALANCE_ALERT_MAX_INTERVAL,
-  BALANCE_ALERT_MIN_INTERVAL
+  BALANCE_ALERT_MIN_INTERVAL,
 } from '@/utils/upstreamBalanceAlert'
 
-// UpstreamBalanceAlertEditor.vue edits one API-key provider's balance reminder
-// and shows the latest scheduled check for a saved provider. The parent form owns
-// the policy object and sends it with Extra on save; this component replaces that
-// object field by field and keeps the read-only check status to itself.
+// UpstreamBalanceAlertEditor.vue edits one API-key provider balance reminder and displays
+// the latest saved check status. The parent owns the editable policy and persists it with
+// Extra, while this component owns status reads and their loading or failure state.
+// Unsupported providers display the policy as inactive.
 //
-// Status reads go through an endpoint that neither queries the upstream nor sends
-// mail. The edit dialog can switch to another provider while a read is pending,
-// so each read takes a sequence number and only the latest one may update the
-// display. Unmounting advances the sequence as well, which discards a response
-// that arrives after the dialog closes.
+// Each read captures a sequence number and can publish only while that number remains
+// current. Provider changes, disabling the displayed reminder, and unmount all invalidate
+// pending reads. The status endpoint returns existing observations; policy editing and
+// status refresh remain separate from upstream querying and email delivery.
 
+// props exposes caller-owned inputs used by the template and derived state in this
+// component.
 const props = defineProps<{
-  supported: boolean // query adapter reports a wallet balance
-  queryEnabled: boolean // upstream usage query switch
-  providerId?: number // saved provider; omitted while creating
+  // Whether the query adapter reports a wallet balance; unsupported policies display as
+  // inactive.
+  supported: boolean
+  queryEnabled: boolean // Upstream usage query switch.
+  // providerId identifies the saved reminder status to read; changes invalidate
+  // pending status reads, while omission during creation skips the status request.
+  providerId?: number
 }>()
+// model holds the parent-owned editable value and sends replacement values through the
+// component model event.
 const model = defineModel<UpstreamBalanceAlertConfig>({ required: true })
+// t resolves interface labels from the active component locale while reactive consumers
+// update their displayed text.
 const { t } = useI18n()
+// uid supplies one stable instance ID so labels target their own input when several
+// editors are mounted.
 const uid = useId()
 
-// Backend reasons owned by the reminder; other codes come from the shared usage query.
-const REMINDER_ERROR_CODES = new Set(['UPSTREAM_BALANCE_ALERT_HOST_DENIED', 'UPSTREAM_BALANCE_ALERT_EMAIL_FAILED'])
+// REMINDER_ERROR_CODES separates reminder-owned failures from usage-query failures when
+// choosing the namespace for the status error label.
+const REMINDER_ERROR_CODES = new Set([
+  'UPSTREAM_BALANCE_ALERT_HOST_DENIED',
+  'UPSTREAM_BALANCE_ALERT_EMAIL_FAILED',
+])
 
-// status, loading, and loadFailed describe the latest status read. Only the read
-// whose number still equals loadSequence may change them.
+// status holds the latest accepted saved check observation and is cleared whenever
+// provider or active-policy identity changes.
 const status = ref<UpstreamBalanceAlertStatus | null>(null)
+// loading belongs to the current status-read sequence so an older response cannot clear
+// the indicator for a newer read.
 const loading = ref(false)
+// loadFailed marks the current status read as failed while keeping the editable policy
+// available for further changes.
 const loadFailed = ref(false)
+// loadSequence advances before reads and lifecycle invalidation so responses publish only
+// into the provider display they still belong to.
 let loadSequence = 0
 
-// An enabled policy stays saved for unsupported providers, but the switch shows off.
+// active displays the policy as enabled only when its model flag and the provider balance
+// capability both permit it.
 const active = computed(() => model.value.enabled && props.supported)
 
-// Field models for the inputs; each write replaces the whole policy through update.
+// threshold proxies the balance threshold through update so edits replace the whole
+// parent-owned policy object with the changed field.
 const threshold = computed({
   get: () => model.value.threshold,
-  set: (value: number) => update({ threshold: value })
+  set: (value: number) => update({ threshold: value }),
 })
 
+// interval proxies the check interval in minutes through update so the parent receives a
+// replacement policy object.
 const interval = computed({
   get: () => model.value.interval_minutes,
-  set: (value: number) => update({ interval_minutes: value })
+  set: (value: number) => update({ interval_minutes: value }),
 })
 
+// recipientEmail proxies the destination address through update while retaining the other
+// fields of the parent-owned reminder policy.
 const recipientEmail = computed({
   get: () => model.value.recipient_email,
-  set: (value: string) => update({ recipient_email: value })
+  set: (value: string) => update({ recipient_email: value }),
 })
 
-// balanceLabel shows the observed balance with up to four decimals and its upstream unit.
+// balanceLabel formats a known balance with up to four decimals and its observed unit;
+// missing balances show a dash.
 const balanceLabel = computed(() => {
   const balance = status.value?.balance
   if (balance == null) return '—'
@@ -196,27 +257,36 @@ const balanceLabel = computed(() => {
   return status.value?.unit ? `${amount} ${status.value.unit}` : amount
 })
 
-/** update emits a new policy object with the given fields replaced. */
+// update replaces the policy model with the current fields and supplied patch.
+// Unmentioned fields remain present, while the parent receives the replacement object
+// through the model update event.
 function update(patch: Partial<UpstreamBalanceAlertConfig>) {
   model.value = { ...model.value, ...patch }
 }
 
-/** formatTime formats a status timestamp, or returns a dash when it is absent. */
+// formatTime formats a status timestamp or returns a dash when formatting yields no text.
+// Timestamp parsing and invalid-value behavior are delegated to the shared formatDateTime
+// helper used elsewhere.
 function formatTime(value?: string): string {
   return formatDateTime(value) || '—'
 }
 
-/** errorLabel returns the localized text for a backend error code, or the code itself. */
+// errorLabel returns localized reminder or usage-query text for a backend error code.
+// Reminder-owned codes choose their namespace, and unknown translations fall back to the
+// exact code for diagnosis.
 function errorLabel(code: string): string {
   const group = REMINDER_ERROR_CODES.has(code) ? 'balanceAlert' : 'upstreamUsage'
   return t(`admin.providers.${group}.errors.${code}`, code)
 }
 
-/** loadStatus reads the saved provider's latest check into the status area.
- * Calls without a saved, supported provider clear the display and send nothing.
- * A failed read shows an error in the status area and leaves the editable fields
- * untouched; the refresh button retries it.
- */
+// loadStatus loads the saved provider reminder status into this component. Missing
+// provider IDs or unsupported providers clear the display and send no request. Each
+// invocation advances a sequence so later reads and lifecycle invalidation decide which
+// result may publish.
+//
+// Failures mark the current status area as failed while leaving the editable policy
+// untouched. The finally branch clears loading only for the current sequence, preventing
+// an older request from hiding a newer request indicator.
 async function loadStatus() {
   const sequence = ++loadSequence
   loadFailed.value = false
@@ -228,22 +298,26 @@ async function loadStatus() {
   loading.value = true
   try {
     const result = await getUpstreamBalanceAlertStatus(props.providerId)
-    // A newer read started after the provider changed or the panel closed;
-    // its result replaces this one, so this response is dropped.
+
+    // A later read or lifecycle invalidation owns the current display, so this completion
+    // must leave status and failure state untouched.
     if (sequence !== loadSequence) return
     status.value = result
   } catch {
+    // A later read or lifecycle invalidation owns the current display, so this completion
+    // must leave status and failure state untouched.
     if (sequence !== loadSequence) return
-    // The status area shows the error in place of the earlier result; the
-    // reminder settings being edited stay as they are.
+
     loadFailed.value = true
   } finally {
+    // Only the current read releases the loading indicator, preventing an older completion
+    // from making a newer in-flight request look finished.
     if (sequence === loadSequence) loading.value = false
   }
 }
 
-// Every provider or visibility change invalidates earlier requests, including
-// switches to a disabled provider that will not start a replacement status read.
+// Provider and active-policy changes invalidate pending requests even when the next state
+// is disabled and starts no replacement read.
 watch(
   () => [props.providerId, active.value] as const,
   () => {
@@ -253,11 +327,12 @@ watch(
     loadFailed.value = false
     if (active.value) void loadStatus()
   },
-  { immediate: true }
+  { immediate: true },
 )
 
+// Advance the sequence when the component unmounts so pending success or failure responses
+// cannot update its discarded status display.
 onBeforeUnmount(() => {
-  // Invalidate pending reads so their responses do not update an unmounted component.
   loadSequence++
 })
 </script>

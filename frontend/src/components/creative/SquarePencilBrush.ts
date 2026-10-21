@@ -1,23 +1,30 @@
-/**
- * 方头画笔：PencilBrush 子类，用于创作台 mask 涂抹的"方"形状。
- *
- * 实现依据（fabric 7.4 源码，node_modules/fabric/dist/index.mjs 中 PencilBrush）：
- * - 预览阶段 PencilBrush._render 在 contextTop 上 _saveAndTransform(ctx) 应用 viewportTransform 后描边；
- *   其 onMouseMove 的增量分支调用的是「类名限定」的静态方法 PencilBrush.drawSegment，
- *   实例覆写无法拦截，因此方头笔必须走全量重绘路径（clearContext + _render）。
- * - 落笔结束 _finalizeAndAddPath 依次调用可覆写的实例方法 convertPointsToSVGPath / createPath 生成最终 Path。
- *
- * 方头笔迹用「等间距方形印章」实现：沿轨迹以 width/2 为步长插值出一串轴对齐方块，
- * 预览直接 fillRect 这些方块，最终 Path 用同样方块的填充子路径。
- * 这样斜向快速移动不会出现描边折线的斜接尖角 / 圆帽残留，预览与最终笔迹逐像素一致。
- */
-
 import { Path, PencilBrush, Point, type TEvent, type TSimplePathData } from 'fabric'
 
+/**
+ * SquarePencilBrush.ts draws square mask strokes as axis-aligned stamps along
+ * Fabric pointer samples. The preview and final SVG path use the same
+ * interpolated stamp centers, connecting sampled segments with filled squares.
+ * This representation keeps diagonal motion from introducing stroke joins or
+ * round caps into the square brush.
+ *
+ * Fabric's inherited incremental mouse-move path calls its static segment
+ * renderer, so this subclass clears and redraws the preview after accepted
+ * points. The final path uses filled polygon subpaths with empty stroke
+ * styling. Preview drawing applies the canvas viewport transform before filling
+ * stamps, while export produces scene-coordinate path data for Fabric's normal
+ * path creation lifecycle.
+ */
+
+/**
+ * SquarePencilBrush implements square mask strokes through shared preview and
+ * export stamps.
+ */
 export class SquarePencilBrush extends PencilBrush {
   /**
-   * 鼠标移动：沿用父类的点采集与直线修饰键判断，但每次全量重绘方头预览，
-   * 避免父类增量分支调用静态 drawSegment 画出不一致的圆头线段。
+   * onMouseMove accepts primary Fabric pointer samples and redraws the square
+   * preview. Out-of-canvas points are ignored when configured; a full redraw
+   * bypasses the inherited static segment drawing used for incremental round
+   * strokes.
    */
   override onMouseMove(pointer: Point, options: TEvent): void {
     if (!this.canvas._isMainEvent(options.e)) return
@@ -29,14 +36,31 @@ export class SquarePencilBrush extends PencilBrush {
   }
 
   /**
-   * 沿轨迹插值出等间距（width/2）的印章中心点；
-   * 相邻点距离不足步长时至少保留端点，保证快速斜向移动下笔迹连续。
+   * stampCenters interpolates square stamp centers along a nonempty pointer path.
+   * The sampling step is at least one pixel and otherwise half the brush width,
+   * while a distance tolerance suppresses nearly coincident centers at segment
+   * joins. Each segment receives enough subdivisions to stay within that step.
+   * Preview and final path conversion both call this calculation, keeping their
+   * squares tied to the same retained center positions across render
+   * representations.
    */
   private stampCenters(points: Point[]): Point[] {
+    /**
+     * Half-width sampling overlaps neighboring stamps along the pointer path.
+     */
     const step = Math.max(1, this.width / 2)
     const centers: Point[] = []
+    /**
+     * push adds a stamp center after comparing its distance to the previous
+     * retained center. Closely spaced candidates are skipped so adjacent source
+     * segments share the same sampling tolerance.
+     */
     const push = (x: number, y: number) => {
       const last = centers[centers.length - 1]
+      /**
+       * Suppress centers closer than the sampling tolerance so adjacent source
+       * segments do not repeatedly add nearly identical stamp squares.
+       */
       if (!last || Math.hypot(x - last.x, y - last.y) >= step * 0.9) {
         centers.push(new Point(x, y))
       }
@@ -54,7 +78,11 @@ export class SquarePencilBrush extends PencilBrush {
     return centers
   }
 
-  /** 在 contextTop 上绘制方头预览：所有印章轴对齐 fillRect，任意方向粗细一致 */
+  /**
+   * _render paints square stamps using the supplied context or Fabric's top
+   * context. Empty point sets do nothing; the viewport transform is saved before
+   * drawing and restored after the preview.
+   */
   override _render(ctx: CanvasRenderingContext2D = this.canvas.contextTop): void {
     const points = this._points
     if (!points.length) return
@@ -68,8 +96,13 @@ export class SquarePencilBrush extends PencilBrush {
   }
 
   /**
-   * 点集 → 填充方块子路径（M/L 闭合，不用 Z，兼容 TSimplePathData 最简命令集），
-   * 与预览印章一一对应，保证最终 Path 与预览视觉一致。
+   * convertPointsToSVGPath encodes the same stamp centers used by preview
+   * rendering as filled square subpaths. Empty input returns an empty path;
+   * otherwise each center receives width-based left, top, right, and bottom
+   * coordinates. Explicit line commands return to the starting point using
+   * Fabric's simple path command representation. Because every preview rectangle
+   * has a corresponding polygon, final path creation can use fill-only styling
+   * without introducing independent stroke joins or end caps.
    */
   override convertPointsToSVGPath(points: Point[]): TSimplePathData {
     const path: TSimplePathData = []
@@ -91,7 +124,11 @@ export class SquarePencilBrush extends PencilBrush {
     return path
   }
 
-  /** 最终 Path 由填充方块组成，斜向笔迹的端点和连接处保持方形。 */
+  /**
+   * createPath builds a Fabric path with the brush color as its fill. Its empty
+   * stroke and zero stroke width keep the final result governed by the square
+   * polygons emitted by conversion.
+   */
   override createPath(pathData: TSimplePathData): Path {
     const path = new Path(pathData, {
       fill: this.color,

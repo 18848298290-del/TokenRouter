@@ -1,7 +1,6 @@
 <template>
   <AppLayout fit-viewport>
-    <!-- 不加 mx-auto：app-main 是 flex 列容器，auto 边距会让内容收缩到内容宽度并与页头错位。
-         窄屏按兑换、历史、订阅顺序堆叠；宽屏锁定视口高度，左栏上下放兑换与订阅，右栏历史跨两行并在卡内滚动。 -->
+    <!-- Keep the main content stretched within the flex-column layout. Narrow screens stack redemption, history, and subscriptions; wide screens reserve the left column for benefits and let history scroll across both rows. -->
     <div
       class="grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[22.5rem_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)]"
     >
@@ -27,13 +26,15 @@
                 </dt>
                 <dd class="mt-1 text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
                   {{ user?.concurrency || 0 }}
-                  <span class="text-sm font-normal text-gray-500 dark:text-dark-400">{{ t('redeem.requests') }}</span>
+                  <span class="text-sm font-normal text-gray-500 dark:text-dark-400">{{
+                    t('redeem.requests')
+                  }}</span>
                 </dd>
               </div>
             </dl>
           </RedeemCelebration>
 
-          <!-- 中等宽度下输入框与按钮同排，宽屏左栏较窄时恢复纵向排列。 -->
+          <!-- Medium widths place input and submit beside each other; the narrower wide-layout column stacks them again. -->
           <form
             ref="redeemForm"
             class="flex flex-col gap-3 border-t border-gray-100 pt-4 dark:border-dark-700 sm:flex-row lg:flex-col"
@@ -75,7 +76,7 @@
         </div>
       </section>
 
-      <!-- 最近活动用分隔线划分列表项，使窄屏行内容共用一层内边距。 -->
+      <!-- Separators divide recent activity while rows share the card padding on narrow screens. -->
       <section
         data-testid="redeem-history"
         class="card flex min-w-0 flex-col overflow-hidden lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:min-h-0"
@@ -87,14 +88,19 @@
         </div>
 
         <div class="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
-          <!-- 首次加载显示骨架，翻页时当前列表降低透明度并保持占位。 -->
-          <ContentSkeleton v-if="loadingHistory && history.length === 0" variant="list" :rows="4" class="p-6" />
+          <!-- Initial loading uses a skeleton; pagination dims existing rows to retain their occupied space while another page loads. -->
+          <ContentSkeleton
+            v-if="loadingHistory && history.length === 0"
+            variant="list"
+            :rows="4"
+            class="p-6"
+          />
 
           <ul
             v-else-if="history.length > 0"
             :class="[
               'divide-y divide-gray-100 transition-opacity dark:divide-dark-700',
-              loadingHistory ? 'opacity-60' : ''
+              loadingHistory ? 'opacity-60' : '',
             ]"
           >
             <li
@@ -105,7 +111,7 @@
               <div
                 :class="[
                   'flex h-9 w-9 shrink-0 items-center justify-center rounded-compact',
-                  getHistoryTone(item).bg
+                  getHistoryTone(item).bg,
                 ]"
               >
                 <BalanceIcon
@@ -126,8 +132,12 @@
                 <p class="truncate text-sm font-medium text-gray-900 dark:text-white">
                   {{ getHistoryItemTitle(item) }}
                 </p>
-                <p class="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-dark-400">
-                  <span v-if="item.used_at" class="shrink-0">{{ formatDateTime(item.used_at) }}</span>
+                <p
+                  class="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-dark-400"
+                >
+                  <span v-if="item.used_at" class="shrink-0">{{
+                    formatDateTime(item.used_at)
+                  }}</span>
                   <template v-if="getHistoryItemMeta(item)">
                     <span v-if="item.used_at" aria-hidden="true">·</span>
                     <span
@@ -143,7 +153,7 @@
               <p
                 :class="[
                   'max-w-40 shrink-0 truncate text-right text-sm font-semibold tabular-nums',
-                  getHistoryTone(item).text
+                  getHistoryTone(item).text,
                 ]"
               >
                 {{ formatHistoryValue(item) }}
@@ -174,7 +184,7 @@
         />
       </section>
 
-      <!-- 我的订阅：宽屏位于兑换卡下方并撑满左栏剩余高度，窄屏排在历史之后。 -->
+      <!-- Subscriptions fill the remaining wide-layout space below redemption and follow history in the narrow document layout. -->
       <section
         data-testid="redeem-subscriptions"
         class="card flex min-w-0 flex-col overflow-hidden lg:col-start-1 lg:row-start-2 lg:min-h-0"
@@ -228,68 +238,107 @@ import RedeemCelebration from '@/components/user/RedeemCelebration.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { formatDateTime } from '@/utils/format'
 
+// RedeemView.vue redeems benefit codes and displays account benefits alongside paginated
+// redemption history. Successful redemption produces its own sequence-tagged message from
+// the returned benefit, while profile, history, and subscription refreshes run afterward and
+// can fail independently.
+//
+// History requests use increasing identities so rapid pagination publishes only the current
+// page. Disposal invalidates that identity and suppresses page-owned redemption feedback.
+// The form retains its focus intent across disabled controls but restores focus only when
+// the document body still owns it, leaving later user navigation intact. Celebration timing
+// belongs to its child component rather than the submission flag.
+
+// Account, subscription, and app stores supply current benefits and notification feedback;
+// balance formatting uses the configured account unit throughout redemption history.
 const { t } = useI18n()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const subscriptionStore = useSubscriptionStore()
 const { formatBalanceAmount } = useBalanceDisplay()
 
+// user exposes the shared profile used by the balance and concurrency summary beside the
+// redemption form.
 const user = computed(() => authStore.user)
 
+// Form refs and submitting control redemption input; celebrationSequence identifies
+// successful results while disposed suppresses page-owned UI updates after navigation.
 const redeemCode = ref('')
 const redeemForm = ref<HTMLFormElement | null>(null)
 const codeInput = ref<HTMLInputElement | null>(null)
 const submitting = ref(false)
-const celebration = ref<{ sequence: number; title: string; detail: string } | null>(null)
+const celebration = ref<{
+  sequence: number // Unique successful redemption identity.
+  title: string // Localized success heading text.
+  detail: string // Response-derived granted benefit text.
+} | null>(null)
 let celebrationSequence = 0
 let disposed = false
 
-// 兑换历史按固定页容量分页，宽屏下页面高度固定，列表在卡内滚动。
+// HISTORY_PAGE_SIZE bounds each history request; page and total values track server
+// pagination while the history card owns its scroll area.
 const HISTORY_PAGE_SIZE = 10
 const history = ref<RedeemHistoryItem[]>([])
 const historyPage = ref(1)
 const historyTotal = ref(0)
 const loadingHistory = ref(false)
-// 快速连续翻页时只采纳最后一次请求的结果。
+// historyRequestId identifies the latest history request, preventing earlier page responses
+// from replacing a newer navigation selection.
 let historyRequestId = 0
 
+// The subscription store supplies active benefits; redeemErrorMap converts known redemption
+// rejection reasons into page-specific localized error messages.
 const activeSubscriptions = computed(() => subscriptionStore.activeSubscriptions)
 const redeemErrorMap = computed<Record<string, string>>(() => ({
   REDEEM_PAYMENT_REQUIRED: t('redeem.paymentRequired'),
   REDEEM_CODE_EXPIRED: t('redeem.codeExpired'),
   REDEEM_CODE_MAX_USED: t('redeem.codeMaxUsed'),
   REDEEM_CODE_ALREADY_USED: t('redeem.codeAlreadyUsed'),
-  REDEEM_CODE_USED: t('redeem.codeMaxUsed')
+  REDEEM_CODE_USED: t('redeem.codeMaxUsed'),
 }))
 
-// 余额类记录共用金额与正负号格式。
+// isBalanceType identifies history entries expressed in the configured balance unit.
 const isBalanceType = (type: string) => {
   return type === 'balance' || type === 'admin_balance' || type === 'affiliate_balance'
 }
 
+// isSubscriptionType identifies history entries that represent a granted subscription.
 const isSubscriptionType = (type: string) => {
   return type === 'subscription'
 }
 
+// isAdminAdjustment identifies balance or concurrency entries whose metadata comes from
+// administrator notes.
 const isAdminAdjustment = (type: string) => {
   return type === 'admin_balance' || type === 'admin_concurrency'
 }
 
-// getHistoryTone 按记录类型和增减方向返回图标底色与文字色，列表各处共用同一套配色。
+// getHistoryTone selects entry colors using benefit type and adjustment direction. Balance,
+// subscription, and concurrency entries use distinct palettes, with negative adjustments
+// differentiated from granted benefits.
 const getHistoryTone = (item: RedeemHistoryItem) => {
   if (isBalanceType(item.type)) {
     return item.value >= 0
-      ? { bg: 'bg-emerald-100 dark:bg-emerald-900/30', text: 'text-emerald-600 dark:text-emerald-400' }
+      ? {
+          bg: 'bg-emerald-100 dark:bg-emerald-900/30',
+          text: 'text-emerald-600 dark:text-emerald-400',
+        }
       : { bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-600 dark:text-red-400' }
   }
   if (isSubscriptionType(item.type)) {
-    return { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-600 dark:text-purple-400' }
+    return {
+      bg: 'bg-purple-100 dark:bg-purple-900/30',
+      text: 'text-purple-600 dark:text-purple-400',
+    }
   }
   return item.value >= 0
     ? { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-600 dark:text-blue-400' }
     : { bg: 'bg-orange-100 dark:bg-orange-900/30', text: 'text-orange-600 dark:text-orange-400' }
 }
 
+// getHistoryItemTitle returns the localized history action for its benefit type and
+// direction. Unrecognized types use the shared unknown label, while administrator
+// adjustments distinguish additions from deductions.
 const getHistoryItemTitle = (item: RedeemHistoryItem) => {
   if (item.type === 'balance') {
     return t('redeem.balanceAddedRedeem')
@@ -307,7 +356,9 @@ const getHistoryItemTitle = (item: RedeemHistoryItem) => {
   return t('common.unknown')
 }
 
-// getHistoryItemMeta 返回时间后的补充信息：管理员调整显示备注，兑换记录显示兑换码。
+// getHistoryItemMeta returns administrator notes for manual adjustments and the redemption
+// code otherwise. Missing administrator notes produce empty metadata, allowing the history
+// row to omit an unavailable explanation.
 const getHistoryItemMeta = (item: RedeemHistoryItem) => {
   if (isAdminAdjustment(item.type)) {
     return item.notes || ''
@@ -315,43 +366,63 @@ const getHistoryItemMeta = (item: RedeemHistoryItem) => {
   return item.code
 }
 
+// formatHistoryValue formats signed balance changes, subscription names, or concurrency
+// amounts by entry type. Subscription names fall back to a plan ID and then the generic
+// assigned label when metadata is incomplete.
 const formatHistoryValue = (item: RedeemHistoryItem) => {
   if (isBalanceType(item.type)) {
     return formatSignedBalanceAmount(item.value, 2)
   } else if (isSubscriptionType(item.type)) {
-    return item.plan?.name || (item.plan_id ? `Plan #${item.plan_id}` : t('redeem.subscriptionAssigned'))
+    return (
+      item.plan?.name || (item.plan_id ? `Plan #${item.plan_id}` : t('redeem.subscriptionAssigned'))
+    )
   } else {
     const sign = item.value >= 0 ? '+' : ''
     return `${sign}${item.value} ${t('redeem.requests')}`
   }
 }
 
+// formatSignedBalanceAmount formats an absolute amount with an explicit positive or negative
+// sign.
 const formatSignedBalanceAmount = (value: number, fractionDigits: number) => {
   const sign = value >= 0 ? '+' : '-'
   return `${sign}${formatBalanceAmount(Math.abs(value), { fractionDigits })}`
 }
 
+// fetchHistory requests the selected page and publishes it only while its request ID remains
+// current and the page is mounted. Superseded successful responses resolve true after being
+// ignored, while request failures log the cause and return false. Redemption refresh uses
+// that boolean to report a partial refresh failure. Only the current request clears the
+// loading flag, preventing an older completion from hiding a newer page load.
 const fetchHistory = async (page = historyPage.value) => {
   const requestId = ++historyRequestId
   loadingHistory.value = true
   try {
     const result = await redeemAPI.getHistory(page, HISTORY_PAGE_SIZE)
+    // Ignore successful responses owned by an older page or request; returning
+    // true keeps discarded results from reporting a redemption refresh failure.
     if (disposed || requestId !== historyRequestId) return true
     history.value = result.items
     historyTotal.value = result.total
     historyPage.value = page
     return true
   } catch (error) {
+    // Convert history errors to a boolean so redemption can report its partial
+    // refresh failure after the successful redemption response has already arrived.
     console.error('Failed to fetch history:', error)
     return false
   } finally {
+    // A newer history request owns the shared spinner, so older completions
+    // leave it active until that request finishes.
     if (requestId === historyRequestId) {
       loadingHistory.value = false
     }
   }
 }
 
-// 成功内容来自兑换响应，不依赖后续刷新，也不从余额差额推算到账金额。
+// getCelebrationDetail formats the benefit granted by the successful redemption response. It
+// uses that response amount directly, so subsequent profile refresh timing or another
+// balance change cannot alter the success description.
 const getCelebrationDetail = (result: RedeemHistoryItem) => {
   if (result.type === 'balance') {
     return t('redeem.balanceReceived', { amount: formatSignedBalanceAmount(result.value, 2) })
@@ -363,6 +434,12 @@ const getCelebrationDetail = (result: RedeemHistoryItem) => {
   return t('redeem.subscriptionReceived')
 }
 
+// handleRedeem validates and submits the entered code, then separates granted benefits from
+// subsequent account refresh work. A successful response clears input and publishes
+// sequence-tagged feedback before profile, history, and optional subscription refreshes
+// settle independently. Refresh failures produce a warning while retaining redemption
+// success. Disposal suppresses page notifications and feedback, and focus returns only if
+// the form previously owned focus and disabled controls left it on the document body.
 const handleRedeem = async () => {
   if (submitting.value) return
   if (!redeemCode.value.trim()) {
@@ -380,7 +457,9 @@ const handleRedeem = async () => {
       result = await redeemAPI.redeem(redeemCode.value.trim())
     } catch (error) {
       if (!disposed) {
-        appStore.showError(extractApiErrorMessage(error, t('redeem.failedToRedeem'), redeemErrorMap.value))
+        appStore.showError(
+          extractApiErrorMessage(error, t('redeem.failedToRedeem'), redeemErrorMap.value),
+        )
       }
       return
     }
@@ -390,35 +469,41 @@ const handleRedeem = async () => {
     celebration.value = {
       sequence: ++celebrationSequence,
       title: t('redeem.codeRedeemSuccess'),
-      detail: getCelebrationDetail(result)
+      detail: getCelebrationDetail(result),
     }
 
-    // 权益已发放，后续刷新独立完成；局部失败不会把兑换成功改报成失败。
-    // 历史回到第一页，订阅兑换强制刷新，任一刷新失败也不阻止其余数据更新。
+    // The benefit is already granted. Refresh the first history page, profile, and
+    // applicable subscription summary independently so one failure does not prevent
+    // other summaries updating or replace success with a redemption error.
     const results = await Promise.allSettled([
       authStore.refreshUser(),
       fetchHistory(1),
       result.type === 'subscription'
         ? subscriptionStore.fetchActiveSubscriptions(true)
-        : Promise.resolve()
+        : Promise.resolve(),
     ])
     const historyResult = results[1]
-    const refreshFailed = results.some((entry) => entry.status === 'rejected') ||
+    const refreshFailed =
+      results.some((entry) => entry.status === 'rejected') ||
       (historyResult.status === 'fulfilled' && historyResult.value === false)
     if (!disposed && refreshFailed) {
       appStore.showWarning(t('redeem.dataRefreshFailed'))
     }
   } finally {
-    // 提交状态随请求结束而清除，庆祝动画和成功信息按各自的时长展示。
+    // Release submission after request work settles; celebration visibility belongs
+    // to its separate component timer and animation events rather than this guard.
     submitting.value = false
     await nextTick()
-    // 禁用控件可能让焦点落到 body；用户已移到其他控件时不抢回焦点。
+    // Disabled form controls can leave focus on body. Restore the input only in
+    // that case so a user who moved elsewhere retains their chosen focus.
     if (!disposed && restoreInputFocus && document.activeElement === document.body) {
       codeInput.value?.focus({ preventScroll: true })
     }
   }
 }
 
+// Mark the page disposed and invalidate history ownership before late responses arrive so
+// old page data and success feedback cannot publish after navigation.
 onBeforeUnmount(() => {
   disposed = true
   historyRequestId++

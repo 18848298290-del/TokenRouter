@@ -1,17 +1,22 @@
+import { apiClient } from './client'
+import type { PaginatedResponse } from '@/api/common.types'
+import type { RedeemCode, RedeemCodeRequest } from '@/api/redeem.types'
+
 /**
- * Redeem code API endpoints
- * Handles redeem code redemption for users
+ * redeem.ts submits user redemption codes and retrieves redemption history.
+ * Submission wraps the code in the shared request type, while history callers
+ * supply one-based pagination values and receive a paginated collection of the
+ * resulting redemption records.
  */
 
-import { apiClient } from './client'
-import type { PaginatedResponse, RedeemCode, RedeemCodeRequest } from '@/types'
-
+/**
+ * RedeemHistoryItem uses the shared redemption record shape for the current
+ * user's history entries.
+ */
 export type RedeemHistoryItem = RedeemCode
 
 /**
- * Redeem a code
- * @param code - Redeem code string
- * @returns Redemption result with updated balance or concurrency
+ * redeem submits redeem and returns the server response data.
  */
 export async function redeem(code: string): Promise<RedeemCode> {
   const payload: RedeemCodeRequest = { code }
@@ -22,23 +27,27 @@ export async function redeem(code: string): Promise<RedeemCode> {
 }
 
 /**
- * 按使用时间倒序分页获取当前用户的兑换历史
- * @param page - 页码，从 1 开始
- * @param pageSize - 每页条数
+ * getHistory retrieves the current user's redemption history in descending
+ * usage-time order. Pagination starts at one, and the pageSize argument controls
+ * the number of records requested from the server.
  */
 export async function getHistory(
   page: number,
-  pageSize: number
+  pageSize: number,
 ): Promise<PaginatedResponse<RedeemHistoryItem>> {
   const { data } = await apiClient.get<PaginatedResponse<RedeemHistoryItem>>('/redeem/history', {
-    params: { page, page_size: pageSize }
+    params: { page, page_size: pageSize },
   })
   return data
 }
 
+/**
+ * redeemAPI groups redemption code records and operations for callers using the
+ * module's named or default API object.
+ */
 export const redeemAPI = {
   redeem,
-  getHistory
+  getHistory,
 }
 
 export default redeemAPI

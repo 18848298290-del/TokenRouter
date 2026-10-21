@@ -4,7 +4,7 @@ This directory contains reusable Vue 3 components built with Composition API, Ty
 
 ## Components
 
-### DataTable.vue
+### table/DataTable.vue
 
 A generic data table component with sorting, loading states, and custom cell rendering.
 
@@ -265,7 +265,7 @@ Validation is opt-in. Compute issues with `validateModelMappingRows(rows, option
 组件按文件路径导入：
 
 ```typescript
-import DataTable from '@/components/common/DataTable.vue'
+import DataTable from '@/components/common/table/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 ```

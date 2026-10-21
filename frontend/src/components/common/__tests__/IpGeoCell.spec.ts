@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
+/**
+ * IpGeoCell.spec.ts checks IP lookup display states and user actions with a controlled
+ * cache substitute. Each case supplies its cache entry and observes the rendered
+ * controls or delegated request, including forced refresh and external detail
+ * navigation.
+ */
+
+/**
+ * mocks supplies shared lookup spies for the module substitute; beforeEach resets
+ * both spies to isolate the supplied IP cache state scenarios.
+ */
 const mocks = vi.hoisted(() => ({
   getEntry: vi.fn(),
   fetchOne: vi.fn(),
@@ -28,6 +39,8 @@ vi.mock('vue-i18n', async () => {
           'usage.ipGeo.detailAccuracy': 'Accuracy',
           'usage.ipGeo.detailCoordinates': 'Coordinates',
         }
+        // Unlisted messages remain identifiable by their keys so a missing test
+        // translation does not hide which component label was requested.
         return table[key] ?? key
       },
     }),
@@ -42,6 +55,10 @@ describe('IpGeoCell', () => {
     mocks.fetchOne.mockReset()
   })
 
+  /**
+   * An idle IP cache entry offers a lookup action to the user. Clicking it delegates
+   * the current address to fetchOne through the normal lookup path.
+   */
   it('renders a clickable fetch link in idle state and triggers fetchOne on click', async () => {
     mocks.getEntry.mockReturnValue({ status: 'idle' })
     const wrapper = mount(IpGeoCell, { props: { ip: '8.8.8.8' } })
@@ -50,6 +67,10 @@ describe('IpGeoCell', () => {
     expect(mocks.fetchOne).toHaveBeenCalledWith('8.8.8.8')
   })
 
+  /**
+   * A loading lookup entry is displayed while its result is pending. The cell exposes
+   * a named busy status and a skeleton while hiding action buttons.
+   */
   it('加载属地时显示带加载标签的行内骨架', () => {
     mocks.getEntry.mockReturnValue({ status: 'loading' })
     const wrapper = mount(IpGeoCell, { props: { ip: '8.8.8.8' } })
@@ -59,6 +80,11 @@ describe('IpGeoCell', () => {
     expect(wrapper.find('button').exists()).toBe(false)
   })
 
+  /**
+   * A successful lookup provides a location label and supplementary network details.
+   * The tooltip exposes those details and the refresh button passes the force flag to
+   * fetchOne.
+   */
   it('renders success state with label, tooltip detail, and a refresh button', async () => {
     mocks.getEntry.mockReturnValue({
       status: 'success',
@@ -81,6 +107,10 @@ describe('IpGeoCell', () => {
     expect(mocks.fetchOne).toHaveBeenCalledWith('121.35.47.43', true)
   })
 
+  /**
+   * A successful location label is clicked to inspect external detail. The cell opens
+   * the address lookup URL in a new context with noopener and noreferrer features.
+   */
   it('opens the external lookup page when the label is clicked', async () => {
     mocks.getEntry.mockReturnValue({ status: 'success', label: 'US · California', detail: {} })
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
@@ -89,11 +119,15 @@ describe('IpGeoCell', () => {
     expect(openSpy).toHaveBeenCalledWith(
       'https://www.iplocation.net/ip-lookup?query=8.8.4.4',
       '_blank',
-      'noopener,noreferrer'
+      'noopener,noreferrer',
     )
     openSpy.mockRestore()
   })
 
+  /**
+   * A lookup cache entry has failed and displays a retry action. Clicking the failed
+   * label delegates the same address to fetchOne for another lookup attempt.
+   */
   it('renders failed state as a clickable retry', async () => {
     mocks.getEntry.mockReturnValue({ status: 'error' })
     const wrapper = mount(IpGeoCell, { props: { ip: '8.8.8.8' } })
@@ -102,6 +136,10 @@ describe('IpGeoCell', () => {
     expect(mocks.fetchOne).toHaveBeenCalledWith('8.8.8.8')
   })
 
+  /**
+   * A private address has a nonpublic lookup state in the shared cache. The cell
+   * displays the private address label with no clickable lookup action.
+   */
   it('renders private state as non-clickable text', () => {
     mocks.getEntry.mockReturnValue({ status: 'private' })
     const wrapper = mount(IpGeoCell, { props: { ip: '192.168.1.1' } })

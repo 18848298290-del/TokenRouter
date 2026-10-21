@@ -1,3 +1,8 @@
+// audit.ts supplies Simplified Chinese labels for audit log filtering,
+// inspection, and clearing. Action names, redacted payload descriptions, and
+// confirmation messages share the audit namespace so administrators can read
+// management activity in the selected interface language.
+
 export default {
   audit: {
     title: '操作日志',
@@ -18,7 +23,7 @@ export default {
       resultSuccess: '成功',
       resultFailure: '失败',
       startTime: '开始时间',
-      endTime: '结束时间'
+      endTime: '结束时间',
     },
     columns: {
       time: '时间',
@@ -27,7 +32,7 @@ export default {
       method: '方法',
       result: '结果',
       clientIp: '客户端 IP',
-      detail: '详情'
+      detail: '详情',
     },
     detail: {
       title: '操作日志详情',
@@ -37,7 +42,7 @@ export default {
       credential: '凭证（掩码）',
       userAgent: 'User-Agent',
       requestBody: '请求体（已脱敏）',
-      extra: '附加信息'
+      extra: '附加信息',
     },
     clearConfirm: {
       title: '清理全部操作日志',
@@ -45,7 +50,7 @@ export default {
       totpTitle: '输入二次验证码',
       totpHint: '清理操作日志需要现场验证 TOTP 验证码。',
       success: '已清理 {count} 条操作日志',
-      failed: '清理操作日志失败'
-    }
-  }
+      failed: '清理操作日志失败',
+    },
+  },
 }

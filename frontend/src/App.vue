@@ -4,12 +4,32 @@ import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import Toast from '@/components/common/Toast.vue'
 import NavigationProgress from '@/components/common/NavigationProgress.vue'
 import { resolveRouteDocumentTitle } from '@/router/title'
-import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
-import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminSettingsStore } from '@/stores'
+import AnnouncementPopup from '@/components/announcements/AnnouncementPopup.vue'
+import {
+  useAppStore,
+  useAuthStore,
+  useSubscriptionStore,
+  useAnnouncementStore,
+  useAdminSettingsStore,
+} from '@/stores'
 import { getSetupStatus } from '@/api/setup'
 import { sanitizeUrl } from '@/utils/url'
 import { updateFavicon } from '@/utils/branding'
 
+// App.vue renders the routed page and shared progress, toast, and announcement surfaces.
+// It updates branding and document titles from reactive configuration, and refreshes
+// shared translated data when the locale changes. Announcement popups stay hidden on the
+// root destination and Home page.
+//
+// Authentication changes start subscription polling and announcement reads, while logout
+// clears their local state and removes the visibility listener. A restored session reads
+// announcements immediately; a fresh login schedules a delayed forced read. The delay is
+// not cancelled by this component. Mounting checks installation status before loading
+// public settings, and unmounting removes the window and document listeners installed by
+// this shell.
+
+// The root shell shares router and store instances across page changes so global
+// branding, notifications, and session-driven refreshes follow application state.
 const router = useRouter()
 const route = useRoute()
 const appStore = useAppStore()
@@ -18,12 +38,14 @@ const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
 const adminSettingsStore = useAdminSettingsStore()
 
-// 新公告弹窗从控制台开始展示，网站根目录和 Home 页面保持关闭。
-const shouldShowAnnouncementPopup = computed(() => (
-  route.path !== '/' && route.name !== 'Home'
-))
+// shouldShowAnnouncementPopup gates the global popup surface to console destinations
+// while leaving the root and named Home page without popup rendering.
+const shouldShowAnnouncementPopup = computed(() => route.path !== '/' && route.name !== 'Home')
 
-// 用户主动切换语言时刷新共享展示数据，页面中的编辑草稿继续保留。
+// onLocaleChanged refreshes public settings after a language-change event and then
+// refreshes authenticated shared data. Announcement and subscription requests settle
+// independently before the document title is recalculated; component drafts remain owned
+// by their mounted pages.
 async function onLocaleChanged() {
   await appStore.fetchPublicSettings(true)
   if (authStore.isAuthenticated) {
@@ -35,6 +57,8 @@ async function onLocaleChanged() {
   updateDocumentTitle()
 }
 
+// updateDocumentTitle applies route, site, and permitted custom-menu labels to the
+// browser tab.
 function updateDocumentTitle() {
   const customMenuItems = [
     ...(appStore.cachedPublicSettings?.custom_menu_items ?? []),
@@ -43,7 +67,6 @@ function updateDocumentTitle() {
   document.title = resolveRouteDocumentTitle(route, appStore.siteName, customMenuItems)
 }
 
-// Watch for site settings changes and update favicon/title
 watch(
   () => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }),
   (newLogo) => {
@@ -51,7 +74,7 @@ watch(
       updateFavicon(newLogo)
     }
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 watch(
@@ -65,10 +88,12 @@ watch(
     () => adminSettingsStore.customMenuItems,
   ],
   updateDocumentTitle,
-  { deep: true }
+  { deep: true },
 )
 
-// Watch for authentication state and manage subscription data + announcements
+// onVisibilityChange requests announcements when the authenticated document becomes
+// visible again. The announcement store controls throttling so repeated visibility
+// events reuse its existing fetch-admission window instead of forcing reads.
 function onVisibilityChange() {
   if (document.visibilityState === 'visible' && authStore.isAuthenticated) {
     announcementStore.fetchAnnouncements()
@@ -79,34 +104,32 @@ watch(
   () => authStore.isAuthenticated,
   (isAuthenticated, oldValue) => {
     if (isAuthenticated) {
-      // User logged in: preload subscriptions and start polling
+      // Authentication starts subscription loading and polling; a failed initial read is
+      // logged while the periodic poller can perform later refreshes.
       subscriptionStore.fetchActiveSubscriptions().catch((error) => {
         console.error('Failed to preload subscriptions:', error)
       })
       subscriptionStore.startPolling()
-
-      // Announcements: new login vs page refresh restore
       if (oldValue === false) {
-        // New login: delay 3s then force fetch
+        // A fresh sign-in delays forced announcement loading by three seconds; restored
+        // sessions use the ordinary fetch path immediately during shell setup.
         setTimeout(() => announcementStore.fetchAnnouncements(true), 3000)
       } else {
-        // Page refresh restore (oldValue was undefined)
         announcementStore.fetchAnnouncements()
       }
-
-      // Register visibility change listener
       document.addEventListener('visibilitychange', onVisibilityChange)
     } else {
-      // User logged out: clear data and stop polling
+      // Logout invalidates subscription publication and clears announcements before
+      // removing the visibility listener, ending the shell's authenticated refresh
+      // triggers.
       subscriptionStore.clear()
       announcementStore.reset()
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   },
-  { immediate: true }
+  { immediate: true },
 )
 
-// Route change trigger (throttled by store)
 router.afterEach(() => {
   if (authStore.isAuthenticated) {
     announcementStore.fetchAnnouncements()
@@ -114,13 +137,14 @@ router.afterEach(() => {
 })
 
 onBeforeUnmount(() => {
+  // Unmount releases the shell-owned locale and visibility listeners so later browser
+  // events cannot invoke callbacks attached by this component instance.
   window.removeEventListener('locale-changed', onLocaleChanged)
   document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 
 onMounted(async () => {
   window.addEventListener('locale-changed', onLocaleChanged)
-  // Check if setup is needed
   try {
     const status = await getSetupStatus()
     if (status.needs_setup && route.path !== '/setup') {
@@ -128,13 +152,10 @@ onMounted(async () => {
       return
     }
   } catch {
-    // If setup endpoint fails, assume normal mode and continue
+    // Setup status is unknown after a failed request; continue loading public
+    // settings so the normal shell remains usable during that endpoint failure.
   }
-
-  // Load public settings into appStore (will be cached for other components)
   await appStore.fetchPublicSettings()
-
-  // 站点设置加载后重新计算浏览器页签标题
   updateDocumentTitle()
 })
 </script>

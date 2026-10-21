@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-6">
-    <!-- 标题行：左侧平台标识与说明，右侧授权方式；两侧按垂直中线对齐，窄屏改为上下排列。 -->
+    <!-- Platform identity and instructions share the header with the authorization method; narrow screens stack those groups vertically. -->
     <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div class="flex min-w-0 items-center gap-3">
         <span
@@ -15,7 +15,7 @@
         </div>
       </div>
 
-      <!-- 标签与控件同排，少量选项用分段控件，OpenAI 等选项较多的平台用下拉框。 -->
+      <!-- Up to four methods use segmented controls, while larger method sets use a dropdown beside the label. -->
       <div v-if="showMethodSelection" class="flex shrink-0 items-center gap-3">
         <label :for="`${uid}-method`" class="shrink-0 text-sm text-gray-500 dark:text-gray-400">
           {{ methodLabel || t('admin.providers.oauth.authMethod') }}
@@ -45,7 +45,9 @@
       label="Refresh Token"
       :placeholder="t(getOAuthKey('refreshTokenPlaceholder'))"
       :count="parsedRefreshTokenCount"
-      :count-hint="t('admin.providers.oauth.batchCreateProviders', { count: parsedRefreshTokenCount })"
+      :count-hint="
+        t('admin.providers.oauth.batchCreateProviders', { count: parsedRefreshTokenCount })
+      "
       :loading="loading"
       :error="error"
       :submit-label="t(getOAuthKey('validateAndCreate'))"
@@ -53,7 +55,7 @@
       @submit="handleValidateRefreshToken"
     />
 
-    <!-- Grok Web SSO 转换为 Grok Build -->
+    <!-- Grok Web SSO input for Grok Build conversion. -->
     <OAuthCredentialImport
       v-if="inputMethod === 'sso_cookie'"
       v-model="ssoCookieInput"
@@ -70,14 +72,38 @@
       @submit="handleImportSSO"
     />
 
-    <!-- Codex auth.json、Agent Identity 与会话凭据共用批量导入表单。 -->
+    <!-- Codex auth.json, Agent Identity, and session credentials share the batch import form. -->
     <OAuthCredentialImport
       v-if="inputMethod === 'codex_session' || inputMethod === 'agent_identity'"
       v-model="codexSessionInput"
-      :description="t(isAgentIdentityInput ? 'admin.providers.oauth.openai.agentIdentityDesc' : 'admin.providers.oauth.openai.codexSessionDesc')"
-      :label="t(isAgentIdentityInput ? 'admin.providers.oauth.openai.agentIdentityInputLabel' : 'admin.providers.oauth.openai.codexSessionInputLabel')"
-      :placeholder="t(isAgentIdentityInput ? 'admin.providers.oauth.openai.agentIdentityPlaceholder' : 'admin.providers.oauth.openai.codexSessionPlaceholder')"
-      :hint="t(isAgentIdentityInput ? 'admin.providers.oauth.openai.agentIdentityHint' : 'admin.providers.oauth.openai.codexSessionHint')"
+      :description="
+        t(
+          isAgentIdentityInput
+            ? 'admin.providers.oauth.openai.agentIdentityDesc'
+            : 'admin.providers.oauth.openai.codexSessionDesc',
+        )
+      "
+      :label="
+        t(
+          isAgentIdentityInput
+            ? 'admin.providers.oauth.openai.agentIdentityInputLabel'
+            : 'admin.providers.oauth.openai.codexSessionInputLabel',
+        )
+      "
+      :placeholder="
+        t(
+          isAgentIdentityInput
+            ? 'admin.providers.oauth.openai.agentIdentityPlaceholder'
+            : 'admin.providers.oauth.openai.codexSessionPlaceholder',
+        )
+      "
+      :hint="
+        t(
+          isAgentIdentityInput
+            ? 'admin.providers.oauth.openai.agentIdentityHint'
+            : 'admin.providers.oauth.openai.codexSessionHint',
+        )
+      "
       :count="parsedCodexSessionCount"
       :rows="8"
       :loading="loading"
@@ -103,13 +129,17 @@
       @submit="handleImportCodexPAT"
     />
 
-    <!-- Cookie 自动授权 -->
+    <!-- Cookie authorization input. -->
     <OAuthCredentialImport
       v-if="inputMethod === 'cookie'"
       v-model="sessionKeyInput"
       :description="t('admin.providers.oauth.cookieAutoAuthDesc')"
       :label="t('admin.providers.oauth.sessionKey')"
-      :placeholder="allowMultiple ? t('admin.providers.oauth.sessionKeyPlaceholder') : t('admin.providers.oauth.sessionKeyPlaceholderSingle')"
+      :placeholder="
+        allowMultiple
+          ? t('admin.providers.oauth.sessionKeyPlaceholder')
+          : t('admin.providers.oauth.sessionKeyPlaceholderSingle')
+      "
       :count="allowMultiple ? parsedKeyCount : 0"
       :count-hint="t('admin.providers.oauth.batchCreateProviders', { count: parsedKeyCount })"
       :loading="loading"
@@ -145,12 +175,14 @@
       </Collapse>
     </OAuthCredentialImport>
 
-    <!-- 手动授权：生成链接、浏览器授权、粘贴授权码 -->
+    <!-- Manual authorization proceeds through URL generation, browser approval, and pasted callback input. -->
     <ol v-if="inputMethod === 'manual'">
       <OAuthStep :index="1" :title="oauthStep1GenerateUrl" :done="hasGeneratedUrl">
         <div v-if="showProjectId && platform === 'gemini'">
           <div class="mb-1.5 flex items-center gap-2">
-            <label :for="`${uid}-project-id`" class="input-label mb-0">{{ t('admin.providers.oauth.gemini.projectIdLabel') }}</label>
+            <label :for="`${uid}-project-id`" class="input-label mb-0">{{
+              t('admin.providers.oauth.gemini.projectIdLabel')
+            }}</label>
             <a
               href="https://console.cloud.google.com/"
               target="_blank"
@@ -171,7 +203,7 @@
           <p class="input-hint">{{ t('admin.providers.oauth.gemini.projectIdHint') }}</p>
         </div>
 
-        <!-- OpenAI 支持追加多个授权链接，批量创建 -->
+        <!-- OpenAI can append authorization sessions so the parent can create providers from multiple callbacks. -->
         <template v-if="isOpenAI">
           <div v-if="openAIAuthSessions.length > 0" class="space-y-2">
             <div
@@ -179,7 +211,9 @@
               :key="session.sessionId"
               class="flex items-center gap-2"
             >
-              <span class="w-8 shrink-0 text-center text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">
+              <span
+                class="w-8 shrink-0 text-center text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400"
+              >
                 #{{ index + 1 }}
               </span>
               <input
@@ -220,7 +254,11 @@
               </button>
             </div>
             <p v-if="isOpenAIBatchAuth" class="input-hint">
-              {{ t('admin.providers.oauth.openai.multiAuthUrlHint', { count: openAIAuthSessions.length }) }}
+              {{
+                t('admin.providers.oauth.openai.multiAuthUrlHint', {
+                  count: openAIAuthSessions.length,
+                })
+              }}
             </p>
           </div>
           <button
@@ -229,7 +267,13 @@
             :class="openAIAuthSessions.length > 0 ? 'btn btn-secondary' : 'btn btn-primary'"
             @click="handleGenerateUrl"
           >
-            <Icon v-if="loading" name="loader" size="sm" :animate-on-hover="false" class="animate-spin" />
+            <Icon
+              v-if="loading"
+              name="loader"
+              size="sm"
+              :animate-on-hover="false"
+              class="animate-spin"
+            />
             <Icon v-else name="plus" size="sm" />
             {{
               loading
@@ -248,7 +292,13 @@
           class="btn btn-primary"
           @click="handleGenerateUrl"
         >
-          <Icon v-if="loading" name="loader" size="sm" :animate-on-hover="false" class="animate-spin" />
+          <Icon
+            v-if="loading"
+            name="loader"
+            size="sm"
+            :animate-on-hover="false"
+            class="animate-spin"
+          />
           <Icon v-else name="link" size="sm" />
           {{ loading ? t('admin.providers.oauth.generating') : oauthGenerateAuthUrl }}
         </button>
@@ -270,7 +320,14 @@
               @click="handleCopyUrl"
             >
               <Icon v-if="!copied" name="clipboard" size="sm" />
-              <Icon v-else name="check" size="sm" class="text-green-500" :stroke-width="2" :animate-on-hover="false" />
+              <Icon
+                v-else
+                name="check"
+                size="sm"
+                class="text-green-500"
+                :stroke-width="2"
+                :animate-on-hover="false"
+              />
             </button>
             <a
               :href="authUrl"
@@ -295,8 +352,13 @@
         </div>
       </OAuthStep>
 
-      <OAuthStep :index="2" :title="oauthStep2OpenUrl" :description="oauthOpenUrlDesc" :done="hasAuthCode">
-        <!-- 平台相关的回调说明与代理提示 -->
+      <OAuthStep
+        :index="2"
+        :title="oauthStep2OpenUrl"
+        :description="oauthOpenUrlDesc"
+        :done="hasAuthCode"
+      >
+        <!-- Platform callback instructions and proxy guidance. -->
         <SettingsNotice v-if="showLocalCallbackNotice || oauthImportantNotice" tone="warning">
           <p v-text="oauthImportantNotice"></p>
         </SettingsNotice>
@@ -305,7 +367,13 @@
         </SettingsNotice>
       </OAuthStep>
 
-      <OAuthStep :index="3" :title="oauthStep3EnterCode" :description="oauthAuthCodeDesc" :done="hasAuthCode" last>
+      <OAuthStep
+        :index="3"
+        :title="oauthStep3EnterCode"
+        :description="oauthAuthCodeDesc"
+        :done="hasAuthCode"
+        last
+      >
         <div>
           <div class="mb-1.5 flex items-center gap-2">
             <label :for="`${uid}-auth-code`" class="input-label mb-0">{{ oauthAuthCode }}</label>
@@ -324,12 +392,14 @@
             :placeholder="oauthAuthCodePlaceholder"
           ></textarea>
           <p v-if="isOpenAI && parsedAuthCodeLineCount > 1" class="input-hint">
-            {{ t('admin.providers.oauth.batchCreateProviders', { count: parsedAuthCodeLineCount }) }}
+            {{
+              t('admin.providers.oauth.batchCreateProviders', { count: parsedAuthCodeLineCount })
+            }}
           </p>
           <p class="input-hint">{{ oauthAuthCodeHint }}</p>
         </div>
 
-        <!-- Gemini 回调必须保留 state 参数 -->
+        <!-- Gemini callback input retains the state parameter for the parent code-exchange request. -->
         <SettingsNotice v-if="platform === 'gemini'" tone="warning">
           <p class="font-medium">{{ t('admin.providers.oauth.gemini.stateWarningTitle') }}</p>
           <p>{{ t('admin.providers.oauth.gemini.stateWarningDesc') }}</p>
@@ -358,34 +428,53 @@ import OAuthStep from '@/components/provider/form/OAuthStep.vue'
 import { platformBadgeLightClass } from '@/utils/platformColors'
 import type { AddMethod, AuthInputMethod } from '@/composables/useProviderOAuth'
 import type { OpenAIOAuthSession } from '@/composables/useOpenAIOAuth'
-import type { ProviderPlatform } from '@/types'
+import type { ProviderPlatform } from '@/api/admin/providers.types'
 
+// OAuthAuthorizationFlow.vue presents manual authorization and credential import methods
+// selected by its caller. Local drafts contain pasted codes, tokens, session records, and
+// callback state, while emitted events delegate exchange or import to the parent. The
+// exposed refs let dialog controllers read those drafts and reset them when their own
+// lifecycle requires it.
+//
+// Single callback input extracts the code and retains state separately for exchange.
+// OpenAI batch sessions keep the raw multiline callbacks so the parent can match each
+// state to its authorization session. Method visibility follows the supplied flags;
+// platform selection supplies labels and callback guidance.
+
+// Props describes caller-owned authorization settings and display state for this
+// component.
 interface Props {
-  addMethod: AddMethod
-  authUrl?: string
-  sessionId?: string
-  loading?: boolean
-  error?: string
-  showHelp?: boolean
-  showProxyWarning?: boolean
-  allowMultiple?: boolean
-  methodLabel?: string
-  showCookieOption?: boolean // Whether to show cookie auto-auth option
-  showRefreshTokenOption?: boolean // Whether to show refresh token input option (OpenAI only)
-  showMobileRefreshTokenOption?: boolean // Whether to show mobile refresh token option (OpenAI only)
-  showSessionTokenOption?: boolean
-  showAccessTokenOption?: boolean
-  showCodexSessionImportOption?: boolean
-  showAgentIdentityOption?: boolean
-  showCodexPatOption?: boolean
-  showSsoOption?: boolean
-  showManualOption?: boolean
+  addMethod: AddMethod // OAuth or setup-token mode.
+  authUrl?: string // Current single-session authorization URL.
+  sessionId?: string // Current single-session authorization identifier.
+  loading?: boolean // Caller-owned pending operation flag.
+  error?: string // Caller-owned error display text.
+  showHelp?: boolean // Shows authorization help access.
+  showProxyWarning?: boolean // Shows proxy configuration guidance.
+  allowMultiple?: boolean // Allows multiline credential guidance.
+  methodLabel?: string // Caller-supplied method label text.
+  showCookieOption?: boolean // Enables the cookie method choice.
+  showRefreshTokenOption?: boolean // Enables refresh-token method choice.
+  showMobileRefreshTokenOption?: boolean // Enables mobile refresh-token choice.
+  showSessionTokenOption?: boolean // Enables session-token method choice.
+  showAccessTokenOption?: boolean // Enables access-token method choice.
+  showCodexSessionImportOption?: boolean // Enables Codex session import choice.
+  showAgentIdentityOption?: boolean // Enables Agent Identity import choice.
+  showCodexPatOption?: boolean // Enables personal access-token choice.
+  showSsoOption?: boolean // Enables SSO cookie import choice.
+  showManualOption?: boolean // Enables manual callback method choice.
+  // Initial method and later reset target; prop changes replace the local selection even
+  // if unavailable.
   initialInputMethod?: AuthInputMethod
-  platform?: ProviderPlatform // Platform type for different UI/text
-  showProjectId?: boolean // New prop to control project ID visibility
+  platform?: ProviderPlatform // Provider platform identifier.
+  showProjectId?: boolean // Shows the project input.
+  // OpenAI batch sessions take precedence over the single authUrl/sessionId pair and
+  // preserve callback state matching.
   authSessions?: OpenAIOAuthSession[]
 }
 
+// props exposes caller-owned inputs used by the template and derived state in this
+// component.
 const props = withDefaults(defineProps<Props>(), {
   authUrl: '',
   sessionId: '',
@@ -408,28 +497,37 @@ const props = withDefaults(defineProps<Props>(), {
   initialInputMethod: 'manual',
   platform: 'anthropic',
   showProjectId: true,
-  authSessions: () => []
+  authSessions: () => [],
 })
 
+// emit publishes typed draft changes and actions to the parent that owns this component.
 const emit = defineEmits<{
-  'generate-url': []
-  'remove-auth-session': [sessionId: string]
-  'exchange-code': [code: string]
-  'cookie-auth': [sessionKey: string]
-  'validate-refresh-token': [refreshToken: string]
-  'validate-mobile-refresh-token': [refreshToken: string]
-  'validate-session-token': [sessionToken: string]
-  'import-access-token': [accessToken: string]
-  'import-codex-session': [content: string]
-  'import-codex-pat': [accessToken: string]
-  'import-sso': [content: string]
-  'update:inputMethod': [method: AuthInputMethod]
+  'generate-url': [] // Authorization URL generation request.
+  'remove-auth-session': [sessionId: string] // Session removal identifier payload.
+  'exchange-code': [code: string] // Manual authorization code payload.
+  'cookie-auth': [sessionKey: string] // Untrimmed cookie input payload.
+  'validate-refresh-token': [refreshToken: string] // Trimmed refresh-token input payload.
+  'validate-mobile-refresh-token': [refreshToken: string] // Trimmed mobile refresh-token payload.
+  'validate-session-token': [sessionToken: string] // Session-token validation request payload.
+  'import-access-token': [accessToken: string] // Access-token import request payload.
+  'import-codex-session': [content: string] // Trimmed session content payload.
+  'import-codex-pat': [accessToken: string] // Trimmed personal access-token payload.
+  'import-sso': [content: string] // Trimmed SSO input payload.
+  'update:inputMethod': [method: AuthInputMethod] // Replacement input method draft value.
 }>()
 
+// t resolves interface labels from the active component locale while reactive consumers
+// update their displayed text.
 const { t } = useI18n()
 
+// isOpenAI selects OpenAI authorization controls and hints from the platform provided by
+// the owning dialog.
 const isOpenAI = computed(() => props.platform === 'openai')
+// isOpenAIBatchAuth reports supplied session entries so raw callbacks can retain state
+// for parent-side batch association.
 const isOpenAIBatchAuth = computed(() => props.authSessions.length > 0)
+// openAIAuthSessions prefers supplied batch entries; the single URL and session ID
+// synthesize one display entry when both exist.
 const openAIAuthSessions = computed(() => {
   if (props.authSessions.length > 0) {
     return props.authSessions
@@ -437,15 +535,23 @@ const openAIAuthSessions = computed(() => {
   if (!props.authUrl || !props.sessionId) {
     return []
   }
-  return [{
-    authUrl: props.authUrl,
-    sessionId: props.sessionId,
-    state: ''
-  }]
+  return [
+    {
+      authUrl: props.authUrl,
+      sessionId: props.sessionId,
+      state: '',
+    },
+  ]
 })
-const showLocalCallbackNotice = computed(() => props.platform === 'openai' || props.platform === 'grok')
+// showLocalCallbackNotice enables callback guidance for OpenAI and Grok, whose flow
+// accepts pasted local callback addresses.
+const showLocalCallbackNotice = computed(
+  () => props.platform === 'openai' || props.platform === 'grok',
+)
 
-// Get translation key based on platform
+// getOAuthKey selects the platform translation namespace for a shared authorization
+// label. Anthropic and unrecognized platforms use the base OAuth namespace, while
+// supported alternatives supply their platform-specific prefix.
 const getOAuthKey = (key: string) => {
   if (props.platform === 'openai') return `admin.providers.oauth.openai.${key}`
   if (props.platform === 'gemini') return `admin.providers.oauth.gemini.${key}`
@@ -455,7 +561,9 @@ const getOAuthKey = (key: string) => {
   return `admin.providers.oauth.${key}`
 }
 
-// Computed translations for current platform
+// The OAuth title, instructions, step labels, and code hints share the platform
+// namespace returned by getOAuthKey. Computed translations keep those labels
+// synchronized when the caller changes the platform or locale.
 const oauthTitle = computed(() => t(getOAuthKey('title')))
 const oauthFollowSteps = computed(() => t(getOAuthKey('followSteps')))
 const oauthStep1GenerateUrl = computed(() => t(getOAuthKey('step1GenerateUrl')))
@@ -467,71 +575,152 @@ const oauthAuthCodeDesc = computed(() => t(getOAuthKey('authCodeDesc')))
 const oauthAuthCode = computed(() => t(getOAuthKey('authCode')))
 const oauthAuthCodePlaceholder = computed(() => t(getOAuthKey('authCodePlaceholder')))
 const oauthAuthCodeHint = computed(() => t(getOAuthKey('authCodeHint')))
+// oauthImportantNotice selects callback warnings for OpenAI, Antigravity, Qoder, and
+// Grok. Other platforms receive an empty notice so the template can omit that block.
 const oauthImportantNotice = computed(() => {
   if (props.platform === 'openai') return t('admin.providers.oauth.openai.importantNotice')
-  if (props.platform === 'antigravity') return t('admin.providers.oauth.antigravity.importantNotice')
+  if (props.platform === 'antigravity')
+    return t('admin.providers.oauth.antigravity.importantNotice')
   if (props.platform === 'qoder') return t('admin.providers.oauth.qoder.importantNotice')
   if (props.platform === 'grok') return t('admin.providers.oauth.grok.importantNotice')
   return ''
 })
 
-// Local state
+// inputMethod starts from initialInputMethod and reports later changes to the parent that
+// performs the chosen authorization action.
 const inputMethod = ref<AuthInputMethod>(props.initialInputMethod)
+// isAgentIdentityInput selects Agent Identity labels for the shared session import
+// controls when that method is active.
 const isAgentIdentityInput = computed(() => inputMethod.value === 'agent_identity')
+// authCodeInput holds a manual code or raw batch callbacks; the single-session watcher
+// extracts code while retaining state separately.
 const authCodeInput = ref('')
+// sessionKeyInput retains cookie authorization text, including internal newlines, until
+// the parent resets the exposed input flow.
 const sessionKeyInput = ref('')
+// refreshTokenInput holds regular or mobile refresh-token drafts and retains internal
+// line breaks for parent-side batch parsing.
 const refreshTokenInput = ref('')
+// sessionTokenInput holds the session-token draft read by the owning dialog through the
+// exposed component reference.
 const sessionTokenInput = ref('')
+// codexSessionInput retains JSON session records or multiline import text for the parent
+// authorization parser to interpret.
 const codexSessionInput = ref('')
+// codexPATInput stores the personal access token draft until the owning dialog resets the
+// exposed input flow.
 const codexPATInput = ref('')
+// ssoCookieInput retains multiline SSO entries and is trimmed at the outer edges when
+// import is requested.
 const ssoCookieInput = ref('')
+// showHelpDialog controls the local authorization help dialog and closes when the parent
+// invokes the exposed reset operation.
 const showHelpDialog = ref(false)
+// oauthState retains callback state separately from a normalized code so the parent can
+// supply it during exchange.
 const oauthState = ref('')
+// projectId retains the optional project draft that platform-specific parent controllers
+// read before generating an authorization URL.
 const projectId = ref('')
 
-// 仅在存在多个输入方式时显示方式选择区。
-const methodOptionCount = computed(() => [
-  props.showManualOption,
-  props.showCookieOption,
-  props.showRefreshTokenOption,
-  props.showMobileRefreshTokenOption,
-  props.showSessionTokenOption,
-  props.showAccessTokenOption,
-  props.showCodexSessionImportOption,
-  props.showAgentIdentityOption,
-  props.showCodexPatOption,
-  props.showSsoOption
-].filter(Boolean).length)
+// methodOptionCount counts enabled method flags so the template can choose between
+// hidden, segmented, and dropdown method controls.
+const methodOptionCount = computed(
+  () =>
+    [
+      props.showManualOption,
+      props.showCookieOption,
+      props.showRefreshTokenOption,
+      props.showMobileRefreshTokenOption,
+      props.showSessionTokenOption,
+      props.showAccessTokenOption,
+      props.showCodexSessionImportOption,
+      props.showAgentIdentityOption,
+      props.showCodexPatOption,
+      props.showSsoOption,
+    ].filter(Boolean).length,
+)
+// showMethodSelection hides method choice when at most one method flag is enabled for the
+// owning dialog.
 const showMethodSelection = computed(() => methodOptionCount.value > 1)
 
-// 授权方式按调用方开放的选项生成，顺序与旧版单选框一致。
+// methodOptions filters caller-enabled methods in display order and assigns stable test
+// identifiers to each resulting selector option.
 const methodOptions = computed(() => {
-  const options: Array<{ value: AuthInputMethod; label: string; show: boolean }> = [
+  const options: Array<{
+    value: AuthInputMethod // Selector option wire value.
+    label: string // Displayed input label.
+    show: boolean // Caller-enabled method visibility.
+  }> = [
     { value: 'manual', label: t('admin.providers.oauth.manualAuth'), show: props.showManualOption },
-    { value: 'cookie', label: t('admin.providers.oauth.cookieAutoAuth'), show: props.showCookieOption },
-    { value: 'refresh_token', label: t(getOAuthKey('refreshTokenAuth')), show: props.showRefreshTokenOption },
+    {
+      value: 'cookie',
+      label: t('admin.providers.oauth.cookieAutoAuth'),
+      show: props.showCookieOption,
+    },
+    {
+      value: 'refresh_token',
+      label: t(getOAuthKey('refreshTokenAuth')),
+      show: props.showRefreshTokenOption,
+    },
     { value: 'sso_cookie', label: t(getOAuthKey('ssoCookieAuth')), show: props.showSsoOption },
-    { value: 'mobile_refresh_token', label: t('admin.providers.oauth.openai.mobileRefreshTokenAuth', '手动输入 Mobile RT'), show: props.showMobileRefreshTokenOption },
-    { value: 'session_token', label: t(getOAuthKey('sessionTokenAuth')), show: props.showSessionTokenOption },
-    { value: 'access_token', label: t('admin.providers.oauth.openai.accessTokenAuth', '手动输入 AT'), show: props.showAccessTokenOption },
-    { value: 'codex_session', label: t('admin.providers.oauth.openai.codexSessionAuth'), show: props.showCodexSessionImportOption },
-    { value: 'agent_identity', label: t('admin.providers.oauth.openai.agentIdentityAuth'), show: props.showAgentIdentityOption },
-    { value: 'codex_pat', label: t('admin.providers.oauth.openai.codexPatAuth'), show: props.showCodexPatOption },
+    {
+      value: 'mobile_refresh_token',
+      label: t('admin.providers.oauth.openai.mobileRefreshTokenAuth', '手动输入 Mobile RT'),
+      show: props.showMobileRefreshTokenOption,
+    },
+    {
+      value: 'session_token',
+      label: t(getOAuthKey('sessionTokenAuth')),
+      show: props.showSessionTokenOption,
+    },
+    {
+      value: 'access_token',
+      label: t('admin.providers.oauth.openai.accessTokenAuth', '手动输入 AT'),
+      show: props.showAccessTokenOption,
+    },
+    {
+      value: 'codex_session',
+      label: t('admin.providers.oauth.openai.codexSessionAuth'),
+      show: props.showCodexSessionImportOption,
+    },
+    {
+      value: 'agent_identity',
+      label: t('admin.providers.oauth.openai.agentIdentityAuth'),
+      show: props.showAgentIdentityOption,
+    },
+    {
+      value: 'codex_pat',
+      label: t('admin.providers.oauth.openai.codexPatAuth'),
+      show: props.showCodexPatOption,
+    },
   ]
   return options
-    .filter(option => option.show)
-    .map(option => ({ value: option.value, label: option.label, testid: `oauth-method-${option.value}` }))
+    .filter((option) => option.show)
+    .map((option) => ({
+      value: option.value,
+      label: option.label,
+      testid: `oauth-method-${option.value}`,
+    }))
 })
 
+// uid supplies one stable instance ID so labels target their own input when several
+// editors are mounted.
 const uid = useId()
-// 步骤完成状态控制视觉提示。
+
+// hasGeneratedUrl marks the generation step complete when a single authorization URL or
+// batch session entry is available.
 const hasGeneratedUrl = computed(() => !!props.authUrl || props.authSessions.length > 0)
+// hasAuthCode marks the input step complete when the current code draft contains any
+// non-whitespace text.
 const hasAuthCode = computed(() => authCodeInput.value.trim() !== '')
 
-// Clipboard
+// copied and copyToClipboard expose shared clipboard feedback for authorization URLs
+// displayed by this flow.
 const { copied, copyToClipboard } = useClipboard()
 
-// Computed
+// parsedKeyCount counts nonblank cookie input lines for batch guidance while leaving
+// parsing and validation to the parent.
 const parsedKeyCount = computed(() => {
   return sessionKeyInput.value
     .split('\n')
@@ -539,7 +728,8 @@ const parsedKeyCount = computed(() => {
     .filter((k) => k).length
 })
 
-// Computed: count of refresh tokens entered
+// parsedRefreshTokenCount counts nonblank refresh-token lines for display while
+// preserving their complete text in the local draft.
 const parsedRefreshTokenCount = computed(() => {
   return refreshTokenInput.value
     .split('\n')
@@ -547,6 +737,8 @@ const parsedRefreshTokenCount = computed(() => {
     .filter((rt) => rt).length
 })
 
+// parsedAuthCodeLineCount counts nonblank callback lines for batch guidance without
+// extracting or matching the individual authorization sessions.
 const parsedAuthCodeLineCount = computed(() => {
   return authCodeInput.value
     .split('\n')
@@ -554,6 +746,8 @@ const parsedAuthCodeLineCount = computed(() => {
     .filter((line) => line).length
 })
 
+// parsedCodexSessionCount treats JSON-looking content as one displayed entry and
+// otherwise counts nonblank lines for import guidance.
 const parsedCodexSessionCount = computed(() => {
   const trimmed = codexSessionInput.value.trim()
   if (!trimmed) return 0
@@ -564,30 +758,47 @@ const parsedCodexSessionCount = computed(() => {
     .filter((item) => item).length
 })
 
+// extractCallbackParam extracts a trimmed code or state from a callback URL or pasted
+// fragment. A valid URL prefers its search parameter and then checks the fragment;
+// malformed URLs use a parameter-pattern match.
+//
+// The malformed-URL path decodes plus signs as spaces before percent decoding. If decoding
+// fails, it returns the captured text so the pasted credential remains available to the
+// caller. Missing parameters return an empty string.
 const extractCallbackParam = (value: string, param: 'code' | 'state') => {
   try {
     const url = new URL(value)
     const fromSearch = url.searchParams.get(param)
+    // Search parameters take precedence over fragment parameters for valid URLs, matching
+    // the code and state chosen from a complete callback address.
     if (fromSearch) return fromSearch.trim()
     if (url.hash) {
       return new URLSearchParams(url.hash.replace(/^#/, '')).get(param)?.trim() || ''
     }
   } catch {
+    // Malformed URL input may still contain pasted callback parameters, so the pattern path
+    // extracts those values before attempting percent decoding.
     const match = value.match(new RegExp(`(?:^|[?#&])${param}=([^&#\\s]+)`))
     if (!match?.[1]) return ''
     try {
       return decodeURIComponent(match[1].replace(/\+/g, ' ')).trim()
     } catch {
+      // Invalid percent escapes keep their captured text so the parent receives the pasted
+      // value and can report any exchange failure.
       return match[1].trim()
     }
   }
   return ''
 }
 
+// shouldNormalizeSingleCallbackInput keeps raw OpenAI batch callbacks available while
+// allowing single-session code and state extraction in the input watcher.
 const shouldNormalizeSingleCallbackInput = computed(() => {
   return props.platform !== 'openai' || !isOpenAIBatchAuth.value
 })
 
+// parsedSSOCount counts nonblank SSO lines for display while the parent remains
+// responsible for parsing and validating entries.
 const parsedSSOCount = computed(() => {
   return ssoCookieInput.value
     .split('\n')
@@ -595,17 +806,19 @@ const parsedSSOCount = computed(() => {
     .filter((item) => item).length
 })
 
-// Watchers
-watch(() => props.initialInputMethod, (newVal) => {
-  inputMethod.value = newVal
-})
+watch(
+  () => props.initialInputMethod,
+  (newVal) => {
+    inputMethod.value = newVal
+  },
+)
 
 watch(inputMethod, (newVal) => {
   emit('update:inputMethod', newVal)
 })
 
-// 从单条回调链接自动提取授权码，OpenAI 批量导入保留多行原始输入给父组件匹配 state。
-// 例如：http://localhost:8085/callback?code=xxx...&state=...
+// Single callbacks store state before replacing the draft with the extracted code; OpenAI
+// batch callbacks retain their original text for session matching.
 watch(authCodeInput, (newVal) => {
   if (!shouldNormalizeSingleCallbackInput.value) return
 
@@ -622,37 +835,55 @@ watch(authCodeInput, (newVal) => {
   }
 })
 
-// Methods
+// handleGenerateUrl asks the owning dialog to generate an authorization URL.
 const handleGenerateUrl = () => {
   emit('generate-url')
 }
 
+// handleCopyUrl copies the current authorization URL when a nonempty URL is available.
+// Clipboard success feedback comes from the shared helper, and this handler leaves
+// authorization state and input drafts unchanged.
 const handleCopyUrl = () => {
   if (props.authUrl) {
     copyToClipboard(props.authUrl, 'URL copied to clipboard')
   }
 }
 
+// handleCopySessionUrl copies the supplied session URL with the shared clipboard helper.
+// The caller provides the URL belonging to the displayed session so batch entries retain
+// their own authorization destinations.
 const handleCopySessionUrl = (urlValue: string) => {
   copyToClipboard(urlValue, 'URL copied to clipboard')
 }
 
+// handleRemoveAuthSession asks the parent to remove the authorization session identified
+// by its ID. Session storage and pending-request handling belong to the parent rather
+// than this list action.
 const handleRemoveAuthSession = (targetSessionId: string) => {
   emit('remove-auth-session', targetSessionId)
 }
 
+// handleRegenerate clears the entered code and extracted state before requesting a new
+// URL. Other credential drafts remain available, and the parent replaces its
+// authorization session when generation completes.
 const handleRegenerate = () => {
   authCodeInput.value = ''
   oauthState.value = ''
   emit('generate-url')
 }
 
+// handleCookieAuth emits the cookie draft when it contains non-whitespace characters. The
+// original text is forwarded so the parent can split multiple session keys and apply its
+// own trimming rules.
 const handleCookieAuth = () => {
   if (sessionKeyInput.value.trim()) {
     emit('cookie-auth', sessionKeyInput.value)
   }
 }
 
+// handleValidateRefreshToken emits trimmed refresh-token input through the selected
+// validation event. Mobile refresh mode uses its dedicated event, while other modes use
+// the regular refresh-token event and preserve internal newlines.
 const handleValidateRefreshToken = () => {
   if (refreshTokenInput.value.trim()) {
     if (inputMethod.value === 'mobile_refresh_token') {
@@ -663,25 +894,35 @@ const handleValidateRefreshToken = () => {
   }
 }
 
+// handleImportCodexSession emits trimmed Codex session content when the draft contains
+// text. JSON objects and multiline imports remain intact for the parent parser to
+// interpret and associate with accounts.
 const handleImportCodexSession = () => {
   if (codexSessionInput.value.trim()) {
     emit('import-codex-session', codexSessionInput.value.trim())
   }
 }
 
+// handleImportCodexPAT emits a trimmed personal access token when its draft contains
+// text. Validation and persistence belong to the parent handling import-codex-pat, so the
+// draft remains visible until reset.
 const handleImportCodexPAT = () => {
   if (codexPATInput.value.trim()) {
     emit('import-codex-pat', codexPATInput.value.trim())
   }
 }
 
+// handleImportSSO emits trimmed SSO cookie content when the draft contains text. Internal
+// line breaks remain available to the parent for batch parsing, and the component retains
+// its local draft.
 const handleImportSSO = () => {
   if (ssoCookieInput.value.trim()) {
     emit('import-sso', ssoCookieInput.value.trim())
   }
 }
 
-// Expose methods and state
+// The parent reads unwrapped draft refs and calls reset when its dialog lifecycle ends, so
+// credential clearing is coordinated by the owner.
 defineExpose({
   authCode: authCodeInput,
   oauthState,
@@ -693,6 +934,9 @@ defineExpose({
   codexPAT: codexPATInput,
   ssoCookie: ssoCookieInput,
   inputMethod,
+  // reset clears every exposed credential draft and callback state, restores the initial
+  // input method, and closes help. The owning dialog invokes it when its authorization
+  // lifecycle should discard the entered secrets.
   reset: () => {
     authCodeInput.value = ''
     oauthState.value = ''
@@ -705,6 +949,6 @@ defineExpose({
     ssoCookieInput.value = ''
     inputMethod.value = props.initialInputMethod
     showHelpDialog.value = false
-  }
+  },
 })
 </script>

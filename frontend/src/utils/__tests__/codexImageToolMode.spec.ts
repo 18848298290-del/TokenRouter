@@ -6,7 +6,19 @@ import {
   type CodexImageToolMode,
 } from '@/utils/codexImageToolMode'
 
+/**
+ * codexImageToolMode.spec.ts checks image-tool mode precedence and both
+ * persistence cleanup forms. Table cases cover current and legacy keys
+ * together with strip policy, then verify complete-object deletion and JSONB
+ * null clearing preserve the selected mode without unrelated changes.
+ */
+
 describe('Codex 图片工具策略', () => {
+  /**
+   * Provider settings combine absent, current, legacy, and strip-policy values.
+   * The reader must follow strip precedence and current boolean precedence while
+   * treating unsupported values as inherited.
+   */
   it.each<[string, Record<string, unknown> | undefined, CodexImageToolMode]>([
     ['空配置跟随渠道', undefined, 'inherit'],
     ['读取新桥接开关 true', { codex_image_generation_bridge: true }, 'enabled'],
@@ -35,6 +47,11 @@ describe('Codex 图片工具策略', () => {
     expect(readCodexImageToolMode(extra)).toBe(expected)
   })
 
+  /**
+   * A complete extra object contains conflicting current and legacy overrides.
+   * Applying each mode must remove stale keys and preserve the unrelated field
+   * in the result.
+   */
   it.each<[CodexImageToolMode, Record<string, unknown>]>([
     ['inherit', {}],
     ['enabled', { codex_image_generation_bridge: true }],
@@ -51,6 +68,11 @@ describe('Codex 图片工具策略', () => {
     expect(applyCodexImageToolMode(extra, mode)).toEqual({ untouched: 'keep', ...expected })
   })
 
+  /**
+   * Merge updates require explicit null values to clear persisted override
+   * fields. Each selected mode must retain those clear markers except for its
+   * active replacement value.
+   */
   it.each<[CodexImageToolMode, Record<string, unknown>]>([
     [
       'inherit',

@@ -4,4 +4,9 @@
 
 <script setup lang="ts">
 import AdminAffiliateRecordsTable from './AdminAffiliateRecordsTable.vue'
+
+// AdminAffiliateInvitesView.vue opens the administrator invitation records page through
+// the shared affiliate table. Its fixed record type selects the matching endpoint,
+// column set, and saved sorting namespace while the shared component owns filtering and
+// detail interactions.
 </script>

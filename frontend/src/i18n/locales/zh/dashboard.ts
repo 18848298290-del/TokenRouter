@@ -1,7 +1,8 @@
-// dashboard.ts supplies Simplified Chinese labels for metrics, chart controls,
-// announcements, and account shortcuts. Compact comparison labels retain the
-// previous-period context on narrow cards, while wider cards display the full
-// comparison phrase beside the same values.
+// dashboard.ts supplies Simplified Chinese messages for dashboards, API keys,
+// usage, profile settings, and shared table states. Metric labels and comparison
+// phrases support summary cards, while the other namespaces provide account
+// actions, validation messages, and list controls used throughout user pages.
+
 export default {
   dashboard: {
     title: '仪表盘',
@@ -11,7 +12,7 @@ export default {
         requests: '请求数',
         tokens: 'Token',
         cost: '消费',
-        cacheHitRate: '缓存命中率'
+        cacheHitRate: '缓存命中率',
       },
       series: {
         input: '输入',
@@ -19,7 +20,7 @@ export default {
         cacheCreation: '缓存创建',
         cacheRead: '缓存读取',
         actualCost: '实际扣费',
-        total: '合计'
+        total: '合计',
       },
       currentPeriod: '本期',
       previousPeriod: '上一周期',
@@ -31,7 +32,7 @@ export default {
       byHour: '按小时',
       byDay: '按天',
       trendTitle: '用量趋势 · {metric}',
-      empty: '所选时间范围内暂无用量'
+      empty: '所选时间范围内暂无用量',
     },
     live: {
       rpm: 'RPM',
@@ -39,7 +40,7 @@ export default {
       rpmHint: '近 5 分钟平均每分钟请求数',
       tpmHint: '近 5 分钟平均每分钟 Token 数',
       latency: '平均耗时',
-      todayCost: '今日消费'
+      todayCost: '今日消费',
     },
     topModels: {
       title: '模型排行',
@@ -49,7 +50,7 @@ export default {
       empty: '所选范围内暂无模型用量',
       filterHint: '点击按此模型筛选',
       clearFilter: '再次点击取消筛选',
-      hitRate: '命中率 {rate}'
+      hitRate: '命中率 {rate}',
     },
     activityHeatmap: '用量热力图',
     heatmapSelectDay: '点击查看当天按小时用量',
@@ -71,13 +72,13 @@ export default {
     checkDetailedLogs: '查看详细的使用日志',
     purchasePlanOrRecharge: '购买套餐或充值余额',
     redeemCode: '兑换码',
-    addBalanceWithCode: '使用兑换码充值'
+    addBalanceWithCode: '使用兑换码充值',
   },
-// Groups (shared)
+  // Groups (shared)
   groups: {
-    subscription: '订阅'
+    subscription: '订阅',
   },
-// API Keys
+  // API Keys
   keys: {
     title: 'API 密钥',
     description: '管理您的 API 密钥和访问令牌',
@@ -98,7 +99,8 @@ export default {
     deleteKey: '删除密钥',
     rotateKey: '轮换凭据',
     confirmRotate: '确认轮换',
-    rotateConfirmMessage: "确定要轮换 '{name}' 的 API Key 凭据吗？旧凭据将失效，使用它的客户端需要更新。Key 的 ID、配置和用量记录保持不变。",
+    rotateConfirmMessage:
+      "确定要轮换 '{name}' 的 API Key 凭据吗？旧凭据将失效，使用它的客户端需要更新。Key 的 ID、配置和用量记录保持不变。",
     keyRotatedSuccess: 'API Key 凭据已轮换',
     rotatedKeyHint: '请复制新凭据并更新客户端配置。旧凭据已失效。',
     failedToRotate: '轮换 API Key 凭据失败',
@@ -123,14 +125,16 @@ export default {
       verifiedTitle: '已验证当前 tf 会话',
       verifiedDescription: '会话证明与终端链接一致。此状态不验证网页、API Key 或后续网关结果。',
       unverifiedTitle: '未验证本机 tf 会话',
-      unverifiedDescription: '无法验证此本机服务是否来自当前终端链接。继续会将 API Key 发送给该服务。',
+      unverifiedDescription:
+        '无法验证此本机服务是否来自当前终端链接。继续会将 API Key 发送给该服务。',
       destination: '本机目标',
       group: '来源分组',
       confirmDescription: '发送后仍需在终端确认；只有终端确认后 tf 才会继续校验并保存 Key。',
       send: '发送到 TF CLI',
       waiting: '等待终端',
       waitingTitle: '等待终端确认',
-      waitingDescription: '请在运行 tf 的终端核对来源并确认。关闭窗口将停止网页等待，后续状态请查看终端。',
+      waitingDescription:
+        '请在运行 tf 的终端核对来源并确认。关闭窗口将停止网页等待，后续状态请查看终端。',
       acceptedTitle: '终端已接受请求',
       acceptedDescription: '请返回终端完成后续操作，最终结果以终端输出为准。',
       notFoundTitle: '未找到本机 tf 会话',
@@ -145,8 +149,8 @@ export default {
         invalidPayload: 'tf 无法读取此 Key 的导入数据。',
         unsupportedVersion: '本机 tf 不支持当前网页导入协议，请更新 tf。',
         network: '与本机 tf 的连接已中断，请确认会话仍在运行。',
-        unexpected: '本机 tf 返回了无法识别的响应。'
-      }
+        unexpected: '本机 tf 返回了无法识别的响应。',
+      },
     },
     enable: '启用',
     disable: '禁用',
@@ -169,7 +173,7 @@ export default {
       mappingRequired: '复合 Key 至少需要一个分组映射',
       tooManyMappings: '复合 Key 最多支持 20 个分组映射',
       moveUp: '上移',
-      moveDown: '下移'
+      moveDown: '下移',
     },
     billing: {
       modeLabel: '结算方式',
@@ -182,14 +186,14 @@ export default {
       modes: {
         auto: '自动选择',
         subscription: '指定订阅',
-        balance: '仅使用余额'
-      }
+        balance: '仅使用余额',
+      },
     },
     fastModePolicyLabel: 'Fast 模式策略',
     fastModePolicy: {
       followRequest: '跟随请求',
       forceOn: '强制开启 Fast',
-      forceOff: '强制关闭 Fast'
+      forceOff: '强制关闭 Fast',
     },
     modelRedirect: {
       label: '模型重定向',
@@ -201,7 +205,7 @@ export default {
         request: '客户端',
         match: '密钥规则',
         target: '后续路由',
-        flow: '客户端请求 {from}，密钥规则将它替换为 {to}，再交给后续路由。'
+        flow: '客户端请求 {from}，密钥规则将它替换为 {to}，再交给后续路由。',
       },
       hint: '精确来源优先；来源可使用一个末尾 *，目标必须是具体模型。',
       addRule: '添加规则',
@@ -217,7 +221,7 @@ export default {
       targetWildcardInvalid: '目标模型不能包含通配符',
       selfMapping: '来源与目标不能相同',
       duplicateSource: '来源模型不能重复',
-      tooManyRules: '最多支持 100 条模型重定向规则'
+      tooManyRules: '最多支持 100 条模型重定向规则',
     },
     fallbackWhenGroupUnavailable: '不可用时自动降级',
     statusLabel: '状态',
@@ -234,7 +238,8 @@ export default {
     teamOwnerDisabledHint: '该密钥已被团队管理员禁用，只有团队管理员可以重新启用。',
     failedToLoad: '加载 API 密钥失败',
     failedToSave: '保存 API 密钥失败',
-    apiKeyLimitReached: '无法创建 API 密钥：当前已有 {current} 个，上限为 {limit} 个。删除不再使用的密钥后可继续创建。',
+    apiKeyLimitReached:
+      '无法创建 API 密钥：当前已有 {current} 个，上限为 {limit} 个。删除不再使用的密钥后可继续创建。',
     failedToDelete: '删除 API 密钥失败',
     failedToUpdateStatus: '更新 API 密钥状态失败',
     clickToChangeGroup: '点击更换分组',
@@ -254,8 +259,10 @@ export default {
       shell: '终端环境',
       noModels: '此分组没有适用于当前客户端的模型',
       directAuth: '将 API Key 写入配置文件',
-      directAuthDescription: '开启后 Key 写入 config.toml，不再生成 auth.json，已有的登录信息不会被覆盖。',
-      websocketDescription: '通过 WebSocket 连接 Responses 接口，需要 Codex 客户端支持 WebSocket v2，不确定时保持关闭。',
+      directAuthDescription:
+        '开启后 Key 写入 config.toml，不再生成 auth.json，已有的登录信息不会被覆盖。',
+      websocketDescription:
+        '通过 WebSocket 连接 Responses 接口，需要 Codex 客户端支持 WebSocket v2，不确定时保持关闭。',
       title: '使用 API 密钥',
       compositeDescription: '调用模型时，请在模型 ID 前添加对应分组前缀。',
       description: '将以下环境变量添加到您的终端配置文件或直接在终端中运行。',
@@ -271,25 +278,28 @@ export default {
       openai: {
         description: '将以下配置文件添加到 Codex CLI 配置目录中。',
         authModeTitle: 'Codex 认证模式',
-        authModeDescription: '日常使用请选择兼容模式；仅当 Codex Desktop 需要调用本地图片工具时，才选择 API Key Mode。',
+        authModeDescription:
+          '日常使用请选择兼容模式；仅当 Codex Desktop 需要调用本地图片工具时，才选择 API Key Mode。',
         authModeLegacy: '兼容模式',
         authModeApiKey: 'API Key Mode',
-        authModeApiKeyRestartNotice: '保存此配置后，必须完全退出并重启 Codex Desktop 或 CLI，然后新建 task，让客户端重新构建工具注册表。',
+        authModeApiKeyRestartNotice:
+          '保存此配置后，必须完全退出并重启 Codex Desktop 或 CLI，然后新建 task，让客户端重新构建工具注册表。',
         websocketTitle: 'WebSocket 连接',
-        websocketDescription: '默认使用普通 HTTP 请求。仅当当前 Codex 客户端和服务端都支持 WebSocket v2 时开启；复合 Key 不支持 WebSocket。',
+        websocketDescription:
+          '默认使用普通 HTTP 请求。仅当当前 Codex 客户端和服务端都支持 WebSocket v2 时开启；复合 Key 不支持 WebSocket。',
         websocketDisabled: '关闭',
         websocketEnabled: '开启',
         configTomlHint: '请确保以下内容位于 config.toml 文件的开头部分',
         note: '请确保配置目录存在。macOS/Linux 用户可运行 mkdir -p ~/.codex 创建目录。',
         noteWindows:
-          '按 Win+R，输入 %userprofile%\\.codex 打开配置目录。如目录不存在，请先手动创建。'
+          '按 Win+R，输入 %userprofile%\\.codex 打开配置目录。如目录不存在，请先手动创建。',
       },
       cliTabs: {
         claudeCode: 'Claude Code',
         geminiCli: 'Gemini CLI',
         codexCli: 'Codex CLI',
         grokCli: 'Grok CLI',
-        opencode: 'OpenCode'
+        opencode: 'OpenCode',
       },
       antigravity: {
         description: '为 Antigravity 分组配置 API 访问。请根据您使用的客户端选择对应的配置方式。',
@@ -298,31 +308,37 @@ export default {
         claudeNote:
           '这些环境变量将在当前终端会话中生效。如需永久配置，请将其添加到 ~/.bashrc、~/.zshrc 或相应的配置文件中。',
         geminiNote:
-          '这些环境变量将在当前终端会话中生效。如需永久配置，请将其添加到 ~/.bashrc、~/.zshrc 或相应的配置文件中。'
+          '这些环境变量将在当前终端会话中生效。如需永久配置，请将其添加到 ~/.bashrc、~/.zshrc 或相应的配置文件中。',
       },
       gemini: {
         description:
           '将以下环境变量添加到您的终端配置文件或直接在终端中运行，以配置 Gemini CLI 访问。',
         modelComment: '如果你有 Gemini 3 权限可以填：gemini-3-pro-preview',
-        note: '这些环境变量将在当前终端会话中生效。如需永久配置，请将其添加到 ~/.bashrc、~/.zshrc 或相应的配置文件中。'
+        note: '这些环境变量将在当前终端会话中生效。如需永久配置，请将其添加到 ~/.bashrc、~/.zshrc 或相应的配置文件中。',
       },
       grok: {
-        description: '配置 Grok Build、Claude Code、Codex 或 OpenCode，让请求通过当前 TokenRouter Grok 分组发送。',
-        claudeDescription: '配置 Claude Code，让 Messages API 请求通过当前 TokenRouter Grok 分组发送。',
+        description:
+          '配置 Grok Build、Claude Code、Codex 或 OpenCode，让请求通过当前 TokenRouter Grok 分组发送。',
+        claudeDescription:
+          '配置 Claude Code，让 Messages API 请求通过当前 TokenRouter Grok 分组发送。',
         codexDescription: '配置 Codex，让 Responses API 请求通过当前 TokenRouter Grok 分组发送。',
-        configTomlHint: '如已有 config.toml，请先备份再合并此模型配置。保存后运行 grok inspect 验证生效配置。',
+        configTomlHint:
+          '如已有 config.toml，请先备份再合并此模型配置。保存后运行 grok inspect 验证生效配置。',
         codexConfigTomlHint: '如已有 config.toml，请先备份再合并此服务商配置。',
         note: '保存为 ~/.grok/config.toml，然后运行 grok inspect，并在 /model 中选择 grok。',
-        noteWindows: '保存为 %USERPROFILE%\\.grok\\config.toml，然后运行 grok inspect，并在 /model 中选择 grok。',
-        claudeNote: '二选一即可：终端命令仅在当前会话生效；保存 settings.json 可作为用户级持久配置。',
+        noteWindows:
+          '保存为 %USERPROFILE%\\.grok\\config.toml，然后运行 grok inspect，并在 /model 中选择 grok。',
+        claudeNote:
+          '二选一即可：终端命令仅在当前会话生效；保存 settings.json 可作为用户级持久配置。',
         codexNote: '将 config.toml 保存到 ~/.codex，并在启动 Codex 前设置 TOKENROUTER_API_KEY。',
-        codexNoteWindows: '将 config.toml 保存到 %USERPROFILE%\\.codex，并在 PowerShell 中设置 TOKENROUTER_API_KEY 后启动 Codex。'
+        codexNoteWindows:
+          '将 config.toml 保存到 %USERPROFILE%\\.codex，并在 PowerShell 中设置 TOKENROUTER_API_KEY 后启动 Codex。',
       },
       opencode: {
         title: 'OpenCode 配置示例',
         subtitle: 'opencode.json',
-        hint: '配置文件路径：~/.config/opencode/opencode.json（或 opencode.jsonc），不存在需手动创建。可使用默认 provider（openai/anthropic/google）或自定义 provider_id。API Key 支持直接配置或通过客户端 /connect 命令配置。示例仅供参考，模型与选项可按需调整。'
-      }
+        hint: '配置文件路径：~/.config/opencode/opencode.json（或 opencode.jsonc），不存在需手动创建。可使用默认 provider（openai/anthropic/google）或自定义 provider_id。API Key 支持直接配置或通过客户端 /connect 命令配置。示例仅供参考，模型与选项可按需调整。',
+      },
     },
     customKeyLabel: '自定义密钥',
     customKeyPlaceholder: '输入自定义密钥（至少16个字符）',
@@ -346,9 +362,9 @@ export default {
       claudeCode: 'Claude Code',
       claudeCodeDesc: '导入为 Claude Code 配置',
       geminiCli: 'Gemini CLI',
-      geminiCliDesc: '导入为 Gemini CLI 配置'
+      geminiCliDesc: '导入为 Gemini CLI 配置',
     },
-    // 配额和有效期
+    // Quota and expiration
     quotaLimit: '额度限制',
     quotaAmount: '额度金额',
     quotaAmountPlaceholder: '输入额度限制',
@@ -357,14 +373,16 @@ export default {
     reset: '重置',
     resetQuotaUsed: '将已用额度重置为 0',
     resetQuotaTitle: '确认重置额度',
-    resetQuotaConfirmMessage: '确定要将密钥 "{name}" 的已用额度（{used}）重置为 0 吗？此操作不可撤销。',
+    resetQuotaConfirmMessage:
+      '确定要将密钥 "{name}" 的已用额度（{used}）重置为 0 吗？此操作不可撤销。',
     quotaResetSuccess: '额度重置成功',
     failedToResetQuota: '重置额度失败',
     rateLimitColumn: '速率限制',
     concurrencyLimit: '并发上限',
     rpmLimit: '每分钟请求上限（RPM）',
     requestLimitsInvalid: '请求上限需为 0 到 2147483647 之间的整数',
-    requestLimitsHint: '0 表示不限制此 Key。用户和分组的限制仍然生效。RPM 按最近 60 秒获准进入网关的请求计数。',
+    requestLimitsHint:
+      '0 表示不限制此 Key。用户和分组的限制仍然生效。RPM 按最近 60 秒获准进入网关的请求计数。',
     rateLimitSection: '速率限制',
     resetUsage: '重置',
     rateLimit5h: '5小时限额',
@@ -374,7 +392,8 @@ export default {
     rateLimitUsage: '速率限制用量',
     resetRateLimitUsage: '重置速率限制用量',
     resetRateLimitTitle: '确认重置速率限制',
-    resetRateLimitConfirmMessage: '确定要重置密钥 "{name}" 的速率限制用量吗？所有时间窗口的已用额度将归零。此操作不可撤销。',
+    resetRateLimitConfirmMessage:
+      '确定要重置密钥 "{name}" 的速率限制用量吗？所有时间窗口的已用额度将归零。此操作不可撤销。',
     rateLimitResetSuccess: '速率限制已重置',
     failedToResetRateLimit: '重置速率限制失败',
     resetNow: '即将重置',
@@ -393,10 +412,10 @@ export default {
       disabled: '已禁用',
       team_owner_disabled: '团队管理员禁用',
       quota_exhausted: '额度耗尽',
-      expired: '已过期'
-    }
+      expired: '已过期',
+    },
   },
-// Usage
+  // Usage
   usage: {
     title: '使用记录',
     description: '查看和分析您的 API 使用历史',
@@ -416,9 +435,12 @@ export default {
     standardCost: '标准',
     actualCost: '实际',
     providerCost: '成本',
-    actualDescription: '用户实际消耗的费用。按分组倍率和用户专属倍率计算，用于扣减用户余额或订阅配额。',
-    providerCostDescription: '提供商口径的费用。按提供商侧定价与提供商计费倍率计算，用于提供商配额统计和提供商成本分析，不影响用户实际扣费。',
-    standardDescription: '标准计费费用。按当前模型或渠道的基础定价计算，不受分组倍率、用户专属倍率和提供商计费倍率影响。',
+    actualDescription:
+      '用户实际消耗的费用。按分组倍率和用户专属倍率计算，用于扣减用户余额或订阅配额。',
+    providerCostDescription:
+      '提供商口径的费用。按提供商侧定价与提供商计费倍率计算，用于提供商配额统计和提供商成本分析，不影响用户实际扣费。',
+    standardDescription:
+      '标准计费费用。按当前模型或渠道的基础定价计算，不受分组倍率、用户专属倍率和提供商计费倍率影响。',
     userBilled: '用户扣费',
     providerBilled: '提供商计费',
     resetNow: '现在',
@@ -468,7 +490,8 @@ export default {
     latencyDuration: '总耗时',
     tps: 'TPS',
     tpsExport: 'TPS (tok/s)',
-    tpsHint: 'TPS = 输出 Token 数 ÷ 首个至最后有效内容的时间（秒）。按数据块估算，受网络、合并发送、下游背压和不可见思考影响。单块输出或 usage 不完整时显示 -；首字／首包设置不影响 TPS。',
+    tpsHint:
+      'TPS = 输出 Token 数 ÷ 首个至最后有效内容的时间（秒）。按数据块估算，受网络、合并发送、下游背压和不可见思考影响。单块输出或 usage 不完整时显示 -；首字／首包设置不影响 TPS。',
     detailedTiming: '详细耗时',
     timingRequestSize: '请求体',
     timingAttempts: '尝试次数',
@@ -554,15 +577,31 @@ export default {
     },
     tabs: { usage: '用量明细', errors: '错误请求', ranking: '用户排行' },
     errors: {
-      time: '时间', model: '模型', endpoint: '端点', status: '状态码',
-      category: '分类', platform: '平台', message: '错误信息',
-      keyName: 'Key 名称', keyDeleted: '已删除', allKeys: '全部 Key',
-      modelPlaceholder: '搜索模型', allCategories: '全部分类', allStatuses: '全部状态码',
-      empty: '暂无错误请求', failedToLoad: '加载错误请求失败',
+      time: '时间',
+      model: '模型',
+      endpoint: '端点',
+      status: '状态码',
+      category: '分类',
+      platform: '平台',
+      message: '错误信息',
+      keyName: 'Key 名称',
+      keyDeleted: '已删除',
+      allKeys: '全部 Key',
+      modelPlaceholder: '搜索模型',
+      allCategories: '全部分类',
+      allStatuses: '全部状态码',
+      empty: '暂无错误请求',
+      failedToLoad: '加载错误请求失败',
       categories: {
-        auth: '认证失败', rate_limit: '限流', quota: '余额/订阅',
-        invalid_request: '参数错误', service_unavailable: '服务暂时不可用',
-        cyber: 'Cyber 风控', upstream: '上游错误', internal: '平台错误', other: '其他',
+        auth: '认证失败',
+        rate_limit: '限流',
+        quota: '余额/订阅',
+        invalid_request: '参数错误',
+        service_unavailable: '服务暂时不可用',
+        cyber: 'Cyber 风控',
+        upstream: '上游错误',
+        internal: '平台错误',
+        other: '其他',
       },
       detail: {
         title: '错误请求详情',
@@ -572,7 +611,7 @@ export default {
       },
     },
   },
-// Redeem
+  // Redeem
   redeem: {
     paymentRequired: '该兑换码需要有成功付款记录才能领取，请先完成一次付款。',
     title: '兑换码',
@@ -604,9 +643,9 @@ export default {
     codeMaxUsed: '该兑换码已达到兑换上限',
     codeAlreadyUsed: '您已经兑换过该兑换码',
     failedToRedeem: '兑换失败，请检查兑换码后重试。',
-    pleaseEnterCode: '请输入兑换码'
+    pleaseEnterCode: '请输入兑换码',
   },
-affiliate: {
+  affiliate: {
     title: '邀请返利',
     description: '邀请新用户注册，并将返利额度转入账户余额',
     yourCode: '我的邀请码',
@@ -623,7 +662,7 @@ affiliate: {
       invitedUsers: '邀请人数',
       availableQuota: '可转返利额度',
       frozenQuota: '冻结中',
-      totalQuota: '历史返利额度'
+      totalQuota: '历史返利额度',
     },
     transfer: {
       title: '返利额度转余额',
@@ -631,7 +670,7 @@ affiliate: {
       button: '转入余额',
       transferring: '转入中...',
       empty: '当前没有可转入额度',
-      success: '已转入余额：{amount}'
+      success: '已转入余额：{amount}',
     },
     invitees: {
       title: '已邀请用户',
@@ -640,18 +679,18 @@ affiliate: {
         email: '邮箱',
         username: '用户名',
         rebate: '返利明细（{unitName}）',
-        joinedAt: '注册时间'
-      }
+        joinedAt: '注册时间',
+      },
     },
     tips: {
       title: '使用说明',
       line1: '将邀请码或邀请链接分享给新用户。',
       line2: '被邀请用户充值后，你可获得 {rate} 的返利额度。',
       line3: '返利额度可随时转入账户余额。',
-      line4: '新产生的返利需要经过冻结期后才能转出。'
-    }
+      line4: '新产生的返利需要经过冻结期后才能转出。',
+    },
   },
-// Profile
+  // Profile
   profile: {
     title: '个人设置',
     description: '管理您的账户信息和设置',
@@ -719,14 +758,14 @@ affiliate: {
       loginTitle: '双因素认证',
       loginHint: '请输入您认证器应用显示的 6 位验证码',
       loginFailed: '验证失败，请重试',
-      // New translations for email verification
+      // Email verification messages
       verifyEmailFirst: '请先验证您的邮箱',
       verifyPasswordFirst: '请先验证您的身份',
       emailCode: '邮箱验证码',
       enterEmailCode: '请输入 6 位验证码',
       sendCode: '发送验证码',
       codeSent: '验证码已发送到您的邮箱',
-      sendCodeFailed: '发送验证码失败'
+      sendCodeFailed: '发送验证码失败',
     },
     passkey: {
       title: 'Passkey',
@@ -749,7 +788,7 @@ affiliate: {
       renameFailed: '重命名 Passkey 失败。',
       deleteConfirm: '删除“{name}”？删除后将无法再使用它登录。',
       deleted: 'Passkey 已删除。',
-      deleteFailed: '删除 Passkey 失败。'
+      deleteFailed: '删除 Passkey 失败。',
     },
     balanceNotify: {
       title: '余额不足提醒',
@@ -836,18 +875,18 @@ affiliate: {
         avatar: '头像当前来自 {providerName}',
         username: '昵称当前来自 {providerName}',
       },
-    }
+    },
   },
-// Empty States
+  // Empty States
   empty: {
-    noData: '暂无数据'
+    noData: '暂无数据',
   },
-// Table
+  // Table
   table: {
     expandActions: '展开更多操作',
-    collapseActions: '收起操作'
+    collapseActions: '收起操作',
   },
-// Pagination
+  // Pagination
   pagination: {
     showing: '显示',
     to: '至',
@@ -861,9 +900,9 @@ affiliate: {
     goToPage: '跳转到第 {page} 页',
     jumpTo: '跳转页',
     jumpPlaceholder: '页码',
-    jumpAction: '跳转'
+    jumpAction: '跳转',
   },
-// Errors
+  // Errors
   errors: {
     somethingWentWrong: '出错了',
     pageNotFound: '页面未找到',
@@ -872,9 +911,9 @@ affiliate: {
     serverError: '服务器错误',
     networkError: '网络错误',
     timeout: '请求超时',
-    tryAgain: '请重试'
+    tryAgain: '请重试',
   },
-// Dates
+  // Dates
   dates: {
     today: '今天',
     yesterday: '昨天',
@@ -900,6 +939,6 @@ affiliate: {
     now: '此刻',
     hour: '时',
     minute: '分',
-    clear: '清除'
+    clear: '清除',
   },
 }

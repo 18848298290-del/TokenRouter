@@ -8,11 +8,28 @@ import {
   shouldMarkUserUIRequest,
 } from '@/api/adminUIRequest'
 
+/**
+ * adminUIRequest.spec.ts checks the stable header names and route classification
+ * for browser timing markers. Parameterized cases cover absolute and relative
+ * URLs, administrator page context, shared user routes and excluded public
+ * payment or webhook paths.
+ */
+
 describe('Admin UI request marker', () => {
+  /**
+   * The administrator marker constant is inspected directly by its consumers'
+   * test. Its exact header spelling remains stable for the server that
+   * recognizes browser timing requests.
+   */
   it('uses the stable request header name', () => {
     expect(ADMIN_UI_REQUEST_HEADER).toBe('X-Admin-UI-Request')
   })
 
+  /**
+   * Administrator targets are expressed as root, prefixed and absolute URLs
+   * before page navigation. Each path independently qualifies for the
+   * administrator marker from the login page.
+   */
   it.each([
     '/admin',
     '/admin/users',
@@ -23,13 +40,23 @@ describe('Admin UI request marker', () => {
     expect(shouldMarkAdminUIRequest(requestURL, '/login')).toBe(true)
   })
 
+  /**
+   * Shared user endpoints are requested while an administrator page is active.
+   * Each case receives the administrator marker from page context regardless of
+   * its target family.
+   */
   it.each(['/keys', '/groups/available', '/auth/me', '/announcements'])(
     'marks shared request %s while an Admin page is active',
     (requestURL) => {
       expect(shouldMarkAdminUIRequest(requestURL, '/admin/dashboard')).toBe(true)
-    }
+    },
   )
 
+  /**
+   * Ordinary pages and similarly prefixed route names are classified as negative
+   * cases. The administrator marker stays absent unless a complete administrator
+   * path segment matches.
+   */
   it.each([
     ['/keys', '/dashboard'],
     ['/api/v1/administer', '/dashboard'],
@@ -41,10 +68,20 @@ describe('Admin UI request marker', () => {
 })
 
 describe('User UI request marker', () => {
+  /**
+   * The user marker constant is inspected directly by its consumers' test. Its
+   * exact header spelling remains stable for the server that recognizes user
+   * browser requests.
+   */
   it('uses the stable request header name', () => {
     expect(USER_UI_REQUEST_HEADER).toBe('X-User-UI-Request')
   })
 
+  /**
+   * User timing endpoints are supplied in relative, prefixed and absolute forms.
+   * Both public classification functions recognize each listed route as eligible
+   * for the user marker.
+   */
   it.each([
     '/auth/me',
     '/auth/revoke-all-sessions',
@@ -84,6 +121,11 @@ describe('User UI request marker', () => {
     expect(isUserTimingAPIPath(requestURL)).toBe(true)
   })
 
+  /**
+   * Login, public payment, webhook and unrelated paths are classified as
+   * negative cases. Each request stays outside the user timing allowlist used to
+   * attach the marker.
+   */
   it.each([
     '/auth/login',
     '/settings/public',

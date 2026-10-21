@@ -1,3 +1,9 @@
+<!--
+  GitHubMark.vue renders the GitHub mark used beside email-provider sign-in
+  actions. The template supplies fixed SVG geometry and colors, while the
+  consuming button provides accessible action text and any inherited sizing
+  classes.
+-->
 <template>
   <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
     <path

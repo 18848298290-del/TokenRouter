@@ -2,25 +2,62 @@ import { describe, expect, it } from 'vitest'
 import { pricingEntryFromAPI, pricingEntryToAPI, validatePricingForm } from '../pricingForm'
 import type { ModelPricingEntry } from '@/api/admin/pricing'
 
-// 使用包含零价、区间和各类倍率的完整 API 价卡，验证两处管理页的共同往返合同。
+// pricingForm.spec.ts checks shared price-card conversions, legacy Fast precedence, and form
+// validation through pure helper calls. API and draft object fixtures supply amounts, intervals,
+// and schedules; a key-returning translator makes validation results directly comparable while
+// assertions check converted values and input object independence.
+
+// fullPricing returns a complete API price card containing amounts, intervals, multipliers, and
+// scheduling.
 export function fullPricing(): ModelPricingEntry {
   return {
-    models: ['gpt-test'], billing_mode: 'token', price_multiplier: 1.2,
-    fast_mode_multiplier: null, fast_multiplier: 1.5, flex_multiplier: 0.4, max_reasoning_effort_multiplier: 2,
-    input_price: 0, output_price: 0.000003, cache_write_price: 0.000004,
-    cache_write_1h_price: 0.000005, cache_read_price: 0.0000001,
-    image_input_price: 0.000006, image_output_price: 0.000007, per_request_price: null,
-    intervals: [{ min_tokens: 0, max_tokens: 100000, tier_label: '', input_price: 0,
-      output_price: null, cache_write_price: null, cache_write_1h_price: 0.000008,
-      cache_read_price: null, input_multiplier: null, output_multiplier: 2,
-      cache_write_multiplier: 1.5, cache_read_multiplier: 0.5, per_request_price: null, sort_order: 0 }],
-    time_pricing: { timezone: 'Asia/Shanghai', weekdays_only: true,
-      periods: [{ start_time: '09:00:00', end_time: '10:00:00', multiplier: 0.5 }] },
+    models: ['gpt-test'],
+    billing_mode: 'token',
+    price_multiplier: 1.2,
+    fast_mode_multiplier: null,
+    fast_multiplier: 1.5,
+    flex_multiplier: 0.4,
+    max_reasoning_effort_multiplier: 2,
+    input_price: 0,
+    output_price: 0.000003,
+    cache_write_price: 0.000004,
+    cache_write_1h_price: 0.000005,
+    cache_read_price: 0.0000001,
+    image_input_price: 0.000006,
+    image_output_price: 0.000007,
+    per_request_price: null,
+    intervals: [
+      {
+        min_tokens: 0,
+        max_tokens: 100000,
+        tier_label: '',
+        input_price: 0,
+        output_price: null,
+        cache_write_price: null,
+        cache_write_1h_price: 0.000008,
+        cache_read_price: null,
+        input_multiplier: null,
+        output_multiplier: 2,
+        cache_write_multiplier: 1.5,
+        cache_read_multiplier: 0.5,
+        per_request_price: null,
+        sort_order: 0,
+      },
+    ],
+    time_pricing: {
+      timezone: 'Asia/Shanghai',
+      weekdays_only: true,
+      periods: [{ start_time: '09:00:00', end_time: '10:00:00', multiplier: 0.5 }],
+    },
   }
 }
+// t returns each localization key directly for assertions against pricing validation results.
 const t = (key: string) => key
 
 describe('共享价格卡', () => {
+  // A complete API price card contains free amounts, interval prices, multipliers, and a
+  // schedule. Hydration and serialization retain these values while separating editable objects
+  // from their inputs.
   it('完整保留各类价格、倍率、区间和时区，并隔离输入对象', () => {
     const api = fullPricing()
     const form = pricingEntryFromAPI(api)
@@ -32,6 +69,9 @@ describe('共享价格卡', () => {
     expect(api.models).toEqual(['gpt-test'])
     expect(api.intervals[0]!.output_multiplier).toBe(2)
   })
+  // Legacy and current Fast fields appear together in a saved card. Hydration prefers the
+  // current multiplier while retaining the legacy representation when no current field is
+  // configured.
   it('兼容旧 Fast 字段并优先采用新字段', () => {
     const api = fullPricing()
     api.fast_mode_multiplier = 3
@@ -40,34 +80,66 @@ describe('共享价格卡', () => {
     api.fast_multiplier = 1.5
     expect(pricingEntryFromAPI(api).fast_multiplier).toBe(1.5)
   })
+  // An untouched legacy Fast value is zero before form validation. It remains serializable,
+  // while an explicitly configured zero in the current multiplier field is rejected.
   it('未编辑的旧零倍率仍可保存，显式新零倍率仍被拒绝', () => {
     const api = { ...fullPricing(), fast_multiplier: null, fast_mode_multiplier: 0 }
     const form = pricingEntryFromAPI(api)
     expect(validatePricingForm([form], t)).toBeNull()
     expect(pricingEntryToAPI(form)).toEqual(api)
-    expect(validatePricingForm([{ ...form, fast_multiplier: 0 }], t)).toContain('tierMultiplierMustBePositive')
+    expect(validatePricingForm([{ ...form, fast_multiplier: 0 }], t)).toContain(
+      'tierMultiplierMustBePositive',
+    )
   })
-  it.each([0, -1, Infinity, NaN])('拒绝非法服务层级倍率 %s', value => {
+  // Each parameterized service-tier multiplier is zero, negative, or nonfinite. Validation
+  // returns an error so unsupported numeric values cannot pass the current multiplier rule.
+  it.each([0, -1, Infinity, NaN])('拒绝非法服务层级倍率 %s', (value) => {
     const form = pricingEntryFromAPI(fullPricing())
-    for (const field of ['fast_multiplier', 'flex_multiplier', 'max_reasoning_effort_multiplier'] as const) {
-      expect(validatePricingForm([{ ...form, [field]: value }], t)).toContain('tierMultiplierMustBePositive')
+    for (const field of [
+      'fast_multiplier',
+      'flex_multiplier',
+      'max_reasoning_effort_multiplier',
+    ] as const) {
+      expect(validatePricingForm([{ ...form, [field]: value }], t)).toContain(
+        'tierMultiplierMustBePositive',
+      )
     }
   })
+  // Models differ only by normalized spelling and intervals overlap. Form validation reports
+  // the corresponding conflict before accepting a configuration with ambiguous model or context
+  // matches.
   it('拒绝归一化后相同的模型以及重叠区间', () => {
     const form = pricingEntryFromAPI(fullPricing())
-    expect(validatePricingForm([{ ...form, models: [' CLAUDE-OPUS-4.6 ', 'claude-opus-4-6'] }], t)).toBeNull()
-    expect(validatePricingForm([{ ...form, models: [' CLAUDE-OPUS-4.6 ', 'claude-opus-4.6'] }], t)).toContain('modelConflict')
+    expect(
+      validatePricingForm([{ ...form, models: [' CLAUDE-OPUS-4.6 ', 'claude-opus-4-6'] }], t),
+    ).toBeNull()
+    expect(
+      validatePricingForm([{ ...form, models: [' CLAUDE-OPUS-4.6 ', 'claude-opus-4.6'] }], t),
+    ).toContain('modelConflict')
     form.intervals.push({ ...form.intervals[0]!, min_tokens: 50000, max_tokens: null })
     expect(validatePricingForm([form], t)).toContain('overlap')
   })
+  // Price amounts and schedule timezones include invalid inputs alongside a multiplier-only
+  // card. Validation rejects the invalid values and accepts the supported current Fast-only
+  // configuration.
   it('拒绝非法价格和时区，接受仅配置 Fast 倍率', () => {
     const form = pricingEntryFromAPI(fullPricing())
     expect(validatePricingForm([{ ...form, output_price: Infinity }], t)).toContain('invalidPrice')
     form.time_pricing.timezone = 'Unknown/Zone'
     expect(validatePricingForm([form], t)).not.toBeNull()
-    const onlyFast = pricingEntryFromAPI({ ...fullPricing(), price_multiplier: null,
-      input_price: null, output_price: null, cache_write_price: null, cache_write_1h_price: null,
-      cache_read_price: null, image_input_price: null, image_output_price: null, intervals: [], time_pricing: null })
+    const onlyFast = pricingEntryFromAPI({
+      ...fullPricing(),
+      price_multiplier: null,
+      input_price: null,
+      output_price: null,
+      cache_write_price: null,
+      cache_write_1h_price: null,
+      cache_read_price: null,
+      image_input_price: null,
+      image_output_price: null,
+      intervals: [],
+      time_pricing: null,
+    })
     expect(validatePricingForm([onlyFast], t)).toBeNull()
   })
 })

@@ -27,20 +27,37 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { MarketplaceGroupAvailability, MarketplaceGroupAvailabilityDay } from '@/types'
+import type {
+  MarketplaceGroupAvailability,
+  MarketplaceGroupAvailabilityDay,
+} from '@/api/marketplace.types'
 
+// GroupAvailabilityBar.vue renders a group's reported availability over a fixed
+// number of time buckets. Missing earlier buckets appear as empty cells, and
+// longer histories retain their newest entries. Summary labels distinguish
+// unavailable measurements from a measured zero success rate.
+
+// props accepts the optional server aggregate; missing data still produces the
+// default window and empty cells so neighboring groups retain comparable geometry.
 const props = defineProps<{
+  // Server aggregate and buckets; null or omission uses an empty seven-day window.
   availability?: MarketplaceGroupAvailability | null
 }>()
 
+// Localized labels describe the displayed measurement window and distinguish
+// empty history from a numerical rate in both visible and accessible text.
 const { t } = useI18n()
 
+// Window and bucket durations determine the target cell count; each duration is
+// clamped to one or more before converting the day window into minutes.
 const windowDays = computed(() => Math.max(props.availability?.window_days ?? 7, 1))
 const bucketMinutes = computed(() => Math.max(props.availability?.bucket_minutes ?? 24 * 60, 1))
 const targetBucketCount = computed(() =>
   Math.max(Math.ceil((windowDays.value * 24 * 60) / bucketMinutes.value), 1),
 )
 
+// normalizedBuckets keeps the newest target-sized suffix, padding missing older
+// observations on the left without changing the supplied server bucket objects.
 const normalizedBuckets = computed<MarketplaceGroupAvailabilityDay[]>(() => {
   const buckets = props.availability?.days ?? []
   const target = targetBucketCount.value
@@ -58,6 +75,8 @@ const normalizedBuckets = computed<MarketplaceGroupAvailabilityDay[]>(() => {
   ]
 })
 
+// Grid gaps and cell widths become smaller as bucket density grows, allowing
+// the history to share the available row width with its fixed summary label.
 const barGridStyle = computed(() => ({
   gap:
     normalizedBuckets.value.length > 360
@@ -82,6 +101,8 @@ const bucketWidth = computed(() => {
   return '100%'
 })
 
+// Summary labels use the aggregate rate rather than averaging the visible cells;
+// inaccessible measurements receive the translated no-data wording and window hint.
 const rateLabel = computed(() => {
   const rate = props.availability?.availability_rate
   if (typeof rate !== 'number') {
@@ -109,6 +130,9 @@ const ariaLabel = computed(
   () => `${t('marketplace.availabilityWindow', { days: windowDays.value })}: ${rateLabel.value}`,
 )
 
+// bucketClass maps measured success rates to the shared availability color bands.
+// A zero or missing request count, or a nonnumeric rate, uses the empty color.
+// Numeric rates otherwise use the existing inclusive threshold comparisons.
 function bucketClass(rate?: number | null, totalCount?: number): string {
   if (!totalCount || typeof rate !== 'number') {
     return 'bg-gray-200 dark:bg-dark-700'

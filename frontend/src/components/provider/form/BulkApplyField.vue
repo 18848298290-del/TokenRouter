@@ -14,7 +14,8 @@
           :id="`${id}-label`"
           :for="`${id}-enabled`"
           class="cursor-pointer text-sm font-medium text-primary-900 dark:text-dark-50"
-        >{{ label }}</label>
+          >{{ label }}</label
+        >
         <p v-if="hint" class="input-hint">{{ hint }}</p>
       </div>
       <div
@@ -44,19 +45,36 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-// 批量编辑的每一项都由左侧“应用”复选框控制：未勾选时不提交，控件整体置灰且无法聚焦。
+// BulkApplyField.vue wraps a bulk-edit field with an application checkbox and an editable
+// content slot. The parent uses the checked state when building its patch; this wrapper
+// also disables interaction while unchecked or while the caller reports an unmet
+// dependency.
+
+// props exposes caller-owned inputs used by the template and derived state in this
+// component.
 const props = defineProps<{
-  /** 复选框 id 为 `${id}-enabled`，内容区 id 为 `${id}-body`。 */
+  // Base identifier used to connect the application checkbox with its content container
+  // IDs.
   id: string
-  label: string
-  hint?: string
-  /** 网格中的紧凑项，不参与分区分隔线。 */
+  label: string // Displayed input label.
+  hint?: string // Supplemental field help text.
+
+  // Uses the compact grid presentation and omits the surrounding section divider for this
+  // item.
   plain?: boolean
-  /** 已勾选但依赖的其他设置不满足时，仍然锁定内容区。 */
+
+  // Keeps the content disabled even when apply is selected because an external dependency
+  // is unmet.
   locked?: boolean
-  applyTestid?: string
+  applyTestid?: string // Application checkbox test selector.
 }>()
+// apply binds the parent-owned bulk patch application switch to the shared controls
+// through its model update event.
 const apply = defineModel<boolean>({ required: true })
+// bodyId links the bulk field content container to its application checkbox through the
+// shared base ID.
 const bodyId = computed(() => `${props.id}-body`)
+// active permits interaction only when the application checkbox is selected and the
+// caller has not locked the field.
 const active = computed(() => apply.value && !props.locked)
 </script>

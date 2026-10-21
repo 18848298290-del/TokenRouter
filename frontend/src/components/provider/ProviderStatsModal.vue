@@ -29,7 +29,7 @@
             'rounded-full px-2.5 py-1 text-xs font-semibold',
             provider.status === 'active'
               ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
-              : 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-dark-300'
+              : 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-dark-300',
           ]"
         >
           {{ provider.status }}
@@ -37,7 +37,14 @@
       </div>
 
       <!-- Loading State -->
-      <div v-if="loading" class="space-y-4" role="status" :aria-label="t('common.loading')" aria-busy="true" data-loading-skeleton>
+      <div
+        v-if="loading"
+        class="space-y-4"
+        role="status"
+        :aria-label="t('common.loading')"
+        aria-busy="true"
+        data-loading-skeleton
+      >
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-hidden="true">
           <div v-for="card in 4" :key="card" class="card min-w-0 space-y-3 p-4">
             <Skeleton width="55%" :height="12" />
@@ -79,10 +86,10 @@
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.providers.stats.accumulatedCost') }}
               <span class="text-gray-400 dark:text-gray-500">
-                ({{ t('usage.userBilled') }}: {{ formatBalanceSummary(stats.summary.total_user_cost) }} ·
-                {{ t('admin.providers.stats.standardCost') }}: {{
-                  formatUsdSummary(stats.summary.total_standard_cost)
-                }})
+                ({{ t('usage.userBilled') }}:
+                {{ formatBalanceSummary(stats.summary.total_user_cost) }} ·
+                {{ t('admin.providers.stats.standardCost') }}:
+                {{ formatUsdSummary(stats.summary.total_standard_cost) }})
               </span>
             </p>
           </div>
@@ -96,7 +103,12 @@
                 t('admin.providers.stats.totalRequests')
               }}</span>
               <div class="rounded-control bg-blue-100 p-1.5 dark:bg-blue-900/30">
-                <Icon name="bolt" size="sm" class="text-blue-600 dark:text-blue-400" :stroke-width="2" />
+                <Icon
+                  name="bolt"
+                  size="sm"
+                  class="text-blue-600 dark:text-blue-400"
+                  :stroke-width="2"
+                />
               </div>
             </div>
             <p class="text-2xl font-bold text-gray-900 dark:text-white">
@@ -127,14 +139,15 @@
             <p class="text-2xl font-bold text-gray-900 dark:text-white">
               {{ formatUsdSummary(stats.summary.avg_daily_cost) }}
             </p>
-             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{
                 t('admin.providers.stats.basedOnActualDays', {
-                  days: stats.summary.actual_days_used
+                  days: stats.summary.actual_days_used,
                 })
               }}
               <span class="text-gray-400 dark:text-gray-500">
-                ({{ t('usage.userBilled') }}: {{ formatBalanceSummary(stats.summary.avg_daily_user_cost) }})
+                ({{ t('usage.userBilled') }}:
+                {{ formatBalanceSummary(stats.summary.avg_daily_user_cost) }})
               </span>
             </p>
           </div>
@@ -174,16 +187,20 @@
             </div>
             <div class="space-y-2">
               <div class="flex items-center justify-between">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('usage.providerBilled') }}</span>
-                <span class="text-sm font-semibold text-gray-900 dark:text-white"
-                  >{{ formatUsdSummary(stats.summary.today?.cost || 0) }}</span
-                >
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                  t('usage.providerBilled')
+                }}</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
+                  formatUsdSummary(stats.summary.today?.cost || 0)
+                }}</span>
               </div>
               <div class="flex items-center justify-between">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('usage.userBilled') }}</span>
-                <span class="text-sm font-semibold text-gray-900 dark:text-white"
-                  >{{ formatBalanceSummary(stats.summary.today?.user_cost || 0) }}</span
-                >
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                  t('usage.userBilled')
+                }}</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
+                  formatBalanceSummary(stats.summary.today?.user_cost || 0)
+                }}</span>
               </div>
               <div class="flex items-center justify-between">
                 <span class="text-xs text-gray-500 dark:text-gray-400">{{
@@ -229,16 +246,20 @@
                 }}</span>
               </div>
               <div class="flex items-center justify-between">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('usage.providerBilled') }}</span>
-                <span class="text-sm font-semibold text-orange-600 dark:text-orange-400"
-                  >{{ formatUsdSummary(stats.summary.highest_cost_day?.cost || 0) }}</span
-                >
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                  t('usage.providerBilled')
+                }}</span>
+                <span class="text-sm font-semibold text-orange-600 dark:text-orange-400">{{
+                  formatUsdSummary(stats.summary.highest_cost_day?.cost || 0)
+                }}</span>
               </div>
               <div class="flex items-center justify-between">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('usage.userBilled') }}</span>
-                <span class="text-sm font-semibold text-gray-900 dark:text-white"
-                  >{{ formatBalanceSummary(stats.summary.highest_cost_day?.user_cost || 0) }}</span
-                >
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                  t('usage.userBilled')
+                }}</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
+                  formatBalanceSummary(stats.summary.highest_cost_day?.user_cost || 0)
+                }}</span>
               </div>
               <div class="flex items-center justify-between">
                 <span class="text-xs text-gray-500 dark:text-gray-400">{{
@@ -284,16 +305,20 @@
                 }}</span>
               </div>
               <div class="flex items-center justify-between">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('usage.providerBilled') }}</span>
-                <span class="text-sm font-semibold text-gray-900 dark:text-white"
-                  >{{ formatUsdSummary(stats.summary.highest_request_day?.cost || 0) }}</span
-                >
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                  t('usage.providerBilled')
+                }}</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
+                  formatUsdSummary(stats.summary.highest_request_day?.cost || 0)
+                }}</span>
               </div>
               <div class="flex items-center justify-between">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('usage.userBilled') }}</span>
-                <span class="text-sm font-semibold text-gray-900 dark:text-white"
-                  >{{ formatBalanceSummary(stats.summary.highest_request_day?.user_cost || 0) }}</span
-                >
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                  t('usage.userBilled')
+                }}</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
+                  formatBalanceSummary(stats.summary.highest_request_day?.user_cost || 0)
+                }}</span>
               </div>
             </div>
           </div>
@@ -305,7 +330,12 @@
           <div class="card p-4">
             <div class="mb-3 flex items-center gap-2">
               <div class="rounded-control bg-teal-100 p-1.5 dark:bg-teal-900/30">
-                <Icon name="cube" size="sm" class="text-teal-600 dark:text-teal-400" :stroke-width="2" />
+                <Icon
+                  name="cube"
+                  size="sm"
+                  class="text-teal-600 dark:text-teal-400"
+                  :stroke-width="2"
+                />
               </div>
               <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
                 t('admin.providers.stats.accumulatedTokens')
@@ -335,7 +365,12 @@
           <div class="card p-4">
             <div class="mb-3 flex items-center gap-2">
               <div class="rounded-control bg-rose-100 p-1.5 dark:bg-rose-900/30">
-                <Icon name="bolt" size="sm" class="text-rose-600 dark:text-rose-400" :stroke-width="2" />
+                <Icon
+                  name="bolt"
+                  size="sm"
+                  class="text-rose-600 dark:text-rose-400"
+                  :stroke-width="2"
+                />
               </div>
               <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
                 t('admin.providers.stats.performance')
@@ -394,16 +429,20 @@
                 }}</span>
               </div>
               <div class="flex items-center justify-between">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('usage.providerBilled') }}</span>
-                <span class="text-sm font-semibold text-gray-900 dark:text-white"
-                  >{{ formatUsdSummary(stats.summary.today?.cost || 0) }}</span
-                >
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                  t('usage.providerBilled')
+                }}</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
+                  formatUsdSummary(stats.summary.today?.cost || 0)
+                }}</span>
               </div>
               <div class="flex items-center justify-between">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('usage.userBilled') }}</span>
-                <span class="text-sm font-semibold text-gray-900 dark:text-white"
-                  >{{ formatBalanceSummary(stats.summary.today?.user_cost || 0) }}</span
-                >
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                  t('usage.userBilled')
+                }}</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
+                  formatBalanceSummary(stats.summary.today?.user_cost || 0)
+                }}</span>
               </div>
             </div>
           </div>
@@ -453,10 +492,7 @@
 
     <template #footer>
       <div class="flex justify-end">
-        <button
-          @click="handleClose"
-          class="btn btn-secondary"
-        >
+        <button @click="handleClose" class="btn btn-secondary">
           {{ t('common.close') }}
         </button>
       </div>
@@ -478,7 +514,7 @@ import {
   Title,
   Tooltip,
   Legend,
-  Filler
+  Filler,
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -489,10 +525,23 @@ import Icon from '@/components/icons/Icon.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { adminAPI } from '@/api/admin'
 import { externalTooltipHandler, hideExternalTooltip } from '@/utils/chartExternalTooltip'
-import type { Provider, ProviderUsageStatsResponse } from '@/types'
+import type { Provider, ProviderUsageStatsResponse } from '@/api/admin/providers.types'
 import { formatTokens } from '@/utils/format'
-import { useChartTheme, CHART_TICK_FONT_SIZE, CHART_LEGEND_FONT_SIZE } from '@/composables/useChartTheme'
+import {
+  useChartTheme,
+  CHART_TICK_FONT_SIZE,
+  CHART_LEGEND_FONT_SIZE,
+} from '@/composables/useChartTheme'
 
+// ProviderStatsModal.vue loads a provider usage report and renders cost, request, model,
+// and endpoint summaries. Opening the dialog requests thirty days of statistics, and
+// closing clears the displayed report. Chart data follows the response and the current
+// theme, with money and request counts on separate axes.
+//
+// The request writes its result when it settles and has no generation or
+// provider-identity check. Provider changes while already open do not trigger the show
+// watcher. Tooltip cleanup runs on unmount, while HTTP completion remains independent of
+// that display resource lifecycle.
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -501,35 +550,50 @@ ChartJS.register(
   Title,
   Tooltip,
   Legend,
-  Filler
+  Filler,
 )
 
+// The external chart tooltip lives outside the canvas, so hide it before the
+// dialog and its chart components begin unmounting their subtree.
 onBeforeUnmount(hideExternalTooltip)
 
+// t resolves interface labels from the active component locale while reactive consumers
+// update their displayed text.
 const { t } = useI18n()
-const {
-  balanceUnitName,
-  usdUnitName,
-  formatBalanceAmount,
-  formatUsdAmount
-} = useBalanceDisplay()
+// The balance helpers distinguish user billing units from provider USD costs in summary
+// cards, charts, and tooltip values.
+const { balanceUnitName, usdUnitName, formatBalanceAmount, formatUsdAmount } = useBalanceDisplay()
 
+// props exposes caller-owned inputs used by the template and derived state in this
+// component.
 const props = defineProps<{
-  show: boolean
+  show: boolean // Parent-controlled dialog visibility.
+  // Current provider supplied by the caller; pending requests may still complete after
+  // replacement.
   provider: Provider | null
 }>()
 
+// emit publishes typed draft changes and actions to the parent that owns this component.
 const emit = defineEmits<{
+  // close asks the parent to dismiss the statistics dialog and carries no payload. The
+  // parent controls the show prop, whose watcher clears the displayed report when
+  // visibility changes.
   (e: 'close'): void
 }>()
 
+// loading tracks the pending read so the template can show its loading state while data
+// is requested.
 const loading = ref(false)
+// stats retains the latest completed report until the show watcher clears it or a later
+// request replaces it.
 const stats = ref<ProviderUsageStatsResponse | null>(null)
 
-// 图表使用响应式主题，切换深浅色时重新绘制。
+// chartColors supplies reactive axis and legend colors so chart options follow changes
+// between light and dark themes.
 const { colors: chartColors } = useChartTheme()
 
-// Line chart data
+// trendChartData maps report history into provider cost, user charge, and request series
+// with separate cost and count axes.
 const trendChartData = computed(() => {
   if (!stats.value?.history?.length) return null
 
@@ -543,7 +607,7 @@ const trendChartData = computed(() => {
         backgroundColor: 'rgba(59, 130, 246, 0.1)',
         fill: true,
         tension: 0.3,
-        yAxisID: 'y'
+        yAxisID: 'y',
       },
       {
         label: `${t('usage.userBilled')} (${balanceUnitName.value})`,
@@ -553,7 +617,7 @@ const trendChartData = computed(() => {
         fill: false,
         tension: 0.3,
         borderDash: [5, 5],
-        yAxisID: 'y'
+        yAxisID: 'y',
       },
       {
         label: t('admin.providers.stats.requests'),
@@ -562,19 +626,20 @@ const trendChartData = computed(() => {
         backgroundColor: 'rgba(249, 115, 22, 0.1)',
         fill: false,
         tension: 0.3,
-        yAxisID: 'y1'
-      }
-    ]
+        yAxisID: 'y1',
+      },
+    ],
   }
 })
 
-// Line chart options with dual Y-axis
+// lineChartOptions configures responsive axes and an external tooltip, using
+// label-specific formatters for user and provider monetary values.
 const lineChartOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
   interaction: {
     intersect: false,
-    mode: 'index' as const
+    mode: 'index' as const,
   },
   plugins: {
     legend: {
@@ -585,9 +650,9 @@ const lineChartOptions = computed(() => ({
         pointStyle: 'circle',
         padding: 15,
         font: {
-          size: CHART_LEGEND_FONT_SIZE
-        }
-      }
+          size: CHART_LEGEND_FONT_SIZE,
+        },
+      },
     },
     tooltip: {
       enabled: false,
@@ -603,74 +668,73 @@ const lineChartOptions = computed(() => ({
             return `${label}: ${formatBalanceAmount(value, { fractionDigits: 4 })}`
           }
           return `${label}: ${formatNumber(value)}`
-        }
-      }
-    }
+        },
+      },
+    },
   },
   scales: {
     x: {
       grid: {
-        color: chartColors.value.grid
+        color: chartColors.value.grid,
       },
       ticks: {
         color: chartColors.value.text,
         font: {
-          size: CHART_TICK_FONT_SIZE
+          size: CHART_TICK_FONT_SIZE,
         },
         maxRotation: 45,
-        minRotation: 0
-      }
+        minRotation: 0,
+      },
     },
     y: {
       type: 'linear' as const,
       display: true,
       position: 'left' as const,
       grid: {
-        color: chartColors.value.grid
+        color: chartColors.value.grid,
       },
       ticks: {
         color: '#3b82f6',
         font: {
-          size: CHART_TICK_FONT_SIZE
+          size: CHART_TICK_FONT_SIZE,
         },
-        callback: (value: string | number) => formatCost(Number(value))
+        callback: (value: string | number) => formatCost(Number(value)),
       },
       title: {
         display: true,
         text: t('usage.cost'),
         color: '#3b82f6',
         font: {
-          size: CHART_LEGEND_FONT_SIZE
-        }
-      }
+          size: CHART_LEGEND_FONT_SIZE,
+        },
+      },
     },
     y1: {
       type: 'linear' as const,
       display: true,
       position: 'right' as const,
       grid: {
-        drawOnChartArea: false
+        drawOnChartArea: false,
       },
       ticks: {
         color: '#f97316',
         font: {
-          size: CHART_TICK_FONT_SIZE
+          size: CHART_TICK_FONT_SIZE,
         },
-        callback: (value: string | number) => formatNumber(Number(value))
+        callback: (value: string | number) => formatNumber(Number(value)),
       },
       title: {
         display: true,
         text: t('admin.providers.stats.requests'),
         color: '#f97316',
         font: {
-          size: CHART_LEGEND_FONT_SIZE
-        }
-      }
-    }
-  }
+          size: CHART_LEGEND_FONT_SIZE,
+        },
+      },
+    },
+  },
 }))
 
-// Load stats when modal opens
 watch(
   () => props.show,
   async (newVal) => {
@@ -679,35 +743,49 @@ watch(
     } else {
       stats.value = null
     }
-  }
+  },
 )
 
+// loadStats loads thirty days of statistics for the currently supplied provider. A
+// missing provider skips the request; failures log the error and clear the report, and
+// completion always clears loading.
 const loadStats = async () => {
   if (!props.provider) return
 
   loading.value = true
   try {
+    // The fixed thirty-day report supplies the history and distribution cards together,
+    // keeping each displayed aggregation within the same requested reporting interval.
     stats.value = await adminAPI.providers.getStats(props.provider.id, 30)
   } catch (error) {
     console.error('Failed to load provider stats:', error)
+    // A failed read clears the previous report so its values are not displayed as the
+    // successful result of the latest request.
     stats.value = null
   } finally {
     loading.value = false
   }
 }
 
+// handleClose requests that the parent close the provider statistics dialog.
 const handleClose = () => {
   emit('close')
 }
 
+// formatBalanceSummary formats a user-billed amount with the configured balance unit and
+// two decimals.
 const formatBalanceSummary = (value: number): string =>
   formatBalanceAmount(value, { fractionDigits: 2 })
 
-const formatUsdSummary = (value: number): string =>
-  formatUsdAmount(value, { fractionDigits: 2 })
+// formatUsdSummary formats a provider-billed USD amount with two fractional digits.
+const formatUsdSummary = (value: number): string => formatUsdAmount(value, { fractionDigits: 2 })
 
-// Format helpers
+// formatCost abbreviates cost-axis values using thousands and magnitude-dependent decimal
+// precision. Values below one cent keep four decimal places, while costs at least one
+// retain two decimals for display.
 const formatCost = (value: number): string => {
+  // Cost labels use thousands above one thousand and progressively finer fractional
+  // precision for smaller values so sub-cent observations remain distinguishable.
   if (value >= 1000) {
     return (value / 1000).toFixed(2) + 'K'
   } else if (value >= 1) {
@@ -718,7 +796,12 @@ const formatCost = (value: number): string => {
   return value.toFixed(4)
 }
 
+// formatNumber abbreviates large request counts using thousand and million suffixes.
+// Counts below one thousand use locale formatting, while abbreviated values keep two
+// decimal places in chart labels.
 const formatNumber = (value: number): string => {
+  // Request-count labels abbreviate millions and thousands with two decimals, while
+  // smaller counts keep their locale-formatted integer representation for display.
   if (value >= 1_000_000) {
     return (value / 1_000_000).toFixed(2) + 'M'
   } else if (value >= 1_000) {
@@ -727,7 +810,12 @@ const formatNumber = (value: number): string => {
   return value.toLocaleString()
 }
 
+// formatDuration formats millisecond durations as seconds above the one-second threshold.
+// Smaller values are rounded to whole milliseconds, and seconds retain two decimal places
+// for the statistics display.
 const formatDuration = (ms: number): string => {
+  // Durations at least one second are divided by one thousand; shorter observations remain
+  // in rounded milliseconds for the summary display.
   if (ms >= 1000) {
     return `${(ms / 1000).toFixed(2)}s`
   }

@@ -1,5 +1,10 @@
 <template>
-  <BaseDialog :show="show" :title="t('admin.users.attributes.title')" width="wide" @close="emit('close')">
+  <BaseDialog
+    :show="show"
+    :title="t('admin.users.attributes.title')"
+    width="wide"
+    @close="emit('close')"
+  >
     <div class="space-y-4">
       <!-- Header with Add Button -->
       <div class="flex items-center justify-between">
@@ -33,8 +38,11 @@
           :key="attr.id"
           class="flex items-center gap-3 rounded-surface border border-gray-200 bg-white p-3 dark:border-dark-600 dark:bg-dark-800"
         >
-          <!-- Drag Handle -->
-          <div class="cursor-move text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" :title="t('admin.users.attributes.dragToReorder')">
+          <!-- Reorder handle appearance; this template registers no drag handlers. -->
+          <div
+            class="cursor-move text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            :title="t('admin.users.attributes.dragToReorder')"
+          >
             <Icon name="menu" size="md" />
           </div>
 
@@ -42,7 +50,9 @@
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <span class="font-medium text-gray-900 dark:text-white">{{ attr.name }}</span>
-              <span class="rounded-compact bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-500 dark:bg-dark-700 dark:text-dark-400">
+              <span
+                class="rounded-compact bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-500 dark:bg-dark-700 dark:text-dark-400"
+              >
                 {{ attr.key }}
               </span>
               <span v-if="attr.required" class="badge badge-danger text-xs">
@@ -53,7 +63,9 @@
               </span>
             </div>
             <div class="mt-0.5 flex items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
-              <span class="badge badge-gray">{{ t(`admin.users.attributes.types.${attr.type}`) }}</span>
+              <span class="badge badge-gray">{{
+                t(`admin.users.attributes.types.${attr.type}`)
+              }}</span>
               <span v-if="attr.description" class="truncate">{{ attr.description }}</span>
             </div>
           </div>
@@ -91,7 +103,11 @@
   <!-- Create/Edit Attribute Modal -->
   <BaseDialog
     :show="showEditModal"
-    :title="editingAttribute ? t('admin.users.attributes.editAttribute') : t('admin.users.attributes.addAttribute')"
+    :title="
+      editingAttribute
+        ? t('admin.users.attributes.editAttribute')
+        : t('admin.users.attributes.addAttribute')
+    "
     width="normal"
     @close="closeEditModal"
   >
@@ -128,7 +144,12 @@
         <label class="input-label">{{ t('admin.users.attributes.type') }}</label>
         <Select
           v-model="form.type"
-          :options="attributeTypes.map(type => ({ value: type, label: t(`admin.users.attributes.types.${type}`) }))"
+          :options="
+            attributeTypes.map((type) => ({
+              value: type,
+              label: t(`admin.users.attributes.types.${type}`),
+            }))
+          "
         />
       </div>
 
@@ -187,12 +208,24 @@
       <!-- Required & Enabled -->
       <div class="flex items-center gap-6">
         <label class="flex items-center gap-2">
-          <input v-model="form.required" type="checkbox" class="h-4 w-4 rounded-compact border-gray-300 text-primary-600" />
-          <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.users.attributes.required') }}</span>
+          <input
+            v-model="form.required"
+            type="checkbox"
+            class="h-4 w-4 rounded-compact border-gray-300 text-primary-600"
+          />
+          <span class="text-sm text-gray-700 dark:text-gray-300">{{
+            t('admin.users.attributes.required')
+          }}</span>
         </label>
         <label class="flex items-center gap-2">
-          <input v-model="form.enabled" type="checkbox" class="h-4 w-4 rounded-compact border-gray-300 text-primary-600" />
-          <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.users.attributes.enabled') }}</span>
+          <input
+            v-model="form.enabled"
+            type="checkbox"
+            class="h-4 w-4 rounded-compact border-gray-300 text-primary-600"
+          />
+          <span class="text-sm text-gray-700 dark:text-gray-300">{{
+            t('admin.users.attributes.enabled')
+          }}</span>
         </label>
       </div>
     </form>
@@ -210,7 +243,9 @@
             v-if="saving"
             class="-ml-1 mr-2 h-4 w-4 animate-spin"
           />
-          {{ saving ? t('common.saving') : (editingAttribute ? t('common.update') : t('common.create')) }}
+          {{
+            saving ? t('common.saving') : editingAttribute ? t('common.update') : t('common.create')
+          }}
         </button>
       </div>
     </template>
@@ -235,48 +270,85 @@ import { ref, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
-import type { UserAttributeDefinition, UserAttributeType, UserAttributeOption } from '@/types'
+import type {
+  UserAttributeDefinition,
+  UserAttributeType,
+  UserAttributeOption,
+} from '@/api/admin/userAttributes.types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import Select from '@/components/common/Select.vue'
 import RuleListEditor from '@/components/common/RuleListEditor.vue'
 
+// UserAttributesConfigModal.vue manages administrator-defined user attributes and their
+// selectable options. A separate edit draft holds create or update values, and select
+// types require at least one option. Saving or deleting refreshes the definition list
+// after the corresponding server mutation succeeds.
+
+// The translation and notification services provide attribute configuration labels and
+// validation or persistence feedback for the definition editor.
 const { t } = useI18n()
 const appStore = useAppStore()
 
+// Props supplies the parent-controlled visibility of the attribute configuration
+// dialog.
 interface Props {
-  show: boolean
+  show: boolean // Parent-controlled dialog visibility.
 }
 
+// Emits lets the parent close the attribute configuration dialog on request.
 interface Emits {
-  (e: 'close'): void
+  (e: 'close'): void // Requests parent-owned dialog closure.
 }
 
+// props and emit connect parent-controlled visibility with the close request from the
+// attribute configuration dialog's footer and dismissal handling.
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
-const attributeTypes: UserAttributeType[] = ['text', 'textarea', 'number', 'email', 'url', 'date', 'select', 'multi_select']
+// attributeTypes lists the supported definition input kinds used by the attribute-type
+// selector when creating or editing a definition.
+const attributeTypes: UserAttributeType[] = [
+  'text',
+  'textarea',
+  'number',
+  'email',
+  'url',
+  'date',
+  'select',
+  'multi_select',
+]
 
+// loading, saving, and attributes hold list feedback, mutation feedback, and the loaded
+// definitions displayed by the configuration dialog.
 const loading = ref(false)
 const saving = ref(false)
 const attributes = ref<UserAttributeDefinition[]>([])
+// showEditModal and editingAttribute identify the create or update draft, while
+// showDeleteDialog and deletingAttribute hold the separate deletion confirmation
+// target.
 const showEditModal = ref(false)
 const showDeleteDialog = ref(false)
 const editingAttribute = ref<UserAttributeDefinition | null>(null)
 const deletingAttribute = ref<UserAttributeDefinition | null>(null)
 
+// form contains an editable definition and option rows; openEditModal copies each
+// option so typing in the draft leaves listed option objects untouched.
 const form = reactive({
-  key: '',
-  name: '',
-  type: 'text' as UserAttributeType,
-  description: '',
-  placeholder: '',
-  required: false,
-  enabled: true,
-  options: [] as UserAttributeOption[]
+  key: '', // Stable attribute identifier.
+  name: '', // Displayed attribute name.
+  type: 'text' as UserAttributeType, // Attribute input kind.
+  description: '', // Attribute help text.
+  placeholder: '', // Empty-input prompt text.
+  required: false, // Mandatory attribute flag.
+  enabled: true, // Attribute availability flag.
+  options: [] as UserAttributeOption[], // Selectable attribute choices.
 })
 
+// loadAttributes retrieves the complete attribute-definition list for configuration.
+// The existing list remains available when loading fails, and a server detail or
+// localized error explains the failure before feedback clears.
 const loadAttributes = async () => {
   loading.value = true
   try {
@@ -288,6 +360,7 @@ const loadAttributes = async () => {
   }
 }
 
+// openCreateModal resets the definition draft and opens the attribute creation editor.
 const openCreateModal = () => {
   editingAttribute.value = null
   form.key = ''
@@ -301,6 +374,9 @@ const openCreateModal = () => {
   showEditModal.value = true
 }
 
+// openEditModal fills the draft from an existing definition and copies each option
+// object. Optional description, placeholder, and options become empty editor values so
+// local edits remain usable for incomplete definitions.
 const openEditModal = (attr: UserAttributeDefinition) => {
   editingAttribute.value = attr
   form.key = attr.key
@@ -314,19 +390,30 @@ const openEditModal = (attr: UserAttributeDefinition) => {
   showEditModal.value = true
 }
 
+// closeEditModal hides the definition editor and clears its existing-definition
+// selection.
 const closeEditModal = () => {
   showEditModal.value = false
   editingAttribute.value = null
 }
 
+// addOption appends an empty value-label pair to the definition's option draft.
 const addOption = () => {
-  form.options.push({ value: '', label: '' })
+  form.options.push({
+    value: '', // Stored option value.
+    label: '', // Displayed option label.
+  })
 }
 
+// removeOption removes the indexed selectable option from the definition draft.
 const removeOption = (index: number) => {
   form.options.splice(index, 1)
 }
 
+// handleSave validates the definition key, name, and required select options before
+// creating or updating the definition. Empty description and placeholder values are
+// omitted, and option arrays are sent only for select types. Success closes the editor
+// and starts a list refresh; failures retain the draft for correction.
 const handleSave = async () => {
   if (!form.key.trim()) {
     appStore.showError(t('admin.users.attributes.keyRequired'))
@@ -343,14 +430,14 @@ const handleSave = async () => {
   saving.value = true
   try {
     const data = {
-      key: form.key,
-      name: form.name,
-      type: form.type,
-      description: form.description || undefined,
-      placeholder: form.placeholder || undefined,
-      required: form.required,
-      enabled: form.enabled,
-      options: (form.type === 'select' || form.type === 'multi_select') ? form.options : undefined
+      key: form.key, // Stable attribute identifier.
+      name: form.name, // Displayed attribute name.
+      type: form.type, // Attribute input kind.
+      description: form.description || undefined, // Attribute help text.
+      placeholder: form.placeholder || undefined, // Empty-input prompt text.
+      required: form.required, // Mandatory attribute flag.
+      enabled: form.enabled, // Attribute availability flag.
+      options: form.type === 'select' || form.type === 'multi_select' ? form.options : undefined, // Selectable attribute choices.
     }
 
     if (editingAttribute.value) {
@@ -361,6 +448,8 @@ const handleSave = async () => {
       appStore.showSuccess(t('admin.users.attributes.created'))
     }
 
+    // Close the completed editor and start reloading definitions after the mutation
+    // succeeds, so the list can reflect the stored create or update result.
     closeEditModal()
     loadAttributes()
   } catch (error: any) {
@@ -373,15 +462,22 @@ const handleSave = async () => {
   }
 }
 
+// confirmDelete selects the attribute definition and opens its deletion confirmation
+// dialog.
 const confirmDelete = (attr: UserAttributeDefinition) => {
   deletingAttribute.value = attr
   showDeleteDialog.value = true
 }
 
+// handleDelete deletes the selected definition and starts a refreshed list after
+// success. Missing selection stops the operation; failure reports a server detail or
+// localized error and leaves the confirmation target available.
 const handleDelete = async () => {
   if (!deletingAttribute.value) return
 
   try {
+    // Await deletion before closing confirmation and refreshing definitions, so a
+    // failed request retains its selected target for another administrator attempt.
     await adminAPI.userAttributes.deleteDefinition(deletingAttribute.value.id)
     appStore.showSuccess(t('admin.users.attributes.deleted'))
     showDeleteDialog.value = false
@@ -392,9 +488,14 @@ const handleDelete = async () => {
   }
 }
 
-watch(() => props.show, (isShow) => {
-  if (isShow) {
-    loadAttributes()
-  }
-})
+// Reload definitions each time the configuration dialog opens so edits made elsewhere
+// can appear when the administrator returns to this panel.
+watch(
+  () => props.show,
+  (isShow) => {
+    if (isShow) {
+      loadAttributes()
+    }
+  },
+)
 </script>

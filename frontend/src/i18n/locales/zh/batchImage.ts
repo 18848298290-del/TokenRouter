@@ -1,3 +1,8 @@
+// batchImage.ts supplies Simplified Chinese labels for batch image jobs and
+// their result downloads. Task states distinguish generation, result processing,
+// settlement, partial success, and deleted outputs so the workspace can present
+// the current job and local download state.
+
 export default {
   batchImage: {
     columns: {
@@ -96,7 +101,8 @@ export default {
       noUsableImage: '未生成可用图片',
       cancelled: '任务已取消',
       waiting: '等待生成结果',
-      emptyImageOutput: '上游返回了结果，但这条没有图片内容。通常是 Gemini/Vertex 单条生成失败或被安全策略拦截。',
+      emptyImageOutput:
+        '上游返回了结果，但这条没有图片内容。通常是 Gemini/Vertex 单条生成失败或被安全策略拦截。',
       providerItemFailed: '上游返回的这条结果没有可用图片。',
     },
     imagePreview: {
@@ -109,7 +115,8 @@ export default {
       taskNamePlaceholder: '不填写则默认使用当前时间',
       loadingKeys: '加载 API Key 中...',
       selectKeyPlaceholder: '请选择 Gemini API Key',
-      noKeysHint: '当前没有可用于批量生图的 Gemini API Key。请先创建并绑定已开启批量生图的 Gemini 分组。',
+      noKeysHint:
+        '当前没有可用于批量生图的 Gemini API Key。请先创建并绑定已开启批量生图的 Gemini 分组。',
       model: '模型',
       imageSize: '图片尺寸',
       imageSizeHint: '当前批量任务固定按 1K 图片提交。',
@@ -123,10 +130,12 @@ export default {
       outputCountOption: '{n} 张',
       referenceImage: '参考图',
       removeReferenceImage: '移除参考图',
-      limitsHint: '每条最多 {maxPerItem} 张，整组最多 {maxPerJob} 张；当前模型每条最多 {refLimit} 张参考图，参考图按生成张数重复消耗输入 token。',
+      limitsHint:
+        '每条最多 {maxPerItem} 张，整组最多 {maxPerJob} 张；当前模型每条最多 {refLimit} 张参考图，参考图按生成张数重复消耗输入 token。',
       referenceCount: '{n} 参考图',
       noPrompts: '还没有添加 prompt。',
-      cancelNotice: '取消任务会请求上游取消；已被系统索引为成功的图片仍会按成功项结算扣费，其余冻结金额会释放。',
+      cancelNotice:
+        '取消任务会请求上游取消；已被系统索引为成功的图片仍会按成功项结算扣费，其余冻结金额会释放。',
       submittingNotice: '正在创建上游批量任务，通常需要几秒，请不要重复提交。',
       modelNoReferenceImages: '当前模型不支持参考图。',
       refLimitReached: '当前模型每条最多 {limit} 张参考图。',
@@ -138,9 +147,12 @@ export default {
       title: '批量生图使用说明',
       uiTitle: '当前界面如何使用',
       step1: '1. 选择已开启批量生图的 Gemini API Key，模型列表会按该 Key 所属分组可用模型展示。',
-      step2: '2. 任务名称可以留空，提交时会自动使用当前时间；Prompt 需要一条条添加到列表里，每条 Prompt 可附参考图，也可以设置重复生成张数。',
-      step3: '3. 提交后任务会先排队，明细会展示已提交的 Prompt；图片预览默认不加载，点击明细里的预览按钮才会加载单张图。',
-      step4: '4. 完成后可以下载 ZIP；部分失败时，更多菜单里可以只重试失败项。当前结算仍按成功输出图张数计算，不单独对参考图加价。',
+      step2:
+        '2. 任务名称可以留空，提交时会自动使用当前时间；Prompt 需要一条条添加到列表里，每条 Prompt 可附参考图，也可以设置重复生成张数。',
+      step3:
+        '3. 提交后任务会先排队，明细会展示已提交的 Prompt；图片预览默认不加载，点击明细里的预览按钮才会加载单张图。',
+      step4:
+        '4. 完成后可以下载 ZIP；部分失败时，更多菜单里可以只重试失败项。当前结算仍按成功输出图张数计算，不单独对参考图加价。',
       skillTitle: '给 Codex 的 Skill 说明',
       skillDesc: '用于告诉 Codex 如何代替用户整理 prompt、提交任务和下载结果。',
     },
@@ -155,14 +167,16 @@ export default {
       submitted: '批量任务已提交',
       submitFailed: '提交失败',
       refreshFailed: '刷新失败',
-      cancelConfirm: '取消会请求上游取消；已被系统索引为成功的图片仍会按成功项结算扣费，其余冻结金额会释放。确定取消吗？',
+      cancelConfirm:
+        '取消会请求上游取消；已被系统索引为成功的图片仍会按成功项结算扣费，其余冻结金额会释放。确定取消吗？',
       cancelled: '已请求取消任务',
       cancelFailed: '取消失败',
       batchDownloadStarted: '已开始下载选中的任务',
       downloadFailed: '下载失败',
       retrySubmitted: '已提交失败项重试任务',
       retryFailed: '重试失败项失败',
-      retryMissingPrompts: '这个任务没有保存失败项 prompt，无法自动重试。请复制原 prompt 后重新创建任务。',
+      retryMissingPrompts:
+        '这个任务没有保存失败项 prompt，无法自动重试。请复制原 prompt 后重新创建任务。',
       retryTaskNameSuffix: '重试失败项',
       deleteConfirm: '删除后这个任务会从你的列表隐藏，但账务记录仍会保留。确定删除吗？',
       deleteSelectedConfirm: '删除后选中的任务会从你的列表隐藏，但账务记录仍会保留。确定删除吗？',
@@ -174,31 +188,41 @@ export default {
       loadingModels: '加载可用模型中...',
       noModels: '无可用模型',
       noModelsHint: '当前密钥所属分组没有配置可用于批量生图的模型。',
-      noCompatibleProvider: '当前密钥所属分组没有可用的批量生图上游提供商。请联系管理员检查：该分组是否绑定了可调度的 Gemini API Key 或 Vertex 服务账号，以及提供商是否支持所选模型。',
-      unsupportedProvider: '这个任务使用的批量生图通道当前不可用。请联系管理员检查批量生图通道配置。',
-      providerSubmitFailed: '上游批量生图任务提交失败。请联系管理员检查上游提供商状态、模型权限或服务状态。',
-      vertexGcsBucketMissing: 'Vertex 批量生图缺少托管 GCS 存储桶配置。请联系管理员配置 BATCH_IMAGE_VERTEX_MANAGED_GCS_BUCKET 后再提交。',
+      noCompatibleProvider:
+        '当前密钥所属分组没有可用的批量生图上游提供商。请联系管理员检查：该分组是否绑定了可调度的 Gemini API Key 或 Vertex 服务账号，以及提供商是否支持所选模型。',
+      unsupportedProvider:
+        '这个任务使用的批量生图通道当前不可用。请联系管理员检查批量生图通道配置。',
+      providerSubmitFailed:
+        '上游批量生图任务提交失败。请联系管理员检查上游提供商状态、模型权限或服务状态。',
+      vertexGcsBucketMissing:
+        'Vertex 批量生图缺少托管 GCS 存储桶配置。请联系管理员配置 BATCH_IMAGE_VERTEX_MANAGED_GCS_BUCKET 后再提交。',
       queueFailed: '任务队列暂时不可用，批量任务没有成功入队。请联系管理员检查队列服务。',
       billingHoldFailed: '费用冻结失败，批量任务没有成功提交。请联系管理员检查余额冻结或计费服务。',
-      groupDisabled: '当前密钥所属分组没有开启批量生图。你可以换一个已开启批量生图的密钥，或联系管理员开启。',
+      groupDisabled:
+        '当前密钥所属分组没有开启批量生图。你可以换一个已开启批量生图的密钥，或联系管理员开启。',
       pricingMissing: '所选模型还没有配置批量生图价格。请联系管理员补充价格配置。',
       insufficientBalance: '余额不足，无法冻结本次批量生图费用。',
       invalidModel: '请选择一个可用于当前密钥的批量生图模型。',
-      invalidItems: 'Prompt 列表格式不正确，请检查是否为空、是否超过数量限制，或图片尺寸是否仍为 1K。',
+      invalidItems:
+        'Prompt 列表格式不正确，请检查是否为空、是否超过数量限制，或图片尺寸是否仍为 1K。',
       duplicateCustomId: 'Prompt 列表里的 custom_id 不能重复。',
       promptTooLong: '单条 prompt 过长，请缩短后重试。',
       invalidReferenceImage: '参考图格式不正确，请使用 10MB 以内的 PNG、JPEG 或 WebP。',
-      tooManyReferenceImages: '参考图数量超过限制：Flash Image 每条最多 3 张，Pro Image 每条最多 14 张，整组最多 1000 张。',
-      referenceImagesTooLarge: '参考图总量过大。inline 参考图整组最多 128MB；大量参考图请改用 gs:// file_uri 或拆分任务。',
+      tooManyReferenceImages:
+        '参考图数量超过限制：Flash Image 每条最多 3 张，Pro Image 每条最多 14 张，整组最多 1000 张。',
+      referenceImagesTooLarge:
+        '参考图总量过大。inline 参考图整组最多 128MB；大量参考图请改用 gs:// file_uri 或拆分任务。',
       tooManyOutputImages: '预计生成张数超过限制：每条最多 4 张，整组最多 200 张。',
       idempotencyConflict: '这次提交和之前的请求标识冲突，请刷新页面后重新提交。',
       notReady: '任务还没有完成，完成后才能下载。',
       outputDeleted: '这个任务的结果文件已经被清理，无法下载。',
-      resultMissing: '结果文件不可用，可能是上游结果文件已清理、存储权限异常，或管理员迁移过存储配置。请联系管理员检查结果文件。',
+      resultMissing:
+        '结果文件不可用，可能是上游结果文件已清理、存储权限异常，或管理员迁移过存储配置。请联系管理员检查结果文件。',
       itemFailed: '这条明细没有成功图片，无法预览。',
       itemImageIndexOutOfRange: '这条明细没有可预览的图片。',
       downloadLimited: '当前下载请求太多，请稍后再试。',
-      downloadTooLarge: '这个 ZIP 太大，已超过单次下载限制。请减少单次下载数量，或联系管理员调整批量下载上限。',
+      downloadTooLarge:
+        '这个 ZIP 太大，已超过单次下载限制。请减少单次下载数量，或联系管理员调整批量下载上限。',
       deleteNotReady: '任务结束后才能删除记录。正在生成或结算中的任务请先等待完成。',
       disabled: '批量生图功能当前未开启。',
       authRequired: '当前 API Key 不可用或已失效，请重新选择密钥。',

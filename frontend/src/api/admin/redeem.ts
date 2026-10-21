@@ -1,8 +1,3 @@
-/**
- * Admin Redeem Codes API endpoints
- * Handles redeem code generation and management for administrators
- */
-
 import { apiClient } from '../client'
 import type {
   RedeemCode,
@@ -10,48 +5,51 @@ import type {
   UpdateRedeemCodeRequest,
   BatchUpdateRedeemCodeFields,
   RedeemCodeType,
-  PaginatedResponse
-} from '@/types'
+} from '@/api/redeem.types'
+import type { PaginatedResponse } from '@/api/common.types'
 
 /**
- * List all redeem codes with pagination
- * @param page - Page number (default: 1)
- * @param pageSize - Items per page (default: 20)
- * @param filters - Optional filters
- * @returns Paginated list of redeem codes
+ * redeem.ts manages administrator redemption codes and their batch operations.
+ * Creation carries entitlement fields, while updates and batch edits use their
+ * respective payloads; list requests accept cancellation and export returns the
+ * CSV Blob produced by the server.
+ */
+
+/**
+ * list lists all redeem codes with pagination. Page defaults to 1, pageSize
+ * defaults to 20; the caller may cancel through the supplied AbortSignal. The
+ * function returns the data portion of the completed response.
  */
 export async function list(
   page: number = 1,
   pageSize: number = 20,
   filters?: {
-    type?: RedeemCodeType
-    status?: 'active' | 'used' | 'expired' | 'unused' | 'disabled'
-    search?: string
-    sort_by?: string
-    sort_order?: 'asc' | 'desc'
+    type?: RedeemCodeType // Represented record category.
+    status?: 'active' | 'used' | 'expired' | 'unused' | 'disabled' // Current server-reported status.
+    search?: string // Free-text search query.
+    sort_by?: string // Requested sort column.
+    sort_order?: 'asc' | 'desc' // Requested ordering direction.
   },
   options?: {
-    signal?: AbortSignal
-  }
+    signal?: AbortSignal // Caller-owned cancellation signal.
+  },
 ): Promise<PaginatedResponse<RedeemCode>> {
   const { data } = await apiClient.get<PaginatedResponse<RedeemCode>>('/admin/redeem-codes', {
     params: {
       page,
       page_size: pageSize,
-      ...filters
+      ...filters,
     },
-    signal: options?.signal
+    signal: options?.signal,
   })
   return data
 }
 
 /**
- * Generate new redeem codes
- * @param count - Number of codes to generate
- * @param type - Type of redeem code
- * @param value - Value of the code
- * @param planId - Plan ID (required for subscription type)
- * @returns Array of generated redeem codes
+ * generate submits redemption-code creation with the supplied entitlement type
+ * and value. Nonnegative maxUses is retained, expiry fields require positive
+ * values, and a nonempty custom code is trimmed. planId is included only for
+ * subscription codes; requiresPayment defaults false.
  */
 export async function generate(
   count: number,
@@ -62,14 +60,17 @@ export async function generate(
   expiresAt?: number | null,
   code?: string,
   expiresInDays?: number | null,
-  requiresPayment: boolean = false
+  requiresPayment: boolean = false,
 ): Promise<RedeemCode[]> {
   const payload: GenerateRedeemCodesRequest = {
     count,
     type,
     value,
-    // 由后端在领取时核对付款记录。
-    requires_payment: requiresPayment
+    /**
+     * The redemption handler checks the payment record when a user claims this code,
+     * using the submitted payment restriction.
+     */
+    requires_payment: requiresPayment,
   }
 
   if (maxUses !== undefined && maxUses >= 0) {
@@ -87,7 +88,9 @@ export async function generate(
     payload.code = code.trim()
   }
 
-  // 订阅类型专用字段
+  /**
+   * Subscription redemption fields.
+   */
   if (type === 'subscription') {
     payload.plan_id = planId
   }
@@ -97,10 +100,7 @@ export async function generate(
 }
 
 /**
- * 更新兑换码
- * @param id - 兑换码 ID
- * @param request - 需要更新的字段
- * @returns 更新后的兑换码
+ * update submits edits to the selected redemption code and returns its record.
  */
 export async function update(id: number, request: UpdateRedeemCodeRequest): Promise<RedeemCode> {
   const { data } = await apiClient.put<RedeemCode>(`/admin/redeem-codes/${id}`, request)
@@ -108,70 +108,72 @@ export async function update(id: number, request: UpdateRedeemCodeRequest): Prom
 }
 
 /**
- * Delete redeem code
- * @param id - Redeem code ID
- * @returns Success confirmation
+ * deleteCode deletes redeem code and returns the server result.
  */
-export async function deleteCode(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>(`/admin/redeem-codes/${id}`)
+export async function deleteCode(id: number): Promise<{
+  message: string // Server-provided result message.
+}> {
+  const { data } = await apiClient.delete<{
+    message: string // Server-provided result message.
+  }>(`/admin/redeem-codes/${id}`)
   return data
 }
 
 /**
- * Batch delete redeem codes
- * @param ids - Array of redeem code IDs
- * @returns Success confirmation
+ * batchDelete submits batch requests to delete redeem codes.
  */
 export async function batchDelete(ids: number[]): Promise<{
-  deleted: number
-  message: string
+  deleted: number // Deleted record count.
+  message: string // Server-provided result message.
 }> {
   const { data } = await apiClient.post<{
-    deleted: number
-    message: string
+    deleted: number // Deleted record count.
+    message: string // Server-provided result message.
   }>('/admin/redeem-codes/batch-delete', { ids })
   return data
 }
 
 /**
- * 批量修改选中兑换码的非权益字段
- * @param ids - 兑换码 ID 列表
- * @param fields - 需要更新的字段集合
- * @returns 更新数量
+ * batchUpdate submits non-entitlement field edits for selected redemption codes
+ * and returns the affected count.
  */
 export async function batchUpdate(
   ids: number[],
-  fields: BatchUpdateRedeemCodeFields
+  fields: BatchUpdateRedeemCodeFields,
 ): Promise<{
-  updated: number
-  message: string
+  updated: number // Updated record count.
+  message: string // Server-provided result message.
 }> {
   const { data } = await apiClient.post<{
-    updated: number
-    message: string
+    updated: number // Updated record count.
+    message: string // Server-provided result message.
   }>('/admin/redeem-codes/batch-update', { ids, fields })
   return data
 }
 
 /**
- * Export redeem codes to CSV
- * @param filters - Optional filters
- * @returns CSV data as blob
+ * exportCodes downloads filtered redemption codes as a CSV Blob. The request
+ * forwards the supplied list filters and selects binary response handling so
+ * browser download consumers receive the file data.
  */
 export async function exportCodes(filters?: {
-  type?: RedeemCodeType
-  status?: 'active' | 'used' | 'expired' | 'unused' | 'disabled'
-  search?: string
-  sort_by?: string
-  sort_order?: 'asc' | 'desc'
+  type?: RedeemCodeType // Represented record category.
+  status?: 'active' | 'used' | 'expired' | 'unused' | 'disabled' // Current server-reported status.
+  search?: string // Free-text search query.
+  sort_by?: string // Requested sort column.
+  sort_order?: 'asc' | 'desc' // Requested ordering direction.
 }): Promise<Blob> {
   const response = await apiClient.get('/admin/redeem-codes/export', {
     params: filters,
-    responseType: 'blob'
+    responseType: 'blob',
   })
   return response.data
 }
 
+/**
+ * redeemAPI groups redemption code records and operations for callers using the
+ * module's named or default API object.
+ */
 export const redeemAPI = {
   list,
   generate,
@@ -179,7 +181,7 @@ export const redeemAPI = {
   delete: deleteCode,
   batchDelete,
   batchUpdate,
-  exportCodes
+  exportCodes,
 }
 
 export default redeemAPI

@@ -1,18 +1,13 @@
 <template>
   <div class="flex min-w-0 flex-1 items-start justify-between gap-3">
-    <!-- 左侧：分组名称与描述 -->
-    <div
-      class="flex min-w-0 flex-1 flex-col items-start"
-      :title="description || undefined"
-    >
-      <!-- 第一行：品牌标签，分组名称加粗 -->
+    <div class="flex min-w-0 flex-1 flex-col items-start" :title="description || undefined">
       <GroupBadge
         :name="name"
         :display-brand="displayBrand"
         :show-rate="false"
         class="groupOptionItemBadge"
       />
-      <!-- 第二行：分组描述，和标题保持轻微间距 -->
+
       <span
         v-if="description"
         class="mt-1.5 w-full whitespace-pre-line [overflow-wrap:anywhere] text-left text-xs leading-relaxed text-gray-500 dark:text-gray-400 line-clamp-3"
@@ -21,7 +16,6 @@
       </span>
     </div>
 
-    <!-- 右侧同排展示负载、倍率和勾选状态。 -->
     <div class="flex shrink-0 flex-wrap items-start justify-end gap-2 pt-0.5">
       <GroupCapacityBadge
         v-if="capacity"
@@ -34,15 +28,19 @@
         :rpm-used="capacity.rpm_used"
         :rpm-max="capacity.rpm_max"
       />
-      <!-- 倍率标签使用品牌配色 -->
-      <span v-if="rateMultiplier !== undefined" :class="['inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold', ratePillClass]">
+
+      <span
+        v-if="rateMultiplier !== undefined"
+        :class="[
+          'inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold',
+          ratePillClass,
+        ]"
+      >
         <template v-if="hasCustomRate">
           <span class="mr-1 line-through opacity-50">{{ rateMultiplier }}x</span>
           <span class="font-bold">{{ userRateMultiplier }}x</span>
         </template>
-        <template v-else>
-          {{ rateMultiplier }}x {{ t('common.multiplier') }}
-        </template>
+        <template v-else> {{ rateMultiplier }}x {{ t('common.multiplier') }} </template>
       </span>
       <span
         v-if="hasPeakRate"
@@ -51,7 +49,7 @@
       >
         {{ peakRateText }}
       </span>
-      <!-- 选中勾 -->
+
       <Icon
         name="check"
         size="sm"
@@ -69,37 +67,71 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GroupBadge from './GroupBadge.vue'
 import GroupCapacityBadge from './GroupCapacityBadge.vue'
-import type { MarketplaceGroupCapacity } from '@/types'
+import type { MarketplaceGroupCapacity } from '@/api/marketplace.types'
 import { currentServerTimezoneLabel, formatPeakRateWindow } from '@/utils/peak-rate'
 import { resolveProviderBrand } from '@/utils/providerBrand'
 
+/**
+ * GroupOptionItem.vue presents a selectable group with its description, capacity, and
+ * billing rates. The description keeps line breaks within a three line clamp, the rate
+ * pill follows the configured display brand, and selection visibility remains
+ * controlled by the parent selector.
+ */
+
+/**
+ * The i18n translator resolves this component's message keys using the current
+ * application locale and its configured translation catalog.
+ */
 const { t } = useI18n()
 
+/**
+ * Props describes the caller supplied values consumed by GroupOptionItem.
+ */
 interface Props {
-  name: string
-  displayBrand?: string | null
-  rateMultiplier?: number
+  name: string /* group display name */
+  displayBrand?: string | null /* configured display brand */
+  rateMultiplier?: number /* ordinary billing multiplier */
+  /**
+   * userRateMultiplier replaces the visible ordinary rate when both rates exist and
+   * differ; null keeps the ordinary multiplier presentation.
+   */
   userRateMultiplier?: number | null
-  peakRateEnabled?: boolean
-  peakStart?: string
-  peakEnd?: string
-  peakRateMultiplier?: number
-  description?: string | null
-  capacity?: MarketplaceGroupCapacity
-  selected?: boolean
-  showCheckmark?: boolean
+  /**
+   * peakRateEnabled permits a peak label only when peakStart and peakEnd both
+   * exist; peakRateMultiplier supplies its rate text, and the times use the
+   * server schedule timezone.
+   */
+  peakRateEnabled?: boolean /* peak schedule enablement */
+  peakStart?: string /* peak start time */
+  peakEnd?: string /* peak end time */
+  peakRateMultiplier?: number /* peak billing multiplier */
+  description?: string | null /* optional explanatory text */
+  capacity?: MarketplaceGroupCapacity /* current group capacity */
+  selected?: boolean /* current selection flag */
+  showCheckmark?: boolean /* selection checkmark visibility */
 }
 
+/**
+ * props supplies one selectable group display, its usage counters and rates, and
+ * parent controlled selection mark visibility.
+ */
 const props = withDefaults(defineProps<Props>(), {
   selected: false,
   showCheckmark: true,
   userRateMultiplier: null,
-  peakRateEnabled: false
+  peakRateEnabled: false,
 })
 
+/**
+ * brandName trims the configured display brand before deciding whether the badge
+ * receives brand styling.
+ */
 const brandName = computed(() => props.displayBrand?.trim() || '')
 
-// 是否存在不同于默认倍率的用户专属倍率。
+/**
+ * hasCustomRate requires both rates and a differing user rate before showing the
+ * ordinary rate crossed out.
+ */
 const hasCustomRate = computed(() => {
   return (
     props.userRateMultiplier !== null &&
@@ -109,37 +141,59 @@ const hasCustomRate = computed(() => {
   )
 })
 
+/**
+ * hasPeakRate gates the peak window label on an enabled schedule with both start and
+ * end times.
+ */
 const hasPeakRate = computed(() => {
   return Boolean(props.peakRateEnabled && props.peakStart && props.peakEnd)
 })
 
+/**
+ * peakRateText formats the supplied peak schedule with the current server timezone
+ * label for display.
+ */
 const peakRateText = computed(() => {
   return formatPeakRateWindow(
     {
       peak_rate_enabled: props.peakRateEnabled,
       peak_start: props.peakStart,
       peak_end: props.peakEnd,
-      peak_rate_multiplier: props.peakRateMultiplier
+      peak_rate_multiplier: props.peakRateMultiplier,
     },
-    currentServerTimezoneLabel()
+    currentServerTimezoneLabel(),
   )
 })
 
+/**
+ * peakRateTitle wraps the formatted peak window in the translated explanation used by
+ * the badge tooltip.
+ */
 const peakRateTitle = computed(() => {
   return t('common.peakRateTooltip', { window: peakRateText.value })
 })
 
-// 倍率标签跟随展示品牌；没有品牌时使用中性色。
+/**
+ * ratePillClass uses the configured brand palette and otherwise gives the multiplier
+ * pill a neutral background.
+ */
 const ratePillClass = computed(() => {
   if (brandName.value) {
     return `ring-1 ring-inset ${resolveProviderBrand(brandName.value).badgeClass}`
   }
+  /**
+   * Groups with no configured display brand use a neutral multiplier pill, leaving
+   * amber available to identify the separate peak schedule badge.
+   */
   return 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-200'
 })
 </script>
 
 <style scoped>
-/* 下拉选项里的分组名称需要比普通标签更醒目。 */
+/*
+ * Option names use a stronger weight than ordinary group badges so the
+ * selectable group title remains distinct from its description.
+ */
 .groupOptionItemBadge :deep(span.truncate) {
   font-weight: 600;
 }

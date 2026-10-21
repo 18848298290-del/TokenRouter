@@ -2,23 +2,29 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import ProfilePasswordForm from '@/components/user/profile/ProfilePasswordForm.vue'
 
+// ProfilePasswordForm.spec.ts exercises password-form validation and API error feedback with
+// controlled request results. The production form receives entered passwords, and assertions
+// distinguish rejected local input from a submitted change that fails at the server.
+
+// Hoisted password and notification spies distinguish local validation rejection from a
+// server request failure while retaining the actual form event handlers.
 const { changePasswordMock, showSuccessMock, showErrorMock } = vi.hoisted(() => ({
   changePasswordMock: vi.fn(),
   showSuccessMock: vi.fn(),
-  showErrorMock: vi.fn()
+  showErrorMock: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
   userAPI: {
-    changePassword: changePasswordMock
-  }
+    changePassword: changePasswordMock,
+  },
 }))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showSuccess: showSuccessMock,
-    showError: showErrorMock
-  })
+    showError: showErrorMock,
+  }),
 }))
 
 vi.mock('vue-i18n', async (importOriginal) => {
@@ -38,15 +44,18 @@ vi.mock('vue-i18n', async (importOriginal) => {
           'profile.passwordsNotMatch': 'New passwords do not match',
           'profile.passwordTooShort': 'Password must be at least 8 characters long',
           'profile.passwordChangeSuccess': 'Password changed successfully',
-          'profile.passwordChangeFailed': 'Failed to change password'
+          'profile.passwordChangeFailed': 'Failed to change password',
         }
         return translations[key] ?? key
-      }
-    })
+      },
+    }),
   }
 })
 
 describe('ProfilePasswordForm', () => {
+  // The replacement password and confirmation differ before submission. The test protects a
+  // validation toast, absence of an API request, and omission of duplicate inline error
+  // text.
   it('shows validation failures as toast messages instead of inline errors', async () => {
     const wrapper = mount(ProfilePasswordForm)
 
@@ -60,9 +69,11 @@ describe('ProfilePasswordForm', () => {
     expect(wrapper.find('.input-error-text').exists()).toBe(false)
   })
 
+  // Matching replacement passwords reach an API that returns a specific failure detail. The
+  // test protects the request arguments and toast-based display of that server message.
   it('shows API failures as toast messages', async () => {
     changePasswordMock.mockRejectedValue({
-      response: { data: { detail: 'backend failure' } }
+      response: { data: { detail: 'backend failure' } },
     })
 
     const wrapper = mount(ProfilePasswordForm)

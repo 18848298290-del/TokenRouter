@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+/**
+ * { post } provide the controlled request fixtures used by admin.users tests to
+ * inspect their observable results.
+ */
 const { post } = vi.hoisted(() => ({
   post: vi.fn(),
 }))
@@ -19,66 +23,112 @@ import {
   type BatchUpdateUserLimitsResponse,
 } from '@/api/admin/users'
 
+/**
+ * admin.users.spec.ts checks administrator identity binding and batch limit
+ * updates. Request mocks protect the transmitted nested identity and limit
+ * fields, while compile-time assertions record the expected request and response
+ * type shapes alongside runtime tests.
+ */
+
+/**
+ * Assert rejects a compile-time test when its argument is not the literal true
+ * type.
+ */
 type Assert<T extends true> = T
-type IsExact<T, U> = (
-  (<G>() => G extends T ? 1 : 2) extends (<G>() => G extends U ? 1 : 2)
-    ? ((<G>() => G extends U ? 1 : 2) extends (<G>() => G extends T ? 1 : 2) ? true : false)
+
+/**
+ * IsExact compares assignability in both directions for the identity-binding
+ * type assertions.
+ */
+type IsExact<T, U> =
+  (<G>() => G extends T ? 1 : 2) extends <G>() => G extends U ? 1 : 2
+    ? (<G>() => G extends U ? 1 : 2) extends <G>() => G extends T ? 1 : 2
+      ? true
+      : false
     : false
-)
 
+/**
+ * ExpectedAdminBindAuthIdentityRequest defines the expected submitted provider
+ * and channel identity shape for type assertions.
+ */
 type ExpectedAdminBindAuthIdentityRequest = {
-  provider_type: string
-  provider_key: string
-  provider_subject: string
-  issuer?: string
-  metadata?: Record<string, unknown>
+  provider_type: string // Provider credential type.
+  provider_key: string // Configured identity-provider key.
+  provider_subject: string // Provider-scoped subject identifier.
+  issuer?: string // Authentication issuer identity.
+  metadata?: Record<string, unknown> // Additional structured metadata.
   channel?: {
-    channel: string
-    channel_app_id: string
-    channel_subject: string
-    metadata?: Record<string, unknown>
-  }
+    channel: string // Authentication channel details.
+    channel_app_id: string // Channel application identifier.
+    channel_subject: string // Channel-scoped subject identifier.
+    metadata?: Record<string, unknown> // Additional structured metadata.
+  } // Authentication channel details.
 }
 
+/**
+ * ExpectedAdminBoundAuthIdentity defines the expected returned identity and
+ * optional channel shape for type assertions.
+ */
 type ExpectedAdminBoundAuthIdentity = {
-  user_id: number
-  provider_type: string
-  provider_key: string
-  provider_subject: string
-  verified_at?: string | null
-  issuer?: string | null
-  metadata: Record<string, unknown> | null
-  created_at: string
-  updated_at: string
+  user_id: number // Owning user identifier.
+  provider_type: string // Provider credential type.
+  provider_key: string // Configured identity-provider key.
+  provider_subject: string // Provider-scoped subject identifier.
+  verified_at?: string | null // Recorded verified at.
+  issuer?: string | null // Authentication issuer identity.
+  metadata: Record<string, unknown> | null // Additional structured metadata.
+  created_at: string // Record creation timestamp.
+  updated_at: string // Last modification timestamp.
   channel?: {
-    channel: string
-    channel_app_id: string
-    channel_subject: string
-    metadata: Record<string, unknown> | null
-    created_at: string
-    updated_at: string
-  } | null
+    channel: string // Authentication channel details.
+    channel_app_id: string // Channel application identifier.
+    channel_subject: string // Channel-scoped subject identifier.
+    metadata: Record<string, unknown> | null // Additional structured metadata.
+    created_at: string // Record creation timestamp.
+    updated_at: string // Last modification timestamp.
+  } | null // Authentication channel details.
 }
 
+/**
+ * requestContractExact provides the controlled compile-time type assertions used
+ * by admin.users tests to inspect their observable results.
+ */
 const requestContractExact: Assert<
   IsExact<AdminBindAuthIdentityRequest, ExpectedAdminBindAuthIdentityRequest>
 > = true
+/**
+ * responseContractExact provides the controlled compile-time type assertions
+ * used by admin.users tests to inspect their observable results.
+ */
 const responseContractExact: Assert<
   IsExact<AdminBoundAuthIdentity, ExpectedAdminBoundAuthIdentity>
 > = true
+/**
+ * batchRequestContractExact provides the controlled compile-time type assertions
+ * used by admin.users tests to inspect their observable results.
+ */
 const batchRequestContractExact: Assert<
   IsExact<
     BatchUpdateUserLimitsRequest,
     {
-      user_ids: number[]
-      all?: boolean
-      concurrency?: number
-      rpm_limit?: number
+      user_ids: number[] // Recorded user ids.
+      all?: boolean // All-users selection flag.
+      concurrency?: number // Concurrent request limit.
+      rpm_limit?: number // Configured requests-per-minute limit.
     }
   >
 > = true
+/**
+ * batchResponseContractExact provides the controlled compile-time type
+ * assertions used by admin.users tests to inspect their observable results.
+ */
 const batchResponseContractExact: Assert<
-  IsExact<BatchUpdateUserLimitsResponse, { affected: number }>
+  IsExact<
+    BatchUpdateUserLimitsResponse,
+    {
+      affected: number // Affected record count.
+    }
+  >
 > = true
 
 describe('admin users api auth identity binding', () => {
@@ -86,6 +136,11 @@ describe('admin users api auth identity binding', () => {
     post.mockReset()
   })
 
+  /**
+   * An administrator binds a provider identity with nested channel metadata. The
+   * wrapper sends the supplied structure to the selected user and returns the
+   * server's identity response.
+   */
   it('posts the backend-compatible auth identity bind payload and returns the backend response shape', async () => {
     const payload: AdminBindAuthIdentityRequest = {
       provider_type: 'wechat',
@@ -127,11 +182,21 @@ describe('admin users api auth identity binding', () => {
     expect(result).toEqual(response)
   })
 
+  /**
+   * Compile-time assignments compare identity-binding types with expected
+   * request and response shapes. Runtime assertions retain those assignments in
+   * the test while the TypeScript checker owns structural validation.
+   */
   it('keeps bind auth identity request and response types aligned with the backend contract', () => {
     expect(requestContractExact).toBe(true)
     expect(responseContractExact).toBe(true)
   })
 
+  /**
+   * A batch limit request supplies an explicit zero RPM limit and selected
+   * users. One POST carries exactly those fields, and the returned affected
+   * count remains available.
+   */
   it('posts batch limit updates once with only the supplied limit fields', async () => {
     const request: BatchUpdateUserLimitsRequest = {
       user_ids: [4, 7],

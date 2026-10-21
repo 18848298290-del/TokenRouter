@@ -6,20 +6,35 @@ import { createI18n } from 'vue-i18n'
 import { formatDateTimeToMinute } from '@/utils/format'
 import SubscriptionProgressMini from '../SubscriptionProgressMini.vue'
 
+/**
+ * SubscriptionProgressMini.spec.ts checks subscription expiration and the header
+ * status variant using controlled API responses. Cases cover empty and nearly
+ * exhausted subscriptions, retaining balance slot content, and opening details with
+ * the shared local minute precision date formatter.
+ */
+
+/**
+ * mockGetActiveSubscriptions controls the active subscription response returned
+ * through the API substitute for each mounted header scenario.
+ */
 const mockGetActiveSubscriptions = vi.fn()
 
 vi.mock('@/api/subscriptions', () => ({
   default: {
-    getActiveSubscriptions: (...args: unknown[]) => mockGetActiveSubscriptions(...args)
-  }
+    getActiveSubscriptions: (...args: unknown[]) => mockGetActiveSubscriptions(...args),
+  },
 }))
 
 vi.mock('@/composables/useBalanceDisplay', () => ({
   useBalanceDisplay: () => ({
-    formatBalanceAmount: (value: number) => value.toFixed(2)
-  })
+    formatBalanceAmount: (value: number) => value.toFixed(2),
+  }),
 }))
 
+/**
+ * createTestI18n supplies English subscription messages with deterministic argument
+ * interpolation.
+ */
 function createTestI18n() {
   return createI18n({
     legacy: false,
@@ -29,16 +44,24 @@ function createTestI18n() {
         subscriptionProgress: {
           title: () => 'My Subscriptions',
           viewDetails: () => 'View subscription details',
-          activeCount: ({ named }: { named: (key: string) => unknown }) => `${named('count')} active subscription(s)`,
+          activeCount: ({
+            named,
+          }: {
+            named: (key: string) => unknown /* translated argument lookup */
+          }) => `${named('count')} active subscription(s)`,
           daily: () => 'Daily',
           weekly: () => 'Weekly',
           monthly: () => 'Monthly',
-          expiresAt: ({ named }: { named: (key: string) => unknown }) => `Expires ${named('time')}`,
+          expiresAt: ({
+            named,
+          }: {
+            named: (key: string) => unknown /* translated argument lookup */
+          }) => `Expires ${named('time')}`,
           viewAll: () => 'View all subscriptions',
-          unlimited: () => 'Unlimited'
-        }
-      }
-    }
+          unlimited: () => 'Unlimited',
+        },
+      },
+    },
   })
 }
 
@@ -47,8 +70,16 @@ describe('SubscriptionProgressMini', () => {
     mockGetActiveSubscriptions.mockReset()
   })
 
+  /**
+   * A subscription has a local expiration timestamp including seconds. Opening the
+   * popover displays the shared minute precision formatter result instead of a
+   * relative tomorrow label.
+   */
   it('在订阅弹层展示精确到分钟的本地到期时间', async () => {
-    // 测试时间使用无时区偏移的本地时间。
+    /**
+     * The fixture omits a timezone suffix so the shared date formatter interprets
+     * the timestamp in the same local calendar used by the assertion.
+     */
     const expiresAt = '2026-08-08T10:33:45'
     mockGetActiveSubscriptions.mockResolvedValue([
       {
@@ -69,8 +100,8 @@ describe('SubscriptionProgressMini', () => {
         monthly_window_start: '2026-07-09T00:00:00',
         created_at: '2026-07-09T10:33:45',
         updated_at: '2026-08-08T00:16:41',
-        plan: { name: 'Lite+' }
-      }
+        plan: { name: 'Lite+' },
+      },
     ])
 
     const wrapper = mount(SubscriptionProgressMini, {
@@ -78,9 +109,9 @@ describe('SubscriptionProgressMini', () => {
         plugins: [createPinia(), createTestI18n()],
         stubs: {
           Icon: { template: '<span />' },
-          RouterLink: { template: '<a><slot /></a>' }
-        }
-      }
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+      },
     })
     await flushPromises()
     await wrapper.get('button').trigger('click')
@@ -90,6 +121,10 @@ describe('SubscriptionProgressMini', () => {
     wrapper.unmount()
   })
 
+  /**
+   * The status variant loads an empty active subscription list. Its balance slot
+   * remains visible, the trigger is disabled, and no usage status dot appears.
+   */
   it('状态变体没有订阅时仍渲染插槽，但不显示状态点也不可展开', async () => {
     mockGetActiveSubscriptions.mockResolvedValue([])
 
@@ -103,6 +138,10 @@ describe('SubscriptionProgressMini', () => {
     wrapper.unmount()
   })
 
+  /**
+   * The status variant loads a subscription near its daily quota. The leading dot uses
+   * the high usage warning color and the trigger opens subscription details.
+   */
   it('状态变体有订阅时按最高用量显示状态点并可展开详情', async () => {
     mockGetActiveSubscriptions.mockResolvedValue([
       {
@@ -113,8 +152,8 @@ describe('SubscriptionProgressMini', () => {
         status: 'active',
         daily_limit_usd: 100,
         daily_usage_usd: 95,
-        plan: { name: 'Lite+' }
-      }
+        plan: { name: 'Lite+' },
+      },
     ])
 
     const wrapper = mountStatusVariant()
@@ -128,7 +167,11 @@ describe('SubscriptionProgressMini', () => {
   })
 })
 
-// 以余额文本作为插槽内容挂载顶栏使用的状态变体。
+/**
+ * mountStatusVariant mounts the header status presentation with balance text in its
+ * slot. A fresh Pinia instance and the test locale isolate subscription state, and
+ * callers unmount the returned wrapper after assertions.
+ */
 function mountStatusVariant() {
   return mount(SubscriptionProgressMini, {
     props: { variant: 'status' },
@@ -137,8 +180,8 @@ function mountStatusVariant() {
       plugins: [createPinia(), createTestI18n()],
       stubs: {
         Icon: { template: '<span />' },
-        RouterLink: { template: '<a><slot /></a>' }
-      }
-    }
+        RouterLink: { template: '<a><slot /></a>' },
+      },
+    },
   })
 }

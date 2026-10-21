@@ -1,21 +1,43 @@
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import ts from 'typescript'
+import {
+  attribute,
+  classes,
+  directive,
+  nodes,
+  parseScript,
+  parseVue,
+} from '@/__tests__/helpers/sourceSyntax'
 
-const viewPath = resolve(dirname(fileURLToPath(import.meta.url)), '../CreativeStudioView.vue')
-const viewSource = readFileSync(viewPath, 'utf8')
+// CreativeStudioView.layout.spec.ts checks the canvas page's viewport ownership
+// through parsed template elements. The application layout supplies available
+// height, while the stage keeps a shrinkable flex chain that supports narrow
+// screens and the independent history overlay.
 
-describe('CreativeStudioView 移动端视口布局', () => {
-  it('使用 AppLayout 全屏视口模式', () => {
-    expect(viewSource).toContain('<AppLayout full-viewport>')
+// The parsed component keeps class tokens attached to their owning elements so
+// template indentation and attribute wrapping do not affect viewport assertions.
+const view = parseVue('views/user/CreativeStudioView.vue')
+
+describe('CreativeStudioView mobile viewport layout', () => {
+  // The canvas page requests the full viewport from its application shell.
+  // This keeps the shell responsible for header offsets and main content padding.
+  it('requests full viewport mode from AppLayout', () => {
+    const layout = view.elements.find((element) => element.tag === 'AppLayout')!
+    expect(attribute(layout, 'full-viewport')).toBe('')
   })
 
-  it('stage 高度由 AppLayout flex 链分配,不再复制顶栏尺寸或抵消父级内边距', () => {
-    expect(viewSource).toContain('class="relative h-full min-h-0"')
-    // 禁止负 margin 抵消 app-main 内边距、禁止写死顶栏高度的视口差值。
-    expect(viewSource).not.toMatch(/-m[txyblr]-/)
-    expect(viewSource).not.toContain('h-[calc(100dvh-3.5rem)]')
-    expect(viewSource).not.toContain('h-[calc(100vh-')
+  // The stage consumes height supplied by the application layout flex chain.
+  // Negative margins and viewport-minus-header utilities would couple this page to shell dimensions.
+  it('inherits stage height and keeps shell sizing out of utility classes', () => {
+    const stage = view.elements.find((element) => attribute(element, 'ref') === 'stageRef')!
+    expect(classes(stage)).toEqual(expect.arrayContaining(['relative', 'h-full', 'min-h-0']))
+    const utilities = view.elements.flatMap((element) => [
+      ...classes(element),
+      ...nodes(parseScript(directive(element, 'bind', 'class') ?? ''), ts.isStringLiteral).flatMap(
+        (node) => node.text.split(/\s+/),
+      ),
+    ])
+    expect(utilities.filter((value) => /(?:^|:)-m[txyblr]?-/u.test(value))).toEqual([])
+    expect(utilities.filter((value) => /^h-\[calc\(100d?vh-/u.test(value))).toEqual([])
   })
 })

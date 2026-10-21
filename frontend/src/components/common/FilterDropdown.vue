@@ -29,10 +29,14 @@
         <div class="filter-panel-header">
           <div class="min-w-0">
             <div class="flex items-center gap-2">
-              <span class="text-sm font-semibold text-gray-900 dark:text-dark-50">{{ t('common.filter') }}</span>
+              <span class="text-sm font-semibold text-gray-900 dark:text-dark-50">{{
+                t('common.filter')
+              }}</span>
               <span v-if="activeCount" class="filter-panel-count">{{ activeCount }}</span>
             </div>
-            <p v-if="description" class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">{{ description }}</p>
+            <p v-if="description" class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
+              {{ description }}
+            </p>
           </div>
           <button
             type="button"
@@ -47,8 +51,14 @@
         </div>
         <div v-if="chips.length" class="filter-panel-chips" data-testid="filter-chips">
           <span v-for="(chip, index) in chips" :key="`${chip.label}-${index}`" class="filter-chip">
-            <span v-if="chip.label" class="shrink-0 text-gray-500 dark:text-dark-400">{{ chip.label }}</span>
-            <span class="min-w-0 truncate font-medium text-gray-900 dark:text-dark-50" :title="chip.text">{{ chip.text }}</span>
+            <span v-if="chip.label" class="shrink-0 text-gray-500 dark:text-dark-400">{{
+              chip.label
+            }}</span>
+            <span
+              class="min-w-0 truncate font-medium text-gray-900 dark:text-dark-50"
+              :title="chip.text"
+              >{{ chip.text }}</span
+            >
             <button
               type="button"
               class="filter-chip-remove"
@@ -68,33 +78,70 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, shallowReactive, type ComputedRef } from 'vue'
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  provide,
+  ref,
+  shallowReactive,
+  type ComputedRef,
+} from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { FILTER_PANEL_KEY, type FilterChip } from './filterPanel'
 
+// FilterDropdown.vue presents a responsive filter panel and the active chips
+// registered by its fields. The panel gathers reactive chip records through injection
+// and orders them by their current elements, so chip order follows the visible field
+// layout. The parent owns filter values and reset handling.
+//
+// Outside-click handling treats teleported Select menus as part of the interaction
+// area, because those options are attached to the document body. Panel width is
+// measured in root-font units and clamped through the shared position helper; the
+// resulting horizontal coordinate is converted back into the relatively positioned
+// wrapper.
+
+// FilterColumns selects the responsive panel width and field grid recipe.
 type FilterColumns = 1 | 2 | 3
 
-const props = withDefaults(defineProps<{
-  activeCount: number
-  // columns 决定面板宽度和栅格列数，条件越多列数越多。
-  columns?: FilterColumns
-  description?: string
-  // keepMounted 让面板收起后保留 DOM，适合内部有输入状态或测试需要直接访问字段的场景。
-  keepMounted?: boolean
-  triggerClass?: string
-}>(), {
-  columns: 1,
-  description: '',
-  keepMounted: false,
-  triggerClass: 'btn btn-secondary btn-icon',
-})
-const emit = defineEmits<{ (event: 'reset'): void }>()
+// props holds parent-supplied component options consumed by the rendering and
+// interaction handlers below.
+const props = withDefaults(
+  defineProps<{
+    activeCount: number // Active filter condition count.
+
+    // Selects panel width and responsive grid columns; narrow viewports retain the
+    // single-column field layout.
+    columns?: FilterColumns
+    description?: string // Optional panel explanatory text.
+
+    // Retains child DOM while closed so nested controls keep their current local input
+    // state between openings.
+    keepMounted?: boolean
+    triggerClass?: string // Trigger button class list.
+  }>(),
+  {
+    columns: 1,
+    description: '',
+    keepMounted: false,
+    triggerClass: 'btn btn-secondary btn-icon',
+  },
+)
+// emit publishes the declared component notifications so the parent can update its
+// owned state.
+const emit = defineEmits<{
+  // Requests parent filter reset.
+  (event: 'reset'): void
+}>()
+// t resolves the component action and status labels using the active application
+// locale.
 const { t } = useI18n()
 
-// 各列数对应的面板宽度（rem）和栅格配方；窄屏统一退回单列。
+// PANEL_WIDTH_REM and COLUMN_CLASSES map each column count to its panel width and
+// responsive field layout, keeping narrow viewports at one column.
 const PANEL_WIDTH_REM: Record<FilterColumns, number> = { 1: 18, 2: 34, 3: 48 }
 const COLUMN_CLASSES: Record<FilterColumns, string> = {
   1: 'grid-cols-1',
@@ -102,31 +149,44 @@ const COLUMN_CLASSES: Record<FilterColumns, string> = {
   3: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
 }
 
+// open controls visibility, rootRef supplies bounds and click ownership, triggerRef
+// restores keyboard focus, and panelStyle holds the clamped horizontal placement.
 const open = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
 const triggerRef = ref<HTMLButtonElement | null>(null)
 const panelStyle = ref<Record<string, string>>({})
 
-// 各字段登记自己的已选条件，面板顶部按字段在面板里的先后顺序展示。
+// registeredChips holds field-owned computed chip records; each registration returns a
+// removal callback for the field lifetime.
 const registeredChips = shallowReactive(new Set<ComputedRef<FilterChip | null>>())
 provide(FILTER_PANEL_KEY, {
   register: (chip) => {
+    // The field owns registration cleanup; returning deletion with registration keeps
+    // removed field chips out of the parent summary after unmount.
     registeredChips.add(chip)
     return () => registeredChips.delete(chip)
   },
 })
-const chips = computed(() => Array.from(registeredChips)
-  .map((chip) => chip.value)
-  .filter((chip): chip is FilterChip => chip !== null)
-  .sort((a, b) => {
-    if (!a.el || !b.el) return 0
-    return a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
-  }))
+// chips filters inactive registrations and sorts active entries by field DOM position
+// for the panel summary.
+const chips = computed(() =>
+  Array.from(registeredChips)
+    .map((chip) => chip.value)
+    .filter((chip): chip is FilterChip => chip !== null)
+    .sort((a, b) => {
+      if (!a.el || !b.el) return 0
+      return a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+    }),
+)
 
-// 面板默认左缘对齐触发器，右侧放不下时向左平移，水平夹取规则复用公共浮层定位。
+// updatePosition measures the wrapper and delegates viewport clamping to the shared
+// helper. It converts rem widths using the root font size and stores an offset
+// relative to the wrapper.
 function updatePosition() {
   const rect = rootRef.value?.getBoundingClientRect()
   if (!rect) return
+  // Use the root font size to convert panel recipes into pixels; unavailable numeric
+  // font sizing uses sixteen so width calculations remain usable.
   const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
   const viewportWidth = document.documentElement.clientWidth || window.innerWidth
   const position = getFloatingPanelPosition(rect, viewportWidth, window.innerHeight, {
@@ -140,45 +200,68 @@ function updatePosition() {
   }
 }
 
+// toggle changes panel visibility and measures its position when opening. Closing
+// keeps child state when keepMounted is enabled, with the template applying hidden and
+// inert states during exit.
 function toggle() {
   open.value = !open.value
   if (open.value) updatePosition()
 }
 
-// 键盘关闭后回到筛选按钮，便于继续操作工具栏。
+// closeWithFocus closes the filter panel and focuses its trigger button. Keyboard
+// dismissal uses this path so users can continue moving through the surrounding
+// toolbar after leaving the panel.
 function closeWithFocus() {
   open.value = false
   triggerRef.value?.focus()
 }
 
-// Select 的 Teleport 面板挂在 body 上，点选候选项时不能误关外层筛选面板。
+// closeOutside dismisses clicks outside the wrapper except teleported Select menus.
+// Those menus live under body, so their option selection must remain inside the
+// enclosing filter interaction.
 function closeOutside(event: MouseEvent) {
   const target = event.target
   if (!(target instanceof Node) || rootRef.value?.contains(target)) return
+  // Select options are teleported outside this wrapper; exempt their portal clicks so
+  // choosing a nested value does not dismiss the filter.
   if (target instanceof Element && target.closest('.select-dropdown-portal')) return
   open.value = false
 }
 
+// handleResize refreshes panel placement when the open panel receives a viewport
+// resize. Closed panels defer measurement until their next opening, when their current
+// wrapper bounds are available.
 function handleResize() {
   if (open.value) updatePosition()
 }
 
+// Capture document clicks before dialog handlers stop bubbling, allowing this panel to
+// dismiss when another region inside the dialog is clicked.
 onMounted(() => {
-  // 外层弹窗会停止点击冒泡，捕获阶段仍可判断点击是否来自筛选面板。
   document.addEventListener('click', closeOutside, true)
   window.addEventListener('resize', handleResize)
 })
 
+// Release document and viewport listeners with the panel owner so removed filters
+// cannot receive clicks or schedule fresh position updates.
 onBeforeUnmount(() => {
   document.removeEventListener('click', closeOutside, true)
   window.removeEventListener('resize', handleResize)
 })
 
-defineExpose({ close: () => { open.value = false } })
+defineExpose({
+  // close hides the panel through the exposed component handle.
+  close: () => {
+    open.value = false
+  },
+})
 </script>
 
 <style scoped>
-/* 有生效条件时按钮描边和图标换成品牌色，右上角再挂数量角标。 */
+/*
+  Active filters use a brand-colored trigger outline and icon with a count badge at
+  the upper right.
+*/
 .filter-trigger-active {
   @apply border-primary-300 text-primary-700 dark:border-primary-500/40 dark:text-primary-400;
 }
@@ -189,7 +272,7 @@ defineExpose({ close: () => { open.value = false } })
   @apply ring-2 ring-white dark:ring-dark-950;
 }
 
-/* 面板外观与日期范围选择器一致：surface 圆角、淡描边、柔和阴影。 */
+/* The panel uses the date-range picker surface radius, subdued outline, and shadow. */
 .filter-panel {
   @apply absolute top-full z-modal-nested mt-2 flex flex-col overflow-hidden;
   @apply max-h-[min(70vh,42rem)];
@@ -198,7 +281,7 @@ defineExpose({ close: () => { open.value = false } })
   @apply shadow-lg shadow-black/10 dark:shadow-black/30;
 }
 
-/* 头部、已选条件和字段区之间不画分割线，只靠留白区分层次。 */
+/* Spacing separates the header, selected chips, and editable fields within the panel. */
 .filter-panel-header {
   @apply flex shrink-0 items-center justify-between gap-3 px-4 pb-1 pt-3;
 }
@@ -219,7 +302,10 @@ defineExpose({ close: () => { open.value = false } })
   @apply flex shrink-0 flex-wrap gap-1.5 px-4 pt-2;
 }
 
-/* 已选条件标签：中性灰底，标签名弱化、取值加重，过长的取值截断并用 title 展示全文。 */
+/*
+  Selected chips use a neutral background and emphasize values over field labels;
+  truncated values retain their full text in title attributes.
+*/
 .filter-chip {
   @apply inline-flex max-w-full items-center gap-1 rounded-compact py-0.5 pl-2 pr-0.5 text-xs;
   @apply bg-gray-100 dark:bg-dark-800;

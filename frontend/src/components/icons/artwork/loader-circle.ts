@@ -1,9 +1,18 @@
-// 图形与逐元素动效移植自 Lucide Animated；许可与版本见 ../README.md。
+// Artwork and element animations adapted from Lucide Animated.
+// See ../README.md for the license and pinned version.
 // https://github.com/pqoqubbw/icons/blob/072c38b1b04ea738d90a084485ccaad4b890ddca/icons/loader-circle.tsx
 import { h } from 'vue'
 import { motion, type Transition } from 'motion-v'
 import type { IconDefinition, IconVariants as Variants } from '../types'
 
+// loader-circle.ts renders an open circular arc with a single full rotation.
+// The animated target uses linear timing and no repeats, while the default
+// spring governs other transitions around the fixed center of the 24-unit icon
+// canvas.
+
+// G_VARIANTS supplies the single linear turn, while DEFAULT_TRANSITION gives
+// the arc a spring for target changes without an overriding animation
+// transition.
 const G_VARIANTS: Variants = {
   normal: { rotate: 0 },
   animate: {
@@ -11,17 +20,19 @@ const G_VARIANTS: Variants = {
     transition: {
       repeat: 0,
       duration: 0.8,
-      ease: 'linear'
-    }
-  }
+      ease: 'linear',
+    },
+  },
 }
 
 const DEFAULT_TRANSITION: Transition = {
   type: 'spring',
   stiffness: 50,
-  damping: 10
+  damping: 10,
 }
 
+// icon binds the loader-circle SVG renderer to ['animate'] for playback by
+// useIconAnimation through the shared controls.
 const icon: IconDefinition = {
   name: 'loader-circle',
   normal: 'normal',
@@ -36,11 +47,11 @@ const icon: IconDefinition = {
           style: { transformOrigin: '12px 12px' },
           transition: DEFAULT_TRANSITION,
           variants: G_VARIANTS,
-          initial: 'normal'
+          initial: 'normal',
         },
-        () => []
-      )
-    ])
+        () => [],
+      ),
+    ]),
 }
 
 export default icon

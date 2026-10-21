@@ -25,11 +25,7 @@
                 <span
                   :class="['badge', user?.status === 'active' ? 'badge-success' : 'badge-danger']"
                 >
-                  {{
-                    user?.status === 'active'
-                      ? t('common.active')
-                      : t('common.disabled')
-                  }}
+                  {{ user?.status === 'active' ? t('common.active') : t('common.disabled') }}
                 </span>
               </div>
 
@@ -84,29 +80,26 @@
       </div>
     </section>
 
-    <!-- 宽屏下分为左右两列：左列为账户资料，右列承接页面传入的安全与通知设置 -->
+    <!-- The wide profile layout places account details beside the security and notification sections supplied by the page. -->
     <div class="grid grid-cols-1 gap-4 xl:grid-cols-2 xl:items-start">
       <div data-testid="profile-main-column" class="min-w-0 space-y-4">
-        <section
-          data-testid="profile-basics-panel"
-          class="card"
-        >
+        <section data-testid="profile-basics-panel" class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-medium text-gray-900 dark:text-white">
               {{ t('profile.basicsTitle') }}
             </h2>
           </div>
 
-          <!-- 双列时列宽不足，头像与用户名表单改回上下排列 -->
-          <div class="flex flex-col gap-6 px-6 py-6 md:flex-row md:items-center md:gap-8 xl:flex-col xl:items-stretch xl:gap-6">
-            <ProfileAvatarCard
-              :user="user"
-              embedded
-              class="shrink-0"
-            />
+          <!-- Within the two-column layout, limited column width stacks avatar and username controls again. -->
+          <div
+            class="flex flex-col gap-6 px-6 py-6 md:flex-row md:items-center md:gap-8 xl:flex-col xl:items-stretch xl:gap-6"
+          >
+            <ProfileAvatarCard :user="user" embedded class="shrink-0" />
 
-            <!-- 上下排列时为横向分隔线，左右排列时为纵向分隔线 -->
-            <div class="h-px w-full bg-gray-100 dark:bg-dark-700 md:h-auto md:w-px md:self-stretch xl:h-px xl:w-full xl:self-auto" />
+            <!-- The separator follows the layout, becoming horizontal for stacked controls and vertical for adjacent controls. -->
+            <div
+              class="h-px w-full bg-gray-100 dark:bg-dark-700 md:h-auto md:w-px md:self-stretch xl:h-px xl:w-full xl:self-auto"
+            />
 
             <ProfileEditForm
               :initial-username="user?.username || ''"
@@ -116,7 +109,7 @@
           </div>
         </section>
 
-        <!-- 使用独立卡片模式，标题栏与右列各卡片保持一致 -->
+        <!-- Standalone card framing keeps this heading consistent with the security cards in the adjacent column. -->
         <ProfileIdentityBindingsSection
           data-testid="profile-auth-bindings-panel"
           :user="user"
@@ -130,10 +123,7 @@
           compact
         />
 
-        <section
-          v-if="sourceHints.length"
-          class="card"
-        >
+        <section v-if="sourceHints.length" class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-medium text-gray-900 dark:text-white">
               {{ t('profile.linkedProfileSources') }}
@@ -168,32 +158,64 @@ import ProfileAvatarCard from '@/components/user/profile/ProfileAvatarCard.vue'
 import ProfileEditForm from '@/components/user/profile/ProfileEditForm.vue'
 import ProfileIdentityBindingsSection from '@/components/user/profile/ProfileIdentityBindingsSection.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-import type { User, UserAuthBindingStatus, UserAuthProvider, UserProfileSourceContext } from '@/types'
+import type {
+  User,
+  UserAuthBindingStatus,
+  UserAuthProvider,
+  UserProfileSourceContext,
+} from '@/api/identity.types'
 
-const props = withDefaults(defineProps<{
-  user: User | null
-  linuxdoEnabled?: boolean
-  dingtalkEnabled?: boolean
-  oidcEnabled?: boolean
-  oidcProviderName?: string
-  wechatEnabled?: boolean
-  wechatOpenEnabled?: boolean
-  wechatMpEnabled?: boolean
-}>(), {
-  linuxdoEnabled: false,
-  dingtalkEnabled: false,
-  oidcEnabled: false,
-  oidcProviderName: 'OIDC',
-  wechatEnabled: false,
-  wechatOpenEnabled: undefined,
-  wechatMpEnabled: undefined,
-})
+// ProfileInfoCard.vue presents the account profile, balance, membership date, and external
+// identity source hints. It delegates avatar, username, and binding edits to their profile
+// sections, while compatibility readers interpret both direct and nested binding data
+// supplied by the API.
+//
+// A direct email binding flag takes precedence over nested evidence before a synthetic
+// .invalid email is shown. Avatar and username provenance use ordered aliases because source
+// information can appear in several record shapes. Recognized external providers receive
+// either their supplied display label or a localized provider name, and unsupported source
+// values produce no hint.
 
+// Profile and provider-availability props determine the displayed account details and
+// binding actions; explicit WeChat capabilities retain their distinction from legacy
+// combined availability.
+const props = withDefaults(
+  defineProps<{
+    user: User | null // Current account profile.
+    linuxdoEnabled?: boolean // Linux DO binding availability.
+    dingtalkEnabled?: boolean // DingTalk binding availability.
+    oidcEnabled?: boolean // OIDC binding availability.
+    oidcProviderName?: string // Configured OIDC display name.
+    wechatEnabled?: boolean // Legacy combined WeChat availability.
+    wechatOpenEnabled?: boolean // Optional Open Platform availability.
+    wechatMpEnabled?: boolean // Optional public-account WeChat availability.
+  }>(),
+  {
+    linuxdoEnabled: false, // Linux DO binding availability.
+    dingtalkEnabled: false, // DingTalk binding availability.
+    oidcEnabled: false, // OIDC binding availability.
+    oidcProviderName: 'OIDC', // Configured OIDC display name.
+    wechatEnabled: false, // Legacy combined WeChat availability.
+    wechatOpenEnabled: undefined, // Optional Open Platform availability.
+    wechatMpEnabled: undefined, // Optional public-account WeChat availability.
+  },
+)
+
+// Translations and configured balance formatting supply the account summary and provider-
+// source hints for the profile header.
 const { t } = useI18n()
-// 个人资料页与全站共用管理员配置的余额单位。
+// Profile amounts use the same administrator-configured balance unit as other account pages.
 const { formatBalanceAmount } = useBalanceDisplay()
 
-function normalizeBindingStatus(binding: boolean | UserAuthBindingStatus | undefined): boolean | null {
+// normalizeBindingStatus converts boolean and detailed identity records into a nullable
+// bound flag. An explicit bound boolean wins even when subject, issuer, or provider-key
+// metadata is present, preventing an unbound detailed record from becoming bound through
+// leftover identity fields. A missing record returns null so the caller can apply its own
+// absence rule. Detailed records without an explicit flag use the presence of those identity
+// fields as their compatible bound indication.
+function normalizeBindingStatus(
+  binding: boolean | UserAuthBindingStatus | undefined,
+): boolean | null {
   if (typeof binding === 'boolean') {
     return binding
   }
@@ -206,6 +228,12 @@ function normalizeBindingStatus(binding: boolean | UserAuthBindingStatus | undef
   return Boolean(binding.provider_subject || binding.issuer || binding.provider_key)
 }
 
+// isEmailBound resolves whether the account has a bound email for primaryEmailDisplay.
+// A direct email_bound boolean wins, including false, so nested identity evidence cannot
+// override an explicit unbound state. When that flag is absent, auth_bindings.email takes
+// precedence over identity_bindings.email through nullish selection, and the selected record
+// is normalized once. Missing or unresolved evidence returns false, which makes the display
+// suppress synthetic .invalid addresses until binding is confirmed.
 function isEmailBound(user: User | null | undefined): boolean {
   if (typeof user?.email_bound === 'boolean') {
     return user.email_bound
@@ -216,8 +244,14 @@ function isEmailBound(user: User | null | undefined): boolean {
   return normalized ?? false
 }
 
+// Avatar and display-name values use trimmed profile strings; the email and membership
+// labels below handle placeholders and invalid dates separately.
 const avatarUrl = computed(() => props.user?.avatar_url?.trim() || '')
-const displayName = computed(() => props.user?.username?.trim() || props.user?.email?.trim() || t('profile.user'))
+const displayName = computed(
+  () => props.user?.username?.trim() || props.user?.email?.trim() || t('profile.user'),
+)
+// primaryEmailDisplay suppresses synthetic .invalid addresses until email binding is
+// confirmed, keeping placeholder account identities out of the contact display.
 const primaryEmailDisplay = computed(() => {
   const email = props.user?.email?.trim() || ''
   if (!email) {
@@ -228,6 +262,8 @@ const primaryEmailDisplay = computed(() => {
   }
   return email
 })
+// memberSinceLabel formats a valid account creation date as month and year, using a dash
+// when the timestamp is absent or invalid.
 const memberSinceLabel = computed(() => {
   const raw = props.user?.created_at?.trim()
   if (!raw) {
@@ -245,6 +281,8 @@ const memberSinceLabel = computed(() => {
   }).format(date)
 })
 
+// providerLabels supplies localized source names, including the configured OIDC label, for
+// profile fields populated by external identities.
 const providerLabels = computed<Record<UserAuthProvider, string>>(() => ({
   email: t('profile.authBindings.providers.email'),
   linuxdo: t('profile.authBindings.providers.linuxdo'),
@@ -252,9 +290,12 @@ const providerLabels = computed<Record<UserAuthProvider, string>>(() => ({
   oidc: t('profile.authBindings.providers.oidc', { providerName: props.oidcProviderName }),
   wechat: t('profile.authBindings.providers.wechat'),
   github: 'GitHub',
-  google: 'Google'
+  google: 'Google',
 }))
 
+// normalizeProvider recognizes the source-provider spellings accepted by this profile
+// summary. OIDC prefixes collapse to oidc, while unknown values return null so they do not
+// create a source hint.
 function normalizeProvider(value: string): UserAuthProvider | null {
   const normalized = value.trim().toLowerCase()
   if (
@@ -272,6 +313,9 @@ function normalizeProvider(value: string): UserAuthProvider | null {
   return null
 }
 
+// readObjectString selects the first nonempty trimmed string from the supplied property
+// names. Their order defines precedence across compatible server field spellings, and no
+// usable property returns an empty string.
 function readObjectString(source: Record<string, unknown>, ...keys: string[]): string {
   for (const key of keys) {
     const value = source[key]
@@ -282,9 +326,16 @@ function readObjectString(source: Record<string, unknown>, ...keys: string[]): s
   return ''
 }
 
-function resolveThirdPartySource(
-  rawSource: string | UserProfileSourceContext | null | undefined
-): { provider: UserAuthProvider; label: string } | null {
+// resolveThirdPartySource resolves a provider and label from a string or compatible source
+// record. Ordered property aliases support several server representations, and an explicit
+// nonempty display label overrides the localized provider label. Email and unrecognized
+// providers return null because these hints describe external profile sources. The caller
+// separately chooses which avatar or username source field takes precedence before passing
+// it into this converter.
+function resolveThirdPartySource(rawSource: string | UserProfileSourceContext | null | undefined): {
+  provider: UserAuthProvider // Recognized external identity provider.
+  label: string // Chosen provider display label.
+} | null {
   if (!rawSource) {
     return null
   }
@@ -296,13 +347,13 @@ function resolveThirdPartySource(
     }
     return {
       provider,
-      label: providerLabels.value[provider]
+      label: providerLabels.value[provider],
     }
   }
 
   const sourceRecord = rawSource as Record<string, unknown>
   const provider = normalizeProvider(
-    readObjectString(sourceRecord, 'provider', 'source', 'provider_type', 'auth_provider')
+    readObjectString(sourceRecord, 'provider', 'source', 'provider_type', 'auth_provider'),
   )
   if (!provider || provider === 'email') {
     return null
@@ -313,24 +364,30 @@ function resolveThirdPartySource(
     'provider_label',
     'label',
     'provider_name',
-    'providerName'
+    'providerName',
   )
 
   return {
     provider,
-    label: explicitLabel || providerLabels.value[provider]
+    label: explicitLabel || providerLabels.value[provider],
   }
 }
 
+// sourceHints resolves avatar and username provenance through ordered profile-source
+// aliases, emitting only recognized external-provider explanations for the displayed account
+// fields.
 const sourceHints = computed(() => {
   const currentUser = props.user
   if (!currentUser) {
     return []
   }
 
-  const hints: Array<{ key: string; text: string }> = []
+  const hints: Array<{
+    key: string // Profile source field identity.
+    text: string // Localized provenance hint text.
+  }> = []
   const avatarSource = resolveThirdPartySource(
-    currentUser.profile_sources?.avatar ?? currentUser.avatar_source
+    currentUser.profile_sources?.avatar ?? currentUser.avatar_source,
   )
   const usernameSource = resolveThirdPartySource(
     currentUser.profile_sources?.username ??
@@ -338,20 +395,20 @@ const sourceHints = computed(() => {
       currentUser.profile_sources?.nickname ??
       currentUser.display_name_source ??
       currentUser.username_source ??
-      currentUser.nickname_source
+      currentUser.nickname_source,
   )
 
   if (avatarSource) {
     hints.push({
       key: 'avatar',
-      text: t('profile.authBindings.source.avatar', { providerName: avatarSource.label })
+      text: t('profile.authBindings.source.avatar', { providerName: avatarSource.label }),
     })
   }
 
   if (usernameSource) {
     hints.push({
       key: 'username',
-      text: t('profile.authBindings.source.username', { providerName: usernameSource.label })
+      text: t('profile.authBindings.source.username', { providerName: usernameSource.label }),
     })
   }
 

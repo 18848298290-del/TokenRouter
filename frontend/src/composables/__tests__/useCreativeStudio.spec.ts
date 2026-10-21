@@ -1,14 +1,12 @@
-/**
- * useCreativeStudio 状态机测试
- * mock API 层与本地存储层，fake timers 驱动轮询节奏。
- */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
-// refreshUser observes account reads independently of the mocked task and image
-// APIs, allowing tests to delay or reject balance updates during generation.
+/**
+ * refreshUser records account reads separately from task APIs so tests can
+ * delay or reject balance refreshes during generation.
+ */
 const { refreshUser } = vi.hoisted(() => ({ refreshUser: vi.fn() }))
 
 vi.mock('@/stores/auth', () => ({
@@ -31,7 +29,11 @@ vi.mock('@/api/creative', () => ({
   ackCreativeRunOutput: vi.fn(),
 }))
 
-// 保留真实工具（key 组合、错误类），只 mock 存储副作用
+/**
+ * Retain real key builders and error classes while replacing storage effects so
+ * recovery assertions use production identity rules with controlled request
+ * outcomes.
+ */
 vi.mock('@/utils/creativeLocalStore', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/creativeLocalStore')>()
   return {
@@ -53,14 +55,36 @@ import * as localStore from '@/utils/creativeLocalStore'
 import { useCreativeStudio, creativeOptionKey } from '@/composables/useCreativeStudio'
 import type { CreativeRun } from '@/api/creative'
 
+/**
+ * useCreativeStudio.spec.ts exercises generation validation, local settings,
+ * shared polling, output recovery, and workspace invalidation through the
+ * mounted composable. API and persistent-store effects are mocked, while real
+ * key construction and storage error classes keep identity and failure handling
+ * representative. Fake timers control polling and debounce intervals, and
+ * deferred promises expose ordering between recovery, clearing, placement, and
+ * account refreshes. The tests inspect observable state and request arguments
+ * without contacting generation providers.
+ */
+
+/**
+ * mockedApi and mockedStore provide typed access to request and persistence
+ * substitutes used across studio scenarios.
+ */
 const mockedApi = vi.mocked(creativeApi)
 const mockedStore = vi.mocked(localStore)
 
-// currentWorkspaceId 返回测试当前浏览器工作区。
+/**
+ * currentWorkspaceId reads the browser identity established by the production
+ * workspace helper.
+ */
 function currentWorkspaceId(): string {
   return localStorage.getItem(localStore.CREATIVE_WORKSPACE_STORAGE_KEY) ?? ''
 }
 
+/**
+ * MODEL supplies one selectable image model with multiple sizes and optional
+ * controls for validation, normalization, and pricing assertions.
+ */
 const MODEL = {
   group_id: 'g1',
   group_name: 'Group A',
@@ -81,6 +105,11 @@ const MODEL = {
   price_4k: 4,
 }
 
+/**
+ * makeRun builds a server task fixture with caller-supplied identity and
+ * status. Defaults supply the shared model and empty outputs, while overrides
+ * define the specific polling or recovery scenario.
+ */
 function makeRun(partial: Partial<CreativeRun> & Pick<CreativeRun, 'id' | 'status'>): CreativeRun {
   return {
     operation: 'generate',
@@ -92,11 +121,19 @@ function makeRun(partial: Partial<CreativeRun> & Pick<CreativeRun, 'id' | 'statu
   }
 }
 
-// 在真实组件 setup 中挂载 composable，保证 onBeforeUnmount 有上下文
+/**
+ * mountStudio creates the composable inside a real mounted component setup. The
+ * returned wrapper lets callers trigger lifecycle cleanup, while the studio
+ * exposes reactive controls for direct scenario assertions.
+ */
 function mountStudio() {
   let studio!: ReturnType<typeof useCreativeStudio>
   const wrapper = mount(
     defineComponent({
+      /**
+       * setup initializes the studio in component context and returns a minimal
+       * render function.
+       */
       setup() {
         studio = useCreativeStudio()
         return () => h('div')
@@ -121,11 +158,17 @@ describe('useCreativeStudio', () => {
       max_mask_bytes: 4194304,
       allowed_mime_types: ['image/png', 'image/jpeg', 'image/webp'],
     })
-    mockedApi.getCreativeActiveRuns.mockResolvedValue({ items: [], next_cursor: '', has_more: false })
+    mockedApi.getCreativeActiveRuns.mockResolvedValue({
+      items: [],
+      next_cursor: '',
+      has_more: false,
+    })
     mockedApi.createCreativeRun.mockResolvedValue(makeRun({ id: 'run-1', status: 'queued' }))
     mockedApi.getCreativeRuns.mockResolvedValue({ items: [], total: 0 })
     mockedApi.getCreativeRun.mockResolvedValue(makeRun({ id: 'run-1', status: 'succeeded' }))
-    mockedApi.getCreativeRunOutputContent.mockResolvedValue(new Blob(['img'], { type: 'image/png' }))
+    mockedApi.getCreativeRunOutputContent.mockResolvedValue(
+      new Blob(['img'], { type: 'image/png' }),
+    )
     mockedApi.ackCreativeRunOutput.mockResolvedValue(undefined)
     mockedStore.saveAsset.mockResolvedValue({} as localStore.LocalAsset)
     mockedStore.deleteAsset.mockResolvedValue(undefined)
@@ -135,7 +178,6 @@ describe('useCreativeStudio', () => {
     mockedStore.clearAll.mockResolvedValue(undefined)
     mockedStore.saveRunParams.mockResolvedValue(undefined)
     mockedStore.loadRunParamsMap.mockResolvedValue(new Map())
-    // listAssets 按 kind 返回，默认全部为空
     mockedStore.listAssets.mockImplementation((kind: string) =>
       Promise.resolve(kind === 'output' || kind === 'source' || kind === 'mask' ? [] : []),
     )
@@ -147,7 +189,11 @@ describe('useCreativeStudio', () => {
     vi.clearAllMocks()
   })
 
-  // 加载模型并选中唯一选项
+  /**
+   * setupStudio mounts the studio, loads the mocked catalog, and selects its sole
+   * model. Callers receive the wrapper for cleanup and a normalized form ready
+   * for their scenario.
+   */
   async function setupStudio() {
     const { studio, wrapper } = mountStudio()
     await studio.loadModels()
@@ -155,6 +201,11 @@ describe('useCreativeStudio', () => {
     return { studio, wrapper }
   }
 
+  /**
+   * A model advertises preferred ratio, quality, background, and thinking
+   * choices. Selecting it must normalize the form to the intended defaults
+   * supported by that catalog entry.
+   */
   it('模型支持时为比例、画质、背景和思考强度选择固定默认值', async () => {
     const { studio, wrapper } = await setupStudio()
 
@@ -166,6 +217,11 @@ describe('useCreativeStudio', () => {
   })
 
   describe('创作参数本地持久化', () => {
+    /**
+     * Stored settings contain a complete model selection and prompt from an earlier
+     * visit. Catalog loading must restore those values before later form
+     * persistence begins.
+     */
     it('恢复完整的模型参数与提示词设置', async () => {
       mockedStore.loadSetting.mockResolvedValueOnce({
         optionKey: creativeOptionKey(MODEL),
@@ -190,10 +246,18 @@ describe('useCreativeStudio', () => {
       wrapper.unmount()
     })
 
+    /**
+     * Prompt edits occur both during normal activity and immediately before
+     * pagehide. Writes must respect the debounce during editing and flush the
+     * latest text when hiding.
+     */
     it('提示词输入使用防抖写入，并在页面隐藏时立即刷新', async () => {
       const { studio, wrapper } = await setupStudio()
-      // 清除恢复阶段产生的设置写入，单独观察本次输入。
       await vi.advanceTimersByTimeAsync(300)
+      /**
+       * Discard hydration writes before testing prompt debounce so the observed calls
+       * correspond to edits made by this scenario.
+       */
       mockedStore.saveSetting.mockClear()
 
       studio.prompt.value = '正在编辑的提示词'
@@ -223,6 +287,11 @@ describe('useCreativeStudio', () => {
   })
 
   describe('createRun 校验', () => {
+    /**
+     * An edit request supplies no reference image to the submission entry point.
+     * Validation must reject it locally with source-required feedback before any
+     * API call.
+     */
     it('edit 无源图时直接报错且不发起请求', async () => {
       const { studio } = await setupStudio()
       studio.operation.value = 'edit'
@@ -234,6 +303,11 @@ describe('useCreativeStudio', () => {
       expect(mockedApi.createCreativeRun).not.toHaveBeenCalled()
     })
 
+    /**
+     * An inpaint request supplies source bytes but omits its required mask.
+     * Validation must publish mask-required feedback and avoid calling the server
+     * creation endpoint.
+     */
     it('inpaint 有源图但无 mask 时直接报错且不发起请求', async () => {
       const { studio } = await setupStudio()
       studio.operation.value = 'inpaint'
@@ -245,6 +319,11 @@ describe('useCreativeStudio', () => {
       expect(mockedApi.createCreativeRun).not.toHaveBeenCalled()
     })
 
+    /**
+     * The selected operation is absent from the model's supported operation list.
+     * Submission must fail with the unsupported-operation message before sending
+     * any creation request.
+     */
     it('操作不在模型支持列表时拒绝提交', async () => {
       const { studio } = await setupStudio()
       studio.operation.value = 'video'
@@ -258,6 +337,11 @@ describe('useCreativeStudio', () => {
   })
 
   describe('canGenerate 表单门禁', () => {
+    /**
+     * The prompt changes from empty text to whitespace and then meaningful content.
+     * The reactive generation gate must remain closed until a nonblank prompt is
+     * present.
+     */
     it('提示词为空或纯空白时禁止生成', async () => {
       const { studio } = await setupStudio()
 
@@ -273,6 +357,11 @@ describe('useCreativeStudio', () => {
   })
 
   describe('estimatedCost 定价', () => {
+    /**
+     * The selected image size moves through multiple catalog pricing tiers. The
+     * estimate must follow each tier's supplied price, including the separately
+     * configured 512 option.
+     */
     it('按所选尺寸读取模型目录的实际档位价格', async () => {
       const { studio } = await setupStudio()
 
@@ -282,21 +371,26 @@ describe('useCreativeStudio', () => {
       expect(studio.estimatedCost.value).toBe(3)
       studio.imageSize.value = '4K'
       expect(studio.estimatedCost.value).toBe(4)
-		studio.imageSize.value = '512'
-		expect(studio.estimatedCost.value).toBe(1.5)
+      studio.imageSize.value = '512'
+      expect(studio.estimatedCost.value).toBe(1.5)
 
-		studio.imageSize.value = '2K'
-		expect(studio.estimatedCost.value).toBe(3)
+      studio.imageSize.value = '2K'
+      expect(studio.estimatedCost.value).toBe(3)
     })
   })
 
   describe('createRun 提交', () => {
+    /**
+     * A valid submission includes prompt, model options, and a reference image. Its
+     * FormData must carry supported fields and start shared list polling after
+     * acceptance.
+     */
     it('成功路径：FormData 字段齐全并启动轮询', async () => {
       const { studio } = await setupStudio()
-		studio.prompt.value = '一只猫'
-		studio.quality.value = 'high'
-		studio.background.value = 'opaque'
-		await Promise.resolve()
+      studio.prompt.value = '一只猫'
+      studio.quality.value = 'high'
+      studio.background.value = 'opaque'
+      await Promise.resolve()
       const sourceBlob = new Blob(['src'], { type: 'image/png' })
       mockedApi.createCreativeRun.mockResolvedValue(makeRun({ id: 'run-9', status: 'queued' }))
       mockedApi.getCreativeRuns.mockResolvedValue({
@@ -315,30 +409,38 @@ describe('useCreativeStudio', () => {
       expect(form.get('model')).toBe('model-x')
       expect(form.get('operation')).toBe('generate')
       expect(form.get('prompt')).toBe('一只猫')
-			expect(form.get('image_size')).toBe('1K')
-			expect(form.get('aspect_ratio')).toBe('auto')
-			expect(form.get('quality')).toBe('high')
-			expect(form.get('output_format')).toBeNull()
-			expect(form.get('output_compression')).toBeNull()
-			expect(form.get('background')).toBe('opaque')
-			expect(form.get('thinking_level')).toBe('minimal')
-			expect(form.get('response_mime_type')).toBeNull()
+      expect(form.get('image_size')).toBe('1K')
+      expect(form.get('aspect_ratio')).toBe('auto')
+      expect(form.get('quality')).toBe('high')
+      expect(form.get('output_format')).toBeNull()
+      expect(form.get('output_compression')).toBeNull()
+      expect(form.get('background')).toBe('opaque')
+      expect(form.get('thinking_level')).toBe('minimal')
+      expect(form.get('response_mime_type')).toBeNull()
       expect(form.getAll('source_images[]')).toHaveLength(1)
 
-      // 进入轮询：前进 3s 后发出第一次批量列表查询
       expect(studio.polling.value).toBe(true)
       await vi.advanceTimersByTimeAsync(3000)
       expect(mockedApi.getCreativeRuns).toHaveBeenCalledTimes(1)
       expect(mockedApi.getCreativeRun).not.toHaveBeenCalled()
     })
 
+    /**
+     * The user edits the prompt while task creation is awaiting its response.
+     * Remembered run parameters must retain the pre-request snapshot in memory and
+     * local storage.
+     */
     it('提交成功后记录发请求前的提示词和参数', async () => {
       const { studio } = await setupStudio()
       studio.prompt.value = '一只猫'
       studio.quality.value = 'high'
       await Promise.resolve()
       let resolveRun!: (run: CreativeRun) => void
-      mockedApi.createCreativeRun.mockReturnValue(new Promise((resolve) => { resolveRun = resolve }))
+      mockedApi.createCreativeRun.mockReturnValue(
+        new Promise((resolve) => {
+          resolveRun = resolve
+        }),
+      )
 
       const pending = studio.createRun({ sourceBlobs: [], maskBlob: null })
       studio.prompt.value = '提交后继续编辑'
@@ -362,6 +464,11 @@ describe('useCreativeStudio', () => {
       expect(studio.runParamsMap.value.get('run-7')).toEqual(expected)
     })
 
+    /**
+     * Task creation succeeds while saving its local parameter snapshot reports a
+     * quota failure. The submission must remain accepted and its in-memory history
+     * parameters remain available.
+     */
     it('任务参数写入失败时任务照常提交', async () => {
       const { studio } = await setupStudio()
       studio.prompt.value = '一只猫'
@@ -377,23 +484,33 @@ describe('useCreativeStudio', () => {
       expect(studio.runParamsMap.value.has('run-1')).toBe(true)
     })
 
+    /**
+     * A saved run contains one size unsupported by the current model catalog. Reuse
+     * must restore its prompt and supported options while normalizing that size to
+     * the default.
+     */
     it('applyRunParams 把历史参数和提示词填回输入框，超出模型能力的参数回到默认值', async () => {
-      mockedStore.loadRunParamsMap.mockResolvedValue(new Map([
-        ['run-3', {
-          runId: 'run-3',
-          optionKey: creativeOptionKey(MODEL),
-          groupName: 'Group A',
-          operation: 'edit',
-          prompt: '历史提示词',
-          imageSize: '4K',
-          aspectRatio: '16:9',
-          quality: 'low',
-          background: 'transparent',
-          thinkingLevel: 'high',
-          referenceCount: 2,
-          createdAt: 1,
-        }],
-      ]))
+      mockedStore.loadRunParamsMap.mockResolvedValue(
+        new Map([
+          [
+            'run-3',
+            {
+              runId: 'run-3',
+              optionKey: creativeOptionKey(MODEL),
+              groupName: 'Group A',
+              operation: 'edit',
+              prompt: '历史提示词',
+              imageSize: '4K',
+              aspectRatio: '16:9',
+              quality: 'low',
+              background: 'transparent',
+              thinkingLevel: 'high',
+              referenceCount: 2,
+              createdAt: 1,
+            },
+          ],
+        ]),
+      )
       const { studio } = await setupStudio()
       await studio.refreshHistory()
 
@@ -402,7 +519,6 @@ describe('useCreativeStudio', () => {
 
       expect(studio.prompt.value).toBe('历史提示词')
       expect(studio.operation.value).toBe('edit')
-      // 模型目录没有 4K，回到默认的 1K
       expect(studio.imageSize.value).toBe('1K')
       expect(studio.aspectRatio.value).toBe('16:9')
       expect(studio.quality.value).toBe('low')
@@ -410,9 +526,19 @@ describe('useCreativeStudio', () => {
       expect(studio.thinkingLevel.value).toBe('high')
     })
 
+    /**
+     * Loading browser-local run parameters fails while server history remains
+     * available. History refresh must still publish the task list without replacing
+     * it with a storage error.
+     */
     it('任务参数读取失败时历史照常刷新', async () => {
-      mockedStore.loadRunParamsMap.mockRejectedValue(new localStore.LocalStoreError('unavailable', 'blocked'))
-      mockedApi.getCreativeRuns.mockResolvedValue({ items: [makeRun({ id: 'run-5', status: 'failed' })], total: 1 })
+      mockedStore.loadRunParamsMap.mockRejectedValue(
+        new localStore.LocalStoreError('unavailable', 'blocked'),
+      )
+      mockedApi.getCreativeRuns.mockResolvedValue({
+        items: [makeRun({ id: 'run-5', status: 'failed' })],
+        total: 1,
+      })
       vi.spyOn(console, 'error').mockImplementation(() => undefined)
       const { studio } = await setupStudio()
 
@@ -422,6 +548,11 @@ describe('useCreativeStudio', () => {
       expect(studio.runHistory.value.map((run) => run.id)).toEqual(['run-5'])
     })
 
+    /**
+     * A valid inpaint submission includes both source and PNG mask bytes. The
+     * request must include the named mask file, current workspace identity, and an
+     * idempotency key.
+     */
     it('inpaint 时附加 mask 文件与幂等键', async () => {
       const { studio } = await setupStudio()
       studio.operation.value = 'inpaint'
@@ -442,6 +573,11 @@ describe('useCreativeStudio', () => {
       expect(mask.name).toBe('mask.png')
     })
 
+    /**
+     * Creation fails twice before succeeding and then receives another new
+     * submission. Retries through acceptance must share the same key, while the
+     * subsequent submission receives a different one.
+     */
     it('失败重试复用同一幂等键，成功后重置', async () => {
       const { studio } = await setupStudio()
       mockedApi.createCreativeRun.mockRejectedValue(new Error('network'))
@@ -454,13 +590,11 @@ describe('useCreativeStudio', () => {
       const keyAfterFail = mockedApi.createCreativeRun.mock.calls[1][2]
       expect(mockedApi.createCreativeRun.mock.calls[0][2]).toBe(keyAfterFail)
 
-      // 成功后续重试仍用同一 key（同一次提交意图），随后重置
       mockedApi.createCreativeRun.mockResolvedValue(makeRun({ id: 'run-2', status: 'queued' }))
       const success = await studio.createRun({ sourceBlobs: [], maskBlob: null })
       expect(success).toBe(true)
       expect(mockedApi.createCreativeRun.mock.calls[2][2]).toBe(keyAfterFail)
 
-      // 新一次提交生成新 key
       mockedApi.createCreativeRun.mockRejectedValue(new Error('network'))
       await studio.createRun({ sourceBlobs: [], maskBlob: null })
       const newKey = mockedApi.createCreativeRun.mock.calls[3][2]
@@ -470,6 +604,11 @@ describe('useCreativeStudio', () => {
   })
 
   describe('轮询节奏', () => {
+    /**
+     * Two accepted runs progress through shared list snapshots and complete
+     * together. They must share each scheduled poll while both outputs are
+     * recovered and placed through the bridge.
+     */
     it('多个 run 共享一次列表轮询并分别收割输出', async () => {
       const { studio } = await setupStudio()
       const run1 = makeRun({
@@ -482,14 +621,13 @@ describe('useCreativeStudio', () => {
         status: 'queued',
         outputs: [{ output_index: 0, status: 'succeeded' }],
       })
-      mockedApi.createCreativeRun
-        .mockResolvedValueOnce(run1)
-        .mockResolvedValueOnce(run2)
+      mockedApi.createCreativeRun.mockResolvedValueOnce(run1).mockResolvedValueOnce(run2)
       let pollCount = 0
       mockedApi.getCreativeRuns.mockImplementation(() => {
         pollCount += 1
         const status = pollCount === 1 ? 'running' : 'succeeded'
-        const outputs = status === 'succeeded' ? [{ output_index: 0, status: 'succeeded' as const }] : []
+        const outputs =
+          status === 'succeeded' ? [{ output_index: 0, status: 'succeeded' as const }] : []
         return Promise.resolve({
           items: [
             makeRun({ id: 'run-2', status, outputs }),
@@ -521,6 +659,11 @@ describe('useCreativeStudio', () => {
       expect(studio.polling.value).toBe(false)
     })
 
+    /**
+     * A history refresh discovers a queued task created outside the current
+     * submission flow. The next shared poll must publish its terminal state and
+     * stop tracking it.
+     */
     it('批量轮询会同步外部任务终态并停止追踪', async () => {
       const { studio } = await setupStudio()
       const queuedRun = makeRun({ id: 'run-external', status: 'queued' })
@@ -538,6 +681,11 @@ describe('useCreativeStudio', () => {
       expect(studio.polling.value).toBe(false)
     })
 
+    /**
+     * A list response reports queued status after success was already observed for
+     * that run. The known terminal task must remain successful in current and
+     * history state.
+     */
     it('历史接口短暂返回旧状态时不会降级已完成任务', async () => {
       const { studio } = await setupStudio()
       const succeededRun = makeRun({ id: 'run-stale-list', status: 'succeeded' })
@@ -555,6 +703,11 @@ describe('useCreativeStudio', () => {
       expect(studio.polling.value).toBe(false)
     })
 
+    /**
+     * A submitted task stays running through two list polls before succeeding.
+     * Requests must follow the three-second schedule and cease once the terminal
+     * snapshot is observed.
+     */
     it('固定每 3s 批量查询，终态后停止', async () => {
       const { studio } = await setupStudio()
       let calls = 0
@@ -587,6 +740,11 @@ describe('useCreativeStudio', () => {
       expect(mockedApi.getCreativeRun).not.toHaveBeenCalled()
     })
 
+    /**
+     * A tracked run enters result_lost without usable output content. Polling must
+     * stop and the studio must avoid attempting a content download for that
+     * terminal task.
+     */
     it('result_lost 终态直接停止，不尝试取回内容', async () => {
       const { studio } = await setupStudio()
       mockedApi.getCreativeRuns.mockResolvedValue({
@@ -602,6 +760,11 @@ describe('useCreativeStudio', () => {
       expect(mockedApi.getCreativeRunOutputContent).not.toHaveBeenCalled()
     })
 
+    /**
+     * The mounted studio is removed while a task remains active after one poll.
+     * Advancing the clock afterward must produce no further scheduled history
+     * requests.
+     */
     it('组件卸载后定时器清理，不再轮询', async () => {
       const { studio, wrapper } = await setupStudio()
       mockedApi.getCreativeRuns.mockResolvedValue({
@@ -620,6 +783,10 @@ describe('useCreativeStudio', () => {
   })
 
   describe('输出收割', () => {
+    /**
+     * succeededRunWithOutputs builds a successful task fixture with two
+     * unacknowledged outputs.
+     */
     function succeededRunWithOutputs() {
       return makeRun({
         id: 'run-1',
@@ -631,6 +798,11 @@ describe('useCreativeStudio', () => {
       })
     }
 
+    /**
+     * A successful run exposes two unacknowledged image outputs in index order.
+     * Recovery must download, save, and acknowledge both identities while leaving
+     * the missing-output set empty.
+     */
     it('succeeded 后逐输出取回 → 存本地 → ack', async () => {
       const { studio } = await setupStudio()
       mockedApi.getCreativeRuns.mockResolvedValue({ items: [succeededRunWithOutputs()], total: 1 })
@@ -639,8 +811,18 @@ describe('useCreativeStudio', () => {
       await vi.advanceTimersByTimeAsync(3000)
 
       expect(mockedApi.getCreativeRunOutputContent).toHaveBeenCalledTimes(2)
-      expect(mockedApi.getCreativeRunOutputContent).toHaveBeenNthCalledWith(1, 'run-1', 0, currentWorkspaceId())
-      expect(mockedApi.getCreativeRunOutputContent).toHaveBeenNthCalledWith(2, 'run-1', 1, currentWorkspaceId())
+      expect(mockedApi.getCreativeRunOutputContent).toHaveBeenNthCalledWith(
+        1,
+        'run-1',
+        0,
+        currentWorkspaceId(),
+      )
+      expect(mockedApi.getCreativeRunOutputContent).toHaveBeenNthCalledWith(
+        2,
+        'run-1',
+        1,
+        currentWorkspaceId(),
+      )
 
       expect(mockedStore.saveAsset).toHaveBeenCalledTimes(2)
       const savedKeys = mockedStore.saveAsset.mock.calls.map(([asset]) => asset.key)
@@ -651,11 +833,26 @@ describe('useCreativeStudio', () => {
       }
 
       expect(mockedApi.ackCreativeRunOutput).toHaveBeenCalledTimes(2)
-      expect(mockedApi.ackCreativeRunOutput).toHaveBeenNthCalledWith(1, 'run-1', 0, currentWorkspaceId())
-      expect(mockedApi.ackCreativeRunOutput).toHaveBeenNthCalledWith(2, 'run-1', 1, currentWorkspaceId())
+      expect(mockedApi.ackCreativeRunOutput).toHaveBeenNthCalledWith(
+        1,
+        'run-1',
+        0,
+        currentWorkspaceId(),
+      )
+      expect(mockedApi.ackCreativeRunOutput).toHaveBeenNthCalledWith(
+        2,
+        'run-1',
+        1,
+        currentWorkspaceId(),
+      )
       expect(studio.missingOutputKeys.value.size).toBe(0)
     })
 
+    /**
+     * The first successful output is permanently unavailable while a second remains
+     * recoverable. Recovery must mark only the missing output and continue saving
+     * and acknowledging the available image.
+     */
     it('单个输出取回失败仅标 missing，不影响其它输出', async () => {
       const { studio } = await setupStudio()
       mockedApi.getCreativeRunOutputContent.mockImplementation((_runId: string, index: number) => {
@@ -664,7 +861,6 @@ describe('useCreativeStudio', () => {
         }
         return Promise.resolve(new Blob(['img-1'], { type: 'image/png' }))
       })
-      // 终态后 refreshHistory 会再次尝试自动恢复；输出 0 每次都失败，输出 1 已在本地。
       mockedApi.getCreativeRuns.mockResolvedValue({
         items: [succeededRunWithOutputs()],
         total: 1,
@@ -689,7 +885,6 @@ describe('useCreativeStudio', () => {
       await studio.createRun({ sourceBlobs: [], maskBlob: null })
       await vi.advanceTimersByTimeAsync(3000)
 
-      // 输出 0 缺失，输出 1 仍正常收割
       expect(studio.missingOutputKeys.value.has('output:run-1:0')).toBe(true)
       expect(studio.missingOutputKeys.value.has('output:run-1:1')).toBe(false)
       expect(mockedStore.saveAsset).toHaveBeenCalledTimes(1)
@@ -697,14 +892,21 @@ describe('useCreativeStudio', () => {
       expect(mockedApi.ackCreativeRunOutput).toHaveBeenCalledWith('run-1', 1, currentWorkspaceId())
     })
 
+    /**
+     * A successful output already carries a server acknowledgement timestamp.
+     * Recovery must skip both content download and acknowledgement when the local
+     * index has no usable copy.
+     */
     it('已 ack 的输出跳过取回', async () => {
       const { studio } = await setupStudio()
       mockedApi.getCreativeRuns.mockResolvedValue({
-        items: [makeRun({
-          id: 'run-1',
-          status: 'succeeded',
-          outputs: [{ output_index: 0, status: 'succeeded', acked_at: 1725000000 }],
-        })],
+        items: [
+          makeRun({
+            id: 'run-1',
+            status: 'succeeded',
+            outputs: [{ output_index: 0, status: 'succeeded', acked_at: 1725000000 }],
+          }),
+        ],
         total: 1,
       })
 
@@ -717,6 +919,10 @@ describe('useCreativeStudio', () => {
   })
 
   describe('画布桥接', () => {
+    /**
+     * succeededRunWithTwoOutputs supplies two successful outputs for canvas bridge
+     * ordering tests.
+     */
     function succeededRunWithTwoOutputs() {
       return makeRun({
         id: 'run-1',
@@ -728,11 +934,19 @@ describe('useCreativeStudio', () => {
       })
     }
 
+    /**
+     * A completed submitted run returns two distinct image Blobs through recovery.
+     * The canvas bridge must receive both matching run and output identities after
+     * their acknowledgement attempts.
+     */
     it('收割成功（save + ack 后）经桥接把输出放上画布', async () => {
       const { studio } = await setupStudio()
       const blob0 = new Blob(['img-0'], { type: 'image/png' })
       const blob1 = new Blob(['img-1'], { type: 'image/png' })
-      mockedApi.getCreativeRuns.mockResolvedValue({ items: [succeededRunWithTwoOutputs()], total: 1 })
+      mockedApi.getCreativeRuns.mockResolvedValue({
+        items: [succeededRunWithTwoOutputs()],
+        total: 1,
+      })
       mockedApi.getCreativeRunOutputContent.mockImplementation((_runId: string, index: number) =>
         Promise.resolve(index === 0 ? blob0 : blob1),
       )
@@ -742,28 +956,54 @@ describe('useCreativeStudio', () => {
       await studio.createRun({ sourceBlobs: [], maskBlob: null })
       await vi.advanceTimersByTimeAsync(3000)
 
-      // 先 save + ack，再上板
       expect(mockedApi.ackCreativeRunOutput).toHaveBeenCalledTimes(2)
       expect(bridge.placeOutput).toHaveBeenCalledTimes(2)
-      expect(bridge.placeOutput).toHaveBeenNthCalledWith(1, { blob: blob0, runId: 'run-1', outputIndex: 0 })
-      expect(bridge.placeOutput).toHaveBeenNthCalledWith(2, { blob: blob1, runId: 'run-1', outputIndex: 1 })
+      expect(bridge.placeOutput).toHaveBeenNthCalledWith(1, {
+        blob: blob0,
+        runId: 'run-1',
+        outputIndex: 0,
+      })
+      expect(bridge.placeOutput).toHaveBeenNthCalledWith(2, {
+        blob: blob1,
+        runId: 'run-1',
+        outputIndex: 1,
+      })
       expect(studio.missingOutputKeys.value.size).toBe(0)
     })
 
+    /**
+     * The first asynchronous canvas placement is deliberately held pending.
+     * Recovery must wait for its completion before invoking placement for the
+     * second output in the same run.
+     */
     it('多输出上板按顺序等待前一张完成，避免并发覆盖画布状态', async () => {
       const { studio } = await setupStudio()
-      mockedApi.getCreativeRuns.mockResolvedValue({ items: [succeededRunWithTwoOutputs()], total: 1 })
+      mockedApi.getCreativeRuns.mockResolvedValue({
+        items: [succeededRunWithTwoOutputs()],
+        total: 1,
+      })
 
       let resolveFirst!: () => void
+      /**
+       * Hold the first bridge promise open so the assertion observes whether recovery
+       * incorrectly starts the next output placement before its predecessor
+       * completes.
+       */
       const firstPlacementDone = new Promise<void>((resolve) => {
         resolveFirst = resolve
       })
       const started: number[] = []
       const bridge = {
-        placeOutput: vi.fn(({ outputIndex }: { outputIndex: number }) => {
-          started.push(outputIndex)
-          return outputIndex === 0 ? firstPlacementDone : Promise.resolve()
-        }),
+        placeOutput: vi.fn(
+          ({
+            outputIndex,
+          }: {
+            outputIndex: number // zero-based output index
+          }) => {
+            started.push(outputIndex)
+            return outputIndex === 0 ? firstPlacementDone : Promise.resolve()
+          },
+        ),
         importToCanvas: vi.fn(),
       }
       studio.registerCanvasBridge(bridge)
@@ -771,7 +1011,6 @@ describe('useCreativeStudio', () => {
       await studio.createRun({ sourceBlobs: [], maskBlob: null })
       await vi.advanceTimersByTimeAsync(3000)
 
-      // 第一张尚未完成时，收割流程不能启动第二次画布委托。
       expect(started).toEqual([0])
       resolveFirst()
       await vi.advanceTimersByTimeAsync(0)
@@ -779,9 +1018,17 @@ describe('useCreativeStudio', () => {
       expect(started).toEqual([0, 1])
     })
 
+    /**
+     * The canvas bridge throws during output placement after bytes are saved.
+     * Recovery must still acknowledge both outputs and leave their available assets
+     * out of missing state.
+     */
     it('桥接 placeOutput 抛异常不影响收割与 ack', async () => {
       const { studio } = await setupStudio()
-      mockedApi.getCreativeRuns.mockResolvedValue({ items: [succeededRunWithTwoOutputs()], total: 1 })
+      mockedApi.getCreativeRuns.mockResolvedValue({
+        items: [succeededRunWithTwoOutputs()],
+        total: 1,
+      })
       const bridge = {
         placeOutput: vi.fn(() => {
           throw new Error('canvas not ready')
@@ -797,22 +1044,26 @@ describe('useCreativeStudio', () => {
       expect(studio.missingOutputKeys.value.size).toBe(0)
     })
 
+    /**
+     * History import is attempted with absent bytes, present bytes, and a throwing
+     * bridge. Its boolean must reflect immediate dispatch availability and
+     * synchronous failure for each case.
+     */
     it('importOutputToCanvas 取本地素材委托桥接；素材缺失或桥接异常时返回 false', async () => {
       const { studio } = await setupStudio()
 
-      // 本地无素材：不调用桥接
       const bridge = { placeOutput: vi.fn(), importToCanvas: vi.fn() }
       studio.registerCanvasBridge(bridge)
       expect(studio.importOutputToCanvas('run-9', 0)).toBe(false)
       expect(bridge.importToCanvas).not.toHaveBeenCalled()
 
-      // 本地有素材：委托桥接导入
       const blob = new Blob(['img'], { type: 'image/png' })
-      studio.outputAssetMap.value = new Map([['output:run-9:0', { key: 'output:run-9:0', kind: 'output', blob, createdAt: 1 }]])
+      studio.outputAssetMap.value = new Map([
+        ['output:run-9:0', { key: 'output:run-9:0', kind: 'output', blob, createdAt: 1 }],
+      ])
       expect(studio.importOutputToCanvas('run-9', 0)).toBe(true)
       expect(bridge.importToCanvas).toHaveBeenCalledWith(blob, 'run-9', 0)
 
-      // 桥接抛异常时吞掉并返回 false
       studio.registerCanvasBridge({
         placeOutput: vi.fn(),
         importToCanvas: () => {
@@ -824,6 +1075,10 @@ describe('useCreativeStudio', () => {
   })
 
   describe('本地数据', () => {
+    /**
+     * Local clearing rejects with a disk error from the storage helper. The studio
+     * must publish that message and rethrow so its view can report failure.
+     */
     it('clearLocalData 失败时写入错误文案并向上抛出', async () => {
       const { studio } = await setupStudio()
       mockedStore.clearAll.mockRejectedValue(new Error('disk full'))
@@ -832,6 +1087,11 @@ describe('useCreativeStudio', () => {
       expect(studio.error.value).toBe('disk full')
     })
 
+    /**
+     * The studio holds current and historical task state before local clearing
+     * succeeds. It must clear those indexes, call storage clearing, and persist a
+     * fresh workspace identity.
+     */
     it('clearLocalData 调 clearAll 并重置内存状态', async () => {
       const { studio } = await setupStudio()
       studio.currentRun.value = makeRun({ id: 'run-1', status: 'succeeded' })
@@ -841,7 +1101,6 @@ describe('useCreativeStudio', () => {
       await studio.clearLocalData()
 
       expect(mockedStore.clearAll).toHaveBeenCalledTimes(1)
-      // 清空后旋转工作区，服务端旧任务在当前浏览器立即隐藏
       expect(currentWorkspaceId()).toMatch(/^[0-9a-f-]{36}$/)
       expect(currentWorkspaceId()).not.toBe(previousWorkspaceId)
       expect(studio.currentRun.value).toBeNull()
@@ -849,6 +1108,11 @@ describe('useCreativeStudio', () => {
       expect(studio.missingOutputKeys.value.size).toBe(0)
     })
 
+    /**
+     * An output download completes after local data has been cleared and the
+     * workspace invalidated. Its obsolete recovery must not save bytes or
+     * repopulate cleared history.
+     */
     it('清空期间完成的旧收割不会把素材重新写回', async () => {
       const { studio } = await setupStudio()
       const run = makeRun({
@@ -868,6 +1132,10 @@ describe('useCreativeStudio', () => {
       await Promise.resolve()
       await Promise.resolve()
       await studio.clearLocalData()
+      /**
+       * Release the delayed image after clearing to reproduce obsolete recovery
+       * resuming against a changed workspace generation and empty current history.
+       */
       resolveContent(new Blob(['stale']))
       await refresh
 
@@ -875,6 +1143,11 @@ describe('useCreativeStudio', () => {
       expect(studio.runHistory.value).toEqual([])
     })
 
+    /**
+     * Another same-origin tab stores a new workspace identifier and emits its
+     * storage event. The studio must query that workspace and replace the visible
+     * task list.
+     */
     it('同源标签页收到工作区变化后重置并刷新历史', async () => {
       const { studio } = await setupStudio()
       await studio.refreshHistory()
@@ -903,8 +1176,11 @@ describe('useCreativeStudio', () => {
   })
 
   describe('balance refresh', () => {
-    // Creating a task reserves funds before polling begins. Refresh the shared
-    // user immediately so the header can show the new reservation.
+    /**
+     * An accepted submission changes the tracked task list before polling begins.
+     * The shared account refresh must run so the page header can update its
+     * reserved funds.
+     */
     it('refreshes the user after a successful submission', async () => {
       const { studio, wrapper } = await setupStudio()
       studio.prompt.value = 'An illustrated city'
@@ -916,21 +1192,26 @@ describe('useCreativeStudio', () => {
       wrapper.unmount()
     })
 
-    // Each terminal status completes a funding path. Repeated history snapshots
-    // must keep the refreshed account without issuing more identical account reads.
+    /**
+     * A tracked task changes from running to each supported terminal status.
+     * Account refresh must run once for the change and stay unchanged on repeated
+     * identical snapshots.
+     */
     it.each(['succeeded', 'failed', 'cancelled', 'result_lost'] as const)(
       'refreshes the user when a tracked task becomes %s',
       async (status) => {
         const { studio, wrapper } = await setupStudio()
         mockedApi.getCreativeRuns.mockResolvedValue({
-          items: [makeRun({ id: 'balance-run', status: 'running' })], total: 1,
+          items: [makeRun({ id: 'balance-run', status: 'running' })],
+          total: 1,
         })
         await studio.refreshHistory()
         await flushPromises()
         refreshUser.mockClear()
 
         mockedApi.getCreativeRuns.mockResolvedValue({
-          items: [makeRun({ id: 'balance-run', status })], total: 1,
+          items: [makeRun({ id: 'balance-run', status })],
+          total: 1,
         })
         await studio.refreshHistory()
         await flushPromises()
@@ -943,8 +1224,11 @@ describe('useCreativeStudio', () => {
       },
     )
 
-    // Older tasks can finish outside the latest history page. Their removal
-    // from the complete active list must still refresh funds shown in the header.
+    /**
+     * An older active task disappears from the complete active listing outside
+     * recent history. Its removal must refresh the shared account and leave polling
+     * stopped.
+     */
     it('refreshes when an older active task disappears', async () => {
       const { studio, wrapper } = await setupStudio()
       mockedApi.getCreativeActiveRuns.mockResolvedValueOnce({
@@ -964,19 +1248,26 @@ describe('useCreativeStudio', () => {
       wrapper.unmount()
     })
 
-    // Settlement can finish while an earlier account read is pending. Start the
-    // next read after that request completes so its stale result cannot win.
+    /**
+     * A settlement status arrives while the reservation-triggered account read
+     * remains pending. The second account refresh must wait until the first
+     * finishes before starting its own read.
+     */
     it('serializes a settlement refresh behind a pending reservation refresh', async () => {
       const { studio, wrapper } = await setupStudio()
       let resolveReservation!: () => void
-      refreshUser.mockImplementationOnce(() => new Promise<void>((resolve) => {
-        resolveReservation = resolve
-      }))
+      refreshUser.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveReservation = resolve
+          }),
+      )
       studio.prompt.value = 'An illustrated city'
       await studio.createRun({ sourceBlobs: [], maskBlob: null })
       await flushPromises()
       mockedApi.getCreativeRuns.mockResolvedValue({
-        items: [makeRun({ id: 'run-1', status: 'succeeded' })], total: 1,
+        items: [makeRun({ id: 'run-1', status: 'succeeded' })],
+        total: 1,
       })
 
       await studio.refreshHistory()
@@ -989,19 +1280,28 @@ describe('useCreativeStudio', () => {
       wrapper.unmount()
     })
 
-    // Image content may arrive long after settlement. The account refresh must
-    // start while the download is pending so frozen funds do not linger.
+    /**
+     * A terminal task's image download is delayed after its status becomes visible.
+     * The shared account refresh must start before bytes are saved, allowing
+     * funding updates independently of recovery.
+     */
     it('refreshes settled funds before the output download completes', async () => {
       const { studio, wrapper } = await setupStudio()
       let resolveOutput!: (blob: Blob) => void
-      mockedApi.getCreativeRunOutputContent.mockImplementationOnce(() => new Promise<Blob>((resolve) => {
-        resolveOutput = resolve
-      }))
+      mockedApi.getCreativeRunOutputContent.mockImplementationOnce(
+        () =>
+          new Promise<Blob>((resolve) => {
+            resolveOutput = resolve
+          }),
+      )
       mockedApi.getCreativeRuns.mockResolvedValue({
-        items: [makeRun({
-          id: 'download-run', status: 'succeeded',
-          outputs: [{ output_index: 0, status: 'succeeded' }],
-        })],
+        items: [
+          makeRun({
+            id: 'download-run',
+            status: 'succeeded',
+            outputs: [{ output_index: 0, status: 'succeeded' }],
+          }),
+        ],
         total: 1,
       })
 
@@ -1016,8 +1316,11 @@ describe('useCreativeStudio', () => {
       wrapper.unmount()
     })
 
-    // An account read can fail after task creation succeeds. Generation remains
-    // accepted, and the next task status change can refresh the account again.
+    /**
+     * The account read fails after task creation succeeds. Generation must remain
+     * accepted, log the account error, and permit a later terminal change to
+     * trigger another refresh.
+     */
     it('continues generation and later refreshes after an account read fails', async () => {
       const { studio, wrapper } = await setupStudio()
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -1027,10 +1330,14 @@ describe('useCreativeStudio', () => {
       expect(await studio.createRun({ sourceBlobs: [], maskBlob: null })).toBe(true)
       await flushPromises()
       expect(studio.error.value).toBe('')
-      expect(consoleError).toHaveBeenCalledWith('Failed to refresh creative balance:', expect.any(Error))
+      expect(consoleError).toHaveBeenCalledWith(
+        'Failed to refresh creative balance:',
+        expect.any(Error),
+      )
 
       mockedApi.getCreativeRuns.mockResolvedValue({
-        items: [makeRun({ id: 'run-1', status: 'failed' })], total: 1,
+        items: [makeRun({ id: 'run-1', status: 'failed' })],
+        total: 1,
       })
       await studio.refreshHistory()
       await flushPromises()
@@ -1042,6 +1349,11 @@ describe('useCreativeStudio', () => {
   })
 
   describe('refreshHistory', () => {
+    /**
+     * The recent history page omits an older task still awaiting settlement.
+     * Active-list cursor traversal must include that task and keep shared polling
+     * active after merging both sources.
+     */
     it('通过 active runs 游标接管不在最近历史页的任务', async () => {
       const { studio } = await setupStudio()
       const recent = makeRun({ id: 'recent-run', status: 'succeeded' })
@@ -1055,10 +1367,25 @@ describe('useCreativeStudio', () => {
 
       expect(studio.runHistory.value.map((run) => run.id)).toEqual(['recent-run', 'older-active'])
       expect(studio.polling.value).toBe(true)
-      expect(mockedApi.getCreativeActiveRuns).toHaveBeenNthCalledWith(1, currentWorkspaceId(), undefined, 100)
-      expect(mockedApi.getCreativeActiveRuns).toHaveBeenNthCalledWith(2, currentWorkspaceId(), 'next', 100)
+      expect(mockedApi.getCreativeActiveRuns).toHaveBeenNthCalledWith(
+        1,
+        currentWorkspaceId(),
+        undefined,
+        100,
+      )
+      expect(mockedApi.getCreativeActiveRuns).toHaveBeenNthCalledWith(
+        2,
+        currentWorkspaceId(),
+        'next',
+        100,
+      )
     })
 
+    /**
+     * Workspace localStorage access throws before history can be queried. The
+     * studio must keep the list empty, report workspace-unavailable feedback, and
+     * avoid the server history request.
+     */
     it('工作区本地存储不可用时不回退到共享历史', async () => {
       const { studio } = await setupStudio()
       vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
@@ -1072,6 +1399,11 @@ describe('useCreativeStudio', () => {
       expect(studio.error.value).toBe('creative.error.workspaceUnavailable')
     })
 
+    /**
+     * Server history includes tasks with very old creation timestamps. The studio
+     * must publish both records for its current workspace without applying a
+     * browser-time cutoff.
+     */
     it('不再按本机时间水位线过滤服务端历史', async () => {
       const { studio } = await setupStudio()
       mockedApi.getCreativeRuns.mockResolvedValue({
@@ -1088,6 +1420,11 @@ describe('useCreativeStudio', () => {
       expect(mockedApi.getCreativeRuns).toHaveBeenCalledWith(currentWorkspaceId(), 1, 20)
     })
 
+    /**
+     * History exposes two unacknowledged outputs while one already exists locally.
+     * Refresh must reuse the local image, download the other, and publish both
+     * without missing placeholders.
+     */
     it('历史刷新自动恢复未 ack 的服务端输出并关联本地素材', async () => {
       const { studio } = await setupStudio()
       const run = makeRun({
@@ -1099,7 +1436,6 @@ describe('useCreativeStudio', () => {
         ],
       })
       mockedApi.getCreativeRuns.mockResolvedValue({ items: [run], total: 1 })
-      // 本地只有输出 0，输出 1 仍在服务端 transient 中。
       const localOutput = {
         key: 'output:run-7:0',
         kind: 'output' as const,
@@ -1119,10 +1455,19 @@ describe('useCreativeStudio', () => {
       expect(studio.outputAssetMap.value.has('output:run-7:1')).toBe(true)
       expect(studio.missingOutputKeys.value.has('output:run-7:1')).toBe(false)
       expect(studio.missingOutputKeys.value.has('output:run-7:0')).toBe(false)
-      expect(mockedApi.getCreativeRunOutputContent).toHaveBeenCalledWith('run-7', 1, currentWorkspaceId())
+      expect(mockedApi.getCreativeRunOutputContent).toHaveBeenCalledWith(
+        'run-7',
+        1,
+        currentWorkspaceId(),
+      )
       expect(mockedApi.ackCreativeRunOutput).toHaveBeenCalledWith('run-7', 1, currentWorkspaceId())
     })
 
+    /**
+     * A successful historical task has one unacknowledged transient output and no
+     * local bytes. Refresh must download and save that image, acknowledge it, and
+     * expose it locally.
+     */
     it('历史刷新自动收割尚未 ack 的服务端输出', async () => {
       const { studio } = await setupStudio()
       const run = makeRun({
@@ -1136,7 +1481,11 @@ describe('useCreativeStudio', () => {
 
       await studio.refreshHistory()
 
-      expect(mockedApi.getCreativeRunOutputContent).toHaveBeenCalledWith('run-history-recover', 0, currentWorkspaceId())
+      expect(mockedApi.getCreativeRunOutputContent).toHaveBeenCalledWith(
+        'run-history-recover',
+        0,
+        currentWorkspaceId(),
+      )
       expect(mockedStore.saveAsset).toHaveBeenCalledWith(
         expect.objectContaining({
           key: 'output:run-history-recover:0',
@@ -1144,11 +1493,20 @@ describe('useCreativeStudio', () => {
           blob,
         }),
       )
-      expect(mockedApi.ackCreativeRunOutput).toHaveBeenCalledWith('run-history-recover', 0, currentWorkspaceId())
+      expect(mockedApi.ackCreativeRunOutput).toHaveBeenCalledWith(
+        'run-history-recover',
+        0,
+        currentWorkspaceId(),
+      )
       expect(studio.outputAssetMap.value.get('output:run-history-recover:0')?.blob).toBe(blob)
       expect(studio.missingOutputKeys.value.has('output:run-history-recover:0')).toBe(false)
     })
 
+    /**
+     * A historical output exists in the local asset store but remains
+     * unacknowledged. Refresh must retain its bytes and retry acknowledgement
+     * without making another download request.
+     */
     it('本地已有未 ack 素材时只重试 ack，不重复下载', async () => {
       const { studio } = await setupStudio()
       const run = makeRun({
@@ -1172,11 +1530,20 @@ describe('useCreativeStudio', () => {
       await studio.refreshHistory()
 
       expect(mockedApi.getCreativeRunOutputContent).not.toHaveBeenCalled()
-      expect(mockedApi.ackCreativeRunOutput).toHaveBeenCalledWith('run-local-recover', 0, currentWorkspaceId())
+      expect(mockedApi.ackCreativeRunOutput).toHaveBeenCalledWith(
+        'run-local-recover',
+        0,
+        currentWorkspaceId(),
+      )
       expect(studio.outputAssetMap.value.get(localOutput.key)).toEqual(localOutput)
       expect(studio.missingOutputKeys.value.has(localOutput.key)).toBe(false)
     })
 
+    /**
+     * Local saving succeeds before the output acknowledgement request fails. The
+     * recovered asset must remain visible and must not enter the missing-output set
+     * because acknowledgement failed.
+     */
     it('本地保存成功但 ack 失败时仍保留素材，不标记 missing', async () => {
       const { studio } = await setupStudio()
       const run = makeRun({
@@ -1194,6 +1561,11 @@ describe('useCreativeStudio', () => {
       expect(studio.missingOutputKeys.value.has('output:run-ack-retry:0')).toBe(false)
     })
 
+    /**
+     * A successful output is acknowledged but its browser-local copy is absent.
+     * Refresh must mark it missing without retrying either content download or
+     * server acknowledgement.
+     */
     it('已 ack 且本地无素材时不尝试从服务端恢复', async () => {
       const { studio } = await setupStudio()
       const run = makeRun({
@@ -1210,6 +1582,11 @@ describe('useCreativeStudio', () => {
       expect(studio.missingOutputKeys.value.has('output:run-acked-missing:0')).toBe(true)
     })
 
+    /**
+     * Two history requests overlap and the older response arrives last. Only the
+     * newer task list and its recovered asset may remain published after both
+     * requests finish.
+     */
     it('并发历史刷新只接受最新请求，旧响应不能覆盖新列表', async () => {
       const { studio } = await setupStudio()
       const oldRun = makeRun({ id: 'run-old', status: 'succeeded' })
@@ -1218,7 +1595,10 @@ describe('useCreativeStudio', () => {
         status: 'succeeded',
         outputs: [{ output_index: 0, status: 'succeeded' }],
       })
-      let resolveOld!: (page: { items: CreativeRun[]; total: number }) => void
+      let resolveOld!: (page: {
+        items: CreativeRun[] // returned server task records
+        total: number // server task record count
+      }) => void
       mockedApi.getCreativeRuns
         .mockImplementationOnce(
           () =>
@@ -1233,6 +1613,10 @@ describe('useCreativeStudio', () => {
       const newRefresh = studio.refreshHistory()
       await newRefresh
 
+      /**
+       * Complete the older request last so generation checks must preserve the newer
+       * published list and recovered asset despite reversed response order.
+       */
       resolveOld({ items: [oldRun], total: 1 })
       await oldRefresh
 

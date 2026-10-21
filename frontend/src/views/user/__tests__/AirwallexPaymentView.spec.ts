@@ -4,8 +4,15 @@ import AirwallexPaymentView from '../AirwallexPaymentView.vue'
 import {
   PAYMENT_RECOVERY_STORAGE_KEY,
   type PaymentRecoverySnapshot,
-} from '@/components/payment/paymentFlow'
+} from '@/utils/payment/paymentFlow'
 
+/**
+ * AirwallexPaymentView.spec.ts checks that route identifiers select locally stored Airwallex
+ * intent data before SDK checkout. The SDK and navigation are mocked, so the tests observe
+ * secret handling and redirect options without opening a payment session.
+ */
+
+// Hoisted route and SDK doubles expose the checkout initialization options while keeping redirect destinations and gateway credentials inside the test fixture.
 const routeState = vi.hoisted(() => ({
   query: {} as Record<string, unknown>,
 }))
@@ -37,7 +44,14 @@ vi.mock('@airwallex/components-sdk', () => ({
   init: airwallexInit,
 }))
 
-function airwallexSnapshot(overrides: Partial<PaymentRecoverySnapshot> = {}): PaymentRecoverySnapshot {
+/**
+ * airwallexSnapshot creates recovery data with SDK credentials and optional field
+ * overrides. Each fixture keeps order identity separate from its secret so tests can
+ * exercise restoration and route matching.
+ */
+function airwallexSnapshot(
+  overrides: Partial<PaymentRecoverySnapshot> = {},
+): PaymentRecoverySnapshot {
   return {
     orderId: 101,
     amount: 88,
@@ -60,6 +74,11 @@ function airwallexSnapshot(overrides: Partial<PaymentRecoverySnapshot> = {}): Pa
   }
 }
 
+/**
+ * mountView mounts Airwallex checkout with the application shell replaced by a slot. The
+ * SDK and router stay mocked so mounting exercises recovery without opening a real payment
+ * destination.
+ */
 function mountView() {
   return shallowMount(AirwallexPaymentView, {
     global: {
@@ -84,16 +103,16 @@ describe('AirwallexPaymentView', () => {
     window.localStorage.clear()
   })
 
+  // The route identifies an Airwallex order while its secret remains in local recovery. SDK
+  // initialization must receive the stored intent data and redirect using order identifiers
+  // only.
   it('从本地恢复快照读取支付参数，避免在 URL 中暴露 client_secret', async () => {
     routeState.query = {
       order_id: '101',
       out_trade_no: 'sub2_awx_101',
       resume_token: 'resume-awx',
     }
-    window.localStorage.setItem(
-      PAYMENT_RECOVERY_STORAGE_KEY,
-      JSON.stringify(airwallexSnapshot()),
-    )
+    window.localStorage.setItem(PAYMENT_RECOVERY_STORAGE_KEY, JSON.stringify(airwallexSnapshot()))
 
     mountView()
     await flushPromises()
@@ -104,12 +123,14 @@ describe('AirwallexPaymentView', () => {
       enabledElements: ['payments'],
       locale: 'zh',
     })
-    expect(redirectToCheckout).toHaveBeenCalledWith(expect.objectContaining({
-      intent_id: 'int_awx_101',
-      client_secret: 'awx_client_secret',
-      currency: 'CNY',
-      country_code: 'CN',
-    }))
+    expect(redirectToCheckout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent_id: 'int_awx_101',
+        client_secret: 'awx_client_secret',
+        currency: 'CNY',
+        country_code: 'CN',
+      }),
+    )
 
     const checkoutOptions = redirectToCheckout.mock.calls[0][0]
     const successUrl = new URL(checkoutOptions.successUrl)
@@ -118,6 +139,8 @@ describe('AirwallexPaymentView', () => {
     expect(successUrl.searchParams.get('resume_token')).toBe('resume-awx')
   })
 
+  // The route contains an Airwallex secret but there is no valid recovery snapshot. The page
+  // must reject those query-only credentials before initializing the checkout SDK.
   it('拒绝只从 URL query 读取 Airwallex 支付密钥', async () => {
     routeState.query = {
       order_id: '101',

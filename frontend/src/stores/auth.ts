@@ -1,44 +1,65 @@
-/**
- * Authentication Store
- * Manages user authentication state, login/logout, token refresh, and token persistence
- */
-
 import { getLocale, setLocale } from '@/i18n'
 import { defineStore } from 'pinia'
 import { ref, computed, readonly } from 'vue'
 import { authAPI, isTotp2FARequired, passkeyAPI, type LoginResponse } from '@/api'
+import type { User } from '@/api/identity.types'
 import type {
-  User,
   LoginRequest,
   RegisterRequest,
   AuthResponse,
-  ActionCaptchaRequestProof
-} from '@/types'
+  ActionCaptchaRequestProof,
+} from '@/api/auth.types'
 
+// auth.ts restores browser authentication, publishes signed-in users, and manages user
+// polling and proactive token renewal. Authentication requires both a token and user,
+// while pending external authentication remains a separate persisted session. Login
+// responses and callback tokens follow different publication sequences because callbacks
+// can already have stored refresh credentials.
+//
+// Locale synchronization tracks the last user identifier so background profile polling
+// does not replace a language selected during the session. Timers are stopped before
+// callback session replacement and local logout. Profile requests and locale changes
+// already in flight are not cancelled here, and their completion follows the
+// corresponding API and locale implementation.
+
+// Authentication storage keys name the persisted session records read during initial
+// navigation and removed by local logout.
 const AUTH_TOKEN_KEY = 'auth_token'
 const AUTH_USER_KEY = 'auth_user'
 const REFRESH_TOKEN_KEY = 'refresh_token'
-const TOKEN_EXPIRES_AT_KEY = 'token_expires_at' // 存储过期时间戳。
+const TOKEN_EXPIRES_AT_KEY = 'token_expires_at' // Absolute expiry timestamp key.
 const PENDING_AUTH_SESSION_KEY = 'pending_auth_session'
 const AUTO_REFRESH_INTERVAL = 60 * 1000 // 60 seconds for user data refresh
 const TOKEN_REFRESH_BUFFER = 120 * 1000 // 120 seconds before expiry to refresh token
 
+// PendingAuthTokenField identifies the request property accepted by pending
+// authentication endpoints.
 type PendingAuthTokenField = 'pending_auth_token' | 'pending_oauth_token'
 
+// PendingAuthSessionSummary stores external sign-in context while registration or
+// account adoption remains incomplete.
 interface PendingAuthSessionSummary {
-  token: string
-  token_field: PendingAuthTokenField
-  provider: string
-  redirect?: string
-  adoption_required?: boolean
-  suggested_display_name?: string
-  suggested_avatar_url?: string
+  // token can be empty for a pending OAuth adoption session; a nonblank provider is what
+  // makes the persisted summary resumable.
+  token: string // External session token text.
+  token_field: PendingAuthTokenField // Request token property name.
+  provider: string // External identity provider name.
+  redirect?: string // Post-authentication destination when supplied.
+  adoption_required?: boolean // Account adoption requirement hint.
+  suggested_display_name?: string // Suggested account display name.
+  suggested_avatar_url?: string // Suggested account avatar URL.
 }
 
+// normalizePendingAuthTokenField maps persisted token-field names to the two supported
+// request properties. Unknown values use pending_auth_token so older or incomplete
+// storage retains the default authentication field.
 function normalizePendingAuthTokenField(value: unknown): PendingAuthTokenField {
   return value === 'pending_oauth_token' ? 'pending_oauth_token' : 'pending_auth_token'
 }
 
+// getPersistedPendingAuthSession reads and validates the pending external authentication
+// summary. Missing storage returns null; malformed JSON or a blank provider removes the
+// entry, while absent optional values remain undefined.
 function getPersistedPendingAuthSession(): PendingAuthSessionSummary | null {
   const raw = localStorage.getItem(PENDING_AUTH_SESSION_KEY)
   if (!raw) {
@@ -49,6 +70,8 @@ function getPersistedPendingAuthSession(): PendingAuthSessionSummary | null {
     const parsed = JSON.parse(raw) as Partial<PendingAuthSessionSummary> | null
     const provider = typeof parsed?.provider === 'string' ? parsed.provider.trim() : ''
     if (!provider) {
+      // A missing provider makes the saved context unusable for external authentication,
+      // so remove it before allowing callers to resume.
       localStorage.removeItem(PENDING_AUTH_SESSION_KEY)
       return null
     }
@@ -57,50 +80,73 @@ function getPersistedPendingAuthSession(): PendingAuthSessionSummary | null {
       token_field: normalizePendingAuthTokenField(parsed?.token_field),
       provider,
       redirect: typeof parsed?.redirect === 'string' ? parsed.redirect : undefined,
-      adoption_required: typeof parsed?.adoption_required === 'boolean' ? parsed.adoption_required : undefined,
-      suggested_display_name: typeof parsed?.suggested_display_name === 'string' ? parsed.suggested_display_name : undefined,
-      suggested_avatar_url: typeof parsed?.suggested_avatar_url === 'string' ? parsed.suggested_avatar_url : undefined
+      adoption_required:
+        typeof parsed?.adoption_required === 'boolean' ? parsed.adoption_required : undefined,
+      suggested_display_name:
+        typeof parsed?.suggested_display_name === 'string'
+          ? parsed.suggested_display_name
+          : undefined,
+      suggested_avatar_url:
+        typeof parsed?.suggested_avatar_url === 'string' ? parsed.suggested_avatar_url : undefined,
     }
   } catch {
+    // Invalid JSON cannot provide a resumable provider context, so remove that persisted
+    // entry and return an absent pending session.
     localStorage.removeItem(PENDING_AUTH_SESSION_KEY)
     return null
   }
 }
 
+// persistPendingAuthSession serializes the pending external authentication summary into
+// browser storage.
 function persistPendingAuthSession(session: PendingAuthSessionSummary): void {
   localStorage.setItem(PENDING_AUTH_SESSION_KEY, JSON.stringify(session))
 }
 
+// clearPendingAuthSessionStorage removes the persisted pending authentication summary
+// from browser storage.
 function clearPendingAuthSessionStorage(): void {
   localStorage.removeItem(PENDING_AUTH_SESSION_KEY)
 }
 
+// useAuthStore exposes the browser session, account identity, and authentication
+// actions. Install Pinia before calling it; session restoration is initiated separately
+// through checkAuth, and logout clears locally owned refresh timers.
 export const useAuthStore = defineStore('auth', () => {
-  // ==================== State ====================
-
+  // localeUserID records the last account whose language was applied; failed locale
+  // loading clears the marker so later profile refreshes can retry.
   let localeUserID: number | null = null
 
-  // 每次登录同步账户选择，后台资料轮询保持当前切换结果。
+  // syncUserLocale applies the account preference once for each observed user
+  // identifier. It records that identifier before awaiting locale loading so repeated
+  // profile responses do not restart the same work. A failed locale change clears the
+  // marker and permits another profile response to retry. An absent preference keeps the
+  // current locale and enables the locale helper's persistence behavior. Already running
+  // locale requests are managed by setLocale.
   async function syncUserLocale(value: User): Promise<void> {
     if (localeUserID === value.id) return
     localeUserID = value.id
     try {
       await setLocale(value.preferred_locale || getLocale(), !value.preferred_locale)
     } catch {
+      // A failed locale load leaves synchronization incomplete, so clear the account
+      // marker and let a later profile refresh retry.
       localeUserID = null
     }
   }
 
+  // Session refs publish authentication to navigation and account consumers; refresh
+  // credentials and expiry remain internal to the store-owned renewal timer.
   const user = ref<User | null>(null)
   const token = ref<string | null>(null)
   const refreshTokenValue = ref<string | null>(null)
-  const tokenExpiresAt = ref<number | null>(null) // 过期时间戳（毫秒）
+  const tokenExpiresAt = ref<number | null>(null) // Unix epoch milliseconds.
   const pendingAuthSession = ref<PendingAuthSessionSummary | null>(null)
   let refreshIntervalId: ReturnType<typeof setInterval> | null = null
   let tokenRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
 
-  // ==================== Computed ====================
-
+  // Authentication selectors require both token and user for sign-in, inspect the user
+  // role for administrator access, and keep pending external sessions separate.
   const isAuthenticated = computed(() => {
     return !!token.value && !!user.value
   })
@@ -111,13 +157,13 @@ export const useAuthStore = defineStore('auth', () => {
 
   const hasPendingAuthSession = computed(() => pendingAuthSession.value !== null)
 
-  // ==================== Actions ====================
-
-  /**
-   * Initialize auth state from localStorage
-   * Call this on app startup to restore session
-   * Also starts auto-refresh and immediately fetches latest user data
-   */
+  // checkAuth restores token, user, refresh credentials, and pending authentication from
+  // browser storage. Call it during initial navigation before evaluating route
+  // permissions. A restored user starts a background profile read and periodic refresh;
+  // a stored expiry of zero still schedules token renewal. Synchronous restoration
+  // failures clear authentication while retaining a valid pending external session.
+  // Profile request failures are logged asynchronously and do not block initial route
+  // matching.
   function checkAuth(): void {
     const savedToken = localStorage.getItem(AUTH_TOKEN_KEY)
     const savedUser = localStorage.getItem(AUTH_USER_KEY)
@@ -131,17 +177,12 @@ export const useAuthStore = defineStore('auth', () => {
         user.value = JSON.parse(savedUser)
         refreshTokenValue.value = savedRefreshToken
         tokenExpiresAt.value = savedExpiresAt ? parseInt(savedExpiresAt, 10) : null
-
-        // Immediately refresh user data from backend (async, don't block)
+        // Restore cached identity immediately for route checks; refresh it
+        // asynchronously so network latency does not block initial navigation.
         refreshUser().catch((error) => {
           console.error('Failed to refresh user on init:', error)
         })
-
-        // Start auto-refresh interval for user data
         startAutoRefresh()
-
-        // Start proactive token refresh if we have refresh token and expiry info
-        // Note: use !== null to handle case when tokenExpiresAt.value is 0 (expired)
         if (savedRefreshToken && tokenExpiresAt.value !== null) {
           scheduleTokenRefreshAt(tokenExpiresAt.value)
         }
@@ -152,12 +193,12 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /**
-   * Start auto-refresh interval for user data
-   * Refreshes user data every 60 seconds
-   */
+  // startAutoRefresh replaces the owned profile-polling interval with a sixty-second
+  // timer. Each tick checks for a token before requesting the user, and failures are
+  // logged while polling continues.
   function startAutoRefresh(): void {
-    // Clear existing interval if any
+    // Replace the existing polling interval before creating another, so repeated
+    // restoration or login does not accumulate profile timers.
     stopAutoRefresh()
 
     refreshIntervalId = setInterval(() => {
@@ -169,33 +210,34 @@ export const useAuthStore = defineStore('auth', () => {
     }, AUTO_REFRESH_INTERVAL)
   }
 
-  /**
-   * Stop auto-refresh interval
-   */
+  // stopAutoRefresh releases the owned profile-polling timer and clears its handle.
+  // Repeated calls have no further effect after cleanup. Profile requests started by
+  // earlier ticks continue and can still publish their results.
   function stopAutoRefresh(): void {
     if (refreshIntervalId) {
+      // Release the interval before clearing its handle so subsequent startup can
+      // register exactly one owned profile poller.
       clearInterval(refreshIntervalId)
       refreshIntervalId = null
     }
   }
 
-  /**
-   * Schedule proactive token refresh before expiry (based on expiry timestamp)
-   * @param expiresAtMs - Token expiry timestamp in milliseconds
-   */
+  // scheduleTokenRefreshAt replaces the renewal timeout using an absolute millisecond
+  // expiry. Expired tokens and tokens within the two-minute buffer refresh immediately;
+  // later expiries schedule one timeout for the remaining delay.
   function scheduleTokenRefreshAt(expiresAtMs: number): void {
-    // Clear any existing timeout
+    // Replace the previous renewal schedule before calculating this expiry, so only the
+    // latest scheduled timeout remains owned by the store.
     if (tokenRefreshTimeoutId) {
       clearTimeout(tokenRefreshTimeoutId)
       tokenRefreshTimeoutId = null
     }
-
-    // Calculate remaining time until refresh (buffer time before expiry)
     const now = Date.now()
+    // Subtract the renewal buffer from the absolute deadline and clamp overdue work to
+    // immediate execution rather than a negative timeout.
     const refreshInMs = Math.max(0, expiresAtMs - now - TOKEN_REFRESH_BUFFER)
 
     if (refreshInMs <= 0) {
-      // Token is about to expire or already expired, refresh immediately
       performTokenRefresh()
       return
     }
@@ -205,20 +247,26 @@ export const useAuthStore = defineStore('auth', () => {
     }, refreshInMs)
   }
 
-  /**
-   * Schedule proactive token refresh before expiry (based on expires_in seconds)
-   * @param expiresInSeconds - Token expiry time in seconds from now
-   */
+  // scheduleTokenRefresh converts a relative expiry in seconds to an absolute
+  // millisecond deadline. It publishes that deadline in reactive state before writing
+  // browser storage, then delegates timeout replacement to scheduleTokenRefreshAt. A
+  // reload can therefore restore the same stored deadline used for scheduling. Storage
+  // failure propagates before scheduling begins, and already elapsed or near-expiry
+  // deadlines are handled by the delegated immediate-refresh path rather than by this
+  // conversion.
   function scheduleTokenRefresh(expiresInSeconds: number): void {
     const expiresAtMs = Date.now() + expiresInSeconds * 1000
+    // Publish and persist the same absolute deadline before scheduling, so a reload can
+    // restore the timestamp used by this renewal.
     tokenExpiresAt.value = expiresAtMs
     localStorage.setItem(TOKEN_EXPIRES_AT_KEY, String(expiresAtMs))
     scheduleTokenRefreshAt(expiresAtMs)
   }
 
-  /**
-   * Perform the actual token refresh
-   */
+  // performTokenRefresh requests replacement credentials when a refresh token is
+  // present. The API owns credential persistence; this store publishes returned tokens
+  // and schedules their next expiry, logging failures while HTTP authentication handling
+  // remains responsible for rejection.
   async function performTokenRefresh(): Promise<void> {
     if (!refreshTokenValue.value) {
       return
@@ -226,22 +274,21 @@ export const useAuthStore = defineStore('auth', () => {
 
     try {
       const response = await authAPI.refreshToken()
-
-      // Update state
+      // Publish the renewed access and refresh tokens before scheduling their expiry;
+      // credential storage is handled by the API request implementation.
       token.value = response.access_token
       refreshTokenValue.value = response.refresh_token
-
-      // Schedule next refresh (this also updates tokenExpiresAt and localStorage)
       scheduleTokenRefresh(response.expires_in)
     } catch (error) {
+      // Keep the current local session after renewal failure; HTTP authentication
+      // handling decides whether a rejected credential requires sign-out.
       console.error('Token refresh failed:', error)
-      // Don't clear auth here - the interceptor will handle 401 errors
     }
   }
 
-  /**
-   * Stop token refresh timeout
-   */
+  // stopTokenRefresh releases the owned renewal timeout and clears its handle.
+  // Repeated calls after cleanup do nothing. Renewal requests already in flight
+  // continue and can publish credentials or schedule their next refresh.
   function stopTokenRefresh(): void {
     if (tokenRefreshTimeoutId) {
       clearTimeout(tokenRefreshTimeoutId)
@@ -249,39 +296,27 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /**
-   * User login
-   * @param credentials - Login credentials (email and password)
-   * @returns Promise resolving to the login response (may require 2FA)
-   * @throws Error if login fails
-   */
+  // login authenticates credentials and returns either a session response or a two-factor challenge. Challenges leave the current state unchanged; other successes
+  // publish authentication, while failures clear authentication and retain pending
+  // external-session state when present.
   async function login(credentials: LoginRequest): Promise<LoginResponse> {
     try {
       const response = await authAPI.login(credentials)
-
-      // If 2FA is required, return the response without setting auth state
       if (isTotp2FARequired(response)) {
         return response
       }
-
-      // Set auth state from the response
       setAuthFromResponse(response)
 
       return response
     } catch (error) {
-      // Clear any partial state on error
       clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
       throw error
     }
   }
 
-  /**
-   * Complete login with 2FA code
-   * @param tempToken - Temporary token from initial login
-   * @param totpCode - 6-digit TOTP code
-   * @returns Promise resolving to the authenticated user
-   * @throws Error if 2FA verification fails
-   */
+  // login2FA exchanges the temporary login token and supplied code for an authenticated
+  // user. Success publishes the response through the shared session helper; failure
+  // clears authentication while retaining an existing pending external session.
   async function login2FA(tempToken: string, totpCode: string): Promise<User> {
     try {
       const response = await authAPI.login2FA({ temp_token: tempToken, totp_code: totpCode })
@@ -293,7 +328,9 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // Passkey 登录可携带动作验证码凭证，并复用密码登录的状态落库流程。
+  // loginWithPasskey authenticates through the passkey API with optional action-captcha
+  // proof. Success uses the shared session publication path, and failure clears
+  // authentication while preserving pending external-session state when present.
   async function loginWithPasskey(proof?: ActionCaptchaRequestProof): Promise<User> {
     try {
       const response = await passkeyAPI.login(proof)
@@ -305,68 +342,57 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /**
-   * Set auth state from an AuthResponse
-   * Internal helper function
-   */
+  // setAuthFromResponse publishes credentials and the authenticated user from a
+  // successful login response. The access token becomes reactive first, followed by an
+  // optional persisted refresh token and the user. Locale synchronization starts before
+  // access-token and user persistence, then pending authentication is cleared. Profile
+  // polling starts after storage updates, and token renewal is scheduled only when both
+  // refresh credentials and a nonzero relative expiry are supplied.
   function setAuthFromResponse(response: AuthResponse): void {
-    // Store token and user
     token.value = response.access_token
-
-    // Store refresh token if present
     if (response.refresh_token) {
       refreshTokenValue.value = response.refresh_token
       localStorage.setItem(REFRESH_TOKEN_KEY, response.refresh_token)
     }
 
+    // Publish the response user before starting locale synchronization, then persist
+    // access credentials and clear the pending external authentication context.
     const userData = response.user
     user.value = userData
     void syncUserLocale(userData)
-
-    // Persist to localStorage
     localStorage.setItem(AUTH_TOKEN_KEY, response.access_token)
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
     clearPendingAuthSession()
-
-    // Start auto-refresh interval for user data
     startAutoRefresh()
-
-    // Start proactive token refresh if we have refresh token and expiry info
-    // scheduleTokenRefresh will also store the expiry timestamp
     if (response.refresh_token && response.expires_in) {
       scheduleTokenRefresh(response.expires_in)
     }
   }
 
-  /**
-   * User registration
-   * @param userData - Registration data (username, email, password)
-   * @returns Promise resolving to the newly registered and authenticated user
-   * @throws Error if registration fails
-   */
+  // register creates an account and publishes the returned authenticated user through
+  // the shared session helper. Failures clear authentication, preserve an existing
+  // pending external session, and propagate the error to the registration form.
   async function register(userData: RegisterRequest): Promise<User> {
     try {
       const response = await authAPI.register(userData)
-
-      // Use the common helper to set auth state
       setAuthFromResponse(response)
 
       return user.value!
     } catch (error) {
-      // Clear any partial state on error
       clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
       throw error
     }
   }
 
-  /**
-   * 直接设置 token（用于 OAuth/SSO 回调），并加载当前用户信息。
-   * 会自动读取 localStorage 中已设置的 refresh_token 和 token_expires_in
-   * @param newToken - 后端签发的 JWT access token
-   */
+  // setToken installs an access token supplied by an external authentication callback
+  // and loads its user. Existing timers and reactive user identity are cleared before
+  // the new token is published and persisted. Refresh credentials are read from storage
+  // because the callback can already have written them. User loading completes before
+  // polling and renewal restart. Failure clears authentication while retaining pending
+  // external-session state when present; in-flight requests are not cancelled here.
   async function setToken(newToken: string): Promise<User> {
-    // Clear any previous state first (avoid mixing sessions)
-    // Note: Don't clear localStorage here as OAuth callback may have set refresh_token
+    // Stop owned timers before replacing session identity; callback-written refresh
+    // credentials remain in storage for the new access token to adopt.
     stopAutoRefresh()
     stopTokenRefresh()
     token.value = null
@@ -375,8 +401,6 @@ export const useAuthStore = defineStore('auth', () => {
 
     token.value = newToken
     localStorage.setItem(AUTH_TOKEN_KEY, newToken)
-
-    // Read refresh token and expires_at from localStorage if set by OAuth callback
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
     const savedExpiresAt = localStorage.getItem(TOKEN_EXPIRES_AT_KEY)
 
@@ -390,9 +414,6 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const userData = await refreshUser()
       startAutoRefresh()
-
-      // Start proactive token refresh if we have refresh token and expiry info
-      // Note: use !== null to handle case when tokenExpiresAt.value is 0 (expired)
       if (savedRefreshToken && tokenExpiresAt.value !== null) {
         scheduleTokenRefreshAt(tokenExpiresAt.value)
       }
@@ -405,7 +426,15 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  // setPendingAuthSession publishes the pending external authentication summary and
+  // updates its browser record. A non-null summary becomes reactive before
+  // serialization, while null clears the reactive value before removing storage. This
+  // ordering means a storage failure can leave the current reactive value changed while
+  // persisted data remains older. Callers that need to end pending authentication use
+  // clearPendingAuthSession, which delegates to this same null-setting path.
   function setPendingAuthSession(session: PendingAuthSessionSummary | null): void {
+    // Publish the pending session before attempting storage so its reactive value
+    // follows the same update order used by the authentication forms.
     pendingAuthSession.value = session
 
     if (session) {
@@ -416,33 +445,34 @@ export const useAuthStore = defineStore('auth', () => {
     clearPendingAuthSessionStorage()
   }
 
+  // clearPendingAuthSession delegates removal of the pending external session to
+  // setPendingAuthSession. The reactive summary becomes null before browser storage
+  // removal, so a storage error propagates after reactive state has already changed.
   function clearPendingAuthSession(): void {
     setPendingAuthSession(null)
   }
 
-  /**
-   * User logout
-   * Clears all authentication state and persisted data
-   */
+  // logout attempts server-side credential revocation and then clears the local session.
+  // Revocation failures are logged and suppressed so a failed network request still
+  // allows local logout and timer cleanup.
   async function logout(): Promise<void> {
     try {
-      // 调用服务端退出接口并吊销 refresh token。
       await authAPI.logout()
     } catch (err) {
-      // 服务端吊销失败（网络/5xx/超时）不应阻止本地登出，否则用户点了退出仍处于登录态。
+      // Server revocation can fail while the user still expects logout; suppress that
+      // error and let finally remove the local session.
       console.warn('Logout API call failed, clearing local session anyway', err)
     } finally {
-      // 无论服务端是否成功，都清理 token、用户信息和刷新定时器等本地状态。
       clearAuth()
     }
   }
 
-  /**
-   * Refresh current user data
-   * Fetches latest user info from the server
-   * @returns Promise resolving to the updated user
-   * @throws Error if not authenticated or request fails
-   */
+  // refreshUser loads the current profile using the active authentication token and
+  // returns that user. It rejects when no token exists. Success publishes the user,
+  // starts account-locale synchronization, and persists the profile in that order. An
+  // error carrying status 401 clears authentication while retaining pending external
+  // state; other errors propagate with existing state intact. Responses already in
+  // flight are not checked against a captured account identifier here.
   async function refreshUser(): Promise<User> {
     if (!token.value) {
       throw new Error('Not authenticated')
@@ -451,15 +481,17 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const response = await authAPI.getCurrentUser()
       const userData = response.data
+      // Publish the returned profile before applying its account locale and persisting
+      // it, preserving the order observed by reactive consumers.
       user.value = userData
-    void syncUserLocale(userData)
-
-      // Update localStorage
+      void syncUserLocale(userData)
       localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
 
       return userData
     } catch (error) {
-      // If refresh fails with 401, clear auth state
+      // A rejected current-user credential invalidates the local access session, while
+      // pending external authentication remains available for its separate completion
+      // flow.
       if ((error as { status?: number }).status === 401) {
         clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
       }
@@ -467,14 +499,21 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /**
-   * Clear all authentication state
-   * Internal helper function
-   */
-  function clearAuth(options?: { preservePendingAuthSession?: boolean }): void {
-    // Stop auto-refresh
+  // clearAuth stops profile and renewal timers before removing reactive and persisted
+  // credentials. The optional preservePendingAuthSession flag reloads valid pending
+  // external authentication after access-session storage has been cleared. Without that
+  // flag, both the pending reactive summary and its storage entry are removed. Timer
+  // cleanup does not cancel requests already in flight, and browser storage operations
+  // retain their normal failure behavior rather than providing a transaction across
+  // keys.
+  function clearAuth(options?: {
+    // preservePendingAuthSession reloads valid pending external authentication after
+    // clearing access credentials; omission clears that pending context as well.
+    preservePendingAuthSession?: boolean
+  }): void {
+    // Release owned refresh timers before clearing credentials so future timer ticks
+    // cannot start new profile or token work for the cleared session.
     stopAutoRefresh()
-    // Stop token refresh
     stopTokenRefresh()
 
     token.value = null
@@ -496,20 +535,13 @@ export const useAuthStore = defineStore('auth', () => {
     clearPendingAuthSessionStorage()
   }
 
-  // ==================== Return Store API ====================
-
   return {
-    // State
     user,
     token,
     pendingAuthSession: readonly(pendingAuthSession),
-
-    // Computed
     isAuthenticated,
     isAdmin,
     hasPendingAuthSession,
-
-    // Actions
     login,
     loginWithPasskey,
     login2FA,
@@ -519,6 +551,6 @@ export const useAuthStore = defineStore('auth', () => {
     checkAuth,
     refreshUser,
     setPendingAuthSession,
-    clearPendingAuthSession
+    clearPendingAuthSession,
   }
 })

@@ -1,34 +1,83 @@
-import { computed, inject, onBeforeUnmount, provide, shallowReactive, unref, type InjectionKey, type Ref } from 'vue'
+import {
+  computed,
+  inject,
+  onBeforeUnmount,
+  provide,
+  shallowReactive,
+  unref,
+  type InjectionKey,
+  type Ref,
+} from 'vue'
 
-/**
- * 一块可以单独保存的设置：dirty 表示有未保存的修改，save 返回是否保存成功，
- * discard 从服务器重新加载这块设置，放弃未保存的修改。
- */
+// useSettingsSaveRegistry.ts aggregates independently owned settings sections for a shared
+// save bar. Registered targets provide their own dirty state, persistence operation, and
+// discard reload. The registry observes dirty flags but leaves each target responsible for
+// updating its own clean snapshot after saving or reloading.
+//
+// Saving snapshots registration order and then rechecks each target's dirty flag
+// immediately before invoking it. A false result records failure while allowing later
+// saves, whereas a rejected promise interrupts the sequence. Discard selects dirty targets
+// first and starts their reloads concurrently. Component registrations are removed on
+// unmount; hiding a mounted panel leaves registration active.
+
+// SettingsSaveTarget exposes section-owned dirty state, persistence, and server reload
+// operations.
 export interface SettingsSaveTarget {
-  dirty: Ref<boolean> | boolean
-  save: () => Promise<boolean>
-  discard: () => Promise<void>
+  // dirty remains owned by the target and is read again before each sequential save; the
+  // registry never clears it itself.
+  dirty: Ref<boolean> | boolean // section-owned pending edit indicator
+  // save persists the target and returns its success flag. False allows later targets to
+  // run, while rejection interrupts saving; the target records its own clean baseline.
+  save: () => Promise<boolean> // section persistence result callback
+  // discard reloads or replaces the section draft and updates its clean baseline. Dirty
+  // targets start these operations concurrently, and callers receive any Promise.all
+  // rejection after dispatch.
+  discard: () => Promise<void> // section draft reload callback
 }
 
+// SettingsSaveRegistry registers and removes named settings sections for page-level
+// saving.
 interface SettingsSaveRegistry {
-  register: (key: string, target: SettingsSaveTarget) => void
-  unregister: (key: string) => void
+  // register stores a target by stable key and replaces any previous target for that key.
+  // Replacing an existing Map entry retains its registration order for saving.
+  register: (key: string, target: SettingsSaveTarget) => void // named section registration callback
+  // unregister removes a key from future aggregate operations. An already running save or
+  // discard uses its captured target references, so removal does not cancel those
+  // operations.
+  unregister: (key: string) => void // named section removal callback
 }
 
+// settingsSaveRegistryKey connects a settings page provider with descendants registering
+// their independently persisted sections during setup.
 const settingsSaveRegistryKey: InjectionKey<SettingsSaveRegistry> = Symbol('settings-save-registry')
 
-/**
- * createSettingsSaveRegistry 汇总整页设置里各块设置的修改状态和保存函数，
- * 吸底保存条据此显示，并在保存时依次调用有修改的那几块。
- */
+// createSettingsSaveRegistry creates a reactive collection of settings targets and
+// aggregate save controls. Registering the same key replaces its target; the Map retains
+// its insertion position. Each target owns its dirty flag and decides when persistence or
+// reload makes it clean.
+//
+// Save operations iterate a copied target list sequentially and inspect dirty state at
+// each turn. Discard chooses dirty targets up front and starts them together. The registry
+// has no operation lock, so callers serialize overlapping save or discard actions.
 export function createSettingsSaveRegistry() {
+  // targets owns registered section references, and dirty observes their current flags
+  // through the shallow reactive Map without changing target-owned draft state.
   const targets = shallowReactive(new Map<string, SettingsSaveTarget>())
 
   const dirty = computed(() => [...targets.values()].some((target) => unref(target.dirty)))
 
-  // 按登记顺序保存有修改的设置。某一块失败时继续保存其余几块，失败的那块保持未保存状态。
+  // saveDirty awaits dirty targets in a snapshot of registration order and returns whether
+  // every invoked save returned true. A false result does not stop later targets; a
+  // rejected promise propagates and stops iteration.
+  //
+  // Dirty state is checked immediately before each save, allowing earlier work to affect
+  // whether later targets run. Registering or removing targets during this operation does
+  // not replace its copied target references. Targets remain responsible for recording the
+  // correct saved snapshot.
   async function saveDirty(): Promise<boolean> {
     let ok = true
+    // Copy targets before awaiting saves so registration changes do not alter this run's
+    // order, while each dirty flag remains current.
     for (const target of [...targets.values()]) {
       if (!unref(target.dirty)) continue
       if (!(await target.save())) ok = false
@@ -36,10 +85,14 @@ export function createSettingsSaveRegistry() {
     return ok
   }
 
-  // 有修改的几块同时从服务器重新加载。
+  // discardDirty starts reloads concurrently for targets dirty when the list is selected.
+  // It propagates Promise.all rejection while other started reloads continue; each target
+  // updates its own draft and dirty baseline.
   async function discardDirty() {
     await Promise.all(
-      [...targets.values()].filter((target) => unref(target.dirty)).map((target) => target.discard()),
+      [...targets.values()]
+        .filter((target) => unref(target.dirty))
+        .map((target) => target.discard()),
     )
   }
 
@@ -51,14 +104,18 @@ export function createSettingsSaveRegistry() {
   return { dirty, saveDirty, discardDirty, registry }
 }
 
-/** provideSettingsSaveRegistry 创建登记表并提供给子组件。 */
+// provideSettingsSaveRegistry creates the page registry and provides its registration API
+// to descendants. Invoke it during setup; the returned aggregate controls drive the page's
+// shared save and discard actions.
 export function provideSettingsSaveRegistry() {
   const saveRegistry = createSettingsSaveRegistry()
   provide(settingsSaveRegistryKey, saveRegistry.registry)
   return saveRegistry
 }
 
-/** useSettingsSaveTarget 把当前组件的一块设置登记到上层的登记表，组件卸载时移除。 */
+// useSettingsSaveTarget registers a section with the nearest settings registry during
+// setup and unregisters its key before unmount. Missing providers are tolerated; callers
+// use unique stable keys to avoid replacing another section.
 export function useSettingsSaveTarget(key: string, target: SettingsSaveTarget) {
   const registry = inject(settingsSaveRegistryKey, null)
   if (!registry) return

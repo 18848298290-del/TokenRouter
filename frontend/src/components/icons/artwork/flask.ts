@@ -1,9 +1,17 @@
-// 图形与逐元素动效移植自 Lucide Animated；许可与版本见 ../README.md。
+// Artwork and element animations adapted from Lucide Animated.
+// See ../README.md for the license and pinned version.
 // https://github.com/pqoqubbw/icons/blob/072c38b1b04ea738d90a084485ccaad4b890ddca/icons/flask.tsx
 import { h } from 'vue'
 import { motion } from 'motion-v'
 import type { IconDefinition } from '../types'
 
+// flask.ts renders the flask outline and a separate group of bubble circles.
+// The outline scales and rocks while the bubble group translates and rocks
+// using its own target; both groups subscribe to the controls supplied by the
+// icon wrapper.
+
+// icon binds the flask SVG renderer to ['animate'] for playback by
+// useIconAnimation through the shared controls.
 const icon: IconDefinition = {
   name: 'flask',
   normal: 'normal',
@@ -21,11 +29,11 @@ const icon: IconDefinition = {
               rotate: [0, 5, -5, 3, -3, 0],
               transition: {
                 ease: 'linear',
-                rotate: { duration: 0.8 }
-              }
-            }
+                rotate: { duration: 0.8 },
+              },
+            },
           },
-          initial: 'normal'
+          initial: 'normal',
         },
         () => [
           h(
@@ -33,47 +41,47 @@ const icon: IconDefinition = {
             {
               cx: '151.273',
               cy: '407.273',
-              r: '11.636'
+              r: '11.636',
             },
-            []
+            [],
           ),
           h(
             'circle',
             {
               cx: '244.364',
               cy: '372.364',
-              r: '11.636'
+              r: '11.636',
             },
-            []
+            [],
           ),
           h(
             'circle',
             {
               cx: '290.909',
               cy: '418.909',
-              r: '11.636'
+              r: '11.636',
             },
-            []
+            [],
           ),
           h(
             'circle',
             {
               cx: '221.091',
               cy: '453.818',
-              r: '11.636'
+              r: '11.636',
             },
-            []
+            [],
           ),
           h(
             'circle',
             {
               cx: '372.364',
               cy: '430.545',
-              r: '11.636'
+              r: '11.636',
             },
-            []
-          )
-        ]
+            [],
+          ),
+        ],
       ),
       h(
         motion.path,
@@ -92,16 +100,16 @@ const icon: IconDefinition = {
                   type: 'spring',
                   bounce: 0.4,
                   stiffness: 150,
-                  damping: 10
-                }
-              }
-            }
+                  damping: 10,
+                },
+              },
+            },
           },
-          initial: 'normal'
+          initial: 'normal',
         },
-        () => []
-      )
-    ])
+        () => [],
+      ),
+    ]),
 }
 
 export default icon

@@ -3,6 +3,14 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 
+// ModelWhitelistSelector.spec.ts tests model selection, clipboard actions, upstream
+// synchronization, and paginated catalog suggestions. Controlled promises and fake
+// timers reproduce changed searches while explicit candidate tests distinguish omitted
+// model data from a deliberately empty list.
+
+// The dependency mocks control catalog and upstream model results, clipboard writes,
+// and notification feedback. Each case resets their call history before scheduling its
+// request responses.
 const {
   catalogDefaults,
   syncUpstreamModels,
@@ -10,7 +18,7 @@ const {
   showError,
   showInfo,
   showSuccess,
-  copyToClipboard
+  copyToClipboard,
 } = vi.hoisted(() => ({
   catalogDefaults: vi.fn(),
   syncUpstreamModels: vi.fn(),
@@ -18,28 +26,30 @@ const {
   showError: vi.fn(),
   showInfo: vi.fn(),
   showSuccess: vi.fn(),
-  copyToClipboard: vi.fn().mockResolvedValue(true)
+  copyToClipboard: vi.fn().mockResolvedValue(true),
 }))
 
 vi.mock('@/api/admin/providers', () => ({
   providersAPI: {
     syncUpstreamModels,
-    syncUpstreamModelsPreview
-  }
+    syncUpstreamModelsPreview,
+  },
 }))
 
-vi.mock('@/api/admin/modelAttributes', () => ({ modelAttributesAPI: { defaults: catalogDefaults } }))
+vi.mock('@/api/admin/modelAttributes', () => ({
+  modelAttributesAPI: { defaults: catalogDefaults },
+}))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError,
     showInfo,
-    showSuccess
-  })
+    showSuccess,
+  }),
 }))
 
 vi.mock('@/composables/useClipboard', () => ({
-  useClipboard: () => ({ copyToClipboard })
+  useClipboard: () => ({ copyToClipboard }),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -47,30 +57,38 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string, params?: Record<string, unknown>) => params ? `${key}:${JSON.stringify(params)}` : key
-    })
+      t: (key: string, params?: Record<string, unknown>) =>
+        params ? `${key}:${JSON.stringify(params)}` : key,
+    }),
   }
 })
 
+// mountSelector mounts the selector with default props and caller overrides for the
+// current case. Dependency mocks remain controlled by the test, and callers own
+// unmounting and any timer cleanup.
 function mountSelector(props: Record<string, unknown> = {}) {
   return mount(ModelWhitelistSelector, {
     props: {
       modelValue: [],
       platform: 'openai',
       models: ['gpt-5.6-sol'],
-      ...props
+      ...props,
     },
     global: {
       stubs: {
         ModelIcon: true,
-        Icon: true
-      }
-    }
+        Icon: true,
+      },
+    },
   })
 }
 
 describe('ModelWhitelistSelector', () => {
-  afterEach(() => { vi.useRealTimers() })
+  // Restore real timers after each catalog scenario so a failing assertion cannot leave
+  // later tests running under this case fake clock.
+  afterEach(() => {
+    vi.useRealTimers()
+  })
   beforeEach(() => {
     catalogDefaults.mockReset()
     syncUpstreamModels.mockReset()
@@ -82,13 +100,15 @@ describe('ModelWhitelistSelector', () => {
     copyToClipboard.mockResolvedValue(true)
   })
 
+  // A model suggestion exposes a dedicated copy action beside its selection control.
+  // Copying must pass the exact ID to the clipboard without emitting a selection update.
   it('复制模型 ID 时不会选中模型', async () => {
     const wrapper = mountSelector()
     await wrapper.get('div.cursor-pointer').trigger('click')
 
     const row = wrapper
       .findAll('[data-testid="model-option"]')
-      .find(candidate => candidate.text().includes('gpt-5.6-sol'))
+      .find((candidate) => candidate.text().includes('gpt-5.6-sol'))
     expect(row).toBeTruthy()
 
     const copyButton = row!.get('[data-testid="copy-model-id"]')
@@ -100,13 +120,16 @@ describe('ModelWhitelistSelector', () => {
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   })
 
+  // The administrator activates a model suggestion through its selection control. The
+  // component must emit that selected ID and leave the clipboard action unused in this
+  // interaction.
   it('模型选择行为保持不变', async () => {
     const wrapper = mountSelector()
     await wrapper.get('div.cursor-pointer').trigger('click')
 
     const row = wrapper
       .findAll('[data-testid="model-option"]')
-      .find(candidate => candidate.text().includes('gpt-5.6-sol'))
+      .find((candidate) => candidate.text().includes('gpt-5.6-sol'))
     expect(row).toBeTruthy()
     await row!.get('[data-testid="select-model"]').trigger('click')
 
@@ -114,17 +137,22 @@ describe('ModelWhitelistSelector', () => {
     expect(copyToClipboard).not.toHaveBeenCalled()
   })
 
+  // A create form supplies preview credentials and the upstream response repeats a model
+  // ID. Synchronization must use the preview endpoint and emit a deduplicated selection
+  // with success feedback.
   it('创建提供商时使用临时凭证同步上游模型', async () => {
     syncUpstreamModelsPreview.mockResolvedValue({ models: ['gpt-5.1', 'o3', 'gpt-5.1'] })
     const syncCredentials = {
       platform: 'openai',
       type: 'apikey',
       base_url: 'https://openai.example.com/v1',
-      api_key: 'openai-key'
+      api_key: 'openai-key',
     }
     const wrapper = mountSelector({ syncCredentials })
 
-    const button = wrapper.findAll('button').find((item) => item.text().includes('admin.providers.syncUpstreamModels'))
+    const button = wrapper
+      .findAll('button')
+      .find((item) => item.text().includes('admin.providers.syncUpstreamModels'))
     expect(button).toBeTruthy()
     await button!.trigger('click')
 
@@ -134,6 +162,9 @@ describe('ModelWhitelistSelector', () => {
     expect(showSuccess).toHaveBeenCalled()
   })
 
+  // An edit form supplies both a saved provider ID and preview credentials.
+  // Synchronization must prefer the saved-provider endpoint and merge its model result
+  // into the emitted selection.
   it('编辑提供商时仍使用提供商 ID 同步上游模型', async () => {
     syncUpstreamModels.mockResolvedValue({ models: ['claude-sonnet-4-5'] })
     const wrapper = mountSelector({
@@ -142,11 +173,13 @@ describe('ModelWhitelistSelector', () => {
       syncCredentials: {
         platform: 'anthropic',
         type: 'apikey',
-        api_key: 'should-not-use'
-      }
+        api_key: 'should-not-use',
+      },
     })
 
-    const button = wrapper.findAll('button').find((item) => item.text().includes('admin.providers.syncUpstreamModels'))
+    const button = wrapper
+      .findAll('button')
+      .find((item) => item.text().includes('admin.providers.syncUpstreamModels'))
     expect(button).toBeTruthy()
     await button!.trigger('click')
 
@@ -155,6 +188,8 @@ describe('ModelWhitelistSelector', () => {
     expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toEqual(['claude-sonnet-4-5'])
   })
 
+  // The caller supplies a model unknown to the catalog and later supplies an empty list.
+  // Explicit candidates must display as supplied and must never trigger catalog loading.
   it('显式候选包含目录未知型号，空候选保持为空', async () => {
     const wrapper = mountSelector({ models: ['custom/unknown-model'] })
     await wrapper.get('div.cursor-pointer').trigger('click')
@@ -165,10 +200,17 @@ describe('ModelWhitelistSelector', () => {
     wrapper.unmount()
   })
 
+  // A search changes while the previous catalog request remains unresolved, then another
+  // page is loaded. Only current results may populate suggestions while the saved
+  // selected ID remains untouched.
   it('目录分页只加载候选，搜索以最新响应为准', async () => {
     vi.useFakeTimers()
     let resolveOld!: (value: unknown) => void
-    catalogDefaults.mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve }))
+    catalogDefaults.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOld = resolve
+      }),
+    )
     const wrapper = mountSelector({ models: undefined, modelValue: ['saved-custom'] })
     await wrapper.get('div.cursor-pointer').trigger('click')
     await vi.advanceTimersByTimeAsync(300)
@@ -177,9 +219,14 @@ describe('ModelWhitelistSelector', () => {
     await vi.advanceTimersByTimeAsync(300)
     resolveOld({ items: [{ model: 'stale-model' }], total: 1 })
     await flushPromises()
-    expect(wrapper.findAll('[data-testid="model-option"]').map(row => row.text())).toEqual(['new-model'])
+    expect(wrapper.findAll('[data-testid="model-option"]').map((row) => row.text())).toEqual([
+      'new-model',
+    ])
     catalogDefaults.mockResolvedValueOnce({ items: [{ model: 'new-second' }], total: 2 })
-    await wrapper.findAll('button').find(button => button.text() === 'admin.providers.loadMoreModels')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'admin.providers.loadMoreModels')!
+      .trigger('click')
     await flushPromises()
     expect(catalogDefaults).toHaveBeenLastCalledWith({ search: 'new', page: 2, page_size: 50 })
     expect(wrapper.findAll('[data-testid="model-option"]')).toHaveLength(2)
@@ -188,16 +235,23 @@ describe('ModelWhitelistSelector', () => {
     wrapper.unmount()
   })
 
+  // The first catalog lookup fails while a manual identifier is available to add. The
+  // editor must allow that addition and recover its suggestions when the retry succeeds.
   it('目录失败可以重试，仍可手动添加型号', async () => {
     vi.useFakeTimers()
     catalogDefaults.mockRejectedValueOnce(new Error('unavailable'))
     const wrapper = mountSelector({ models: undefined })
     await wrapper.get('div.cursor-pointer').trigger('click')
     await vi.advanceTimersByTimeAsync(300)
-    const retry = wrapper.findAll('button').find(button => button.text() === 'common.retry')
+    const retry = wrapper.findAll('button').find((button) => button.text() === 'common.retry')
     expect(retry).toBeTruthy()
-    await wrapper.get('input[placeholder="admin.providers.enterCustomModelName"]').setValue('custom-model')
-    await wrapper.findAll('button').find(button => button.text() === 'admin.providers.addModel')!.trigger('click')
+    await wrapper
+      .get('input[placeholder="admin.providers.enterCustomModelName"]')
+      .setValue('custom-model')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'admin.providers.addModel')!
+      .trigger('click')
     expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toEqual(['custom-model'])
     catalogDefaults.mockResolvedValueOnce({ items: [{ model: 'recovered' }], total: 1 })
     await retry!.trigger('click')
@@ -205,5 +259,4 @@ describe('ModelWhitelistSelector', () => {
     expect(wrapper.get('[data-testid="model-option"]').text()).toContain('recovered')
     wrapper.unmount()
   })
-
 })

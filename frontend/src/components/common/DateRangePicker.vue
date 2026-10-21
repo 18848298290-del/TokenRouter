@@ -7,9 +7,9 @@
       aria-haspopup="dialog"
       :class="[
         'input input-trigger',
-        // 日期控件文字沿用既有的中性灰(比 .input 默认色略浅),保持现状视觉。
+        // Neutral trigger text remains distinct from selected date and preset colors.
         'text-gray-700 dark:text-gray-300',
-        isOpen && 'date-picker-trigger-open'
+        isOpen && 'date-picker-trigger-open',
       ]"
     >
       <span class="date-picker-icon">
@@ -31,15 +31,22 @@
     <MotionTransition name="dropdown-fade">
       <div v-if="isOpen" class="date-picker-dropdown" :style="dropdownStyle" role="dialog">
         <div class="date-picker-body">
-          <!-- 快捷范围：桌面端纵向分组排列，窄屏折成可换行的 chip -->
+          <!-- Preset groups form a vertical sidebar on desktop and wrapping chips on narrow screens. -->
           <div class="date-picker-presets">
-            <div v-for="(group, index) in presetGroups" :key="index" class="date-picker-preset-group">
+            <div
+              v-for="(group, index) in presetGroups"
+              :key="index"
+              class="date-picker-preset-group"
+            >
               <button
                 v-for="preset in group"
                 :key="preset.value"
                 type="button"
                 @click="selectPreset(preset)"
-                :class="['date-picker-preset', isPresetActive(preset) && 'date-picker-preset-active']"
+                :class="[
+                  'date-picker-preset',
+                  isPresetActive(preset) && 'date-picker-preset-active',
+                ]"
               >
                 <span class="truncate">{{ t(preset.labelKey) }}</span>
                 <Icon
@@ -53,7 +60,7 @@
             </div>
           </div>
 
-          <!-- 自定义区间：单月日历，先点开始日期再点结束日期 -->
+          <!-- The single-month calendar collects a starting day and then an ending day. -->
           <div class="date-picker-calendar">
             <div class="date-picker-calendar-header">
               <button
@@ -87,7 +94,7 @@
                   'date-picker-day-cell',
                   cell.inRange && 'date-picker-day-in-range',
                   cell.isRangeStart && 'date-picker-day-range-start',
-                  cell.isRangeEnd && 'date-picker-day-range-end'
+                  cell.isRangeEnd && 'date-picker-day-range-end',
                 ]"
               >
                 <button
@@ -99,7 +106,7 @@
                   :class="[
                     'date-picker-day',
                     (cell.isRangeStart || cell.isRangeEnd) && 'date-picker-day-selected',
-                    cell.isToday && 'date-picker-day-today'
+                    cell.isToday && 'date-picker-day-today',
                   ]"
                   @click="selectDay(cell.date)"
                   @mouseenter="hoverDate = cell.date"
@@ -111,7 +118,7 @@
           </div>
         </div>
 
-        <!-- 底栏：左侧显示待应用的区间，右侧取消与应用 -->
+        <!-- The footer summarizes the draft beside cancellation and application actions. -->
         <div class="date-picker-actions">
           <div class="date-picker-summary">
             <template v-if="selectingEnd">
@@ -129,7 +136,12 @@
             <button type="button" class="btn btn-secondary btn-sm h-8" @click="cancel">
               {{ t('common.cancel') }}
             </button>
-            <button type="button" class="btn btn-primary btn-sm h-8" :disabled="selectingEnd" @click="apply">
+            <button
+              type="button"
+              class="btn btn-primary btn-sm h-8"
+              :disabled="selectingEnd"
+              @click="apply"
+            >
               {{ t('dates.apply') }}
             </button>
           </div>
@@ -147,67 +159,123 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { getFloatingPanelPosition, type FloatingPanelPosition } from '@/utils/floatingPanel'
 
+// DateRangePicker.vue edits date ranges in a floating calendar with predefined ranges
+// and explicit application. Opening captures a snapshot of the current local endpoints
+// and recognized preset. Draft changes update calendar feedback while the trigger
+// continues showing that snapshot; cancellation restores it, and application publishes
+// both endpoints followed by the aggregate change.
+//
+// Two day clicks build a range, with reversed clicks sorted before preset recognition.
+// Date-only presets match exact strings, while minute presets compare elapsed duration
+// and endpoint freshness. Local calendar dates and timestamp strings remain distinct
+// so short presets retain their time components through selection and display.
+
+// DatePreset pairs a translated range label with a fresh endpoint resolver.
 interface DatePreset {
-  labelKey: string
-  value: string
-  durationMs?: number
-  getRange: () => { start: string; end: string }
+  labelKey: string // Translated preset label key.
+  value: string // Stored option selection value.
+  durationMs?: number // Preset elapsed duration milliseconds.
+  // Resolves endpoints at invocation; duration presets retain timestamp precision
+  // while calendar presets return local date strings.
+  getRange: () => {
+    start: string // Local range start text.
+    end: string // Local range end text.
+  }
 }
 
+// CalendarCell contains the display and selection state for one calendar position.
 interface CalendarCell {
-  key: string
+  key: string // Stable rendered item identifier.
+  // Local YYYY-MM-DD date; null represents a blank calendar cell outside the currently
+  // displayed month.
   date: string | null
-  day: number
-  ariaLabel: string
-  disabled: boolean
-  isToday: boolean
-  inRange: boolean
-  isRangeStart: boolean
-  isRangeEnd: boolean
+  day: number // Calendar day display number.
+  ariaLabel: string // Accessible item label text.
+  disabled: boolean // Disables user control interaction.
+  isToday: boolean // Current local day flag.
+  inRange: boolean // Inclusive multi-day highlight flag.
+  isRangeStart: boolean // Range start endpoint flag.
+  isRangeEnd: boolean // Range end endpoint flag.
 }
 
-// 打开弹层时记录的已生效状态，未应用就关闭时据此还原。
+// RangeSnapshot retains applied endpoints and preset identity for draft cancellation.
 interface RangeSnapshot {
-  start: string
-  end: string
+  start: string // Local range start text.
+  end: string // Local range end text.
+  // Recognized preset identifier or null for a custom selection that does not match a
+  // supplied preset.
   preset: string | null
 }
 
+// Props describes the values and options supplied by the parent component.
 interface Props {
-  startDate: string
-  endDate: string
+  startDate: string // Local starting endpoint text.
+  endDate: string // Local ending endpoint text.
+  // Applies and closes immediately after a preset click when true; ordinary calendar
+  // selection still waits for application.
   applyOnPreset?: boolean
 }
 
+// Emits defines the component notifications delivered to its parent listeners.
 interface Emits {
+  // Publishes starting range endpoint.
   (e: 'update:startDate', value: string): void
+  // Publishes ending range endpoint.
   (e: 'update:endDate', value: string): void
-  (e: 'change', range: { startDate: string; endDate: string; preset: string | null }): void
+  // Publishes selection change payload.
+  (
+    e: 'change',
+    range: {
+      startDate: string // Local starting endpoint text.
+      endDate: string // Local ending endpoint text.
+
+      // Recognized preset identifier or null for a custom selection that does not match a
+      // supplied preset.
+      preset: string | null
+    },
+  ): void
 }
 
+// props holds parent-supplied component options consumed by the rendering and
+// interaction handlers below.
 const props = defineProps<Props>()
+// emit publishes the declared component notifications so the parent can update its
+// owned state.
 const emit = defineEmits<Emits>()
 
+// t and locale provide translated actions and localized calendar labels from the
+// application language.
 const { t, locale } = useI18n()
 
+// isOpen controls the panel, containerRef defines measurement and outside-click
+// ownership, and dropdownPosition stores the shared floating helper result.
 const isOpen = ref(false)
 const containerRef = ref<HTMLElement | null>(null)
 const dropdownPosition = ref<FloatingPanelPosition | null>(null)
+// localStartDate, localEndDate, and activePreset hold the editable range; snapshot
+// captures their opening values for trigger display and cancellation restoration.
 const localStartDate = ref(props.startDate)
 const localEndDate = ref(props.endDate)
 const activePreset = ref<string | null>(null)
 const snapshot = ref<RangeSnapshot | null>(null)
 
-// 日历当前展示月份的 1 日，格式 YYYY-MM-DD。
+// viewMonth stores the first local day of the displayed month as YYYY-MM-DD for
+// calendar navigation.
 const viewMonth = ref('')
-// 已点选开始日期、等待点选结束日期。
+
+// selectingEnd marks an incomplete two-click range, and hoverDate supplies a temporary
+// endpoint for the calendar highlight preview.
 const selectingEnd = ref(false)
-// 等待结束日期时鼠标悬停的日期，用于预览区间。
+
 const hoverDate = ref<string | null>(null)
 
+// dropdownWidth and dropdownMargin bound panel width and viewport padding in CSS
+// pixels before the shared floating helper calculates placement.
 const dropdownWidth = 456
 const dropdownMargin = 12
 
+// dropdownStyle maps the floating helper coordinates to CSS, retaining auto for the
+// unused vertical side and an empty style before measurement.
 const dropdownStyle = computed(() => {
   const position = dropdownPosition.value
   if (!position) return {}
@@ -216,14 +284,15 @@ const dropdownStyle = computed(() => {
     top: position.top === null ? 'auto' : `${position.top}px`,
     bottom: position.bottom === null ? 'auto' : `${position.bottom}px`,
     width: `${position.width}px`,
-    maxHeight: `${position.maxHeight}px`
+    maxHeight: `${position.maxHeight}px`,
   }
 })
 
+// dateLocale follows application language; today and tomorrow use browser-local
+// calendar dates for current-day highlighting and the latest selectable date.
 const dateLocale = computed(() => locale.value)
 
 const today = computed(() => {
-  // Use local timezone to avoid UTC timezone issues
   const now = new Date()
   const year = now.getFullYear()
   const month = String(now.getMonth() + 1).padStart(2, '0')
@@ -231,15 +300,13 @@ const today = computed(() => {
   return `${year}-${month}-${day}`
 })
 
-// Tomorrow's date - used for max date to handle timezone differences
-// When user is in a timezone behind the server, "today" on server might be "tomorrow" locally
 const tomorrow = computed(() => {
   const d = new Date()
   d.setDate(d.getDate() + 1)
   return formatDateToString(d)
 })
 
-// Helper function to format date to YYYY-MM-DD using local timezone
+// formatDateToString formats a Date using local calendar fields as YYYY-MM-DD.
 const formatDateToString = (date: Date): string => {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -247,6 +314,7 @@ const formatDateToString = (date: Date): string => {
   return `${year}-${month}-${day}`
 }
 
+// formatDateTimeToString formats local date and time fields through second precision.
 const formatDateTimeToString = (date: Date): string => {
   const hours = String(date.getHours()).padStart(2, '0')
   const minutes = String(date.getMinutes()).padStart(2, '0')
@@ -254,36 +322,51 @@ const formatDateTimeToString = (date: Date): string => {
   return `${formatDateToString(date)}T${hours}:${minutes}:${seconds}`
 }
 
+// dateInputValue extracts the ten-character calendar prefix for date-only comparisons.
+// Timestamp time components are discarded, while shorter inputs remain unchanged
+// because slice stops at the end of the supplied string.
 const dateInputValue = (value: string): string => {
+  // Calendar comparisons use the date prefix and discard timestamp precision.
   return value.slice(0, 10)
 }
 
+// presets defines ordered endpoint resolvers; minute ranges keep timestamp precision,
+// while calendar ranges use inclusive date endpoints and their labels match in this
+// order.
 const presets: DatePreset[] = [
   {
     labelKey: 'dates.last15Minutes',
     value: 'last15Minutes',
+    // The minute preset duration is converted to milliseconds for elapsed-range
+    // matching.
     durationMs: 15 * 60 * 1000,
     getRange: () => {
       const end = new Date()
+      // Resolve both endpoints from one captured instant so the minute preset retains
+      // its intended elapsed duration through local timestamp formatting.
       const start = new Date(end.getTime() - 15 * 60 * 1000)
       return {
         start: formatDateTimeToString(start),
-        end: formatDateTimeToString(end)
+        end: formatDateTimeToString(end),
       }
-    }
+    },
   },
   {
     labelKey: 'dates.last30Minutes',
     value: 'last30Minutes',
+    // The minute preset duration is converted to milliseconds for elapsed-range
+    // matching.
     durationMs: 30 * 60 * 1000,
     getRange: () => {
       const end = new Date()
+      // Resolve both endpoints from one captured instant so the minute preset retains
+      // its intended elapsed duration through local timestamp formatting.
       const start = new Date(end.getTime() - 30 * 60 * 1000)
       return {
         start: formatDateTimeToString(start),
-        end: formatDateTimeToString(end)
+        end: formatDateTimeToString(end),
       }
-    }
+    },
   },
   {
     labelKey: 'dates.today',
@@ -291,7 +374,7 @@ const presets: DatePreset[] = [
     getRange: () => {
       const t = today.value
       return { start: t, end: t }
-    }
+    },
   },
   {
     labelKey: 'dates.yesterday',
@@ -301,19 +384,22 @@ const presets: DatePreset[] = [
       d.setDate(d.getDate() - 1)
       const yesterday = formatDateToString(d)
       return { start: yesterday, end: yesterday }
-    }
+    },
   },
   {
     labelKey: 'dates.last24Hours',
     value: 'last24Hours',
     getRange: () => {
       const end = new Date()
+      // Subtract elapsed milliseconds before date-only formatting; the resulting
+      // calendar endpoints can span browser daylight-saving changes without a fixed
+      // calendar-day count.
       const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
       return {
         start: formatDateToString(start),
-        end: formatDateToString(end)
+        end: formatDateToString(end),
       }
-    }
+    },
   },
   {
     labelKey: 'dates.last7Days',
@@ -321,10 +407,11 @@ const presets: DatePreset[] = [
     getRange: () => {
       const end = today.value
       const d = new Date()
+      // Include today as one of the seven calendar days.
       d.setDate(d.getDate() - 6)
       const start = formatDateToString(d)
       return { start, end }
-    }
+    },
   },
   {
     labelKey: 'dates.last14Days',
@@ -332,10 +419,11 @@ const presets: DatePreset[] = [
     getRange: () => {
       const end = today.value
       const d = new Date()
+      // Include today as one of the fourteen calendar days.
       d.setDate(d.getDate() - 13)
       const start = formatDateToString(d)
       return { start, end }
-    }
+    },
   },
   {
     labelKey: 'dates.last30Days',
@@ -343,10 +431,11 @@ const presets: DatePreset[] = [
     getRange: () => {
       const end = today.value
       const d = new Date()
+      // Include today as one of the thirty calendar days.
       d.setDate(d.getDate() - 29)
       const start = formatDateToString(d)
       return { start, end }
-    }
+    },
   },
   {
     labelKey: 'dates.thisMonth',
@@ -355,7 +444,7 @@ const presets: DatePreset[] = [
       const now = new Date()
       const start = formatDateToString(new Date(now.getFullYear(), now.getMonth(), 1))
       return { start, end: today.value }
-    }
+    },
   },
   {
     labelKey: 'dates.lastMonth',
@@ -365,29 +454,33 @@ const presets: DatePreset[] = [
       const start = formatDateToString(new Date(now.getFullYear(), now.getMonth() - 1, 1))
       const end = formatDateToString(new Date(now.getFullYear(), now.getMonth(), 0))
       return { start, end }
-    }
-  }
+    },
+  },
 ]
 
-// 下拉中的展示分组：分钟/小时级、单日、滚动天数、自然月。匹配顺序仍以 presets 为准。
+// presetGroupValues arranges duration, single-day, rolling-day, and month shortcuts
+// for display; presetGroups resolves those identifiers without changing preset
+// matching order.
 const presetGroupValues = [
   ['last15Minutes', 'last30Minutes', 'last24Hours'],
   ['today', 'yesterday'],
   ['7days', '14days', '30days'],
-  ['thisMonth', 'lastMonth']
+  ['thisMonth', 'lastMonth'],
 ]
 
 const presetGroups = presetGroupValues.map((values) =>
   values
     .map((value) => presets.find((preset) => preset.value === value))
-    .filter((preset): preset is DatePreset => !!preset)
+    .filter((preset): preset is DatePreset => !!preset),
 )
 
-// 弹层打开期间触发器继续显示已生效的范围，点应用后才切换文案。
+// displayValue uses the opening snapshot while editing, so a draft preset or calendar
+// change does not relabel the trigger before application.
 const displayValue = computed(() => {
-  const committed = isOpen.value && snapshot.value
-    ? snapshot.value
-    : { start: localStartDate.value, end: localEndDate.value, preset: activePreset.value }
+  const committed =
+    isOpen.value && snapshot.value
+      ? snapshot.value
+      : { start: localStartDate.value, end: localEndDate.value, preset: activePreset.value }
 
   if (committed.preset) {
     const preset = presets.find((p) => p.value === committed.preset)
@@ -404,41 +497,58 @@ const displayValue = computed(() => {
   return t('dates.selectDateRange')
 })
 
+// parseLocalDate reads the date prefix at midnight in the browser timezone. Time
+// components are discarded for calendar calculations. The Date constructor can
+// normalize impossible calendar days, while prefixes it cannot parse produce an
+// invalid Date for the caller.
 const parseLocalDate = (dateStr: string): Date => {
   return new Date(`${dateInputValue(dateStr)}T00:00:00`)
 }
 
+// formatDate formats the local calendar date with a localized month and day.
 const formatDate = (dateStr: string): string => {
-  return parseLocalDate(dateStr).toLocaleDateString(dateLocale.value, { month: 'short', day: 'numeric' })
+  return parseLocalDate(dateStr).toLocaleDateString(dateLocale.value, {
+    month: 'short',
+    day: 'numeric',
+  })
 }
 
-// 底栏摘要带年份；分钟级预设的值含时刻，一并显示到分钟。
+// formatSummaryDate formats a summary with year and optional hour-minute text. Empty
+// values display an em dash, while timestamp strings contribute their existing time
+// slice without timezone conversion.
 const formatSummaryDate = (value: string): string => {
   if (!value) return '—'
   const text = parseLocalDate(value).toLocaleDateString(dateLocale.value, {
     year: 'numeric',
     month: 'short',
-    day: 'numeric'
+    day: 'numeric',
   })
   return value.length > 10 ? `${text} ${value.slice(11, 16)}` : text
 }
 
+// monthLabel names the displayed month, while weekStartsOn and weekdayLabels place
+// Monday first for zh-Hans and Sunday first for other locales.
 const monthLabel = computed(() => {
   if (!viewMonth.value) return ''
-  return parseLocalDate(viewMonth.value).toLocaleDateString(dateLocale.value, { year: 'numeric', month: 'long' })
+  return parseLocalDate(viewMonth.value).toLocaleDateString(dateLocale.value, {
+    year: 'numeric',
+    month: 'long',
+  })
 })
 
-// 中文日历以周一开头，英文以周日开头。
 const weekStartsOn = computed(() => (locale.value === 'zh-Hans' ? 1 : 0))
 
 const weekdayLabels = computed(() => {
-  // 2023-01-01 是周日，以它为基准依次生成一周的星期缩写。
   return Array.from({ length: 7 }, (_, index) => {
+    // January first of 2023 was Sunday, providing a fixed weekday-label anchor.
     const date = new Date(2023, 0, 1 + ((index + weekStartsOn.value) % 7))
     return date.toLocaleDateString(dateLocale.value, { weekday: 'narrow' })
   })
 })
 
+// canGoNextMonth bounds forward navigation at tomorrow; highlightRange sorts hover
+// endpoints during selection, and calendarCells applies that range to a fixed six-week
+// month grid.
 const canGoNextMonth = computed(() => {
   if (!viewMonth.value) return false
   const next = parseLocalDate(viewMonth.value)
@@ -446,7 +556,6 @@ const canGoNextMonth = computed(() => {
   return formatDateToString(next) <= tomorrow.value
 })
 
-// 当前高亮的区间。等待结束日期时按悬停位置预览，起止顺序自动对调。
 const highlightRange = computed(() => {
   const start = dateInputValue(localStartDate.value)
   const end = dateInputValue(localEndDate.value)
@@ -458,7 +567,6 @@ const highlightRange = computed(() => {
   return { start, end }
 })
 
-// 固定生成 6 周 42 格，不同月份切换时面板高度保持不变。
 const calendarCells = computed<CalendarCell[]>(() => {
   if (!viewMonth.value) return []
   const first = parseLocalDate(viewMonth.value)
@@ -466,6 +574,7 @@ const calendarCells = computed<CalendarCell[]>(() => {
   const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate()
   const { start, end } = highlightRange.value
 
+  // Six full weeks keep calendar height stable across different month layouts.
   return Array.from({ length: 42 }, (_, index) => {
     const day = index - leading + 1
     if (day < 1 || day > daysInMonth) {
@@ -478,7 +587,7 @@ const calendarCells = computed<CalendarCell[]>(() => {
         isToday: false,
         inRange: false,
         isRangeStart: false,
-        isRangeEnd: false
+        isRangeEnd: false,
       }
     }
     const current = new Date(first.getFullYear(), first.getMonth(), day)
@@ -493,22 +602,34 @@ const calendarCells = computed<CalendarCell[]>(() => {
       isToday: date === today.value,
       inRange: hasRange && start !== end && date >= start && date <= end,
       isRangeStart: hasRange && date === start,
-      isRangeEnd: hasRange && date === end
+      isRangeEnd: hasRange && date === end,
     }
   })
 })
 
+// showMonthOf selects the first day of the month containing the supplied date. An
+// empty value uses the current local month, providing an initial calendar page for an
+// unset selection.
 const showMonthOf = (value: string) => {
   const base = value ? parseLocalDate(value) : new Date()
   viewMonth.value = formatDateToString(new Date(base.getFullYear(), base.getMonth(), 1))
 }
 
+// shiftMonth moves the calendar view by the supplied month offset.
 const shiftMonth = (offset: number) => {
   const current = parseLocalDate(viewMonth.value)
-  viewMonth.value = formatDateToString(new Date(current.getFullYear(), current.getMonth() + offset, 1))
+  viewMonth.value = formatDateToString(
+    new Date(current.getFullYear(), current.getMonth() + offset, 1),
+  )
 }
 
-// 第一次点击确定开始日期，第二次点击确定结束日期；反向点选时自动对调。
+// selectDay advances the two-click range draft and recognizes completed ranges. The
+// first click starts a single-day draft and clears the recognized preset; the second
+// completes the range and clears hover preview.
+//
+// A second click before the first day swaps the stored endpoints so calendar
+// highlighting and emitted ranges remain chronological. Preset recognition runs after
+// both endpoints are final, and application remains a separate action.
 const selectDay = (date: string) => {
   if (!selectingEnd.value) {
     localStartDate.value = date
@@ -530,16 +651,26 @@ const selectDay = (date: string) => {
   onDateChange()
 }
 
+// isPresetActive compares the preset identifier with the currently recognized draft
+// preset.
 const isPresetActive = (preset: DatePreset): boolean => {
   return activePreset.value === preset.value
 }
 
+// parseRangeTime converts date-only or timestamp text into milliseconds for preset
+// comparison. Empty strings and invalid Date results become null, allowing duration
+// matching to reject unusable endpoints safely.
 const parseRangeTime = (value: string): number | null => {
   if (!value) return null
   const timestamp = new Date(value.length === 10 ? `${value}T00:00:00` : value).getTime()
+  // Convert an unparseable endpoint to null so duration matching rejects it before
+  // subtracting endpoints or comparing the result with preset tolerances.
   return Number.isFinite(timestamp) ? timestamp : null
 }
 
+// selectPreset copies a freshly resolved preset into the local range draft. It clears
+// incomplete calendar selection, displays the ending month, and immediately applies
+// only when applyOnPreset is enabled.
 const selectPreset = (preset: DatePreset) => {
   const range = preset.getRange()
   localStartDate.value = range.start
@@ -553,6 +684,14 @@ const selectPreset = (preset: DatePreset) => {
   }
 }
 
+// presetMatchesRange checks whether the draft still represents a particular preset.
+// Date-only presets compare endpoint strings exactly, while duration presets parse
+// both timestamps and reject invalid endpoints.
+//
+// Duration matching combines the elapsed range length with the age of its end: the
+// duration may drift by one second, and the endpoint may be at most ninety seconds
+// from now. Both conditions are needed so an older interval with the same length does
+// not keep a recent-range label.
 const presetMatchesRange = (preset: DatePreset): boolean => {
   const range = preset.getRange()
   if (!preset.durationMs) {
@@ -565,11 +704,15 @@ const presetMatchesRange = (preset: DatePreset): boolean => {
 
   const durationDrift = Math.abs(endMs - startMs - preset.durationMs)
   const endDrift = Math.abs(Date.now() - endMs)
+  // Allow one second of duration drift and ninety seconds of endpoint age, so recent
+  // minute ranges keep their label while stale equal-length ranges do not.
   return durationDrift <= 1000 && endDrift <= 90 * 1000
 }
 
+// onDateChange selects the first preset matching the current local endpoints. It
+// clears the previous preset before scanning, leaving null when the completed range is
+// a custom selection.
 const onDateChange = () => {
-  // Check if current dates match any preset
   activePreset.value = null
   for (const preset of presets) {
     if (presetMatchesRange(preset)) {
@@ -579,11 +722,14 @@ const onDateChange = () => {
   }
 }
 
+// open captures the current endpoints and preset before starting a draft session. It
+// resets incomplete selection, shows the ending month, and measures the panel after
+// marking it open.
 const open = () => {
   snapshot.value = {
     start: localStartDate.value,
     end: localEndDate.value,
-    preset: activePreset.value
+    preset: activePreset.value,
   }
   selectingEnd.value = false
   hoverDate.value = null
@@ -592,9 +738,13 @@ const open = () => {
   updateDropdownPosition()
 }
 
-// 未点应用就关闭时丢弃本次改动，触发器文案保持已生效的范围。
+// close discards an open draft by restoring its captured endpoints and preset. It also
+// clears incomplete day selection and hover feedback; an already closed picker returns
+// without touching those values.
 const close = () => {
   if (!isOpen.value) return
+  // Cancellation restores the opening snapshot before hiding the panel, keeping
+  // abandoned preset and endpoint edits out of the applied trigger display.
   if (snapshot.value) {
     localStartDate.value = snapshot.value.start
     localEndDate.value = snapshot.value.end
@@ -605,6 +755,9 @@ const close = () => {
   isOpen.value = false
 }
 
+// toggle opens a new draft session or cancels the currently open one. Opening captures
+// applied values, while closing delegates restoration to close so uncommitted
+// selection changes are abandoned.
 const toggle = () => {
   if (isOpen.value) {
     close()
@@ -613,65 +766,89 @@ const toggle = () => {
   }
 }
 
+// cancel delegates draft cancellation to the picker close handler. That handler
+// restores the opening snapshot when the panel is open and leaves an already closed
+// picker unchanged.
 const cancel = () => {
   close()
 }
 
+// apply publishes both endpoint updates followed by the aggregate range change. It
+// then closes the panel directly, allowing the selected draft to remain current rather
+// than restoring the opening snapshot.
 const apply = () => {
+  // Publish both endpoint updates before the aggregate change so parent handlers
+  // receive the individual model changes before acting on the complete range.
   emit('update:startDate', localStartDate.value)
   emit('update:endDate', localEndDate.value)
   emit('change', {
     startDate: localStartDate.value,
     endDate: localEndDate.value,
-    preset: activePreset.value
+    preset: activePreset.value,
   })
   isOpen.value = false
 }
 
-// 触发器在视口右半侧时右缘对齐，否则左缘对齐；空间不足时由公共定位函数翻转和夹取。
+// updateDropdownPosition measures the trigger and delegates panel sizing to
+// getFloatingPanelPosition. The trigger center selects left or right alignment, while
+// the helper applies viewport padding, vertical flipping, and height limits.
 const updateDropdownPosition = () => {
   const trigger = containerRef.value?.getBoundingClientRect()
   if (!trigger) return
   const triggerCenter = trigger.left + trigger.width / 2
-  dropdownPosition.value = getFloatingPanelPosition(trigger, window.innerWidth, window.innerHeight, {
-    viewportPadding: dropdownMargin,
-    maxWidth: dropdownWidth,
-    maxHeightRatio: 0.85,
-    align: triggerCenter > window.innerWidth / 2 ? 'right' : 'left',
-    pinLeftOnMobile: false
-  })
+  dropdownPosition.value = getFloatingPanelPosition(
+    trigger,
+    window.innerWidth,
+    window.innerHeight,
+    {
+      viewportPadding: dropdownMargin,
+      maxWidth: dropdownWidth,
+      maxHeightRatio: 0.85,
+      align: triggerCenter > window.innerWidth / 2 ? 'right' : 'left',
+      pinLeftOnMobile: false,
+    },
+  )
 }
 
+// Follow ancestor movement through the shared lifecycle and close when the trigger
+// becomes unavailable, keeping the floating panel tied to its visible control.
 useFloatingMotion(containerRef, () => isOpen.value, close, updateDropdownPosition)
 
+// handleClickOutside closes the picker when a click falls outside its container.
+// Internal calendar and action clicks remain available, including when an enclosing
+// dialog stops event bubbling.
 const handleClickOutside = (event: MouseEvent) => {
   if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
     close()
   }
 }
 
+// handleEscape cancels an open range picker when Escape is pressed. It delegates
+// snapshot restoration to close, while other keys and already closed pickers leave the
+// current draft untouched.
 const handleEscape = (event: KeyboardEvent) => {
   if (event.key === 'Escape' && isOpen.value) {
     close()
   }
 }
 
+// handleViewportChange updates placement when the picker is currently open. Closed
+// pickers defer measurement until opening so hidden panel state does not drive
+// viewport positioning work.
 const handleViewportChange = () => {
   if (isOpen.value) {
     updateDropdownPosition()
   }
 }
 
-// 首次渲染前匹配初始范围的快捷项，触发器直接显示对应文案。
 onDateChange()
 
-// Sync local state with props
 watch(
   () => props.startDate,
   (val) => {
     localStartDate.value = val
     onDateChange()
-  }
+  },
 )
 
 watch(
@@ -679,17 +856,20 @@ watch(
   (val) => {
     localEndDate.value = val
     onDateChange()
-  }
+  },
 )
 
+// Capture outside clicks before an enclosing dialog stops bubbling; viewport listeners
+// then keep the open calendar positioned during scrolling or resizing.
 onMounted(() => {
-  // 捕获外部点击以取消未应用的日期范围，包括弹窗内的点击。
   document.addEventListener('click', handleClickOutside, true)
   document.addEventListener('keydown', handleEscape)
   window.addEventListener('resize', handleViewportChange)
   window.addEventListener('scroll', handleViewportChange, true)
 })
 
+// Release this calendar instance document and viewport listeners so an unmounted
+// picker cannot react to later clicks or request position updates.
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside, true)
   document.removeEventListener('keydown', handleEscape)
@@ -699,8 +879,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 基线配方已与 .input 同源(模板 input input-trigger 组合),这里只保留展开态增量。
-   展开态描边与 Select 一致，品牌色只用于选中的日期和快捷范围。 */
+/*
+  The template combines input and input-trigger for baseline control styling.
+  Open-state outlines match Select, while selected dates and presets use the brand
+  color.
+*/
 .date-picker-trigger-open {
   @apply border-primary-900/10 ring-2 ring-black/10 dark:border-dark-400 dark:ring-white/6;
 }
@@ -730,7 +913,10 @@ onUnmounted(() => {
   @apply flex flex-col sm:flex-row;
 }
 
-/* 窄屏时快捷范围横排换行，sm 起改为左侧纵向列表。 */
+/*
+  Presets wrap horizontally on narrow screens and become a vertical sidebar from the
+  sm breakpoint.
+*/
 .date-picker-presets {
   @apply flex flex-wrap gap-1 p-2;
   @apply border-b border-primary-900/10 dark:border-dark-600;
@@ -754,7 +940,10 @@ onUnmounted(() => {
 }
 
 .date-picker-preset-active {
-  /* 与 Select 选中项同一配色：浅色灰底品牌字，深色淡品牌青底。 */
+  /*
+    Selected presets share Select colors: a pale gray surface in light mode and a
+    tinted brand surface in dark mode.
+  */
   @apply bg-gray-100 text-primary-700 dark:bg-primary-500/8 dark:text-primary-500 dark:hover:bg-primary-500/8;
   @apply font-medium;
 }
@@ -789,7 +978,10 @@ onUnmounted(() => {
   @apply flex h-8 items-center justify-center text-xs font-medium text-gray-400 dark:text-dark-400;
 }
 
-/* 区间底色画在单元格的伪元素上，相邻格子连成一条带；起止格只铺向区间内侧的一半。 */
+/*
+  Cell pseudo-elements join neighboring range highlights into a band; endpoint cells
+  fill the inward half so the band stops at the selected days.
+*/
 .date-picker-day-cell {
   @apply relative flex h-9 items-center justify-center;
 }
@@ -823,14 +1015,14 @@ onUnmounted(() => {
   @apply text-primary-800 hover:bg-primary-200/70 dark:text-primary-400 dark:hover:bg-primary-500/15;
 }
 
-/* 今天用底部小圆点标记，不与选中态的实心底色冲突。 */
+/* A bottom dot identifies today independently of the filled selection surface. */
 .date-picker-day-today::after {
   content: '';
   @apply absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-primary-500;
 }
 
 .date-picker-day.date-picker-day-selected {
-  /* 起止日期与主按钮同色。 */
+  /* Range endpoints use the primary action color. */
   @apply bg-primary-600 font-semibold text-white hover:bg-primary-700;
   @apply dark:text-white dark:hover:bg-primary-700;
 }

@@ -1,85 +1,126 @@
+import { apiClient } from '../client'
+import type { AdminUser, UpdateUserRequest } from '@/api/admin/users.types'
+import type { PaginatedResponse } from '@/api/common.types'
+import type { ApiKey } from '@/api/keys.types'
+
 /**
- * Admin Users API endpoints
- * Handles user management for administrators
+ * users.ts sends administrator user maintenance and identity-binding requests.
+ * List construction expands nonempty custom attributes into bracketed query
+ * keys, while balance, limits, group replacement and identity binding use
+ * dedicated payloads and return their endpoint-specific results.
  */
 
-import { apiClient } from '../client'
-import type { AdminUser, UpdateUserRequest, PaginatedResponse, ApiKey } from '@/types'
-
+/**
+ * AdminBindAuthIdentityChannelRequest supplies a channel identity and optional
+ * metadata for an administrator identity binding.
+ */
 export interface AdminBindAuthIdentityChannelRequest {
-  channel: string
-  channel_app_id: string
-  channel_subject: string
-  metadata?: Record<string, unknown> | null
-}
-
-export interface AdminBindAuthIdentityRequest {
-  provider_type: string
-  provider_key: string
-  provider_subject: string
-  issuer?: string | null
-  metadata?: Record<string, unknown> | null
-  channel?: AdminBindAuthIdentityChannelRequest
-}
-
-export interface AdminBoundAuthIdentityChannel {
-  channel: string
-  channel_app_id: string
-  channel_subject: string
-  metadata: Record<string, unknown> | null
-  created_at: string
-  updated_at: string
-}
-
-export interface AdminBoundAuthIdentity {
-  user_id: number
-  provider_type: string
-  provider_key: string
-  provider_subject: string
-  verified_at?: string | null
-  issuer?: string | null
-  metadata: Record<string, unknown> | null
-  created_at: string
-  updated_at: string
-  channel?: AdminBoundAuthIdentityChannel | null
-}
-
-export interface BatchUpdateUserLimitsRequest {
-  user_ids: number[]
-  all?: boolean
-  concurrency?: number
-  rpm_limit?: number
-}
-
-export interface BatchUpdateUserLimitsResponse {
-  affected: number
+  channel: string // Authentication channel details.
+  channel_app_id: string // Channel application identifier.
+  channel_subject: string // Channel-scoped subject identifier.
+  metadata?: Record<string, unknown> | null // Additional structured metadata.
 }
 
 /**
- * List all users with pagination
- * @param page - Page number (default: 1)
- * @param pageSize - Items per page (default: 20)
- * @param filters - Optional filters (status, role, search, attributes)
- * @param options - Optional request options (signal)
- * @returns Paginated list of users
+ * AdminBindAuthIdentityRequest supplies provider identity and optional channel
+ * data for binding an administrator-selected user.
+ */
+export interface AdminBindAuthIdentityRequest {
+  provider_type: string // Provider credential type.
+  provider_key: string // Configured identity-provider key.
+  provider_subject: string // Provider-scoped subject identifier.
+  issuer?: string | null // Authentication issuer identity.
+  metadata?: Record<string, unknown> | null // Additional structured metadata.
+  channel?: AdminBindAuthIdentityChannelRequest // Authentication channel details.
+}
+
+/**
+ * AdminBoundAuthIdentityChannel describes a stored channel identity with
+ * metadata and its creation or update timestamps.
+ */
+export interface AdminBoundAuthIdentityChannel {
+  channel: string // Authentication channel details.
+  channel_app_id: string // Channel application identifier.
+  channel_subject: string // Channel-scoped subject identifier.
+  metadata: Record<string, unknown> | null // Additional structured metadata.
+  created_at: string // Record creation timestamp.
+  updated_at: string // Last modification timestamp.
+}
+
+/**
+ * AdminBoundAuthIdentity describes a user's stored provider identity,
+ * verification state and optional channel record.
+ */
+export interface AdminBoundAuthIdentity {
+  user_id: number // Owning user identifier.
+  provider_type: string // Provider credential type.
+  provider_key: string // Configured identity-provider key.
+  provider_subject: string // Provider-scoped subject identifier.
+  verified_at?: string | null // Recorded verified at.
+  issuer?: string | null // Authentication issuer identity.
+  metadata: Record<string, unknown> | null // Additional structured metadata.
+  created_at: string // Record creation timestamp.
+  updated_at: string // Last modification timestamp.
+  channel?: AdminBoundAuthIdentityChannel | null // Authentication channel details.
+}
+
+/**
+ * BatchUpdateUserLimitsRequest selects users and the limit fields to change. A
+ * supplied zero remains a requested limit value, while omitted concurrency or
+ * RPM fields stay absent from the submitted payload.
+ */
+export interface BatchUpdateUserLimitsRequest {
+  user_ids: number[] // Requested user ids.
+  /**
+   * This selection flag accompanies user_ids in the submitted request; the
+   * server determines the selected user set for the batch operation.
+   */
+  all?: boolean // All-users selection flag.
+  /**
+   * When present this is submitted as the requested concurrency limit; omission
+   * keeps the field out of the batch payload.
+   */
+  concurrency?: number // Concurrent request limit.
+  /**
+   * When present this is submitted as the requested RPM limit, including zero;
+   * omission keeps it out of the batch payload.
+   */
+  rpm_limit?: number // Configured requests-per-minute limit.
+}
+
+/**
+ * BatchUpdateUserLimitsResponse reports how many users the requested batch limit
+ * update affected.
+ */
+export interface BatchUpdateUserLimitsResponse {
+  affected: number // Affected record count.
+}
+
+/**
+ * list retrieves an administrator user page with optional filters and
+ * cancellation. Page and size default to one and twenty; nonempty custom
+ * attribute values become attr[id] query entries, while empty attribute values
+ * are omitted.
  */
 export async function list(
   page: number = 1,
   pageSize: number = 20,
   filters?: {
-    status?: 'active' | 'disabled'
-    role?: 'admin' | 'user'
-    search?: string
-    group_name?: string         // fuzzy filter by allowed group name
-    api_key_group_id?: number   // 按用户 API Key 绑定的分组过滤
-    attributes?: Record<number, string>  // attributeId -> value
-    include_subscriptions?: boolean
-    sort_by?: string
-    sort_order?: 'asc' | 'desc'
+    status?: 'active' | 'disabled' // Current server-reported status.
+    role?: 'admin' | 'user' // Selected account role.
+    search?: string // Free-text search query.
+    group_name?: string // fuzzy filter by allowed group name
+    api_key_group_id?: number /**
+     * Filter users by the group bound to their API keys.
+     */
+    attributes?: Record<number, string> // attributeId -> value
+    include_subscriptions?: boolean // Recorded include subscriptions.
+    sort_by?: string // Requested sort column.
+    sort_order?: 'asc' | 'desc' // Requested ordering direction.
   },
   options?: {
-    signal?: AbortSignal
-  }
+    signal?: AbortSignal // Caller-owned cancellation signal.
+  },
 ): Promise<PaginatedResponse<AdminUser>> {
   // Build params with attribute filters in attr[id]=value format
   const params: Record<string, any> = {
@@ -92,7 +133,7 @@ export async function list(
     api_key_group_id: filters?.api_key_group_id,
     include_subscriptions: filters?.include_subscriptions,
     sort_by: filters?.sort_by,
-    sort_order: filters?.sort_order
+    sort_order: filters?.sort_order,
   }
 
   // Add attribute filters as attr[id]=value
@@ -105,16 +146,15 @@ export async function list(
   }
   const { data } = await apiClient.get<PaginatedResponse<AdminUser>>('/admin/users', {
     params,
-    signal: options?.signal
+    signal: options?.signal,
   })
   return data
 }
 
 /**
- * Get user by ID
- * @param id - User ID
- * @param includeDeleted - Whether to include soft-deleted users
- * @returns User details
+ * getById retrieves an administrator user record by identifier. The default
+ * excludes deleted records; includeDeleted true appends the server's
+ * include_deleted query flag for callers viewing historical user information.
  */
 export async function getById(id: number, includeDeleted = false): Promise<AdminUser> {
   const url = includeDeleted ? `/admin/users/${id}?include_deleted=true` : `/admin/users/${id}`
@@ -123,32 +163,27 @@ export async function getById(id: number, includeDeleted = false): Promise<Admin
 }
 
 /**
- * Create new user
- * @param userData - User data (email, password, etc.)
- * @returns Created user
+ * create creates new user and returns the server result.
  */
 export async function create(userData: {
-  email: string
-  password: string
-  username?: string
-  notes?: string
-  role?: 'admin' | 'user'
-  balance?: number
-  concurrency?: number
-  rpm_limit?: number
-  api_key_limit?: number
-  allowed_groups?: number[] | null
-  disabled_public_groups?: number[] | null
+  email: string // Account email address.
+  password: string // Submitted password text.
+  username?: string // Account display username.
+  notes?: string // Administrator supplied notes.
+  role?: 'admin' | 'user' // Selected account role.
+  balance?: number // Account credit balance.
+  concurrency?: number // Concurrent request limit.
+  rpm_limit?: number // Configured requests-per-minute limit.
+  api_key_limit?: number // API key limit.
+  allowed_groups?: number[] | null // Recorded allowed groups.
+  disabled_public_groups?: number[] | null // Disabled public groups.
 }): Promise<AdminUser> {
   const { data } = await apiClient.post<AdminUser>('/admin/users', userData)
   return data
 }
 
 /**
- * Update user
- * @param id - User ID
- * @param updates - Fields to update
- * @returns Updated user
+ * update updates user and returns the server result.
  */
 export async function update(id: number, updates: UpdateUserRequest): Promise<AdminUser> {
   const { data } = await apiClient.put<AdminUser>(`/admin/users/${id}`, updates)
@@ -156,62 +191,59 @@ export async function update(id: number, updates: UpdateUserRequest): Promise<Ad
 }
 
 /**
- * Delete user
- * @param id - User ID
- * @returns Success confirmation
+ * deleteUser deletes user and returns the server result.
  */
-export async function deleteUser(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>(`/admin/users/${id}`)
+export async function deleteUser(id: number): Promise<{
+  message: string // Server-provided result message.
+}> {
+  const { data } = await apiClient.delete<{
+    message: string // Server-provided result message.
+  }>(`/admin/users/${id}`)
   return data
 }
 
 /**
- * Update user balance
- * @param id - User ID
- * @param balance - New balance
- * @param operation - Operation type ('set', 'add', 'subtract')
- * @param notes - Optional notes for the balance adjustment
- * @returns Updated user
+ * updateBalance submits a user balance adjustment and returns the updated user.
+ * Operation defaults to set; the requested amount is forwarded unchanged, and
+ * missing or empty notes are sent as an empty string.
  */
 export async function updateBalance(
   id: number,
   balance: number,
   operation: 'set' | 'add' | 'subtract' = 'set',
-  notes?: string
+  notes?: string,
 ): Promise<AdminUser> {
   const { data } = await apiClient.post<AdminUser>(`/admin/users/${id}/balance`, {
     balance,
     operation,
-    notes: notes || ''
+    notes: notes || '',
   })
   return data
 }
 
-/** 通过一次请求覆盖多个用户的并发数和/或 RPM 上限。 */
+/**
+ * batchUpdateLimits submits concurrency and RPM limit edits for multiple users
+ * in one request.
+ */
 export async function batchUpdateLimits(
-  request: BatchUpdateUserLimitsRequest
+  request: BatchUpdateUserLimitsRequest,
 ): Promise<BatchUpdateUserLimitsResponse> {
   const { data } = await apiClient.post<BatchUpdateUserLimitsResponse>(
     '/admin/users/batch-limits',
-    request
+    request,
   )
   return data
 }
 
 /**
- * Toggle user status
- * @param id - User ID
- * @param status - New status
- * @returns Updated user
+ * toggleStatus sets user status and returns the server result.
  */
 export async function toggleStatus(id: number, status: 'active' | 'disabled'): Promise<AdminUser> {
   return update(id, { status })
 }
 
 /**
- * Get user's API keys
- * @param id - User ID
- * @returns List of user's API keys
+ * getUserApiKeys retrieves user's API keys and returns the server result.
  */
 export async function getUserApiKeys(id: number): Promise<PaginatedResponse<ApiKey>> {
   const { data } = await apiClient.get<PaginatedResponse<ApiKey>>(`/admin/users/${id}/api-keys`)
@@ -219,82 +251,94 @@ export async function getUserApiKeys(id: number): Promise<PaginatedResponse<ApiK
 }
 
 /**
- * Balance history item returned from the API
+ * BalanceHistoryItem records a balance, concurrency or subscription adjustment
+ * with optional user and group display records.
  */
 export interface BalanceHistoryItem {
-  id: number
-  code: string
-  type: string
-  value: number
-  status: string
-  used_by: number | null
-  used_at: string | null
-  created_at: string
-  group_id: number | null
-  validity_days: number
-  notes: string
-  user?: { id: number; email: string } | null
-  group?: { id: number; name: string } | null
-}
-
-// Balance history response extends pagination with total_recharged summary
-export interface BalanceHistoryResponse extends PaginatedResponse<BalanceHistoryItem> {
-  total_recharged: number
+  id: number // Record identifier value.
+  code: string // Redemption or adjustment code.
+  type: string // Represented record category.
+  value: number // Represented entry value.
+  status: string // Current server-reported status.
+  used_by: number | null // Redeeming user identifier.
+  used_at: string | null // Recorded used at.
+  created_at: string // Record creation timestamp.
+  group_id: number | null // Group record identifier.
+  validity_days: number // Recorded validity days.
+  notes: string // Administrator supplied notes.
+  user?: {
+    id: number // Record identifier value.
+    email: string // Account email address.
+  } | null // Expanded redeeming user summary.
+  group?: {
+    id: number // Record identifier value.
+    name: string // Human-readable display name.
+  } | null // Expanded associated group summary.
 }
 
 /**
- * Get user's balance/concurrency change history
- * @param id - User ID
- * @param page - Page number
- * @param pageSize - Items per page
- * @param type - Optional type filter (balance, admin_balance, concurrency, admin_concurrency, subscription)
- * @returns Paginated balance history with total_recharged
+ * BalanceHistoryResponse adds accumulated recharge totals to paginated user
+ * balance-history entries.
+ */
+export interface BalanceHistoryResponse extends PaginatedResponse<BalanceHistoryItem> {
+  total_recharged: number // Recorded total recharged.
+}
+
+/**
+ * getUserBalanceHistory retrieves a user's balance and entitlement adjustments
+ * with recharge totals. Pagination defaults to page one with twenty entries, and
+ * a type filter is included only when truthy.
  */
 export async function getUserBalanceHistory(
   id: number,
   page: number = 1,
   pageSize: number = 20,
-  type?: string
+  type?: string,
 ): Promise<BalanceHistoryResponse> {
   const params: Record<string, any> = { page, page_size: pageSize }
   if (type) params.type = type
   const { data } = await apiClient.get<BalanceHistoryResponse>(
     `/admin/users/${id}/balance-history`,
-    { params }
+    { params },
   )
   return data
 }
 
 /**
- * Replace user's exclusive group
- * @param userId - User ID
- * @param oldGroupId - Current group ID to replace
- * @param newGroupId - New group ID to replace with
- * @returns Number of migrated keys
+ * replaceGroup submits replace group and returns the server response data.
  */
 export async function replaceGroup(
   userId: number,
   oldGroupId: number,
-  newGroupId: number
-): Promise<{ migrated_keys: number }> {
-  const { data } = await apiClient.post<{ migrated_keys: number }>(
-    `/admin/users/${userId}/replace-group`,
-    { old_group_id: oldGroupId, new_group_id: newGroupId }
-  )
+  newGroupId: number,
+): Promise<{
+  migrated_keys: number // Recorded migrated keys.
+}> {
+  const { data } = await apiClient.post<{
+    migrated_keys: number // Recorded migrated keys.
+  }>(`/admin/users/${userId}/replace-group`, { old_group_id: oldGroupId, new_group_id: newGroupId })
   return data
 }
 
+/**
+ * bindUserAuthIdentity submits bind user auth identity and returns the server
+ * response data.
+ */
 export async function bindUserAuthIdentity(
   userId: number,
-  input: AdminBindAuthIdentityRequest
+  input: AdminBindAuthIdentityRequest,
 ): Promise<AdminBoundAuthIdentity> {
   const { data } = await apiClient.post<AdminBoundAuthIdentity>(
     `/admin/users/${userId}/auth-identities`,
-    input
+    input,
   )
   return data
 }
 
+/**
+ * usersAPI groups administrator user records and identity bindings for callers
+ * using the module's named or default API object.
+ */
 export const usersAPI = {
   list,
   getById,

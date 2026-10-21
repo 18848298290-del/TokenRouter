@@ -43,7 +43,8 @@ func TestProtocolCatalogFixture(t *testing.T) {
 		}
 	}
 	// Fixture export is an opt-in side effect for catalogue review. The
-	// configured path receives the current administrative JSON before the checked-in frontend fixture is compared.
+	// configured path receives the current administrative JSON before the
+	// checked-in frontend fixture is compared.
 	if path := os.Getenv("PROTOCOL_CATALOG_TEST_FIXTURE"); path != "" {
 		data, err := json.MarshalIndent(routinghttpapi.AdminProtocolCatalog(testEndpoints()), "", "  ")
 		if err != nil {
@@ -61,8 +62,9 @@ func TestProtocolCatalogFixture(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, string(fixture), string(actual))
 
-	// Keep the TypeScript union synchronized with catalogue additions and removals.
-	types, err := os.ReadFile(filepath.Join(frontend, "types", "index.ts"))
+	// Read the protocol API's type owner so catalogue additions and removals
+	// remain synchronized with the frontend's accepted identifiers.
+	types, err := os.ReadFile(filepath.Join(frontend, "api", "protocols.types.ts"))
 	require.NoError(t, err)
 	block := regexp.MustCompile(`(?s)export type ProtocolID =\s*((?:\s*\|\s*'[^']+')+)`).FindSubmatch(types)
 	require.Len(t, block, 2)

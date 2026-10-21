@@ -1,8 +1,24 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import apiClient from '@/api/client'
-import { loadProtocolCatalog, protocolCatalog, protocolCatalogError, protocolCatalogLoading } from '../protocolCapabilities'
+import {
+  loadProtocolCatalog,
+  protocolCatalog,
+  protocolCatalogError,
+  protocolCatalogLoading,
+} from '../protocolCapabilities'
 import fixture from '@/__tests__/fixtures/protocol-catalog.json'
 
+/**
+ * protocolCapabilities.spec.ts checks shared protocol-catalog loading from an
+ * empty cache. Controlled request settlement exposes concurrent promise reuse,
+ * loading and error transitions, cached success and recovery after a failed
+ * request releases the pending slot.
+ */
+
+/**
+ * Clear the exported catalog, loading and error refs so a cached fixture cannot
+ * bypass the request sharing and failure recovery exercised by each case.
+ */
 beforeEach(() => {
   protocolCatalog.value = null
   protocolCatalogError.value = false
@@ -10,11 +26,26 @@ beforeEach(() => {
 })
 afterEach(() => vi.restoreAllMocks())
 
-// 从真实空缓存开始验证请求合并与失败恢复，不能由全局夹具跳过加载流程。
 describe('协议目录加载', () => {
+  /**
+   * Two loads begin before the catalog request completes. They share one
+   * promise, publish success state together and reuse the cached catalog on a
+   * later load.
+   */
   it('并发调用共享请求，加载成功后复用缓存', async () => {
-    let resolve!: (value: { data: typeof fixture }) => void
-    const request = vi.spyOn(apiClient, 'get').mockImplementation(() => new Promise(done => { resolve = done }))
+    /**
+     * Hold catalog settlement until both loads have started so their promise
+     * identity and request count expose reuse of the pending request.
+     */
+    let resolve!: (value: {
+      data: typeof fixture // Returned response data.
+    }) => void
+    const request = vi.spyOn(apiClient, 'get').mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done
+        }),
+    )
     const first = loadProtocolCatalog()
     const second = loadProtocolCatalog()
     expect(first).toBe(second)
@@ -28,8 +59,16 @@ describe('协议目录加载', () => {
     expect(request).toHaveBeenCalledTimes(1)
   })
 
+  /**
+   * The first catalog request fails and the next one succeeds. Error state
+   * clears when retry starts, loading tracks settlement and the successful
+   * catalog becomes available.
+   */
   it('失败不缓存空目录，重试清除错误并恢复数据', async () => {
-    const request = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ data: structuredClone(fixture) })
+    const request = vi
+      .spyOn(apiClient, 'get')
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ data: structuredClone(fixture) })
     await expect(loadProtocolCatalog()).rejects.toThrow('offline')
     expect(protocolCatalog.value).toBeNull()
     expect(protocolCatalogError.value).toBe(true)

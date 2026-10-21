@@ -1,8 +1,3 @@
-/**
- * Admin API barrel export
- * Centralized exports for all admin API modules
- */
-
 import dashboardAPI from './dashboard'
 import usersAPI from './users'
 import groupsAPI from './groups'
@@ -34,7 +29,15 @@ import auditAPI from './audit'
 import teamsAPI from './teams'
 
 /**
- * Unified admin API object for convenient access
+ * index.ts collects administrator API objects into the shared adminAPI export.
+ * Existing module objects remain directly available as named exports, and
+ * selected response types are re-exported for consumers that use this
+ * administrator entry point.
+ */
+
+/**
+ * adminAPI groups API module exports for callers using the module's named or
+ * default API object.
  */
 export const adminAPI = {
   dashboard: dashboardAPI,
@@ -65,7 +68,7 @@ export const adminAPI = {
   payment: adminPaymentAPI,
   riskControl: riskControlAPI,
   audit: auditAPI,
-  teams: teamsAPI
+  teams: teamsAPI,
 }
 
 export {
@@ -97,7 +100,7 @@ export {
   adminPaymentAPI,
   riskControlAPI,
   auditAPI,
-  teamsAPI
+  teamsAPI,
 }
 
 export default adminAPI
@@ -112,13 +115,13 @@ export type {
   UpdateProfileRequest,
   TLSFingerprintCollectorStatus,
   TLSFingerprintCollectorSession,
-  TLSFingerprintCaptureRecord
+  TLSFingerprintCaptureRecord,
 } from './tlsFingerprintProfile'
 export type {
   TLSFingerprintRouter,
   TLSFingerprintRouterRule,
   TLSFingerprintRouterMatchType,
   CreateTLSFingerprintRouterRequest,
-  UpdateTLSFingerprintRouterRequest
+  UpdateTLSFingerprintRouterRequest,
 } from './tlsFingerprintRouter'
 export type { ContentModerationConfig, ContentModerationLog, ModerationMode } from './riskControl'

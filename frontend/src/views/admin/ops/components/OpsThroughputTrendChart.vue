@@ -2,40 +2,85 @@
 import Icon from '@/components/icons/Icon.vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Chart as ChartJS, CategoryScale, Filler, Legend, LineElement, LinearScale, PointElement, Title, Tooltip } from 'chart.js'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  Filler,
+  Legend,
+  LineElement,
+  LinearScale,
+  PointElement,
+  Title,
+  Tooltip,
+} from 'chart.js'
 import { Line } from 'vue-chartjs'
 import type { ChartComponentRef } from 'vue-chartjs'
-import type { OpsThroughputGroupBreakdownItem, OpsThroughputPlatformBreakdownItem, OpsThroughputTrendPoint } from '@/api/admin/ops'
+import type {
+  OpsThroughputGroupBreakdownItem,
+  OpsThroughputPlatformBreakdownItem,
+  OpsThroughputTrendPoint,
+} from '@/api/admin/ops'
 import type { ChartState } from '../types'
 import { formatHistoryLabel, sumNumbers } from '../utils/opsFormatters'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { formatNumber } from '@/utils/format'
 import { externalTooltipHandler, hideExternalTooltip } from '@/utils/chartExternalTooltip'
-import { useChartTheme, CHART_TICK_FONT_SIZE, CHART_LEGEND_FONT_SIZE } from '@/composables/useChartTheme'
+import {
+  useChartTheme,
+  CHART_TICK_FONT_SIZE,
+  CHART_LEGEND_FONT_SIZE,
+} from '@/composables/useChartTheme'
 
-ChartJS.register(Title, Tooltip, Legend, LineElement, LinearScale, PointElement, CategoryScale, Filler)
+// OpsThroughputTrendChart.vue plots request throughput beside token throughput
+// for the selected history range. Token rates use thousands of tokens per second
+// on a separate axis, while platform and group summaries emit navigation
+// selections to the dashboard owner.
 
+ChartJS.register(
+  Title,
+  Tooltip,
+  Legend,
+  LineElement,
+  LinearScale,
+  PointElement,
+  CategoryScale,
+  Filler,
+)
+
+// Hide the shared external tooltip when this chart leaves the page so its
+// detached overlay does not outlive the displayed dataset.
 onBeforeUnmount(hideExternalTooltip)
 
+// Props supplies measured history and display controls for this Ops chart.
 interface Props {
-  points: OpsThroughputTrendPoint[]
-  loading: boolean
-  timeRange: string
-  byPlatform?: OpsThroughputPlatformBreakdownItem[]
-  topGroups?: OpsThroughputGroupBreakdownItem[]
-  fullscreen?: boolean
+  points: OpsThroughputTrendPoint[] // ordered API history buckets
+  loading: boolean // parent request in progress
+  timeRange: string // selected history range token
+  byPlatform?: OpsThroughputPlatformBreakdownItem[] // optional execution-platform throughput breakdown
+  topGroups?: OpsThroughputGroupBreakdownItem[] // optional group throughput ranking
+  fullscreen?: boolean // expanded dashboard layout flag
 }
 
+// Component bindings read dashboard-owned measurements and translate labels for
+// the rendered chart and its controls.
 const props = defineProps<Props>()
 const { t } = useI18n()
 const emit = defineEmits<{
+  // selectPlatform publishes a recorded execution-platform identity for
+  // dashboard filtering.
   (e: 'selectPlatform', platform: string): void
+  // selectGroup publishes a persisted group identifier for the dashboard filter.
   (e: 'selectGroup', groupId: number): void
+  // openDetails requests the parent-owned detail list for the displayed metric.
   (e: 'openDetails'): void
 }>()
 
+// throughputChartRef exposes the mounted chart for optional zoom reset and PNG
+// export actions.
 const throughputChartRef = ref<ChartComponentRef | null>(null)
+// Changing the time range schedules a zoom reset after chart updates; the
+// callback checks for a mounted chart and optional plugin method.
 watch(
   () => props.timeRange,
   () => {
@@ -45,9 +90,11 @@ watch(
         chart.resetZoom()
       }
     }, 100)
-  }
+  },
 )
 
+// Theme colors provide reactive axis and label contrast while dataset colors
+// identify the metric series.
 const { colors: themeColors } = useChartTheme()
 const colors = computed(() => ({
   blue: '#3b82f6',
@@ -55,11 +102,15 @@ const colors = computed(() => ({
   green: '#10b981',
   greenAlpha: '#10b98120',
   grid: themeColors.value.grid,
-  text: themeColors.value.muted
+  text: themeColors.value.muted,
 }))
 
+// totalRequests sums finite request counts to suppress charts whose history
+// contains no observed traffic.
 const totalRequests = computed(() => sumNumbers(props.points.map((p) => p.request_count)))
 
+// chartData combines the supplied bucket labels and values into datasets
+// consumed by the chart renderer.
 const chartData = computed(() => {
   if (!props.points.length || totalRequests.value <= 0) return null
   return {
@@ -73,10 +124,11 @@ const chartData = computed(() => {
         fill: true,
         tension: 0.4,
         pointRadius: 0,
-        pointHitRadius: 10
+        pointHitRadius: 10,
       },
       {
         label: t('admin.ops.tpsK'),
+        // Scale tokens per second to thousands for the right-hand axis.
         data: props.points.map((p) => (p.tps ?? 0) / 1000),
         borderColor: colors.value.green,
         backgroundColor: colors.value.greenAlpha,
@@ -84,18 +136,22 @@ const chartData = computed(() => {
         tension: 0.4,
         pointRadius: 0,
         pointHitRadius: 10,
-        yAxisID: 'y1'
-      }
-    ]
+        yAxisID: 'y1',
+      },
+    ],
   }
 })
 
+// state prefers a populated chart during background refresh, then selects
+// loading or empty presentation.
 const state = computed<ChartState>(() => {
   if (chartData.value) return 'ready'
   if (props.loading) return 'loading'
   return 'empty'
 })
 
+// options configures responsive chart axes and the shared external tooltip used
+// for point inspection.
 const options = computed(() => {
   const c = colors.value
   return {
@@ -106,7 +162,12 @@ const options = computed(() => {
       legend: {
         position: 'top' as const,
         align: 'end' as const,
-        labels: { color: c.text, usePointStyle: true, boxWidth: 6, font: { size: CHART_LEGEND_FONT_SIZE } }
+        labels: {
+          color: c.text,
+          usePointStyle: true,
+          boxWidth: 6,
+          font: { size: CHART_LEGEND_FONT_SIZE },
+        },
       },
       tooltip: {
         enabled: false,
@@ -117,14 +178,15 @@ const options = computed(() => {
             if (label) label += ': '
             if (context.raw !== null) label += context.parsed.y.toFixed(1)
             return label
-          }
-        }
+          },
+        },
       },
-      // Optional: if chartjs-plugin-zoom is installed, these options will enable zoom/pan.
+      // Optional: if chartjs-plugin-zoom is installed, these options will enable
+      // zoom/pan.
       zoom: {
         pan: { enabled: true, mode: 'x' as const, modifierKey: 'ctrl' as const },
-        zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' as const }
-      }
+        zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' as const },
+      },
     },
     scales: {
       x: {
@@ -135,32 +197,38 @@ const options = computed(() => {
           font: { size: CHART_TICK_FONT_SIZE },
           maxTicksLimit: 8,
           autoSkip: true,
-          autoSkipPadding: 10
-        }
+          autoSkipPadding: 10,
+        },
       },
       y: {
         type: 'linear' as const,
         display: true,
         position: 'left' as const,
         grid: { color: c.grid, borderDash: [4, 4] },
-        ticks: { color: c.text, font: { size: CHART_TICK_FONT_SIZE } }
+        ticks: { color: c.text, font: { size: CHART_TICK_FONT_SIZE } },
       },
       y1: {
         type: 'linear' as const,
         display: true,
         position: 'right' as const,
         grid: { display: false },
-        ticks: { color: c.green, font: { size: CHART_TICK_FONT_SIZE } }
-      }
-    }
+        ticks: { color: c.green, font: { size: CHART_TICK_FONT_SIZE } },
+      },
+    },
   }
 })
 
+// resetZoom invokes the chart zoom plugin when that method is available. An
+// unmounted chart or a chart without the plugin makes this action a no-op for
+// callers.
 function resetZoom() {
   const chart: any = throughputChartRef.value?.chart
   if (chart && typeof chart.resetZoom === 'function') chart.resetZoom()
 }
 
+// downloadChart exports the mounted chart as a timestamped PNG through a
+// temporary anchor. Missing chart instances or export methods make the action
+// return before creating a download link.
 function downloadChart() {
   const chart: any = throughputChartRef.value?.chart
   if (!chart || typeof chart.toBase64Image !== 'function') return
@@ -173,7 +241,9 @@ function downloadChart() {
 </script>
 
 <template>
-  <div class="flex h-full min-w-0 flex-col rounded-surface bg-white p-6 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-900 dark:ring-dark-700">
+  <div
+    class="flex h-full min-w-0 flex-col rounded-surface bg-white p-6 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-900 dark:ring-dark-700"
+  >
     <div
       data-testid="throughput-chart-header"
       class="mb-4 flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
@@ -187,8 +257,12 @@ function downloadChart() {
         data-testid="throughput-chart-toolbar"
         class="flex w-full min-w-0 flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400 sm:w-auto sm:justify-end"
       >
-        <span class="flex shrink-0 items-center gap-1"><span class="h-2 w-2 rounded-full bg-blue-500"></span>QPS</span>
-        <span class="flex shrink-0 items-center gap-1"><span class="h-2 w-2 rounded-full bg-green-500"></span>{{ t('admin.ops.tpsK') }}</span>
+        <span class="flex shrink-0 items-center gap-1"
+          ><span class="h-2 w-2 rounded-full bg-blue-500"></span>QPS</span
+        >
+        <span class="flex shrink-0 items-center gap-1"
+          ><span class="h-2 w-2 rounded-full bg-green-500"></span>{{ t('admin.ops.tpsK') }}</span
+        >
         <template v-if="!props.fullscreen">
           <button
             type="button"
@@ -249,10 +323,21 @@ function downloadChart() {
     </div>
 
     <div class="min-h-0 min-w-0 flex-1">
-      <Line v-if="state === 'ready' && chartData" ref="throughputChartRef" :data="chartData" :options="options" />
+      <Line
+        v-if="state === 'ready' && chartData"
+        ref="throughputChartRef"
+        :data="chartData"
+        :options="options"
+      />
       <div v-else class="flex h-full items-center justify-center">
-        <div v-if="state === 'loading'" class="animate-pulse text-sm text-gray-400">{{ t('common.loading') }}</div>
-        <EmptyState v-else :title="t('common.noData')" :description="t('admin.ops.charts.emptyRequest')" />
+        <div v-if="state === 'loading'" class="animate-pulse text-sm text-gray-400">
+          {{ t('common.loading') }}
+        </div>
+        <EmptyState
+          v-else
+          :title="t('common.noData')"
+          :description="t('admin.ops.charts.emptyRequest')"
+        />
       </div>
     </div>
   </div>

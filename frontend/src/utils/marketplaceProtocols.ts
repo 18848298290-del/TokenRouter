@@ -1,21 +1,35 @@
-import type { ProtocolID } from '@/types'
+import type { ProtocolID } from '@/api/protocols.types'
 import type { ProviderBrandKey } from '@/utils/providerBrand'
 
-// MarketplaceProtocol 是模型广场展示的一个客户端协议：品牌图标、端点和 i18n 短名的键。
+/**
+ * marketplaceProtocols.ts supplies the client protocol labels, brand identities, and
+ * endpoint hints displayed in the public marketplace. Its static ordered catalog
+ * supports public pages before an administrator catalog is available, and selection
+ * returns recognized entries in that display order.
+ */
+
+/**
+ * MarketplaceProtocol pairs a public client protocol with its branding and endpoint.
+ */
 export interface MarketplaceProtocol {
-  id: ProtocolID
-  // brand 传给 ProviderIcon，表示请求格式所属的厂商。
-  brand: Extract<ProviderBrandKey, 'anthropic' | 'openai' | 'google' | 'xai' | 'typesafe'>
-  endpoint: string
+  id: ProtocolID // client protocol identifier
+  brand: Extract<ProviderBrandKey, 'anthropic' | 'openai' | 'google' | 'xai' | 'typesafe'> // request format brand
+  endpoint: string // displayed HTTP endpoint
 }
 
-// 模型广场对未登录用户开放，读不到管理员的协议目录，所以端点在这里写一份。
-// 顺序和端点要与后端协议目录一致，单元测试用前端的目录夹具核对。
+/**
+ * MARKETPLACE_PROTOCOLS defines the public protocol display order and endpoint hints
+ * checked by the marketplace protocol catalog fixture test.
+ */
 export const MARKETPLACE_PROTOCOLS: readonly MarketplaceProtocol[] = [
   { id: 'anthropic_messages', brand: 'anthropic', endpoint: 'POST /v1/messages' },
   { id: 'openai_responses', brand: 'openai', endpoint: 'POST /v1/responses' },
   { id: 'openai_chat_completions', brand: 'openai', endpoint: 'POST /v1/chat/completions' },
-  { id: 'gemini_generate_content', brand: 'google', endpoint: 'POST /v1beta/models/{model}:generateContent / :streamGenerateContent' },
+  {
+    id: 'gemini_generate_content',
+    brand: 'google',
+    endpoint: 'POST /v1beta/models/{model}:generateContent / :streamGenerateContent',
+  },
   { id: 'systemone', brand: 'typesafe', endpoint: 'POST /v1/systemone' },
   { id: 'openai_embeddings', brand: 'openai', endpoint: 'POST /v1/embeddings' },
   { id: 'openai_images_generations', brand: 'openai', endpoint: 'POST /v1/images/generations' },
@@ -36,8 +50,14 @@ export const MARKETPLACE_PROTOCOLS: readonly MarketplaceProtocol[] = [
   { id: 'grok_x_search', brand: 'xai', endpoint: 'POST /v1/x_search' },
 ]
 
-// marketplaceProtocols 按目录顺序返回接口下发的协议，目录里没有的 ID 跳过。
-export function marketplaceProtocols(ids: readonly ProtocolID[] | undefined): MarketplaceProtocol[] {
+/**
+ * marketplaceProtocols returns recognized protocol entries in the public catalog's
+ * order. Missing IDs produce an empty array; repeated IDs collapse through membership
+ * lookup, and returned entries reference the shared catalog objects.
+ */
+export function marketplaceProtocols(
+  ids: readonly ProtocolID[] | undefined,
+): MarketplaceProtocol[] {
   const selected = new Set(ids ?? [])
-  return MARKETPLACE_PROTOCOLS.filter(protocol => selected.has(protocol.id))
+  return MARKETPLACE_PROTOCOLS.filter((protocol) => selected.has(protocol.id))
 }

@@ -4,48 +4,77 @@ import { icons, type IconName } from './registry'
 import type { IconControls, IconDefinition } from './types'
 import { useIconAnimation } from './useIconAnimation'
 
+// Icon.vue renders registered artwork inside a stable SVG root with shared size
+// and accessibility defaults. The keyed Artwork child remounts when the
+// semantic name changes, while root attributes, caller events, and outer CSS
+// transforms remain on the wrapper.
+
+// IconSize selects square dimensions: xs is 12px, sm 16px, md 18px, lg
+// 24px, and xl 32px before caller dimensions override either axis.
 type IconSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
-// 导航使用 18px，普通按钮使用 16px，展示图标按场景选择更大档位。
+// SIZE_CLASSES maps the five size presets to height and width utilities applied
+// when callers omit those dimensions.
 const SIZE_CLASSES: Record<IconSize, [string, string]> = {
   xs: ['h-3', 'w-3'],
   sm: ['h-4', 'w-4'],
   md: ['h-[18px]', 'w-[18px]'],
   lg: ['h-6', 'w-6'],
-  xl: ['h-8', 'w-8']
+  xl: ['h-8', 'w-8'],
 }
 
-// 图形切换时重新挂载内部节点，根 SVG 继续保留焦点、尺寸和外层状态样式。
+// Artwork renders the selected definition with its shared controller and
+// requested stroke width. Icon.vue keys this child by semantic name so changing
+// artwork remounts its internal motion nodes.
 const Artwork = (props: {
-  definition: IconDefinition
-  controls: IconControls
-  strokeWidth: number
+  definition: IconDefinition // selected artwork renderer
+  controls: IconControls // instance animation controls
+  strokeWidth: number // inherited stroke width
 }) => props.definition.render(props.controls, props.strokeWidth)
 
+// Icon declares the SVG wrapper and reactive inputs consumed by its setup and
+// render functions.
 export default defineComponent({
   name: 'Icon',
   inheritAttrs: false,
   props: {
+    // name selects a registry entry and also keys the inner artwork component
+    // for replacement.
     name: { type: String as PropType<IconName>, required: true },
+    // size supplies default dimensions; caller height, width, or matching
+    // utility classes take precedence independently.
     size: { type: String as PropType<IconSize>, default: 'md' },
-    strokeWidth: { type: Number, default: 1.75 },
+    strokeWidth: { type: Number, default: 1.75 }, // SVG stroke width
+    // animateOnHover enables pointer and focus feedback; animationActive can
+    // still request playback when this is false.
     animateOnHover: { type: Boolean, default: true },
-    animationActive: { type: Boolean, default: false }
+    // animationActive requests playback independently of hover, while disabled
+    // and reduced-motion conditions still suppress animation.
+    animationActive: { type: Boolean, default: false },
   },
+  // setup connects the root SVG to its animation controller and returns the
+  // root renderer. Mounted and updated hooks remove internal artwork nodes from
+  // sequential focus after their motion handlers attach.
   setup(props, { attrs, slots }) {
+    // svgRef and controls belong to this mounted wrapper; definition reads the
+    // current registry entry for rendering and target resets.
     const svgRef = ref<SVGSVGElement | null>(null)
+    // definition returns the registry artwork selected by the current name
+    // prop.
     const definition = () => icons[props.name]
     const controls = useIconAnimation(
       svgRef,
       definition,
       () => props.animateOnHover,
-      () => props.animationActive
+      () => props.animationActive,
     )
 
-    // motion-v 给内部 SVG 节点注册 focus 事件后，浏览器可能将其加入 Tab 顺序。
-    // 挂载及换图后显式排除这些装饰节点，焦点和键盘操作继续由外层控件承担。
+    // excludeArtworkFromFocus removes rendered shape nodes from sequential
+    // keyboard navigation. It runs after mount and updates because motion-v
+    // attaches focus handlers to artwork nodes, including nodes replaced by a
+    // name change.
     const excludeArtworkFromFocus = () => {
       const artwork = svgRef.value?.querySelectorAll(
-        'g, path, circle, rect, line, polyline, polygon, ellipse'
+        'g, path, circle, rect, line, polyline, polygon, ellipse',
       )
       artwork?.forEach((node) => {
         node.setAttribute('tabindex', '-1')
@@ -77,29 +106,26 @@ export default defineComponent({
           ...attrs,
           ref: svgRef,
           'data-animated-icon': definition().name,
-          // 调用方传入尺寸时使用该尺寸，省略 size 档位的尺寸类。
+          // Caller dimensions take precedence per axis so preset utilities do
+          // not compete with explicitly sized icons.
           class: [
             'shrink-0 select-none',
-            !attrs.height &&
-              !/(?:^|\s)(?:\S+:)?(?:h-|size-)/.test(className) &&
-              height,
-            !attrs.width &&
-              !/(?:^|\s)(?:\S+:)?(?:w-|size-)/.test(className) &&
-              width,
-            className
-          ]
+            !attrs.height && !/(?:^|\s)(?:\S+:)?(?:h-|size-)/.test(className) && height,
+            !attrs.width && !/(?:^|\s)(?:\S+:)?(?:w-|size-)/.test(className) && width,
+            className,
+          ],
         },
         [
           h(Artwork, {
             key: props.name,
             definition: definition(),
             controls,
-            strokeWidth: props.strokeWidth
+            strokeWidth: props.strokeWidth,
           }),
-          slots.default?.()
-        ]
+          slots.default?.(),
+        ],
       )
     }
-  }
+  },
 })
 </script>

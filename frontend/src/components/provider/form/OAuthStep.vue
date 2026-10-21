@@ -1,6 +1,6 @@
 <template>
   <li class="relative flex gap-4" :class="!last && 'pb-6'">
-    <!-- 步骤之间的竖向连接线 -->
+    <!-- Vertical connector between authorization steps. -->
     <span
       v-if="!last"
       aria-hidden="true"
@@ -8,9 +8,11 @@
     />
     <span
       class="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors"
-      :class="done
-        ? 'bg-primary-600 text-white'
-        : 'border border-gray-300 bg-white text-gray-600 dark:border-dark-500 dark:bg-dark-900 dark:text-gray-300'"
+      :class="
+        done
+          ? 'bg-primary-600 text-white'
+          : 'border border-gray-300 bg-white text-gray-600 dark:border-dark-500 dark:bg-dark-900 dark:text-gray-300'
+      "
     >
       <Icon v-if="done" name="check" size="xs" :stroke-width="2.5" :animate-on-hover="false" />
       <template v-else>{{ index }}</template>
@@ -28,13 +30,16 @@
 <script setup lang="ts">
 import Icon from '@/components/icons/Icon.vue'
 
-// 手动授权流程中的单个步骤：序号圆点、标题说明和步骤内容，完成后序号换成对勾。
+// OAuthStep.vue renders one numbered step of the manual authorization flow. The caller
+// supplies its title, explanatory content, and completion state, while the last-step flag
+// removes the connecting line and the default slot contains the actual step controls.
 defineProps<{
-  index: number
-  title: string
-  description?: string
-  done?: boolean
-  /** 最后一步不绘制连接线。 */
+  index: number // One-based visible step number.
+  title: string // Displayed section title.
+  description?: string // Explanatory text for display.
+  done?: boolean // Completed step display state.
+
+  // Removes the connecting line after the final step while retaining the step contents.
   last?: boolean
 }>()
 </script>

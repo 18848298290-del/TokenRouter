@@ -17,6 +17,10 @@ Follow repository documentation syntax and tooling. Explicit user instructions t
 
 ## Verify and explain
 
+For Vue, TypeScript, browser styles, and frontend tests, also read
+[frontend-comments.md](references/frontend-comments.md). It maps the coverage
+and explanatory roles below to frontend declarations and lifecycle operations.
+
 Read the implementation; follow callers, tests, dependencies, and design references as needed to support a claim. Check defaults, exceptions, failures, ownership, and ordering. For fields, inspect writers and readers for zero values, units, encoding, precedence, and mutable sharing; name the consumer when its rule is not universal.
 
 Check exceptional paths behind promises such as preserved types, independent copies, atomic updates, thread safety, cancellation, and exactly-once behavior. Use a small executable probe if reflection, aliasing, or an interleaving remains uncertain. Tests support only the cases they exercise. Separate guarantees from caller obligations, qualify claims to their verified scope, and report unresolved behavior. Investigate code/comment disagreements; changing wording cannot establish intended behavior.

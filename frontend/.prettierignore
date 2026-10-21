@@ -1,0 +1,18 @@
+# Dependencies, build output, caches, and compiler products are generated.
+node_modules/
+dist/
+coverage/
+.cache/
+.vite/
+.vitest/
+*.tsbuildinfo
+*.timestamp-*.mjs
+/vite.config.js
+/vite.config.d.ts
+
+# Lockfiles, bundled media data, and legal notices retain their source bytes.
+pnpm-lock.yaml
+src/assets/
+/public/
+**/LICENSE*
+**/NOTICE*

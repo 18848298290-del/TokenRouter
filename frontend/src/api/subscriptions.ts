@@ -1,20 +1,26 @@
+import { apiClient } from './client'
+import type { UserSubscription } from '@/api/subscriptions.types'
+
 /**
- * User Subscription API
- * API for regular users to view their own subscriptions and progress
+ * subscriptions.ts retrieves the signed-in user's subscription lists and submits
+ * exhausted-subscription revocation. The revocation result exposes the revoked
+ * record, any successor and rebound-key count, allowing callers to refresh
+ * subscription and API-key state after the operation.
  */
 
-import { apiClient } from './client'
-import type { UserSubscription } from '@/types'
-
-// 撤销订阅接口返回被撤销记录、接续记录和改绑 Key 数量。
+/**
+ * RevokeSubscriptionResponse identifies the revoked subscription, any selected
+ * successor and the number of API keys rebound by the server.
+ */
 export interface RevokeSubscriptionResponse {
-  revoked_subscription_id: number
-  replacement_subscription_id: number | null
-  rebound_api_key_count: number
+  revoked_subscription_id: number // Revoked subscription ID.
+  replacement_subscription_id: number | null // Replacement subscription ID.
+  rebound_api_key_count: number // Rebound API key count.
 }
 
 /**
- * Get list of current user's subscriptions
+ * getMySubscriptions retrieves list of current user's subscriptions and returns
+ * the server result.
  */
 export async function getMySubscriptions(): Promise<UserSubscription[]> {
   const response = await apiClient.get<UserSubscription[]>('/subscriptions')
@@ -22,19 +28,25 @@ export async function getMySubscriptions(): Promise<UserSubscription[]> {
 }
 
 /**
- * Get current user's active subscriptions
+ * getActiveSubscriptions retrieves current user's active subscriptions and
+ * returns the server result.
  */
 export async function getActiveSubscriptions(): Promise<UserSubscription[]> {
   const response = await apiClient.get<UserSubscription[]>('/subscriptions/active')
   return response.data
 }
 
-/** 撤销当前用户额度耗尽的订阅，并在有接续包时改绑显式订阅 Key。 */
+/**
+ * revokeExhaustedSubscription requests revocation of the current user's
+ * exhausted subscription. The response includes a successor and rebound-key
+ * count when the server transfers keys with explicit subscription bindings to a
+ * continuation package.
+ */
 export async function revokeExhaustedSubscription(
-  subscriptionId: number
+  subscriptionId: number,
 ): Promise<RevokeSubscriptionResponse> {
   const response = await apiClient.post<RevokeSubscriptionResponse>(
-    `/subscriptions/${subscriptionId}/revoke`
+    `/subscriptions/${subscriptionId}/revoke`,
   )
   return response.data
 }
@@ -42,5 +54,5 @@ export async function revokeExhaustedSubscription(
 export default {
   getMySubscriptions,
   getActiveSubscriptions,
-  revokeExhaustedSubscription
+  revokeExhaustedSubscription,
 }

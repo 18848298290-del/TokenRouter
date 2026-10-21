@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
+import postcss from 'postcss'
+import { cssRules, declarations, readSource } from './helpers/sourceSyntax'
 
 import tailwindConfig from '../../tailwind.config.js'
 import { Z_INDEX } from '../constants/overlay'
 
-// style.css 的 :root 变量定义浮层层级，Tailwind zIndex 通过 var() 引用，
-// constants/overlay.ts 的 Z_INDEX 供 JS 内联使用。测试检查三处取值一致。
-const styleCss = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), '../style.css'),
-  'utf8'
-)
+// zIndexTheme.spec.ts compares overlay layers across CSS custom properties,
+// Tailwind utilities, and JavaScript constants. Components that render through
+// teleports still share the same relative stacking rules, including the external
+// driver.js layer that does not have a public utility class.
 
-// token 名 ↔ 三轨命名的映射(zIndex 工具类 key / CSS 变量 / Z_INDEX 常量)
+// rootRules retains each root block so CSS declarations can be compared with runtime layer constants.
+const rootRules = cssRules(postcss.parse(readSource('style.css')), ':root')
+
+// TIERS pairs utility keys, CSS properties, runtime names, and exact numeric values for all shared overlay layers.
 const TIERS = [
   ['chart-tooltip', '--z-chart-tooltip', 'CHART_TOOLTIP', 30],
   ['sidebar-overlay', '--z-sidebar-overlay', 'SIDEBAR_OVERLAY', 30],
@@ -30,26 +30,34 @@ const TIERS = [
   ['action-menu', '--z-action-menu', 'ACTION_MENU', 9999],
   ['teleport-tooltip', '--z-teleport-tooltip', 'TELEPORT_TOOLTIP', 9999],
   ['help-tooltip', '--z-help-tooltip', 'HELP_TOOLTIP', 99999],
-  ['teleport-dropdown', '--z-teleport-dropdown', 'TELEPORT_DROPDOWN', 100000020]
+  ['teleport-dropdown', '--z-teleport-dropdown', 'TELEPORT_DROPDOWN', 100000020],
 ] as const
 
 describe('浮层层级 token', () => {
   const zIndex = tailwindConfig.theme.extend.zIndex
 
+  // Overlay utility names resolve through CSS custom properties at render time.
+  // Every utility must reference its matching property instead of embedding a number.
   it.each(TIERS)('%s:tailwind 工具类经 var() 引用 :root 变量', (utilKey, cssVar) => {
     expect(zIndex[utilKey]).toBe(`var(${cssVar})`)
   })
 
+  // JavaScript-positioned panels and stylesheet-positioned panels share numeric layers.
+  // A single root declaration per property keeps the source of each value unambiguous.
   it.each(TIERS)('%s::root 变量与 Z_INDEX 常量同值', (_utilKey, cssVar, constKey, value) => {
-    expect(styleCss).toContain(`${cssVar}: ${value}`)
+    expect(rootRules.flatMap((rule) => declarations(rule, cssVar))).toEqual([String(value)])
     expect(Z_INDEX[constKey]).toBe(value)
   })
 
+  // The tour library controls its own stacking layer outside Tailwind. Its
+  // numeric registration remains available to panels that must stack above the tour.
   it('driver.js 引导层是外部约束,只登记数值、不暴露工具类', () => {
     expect(Z_INDEX.TOUR).toBe(100000000)
     expect(zIndex).not.toHaveProperty('tour')
   })
 
+  // Teleported dropdowns and announcement levels rely on specific relative ordering.
+  // These comparisons protect visibility even when individual numeric layer values change.
   it('关键相对顺序:teleported 下拉压过引导层,公告梯队递增', () => {
     expect(Z_INDEX.TELEPORT_DROPDOWN).toBeGreaterThan(Z_INDEX.TOUR)
     expect(Z_INDEX.ANNOUNCEMENT).toBeLessThan(Z_INDEX.ANNOUNCEMENT_RAISED)

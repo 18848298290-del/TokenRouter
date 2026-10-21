@@ -18,13 +18,17 @@
     <Collapse :open="cacheTTLOverrideEnabled" unmount-on-hide>
       <SettingsSubpanel>
         <div>
-          <label :for="`${uid}-cache-ttl-target`" class="input-label">{{ t('admin.providers.quotaControl.cacheTTLOverride.target') }}</label>
+          <label :for="`${uid}-cache-ttl-target`" class="input-label">{{
+            t('admin.providers.quotaControl.cacheTTLOverride.target')
+          }}</label>
           <Select
             :id="`${uid}-cache-ttl-target`"
             v-model="cacheTTLOverrideTarget"
             :options="CACHE_TTL_OVERRIDE_TARGET_OPTIONS"
           />
-          <p class="input-hint">{{ t('admin.providers.quotaControl.cacheTTLOverride.targetHint') }}</p>
+          <p class="input-hint">
+            {{ t('admin.providers.quotaControl.cacheTTLOverride.targetHint') }}
+          </p>
         </div>
       </SettingsSubpanel>
     </Collapse>
@@ -60,13 +64,31 @@ import SettingsSubpanel from '@/components/common/settings/SettingsSubpanel.vue'
 import SettingToggleRow from '@/components/common/settings/SettingToggleRow.vue'
 import { CACHE_TTL_OVERRIDE_TARGET_OPTIONS } from './providerFormOptions'
 
-// Anthropic OAuth/Setup Token 的请求改写类设置：会话 ID 伪装、缓存 TTL 和自定义转发地址。
+// AnthropicOAuthRequestFields.vue groups Anthropic request customization drafts for
+// session identity, cache duration, and an upstream address. The owning provider form
+// decides which enabled values enter credentials, and hiding the nested controls retains
+// their draft values for later editing.
+
+// sessionIdMaskingEnabled binds the parent-owned session identifier masking switch to the
+// shared controls through its model update event.
 const sessionIdMaskingEnabled = defineModel<boolean>('sessionIdMaskingEnabled', { required: true })
+// cacheTTLOverrideEnabled binds the parent-owned cache TTL rewrite switch to the shared
+// controls through its model update event.
 const cacheTTLOverrideEnabled = defineModel<boolean>('cacheTtlEnabled', { required: true })
+// cacheTTLOverrideTarget binds the parent-owned five-minute or one-hour cache TTL choice
+// to the shared controls through its model update event.
 const cacheTTLOverrideTarget = defineModel<string>('cacheTtlTarget', { required: true })
+// customBaseUrlEnabled binds the parent-owned custom upstream address switch to the
+// shared controls through its model update event.
 const customBaseUrlEnabled = defineModel<boolean>('customBaseUrlEnabled', { required: true })
+// customBaseUrl binds the parent-owned custom upstream address draft to the shared
+// controls through its model update event.
 const customBaseUrl = defineModel<string>('customBaseUrl', { required: true })
 
+// t resolves interface labels from the active component locale while reactive consumers
+// update their displayed text.
 const { t } = useI18n()
+// uid supplies one stable instance ID so labels target their own input when several
+// editors are mounted.
 const uid = useId()
 </script>

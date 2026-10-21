@@ -1,9 +1,6 @@
 <template>
   <div :class="props.embedded ? 'space-y-4' : 'card'">
-    <div
-      v-if="!props.embedded"
-      class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
-    >
+    <div v-if="!props.embedded" class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
       <h2 class="text-lg font-medium text-gray-900 dark:text-white">
         {{ t('profile.changePassword') }}
       </h2>
@@ -76,21 +73,36 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { userAPI } from '@/api'
 
+// ProfilePasswordForm.vue submits authenticated password changes from the profile security
+// section. Local checks require matching replacement fields and the minimum password length
+// before the API receives current and new passwords; successful submission clears the
+// sensitive form values.
+
+// Translations and app notifications supply password-change feedback, while the embedded
+// prop lets the parent own surrounding card framing.
 const { t } = useI18n()
 const appStore = useAppStore()
-const props = withDefaults(defineProps<{
-  embedded?: boolean
-}>(), {
-  embedded: false,
-})
+const props = withDefaults(
+  defineProps<{
+    embedded?: boolean // Parent supplies card framing.
+  }>(),
+  {
+    embedded: false,
+  },
+)
 
+// loading tracks the change request, and form retains current password, replacement
+// password, and confirmation until a successful update clears them.
 const loading = ref(false)
 const form = ref({
-  old_password: '',
-  new_password: '',
-  confirm_password: ''
+  old_password: '', // Current account password.
+  new_password: '', // Requested replacement password.
+  confirm_password: '', // Local replacement confirmation.
 })
 
+// handleChangePassword validates matching replacement fields and an eight-character minimum
+// before submitting the current and new passwords. Successful requests clear every password
+// field; failures report the server detail and retain the entered values for correction.
 const handleChangePassword = async () => {
   if (form.value.new_password !== form.value.confirm_password) {
     appStore.showError(t('profile.passwordsNotMatch'))

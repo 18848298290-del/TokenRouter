@@ -2,7 +2,15 @@
   <span
     v-if="iconInfo?.maskUrl"
     class="inline-block shrink-0"
-    :style="{ width: size, height: size, backgroundColor: iconColor, maskImage: `url(${iconInfo.maskUrl})`, maskSize: 'contain', maskRepeat: 'no-repeat', maskPosition: 'center' }"
+    :style="{
+      width: size,
+      height: size,
+      backgroundColor: iconColor,
+      maskImage: `url(${iconInfo.maskUrl})`,
+      maskSize: 'contain',
+      maskRepeat: 'no-repeat',
+      maskPosition: 'center',
+    }"
     aria-hidden="true"
   />
   <svg
@@ -34,23 +42,61 @@ import { computed } from 'vue'
 import { modelIconData } from '@/utils/modelIconData'
 import { providerBrandDisplayName, resolveProviderBrand } from '@/utils/providerBrand'
 
-const props = withDefaults(defineProps<{
-  brand: string
-  size?: string
-  color?: string
-}>(), {
-  size: '18px',
-  color: '',
-})
+/**
+ * ProviderIcon.vue renders a resolved provider brand using a mask, SVG paths, or
+ * initial. Callers can override the icon color; otherwise brand color precedes graphic
+ * color and current text color, and the resolver unknown display label receives a question mark
+ * placeholder.
+ */
 
+/**
+ * props supplies the provider name and visual overrides consumed by brand resolution
+ * and the selected icon rendering branch.
+ */
+const props = withDefaults(
+  defineProps<{
+    brand: string /* provider display brand */
+    size?: string /* rendered icon size */
+    color?: string /* caller color override */
+  }>(),
+  {
+    size: '18px',
+    color: '',
+  },
+)
+
+/**
+ * brandInfo resolves the caller brand into the shared display identity, palette, and
+ * optional graphic selection.
+ */
 const brandInfo = computed(() => resolveProviderBrand(props.brand))
+/**
+ * iconInfo loads the resolved brand graphic or leaves the template to render a text
+ * initial.
+ */
 const iconInfo = computed(() => {
   const iconKey = brandInfo.value.iconKey
   return iconKey ? modelIconData[iconKey] : null
 })
-const iconColor = computed(() => props.color || brandInfo.value.iconColor || iconInfo.value?.color || 'currentColor')
+/**
+ * iconColor prefers the caller override, then brand color, graphic color, and finally
+ * the inherited current text color.
+ */
+const iconColor = computed(
+  () => props.color || brandInfo.value.iconColor || iconInfo.value?.color || 'currentColor',
+)
+/**
+ * displayName resolves the human readable provider name used to create the initial
+ * when no graphic is available.
+ */
 const displayName = computed(() => providerBrandDisplayName(props.brand))
-const fallbackText = computed(() => (displayName.value === '未知供应商' ? '?' : displayName.value.charAt(0).toUpperCase()))
+/**
+ * fallbackText uses a question mark for the resolver unknown label and an uppercase
+ * first character for other names.
+ */
+const fallbackText = computed(() =>
+  displayName.value === '未知供应商' ? '?' : displayName.value.charAt(0).toUpperCase(),
+)
 </script>
 
 <style scoped>

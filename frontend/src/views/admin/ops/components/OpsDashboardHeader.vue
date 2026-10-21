@@ -7,95 +7,176 @@ import FilterField from '@/components/common/FilterField.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { opsAPI, type OpsDashboardOverview, type OpsMetricThresholds, type OpsRealtimeTrafficSummary } from '@/api/admin/ops'
+import {
+  opsAPI,
+  type OpsDashboardOverview,
+  type OpsMetricThresholds,
+  type OpsRealtimeTrafficSummary,
+} from '@/api/admin/ops'
 import type { OpsRequestDetailsPreset } from './OpsRequestDetailsModal.vue'
 import { useAdminSettingsStore } from '@/stores'
 import { formatBytes, formatNumber } from '@/utils/format'
 import { buildOpsPlatformOptions } from '../platformOptions'
 import { formatMemorySizeMB } from '../utils/opsFormatters'
 
+// OpsDashboardHeader.vue presents dashboard filters, traffic summaries, health
+// diagnostics, and system resource measurements. Historical values come from the
+// parent overview, while short-window traffic is queried separately using the
+// selected platform and group. Custom-range timestamps are emitted before the
+// custom mode so the parent can construct a complete request.
+//
+// Health display distinguishes missing observations from measured zero,
+// suppresses diagnostics when the overview appears idle, and uses fixed
+// diagnostic rules alongside configurable metric badge thresholds. Database and
+// Redis status combines connectivity with pool utilization, giving failed
+// connectivity precedence. Parent refresh state drives realtime requests, and a
+// busy flag suppresses overlapping traffic reads rather than replacing their
+// results by generation.
+
+// RealtimeWindow names the short traffic windows supported by the summary
+// endpoint.
 type RealtimeWindow = '1min' | '5min' | '30min' | '1h'
 
+// Props combines parent-owned dashboard filters, measurements, thresholds, and
+// refresh presentation state.
 interface Props {
-  overview?: OpsDashboardOverview | null
+  overview?: OpsDashboardOverview | null // nullable historical dashboard snapshot
+  // platform filters by the recorded execution platform; an empty value leaves
+  // all platforms eligible for display.
   platform: string
+  // groupId selects a positive persisted group identifier; null leaves the
+  // historical and realtime queries unfiltered by group.
   groupId: number | null
-  timeRange: string
-  loading: boolean
-  lastUpdated: Date | null
-  thresholds?: OpsMetricThresholds | null // 阈值配置
-  autoRefreshEnabled?: boolean
-  autoRefreshCountdown?: number
-  fullscreen?: boolean
+  timeRange: string // selected history range token
+  loading: boolean // parent request in progress
+  lastUpdated: Date | null // last core-refresh completion time
+  // thresholds supplies optional metric limits; missing limits cause the
+  // corresponding header badge helper to return normal.
+  thresholds?: OpsMetricThresholds | null // metric badge thresholds
+  autoRefreshEnabled?: boolean // automatic dashboard refresh flag
+  autoRefreshCountdown?: number // seconds until scheduled refresh
+  fullscreen?: boolean // expanded dashboard layout flag
+  // customStartTime supplies the explicit interval start when custom mode has
+  // both bounds; otherwise consumers use the one-hour range.
   customStartTime?: string | null
+  // customEndTime supplies the explicit interval end when custom mode has both
+  // bounds; otherwise consumers use the one-hour range.
   customEndTime?: string | null
-  groups?: Array<{ id: number; name: string }>
+  // groups supplies selectable group identities and labels; the view reads these
+  // records and emits selections to their owner.
+  groups?: Array<{
+    id: number // persisted group identifier
+    name: string // group selector display name
+  }>
 }
 
+// Emits requests filter updates, dashboard actions, and metric drilldowns from
+// the parent.
 interface Emits {
+  // update:platform publishes the execution-platform filter; an empty value
+  // clears filtering.
   (e: 'update:platform', value: string): void
+  // update:group publishes a positive group identifier or null to clear
+  // filtering.
   (e: 'update:group', value: number | null): void
+  // update:timeRange publishes the selected historical window to its dashboard
+  // owner.
   (e: 'update:timeRange', value: string): void
+  // update:customTimeRange publishes both ISO timestamp bounds before custom
+  // mode is selected.
   (e: 'update:customTimeRange', startTime: string, endTime: string): void
+  // refresh requests another dashboard load using the current parent-owned
+  // filters.
   (e: 'refresh'): void
+  // openRequestDetails requests a request-list drilldown with optional selection
+  // and ordering defaults.
   (e: 'openRequestDetails', preset?: OpsRequestDetailsPreset): void
+  // openErrorDetails selects the request or upstream error list for inspection.
   (e: 'openErrorDetails', kind: 'request' | 'upstream'): void
+  // openSettings requests the dashboard settings editor from the owning page.
   (e: 'openSettings'): void
+  // openAlertRules requests the persisted alert-rule editor from the owning
+  // page.
   (e: 'openAlertRules'): void
+  // enterFullscreen requests the expanded dashboard presentation through its
+  // route owner.
   (e: 'enterFullscreen'): void
+  // exitFullscreen requests the standard dashboard presentation through its
+  // route owner.
   (e: 'exitFullscreen'): void
 }
 
+// Component bindings expose parent filter ownership and application monitoring
+// flags alongside translated dashboard labels.
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 const { t } = useI18n()
 const adminSettingsStore = useAdminSettingsStore()
 
+// realtimeWindow selects the short traffic aggregation independently of the
+// dashboard historical interval and its supplied overview.
 const realtimeWindow = ref<RealtimeWindow>('1min')
 
+// Overview selectors keep absent parent data as null before deriving
+// measurements and system-resource presentation for the header.
 const overview = computed(() => props.overview ?? null)
 const systemMetrics = computed(() => overview.value?.system_metrics ?? null)
 
+// REALTIME_WINDOW_MINUTES assigns each traffic window its duration for
+// comparison with the selected toolbar range.
 const REALTIME_WINDOW_MINUTES: Record<RealtimeWindow, number> = {
   '1min': 1,
   '5min': 5,
   '30min': 30,
-  '1h': 60
+  '1h': 60,
 }
 
+// TOOLBAR_RANGE_MINUTES bounds available realtime choices; unknown toolbar modes
+// use sixty minutes in availableRealtimeWindows.
 const TOOLBAR_RANGE_MINUTES: Record<string, number> = {
   '5m': 5,
   '30m': 30,
   '1h': 60,
   '6h': 6 * 60,
-  '24h': 24 * 60
+  '24h': 24 * 60,
 }
 
+// availableRealtimeWindows removes traffic windows longer than the toolbar
+// range, using one hour when that range has no duration mapping.
 const availableRealtimeWindows = computed(() => {
   const toolbarMinutes = TOOLBAR_RANGE_MINUTES[props.timeRange] ?? 60
-  return (['1min', '5min', '30min', '1h'] as const).filter((w) => REALTIME_WINDOW_MINUTES[w] <= toolbarMinutes)
+  return (['1min', '5min', '30min', '1h'] as const).filter(
+    (w) => REALTIME_WINDOW_MINUTES[w] <= toolbarMinutes,
+  )
 })
 
 watch(
   () => props.timeRange,
   () => {
-    // The realtime window must be inside the toolbar window; reset to keep UX predictable.
+    // The realtime window must be inside the toolbar window; reset to keep UX
+    // predictable.
     realtimeWindow.value = '1min'
-    // Keep realtime traffic consistent with toolbar changes even when the window is already 1min.
+    // Keep realtime traffic consistent with toolbar changes even when the window
+    // is already 1min.
     loadRealtimeTrafficSummary()
-  }
+  },
 )
 
-// --- Filters ---
-
+// The custom-range editor holds timestamp text separately until confirmation
+// emits both bounds before changing the parent range mode.
 const showCustomTimeRangeDialog = ref(false)
 const customStartTimeInput = ref('')
 const customEndTimeInput = ref('')
 
+// formatCustomTimeRangeLabel renders both supplied timestamps in local month-day
+// and hour-minute form. Callers provide parseable timestamps; the helper has no
+// invalid-date guard before assembling the display label.
 function formatCustomTimeRangeLabel(startTime: string, endTime: string): string {
   const start = new Date(startTime)
   const end = new Date(endTime)
+  // formatDate renders one custom-range endpoint using the browser local
+  // calendar.
   const formatDate = (d: Date) => {
     const month = String(d.getMonth() + 1).padStart(2, '0')
     const day = String(d.getDate()).padStart(2, '0')
@@ -106,7 +187,9 @@ function formatCustomTimeRangeLabel(startTime: string, endTime: string): string 
   return `${formatDate(start)} ~ ${formatDate(end)}`
 }
 
-const platformOptions = computed(() => buildOpsPlatformOptions( t('common.all')))
+// Filter options retain execution-platform and group identities while translated
+// time labels include complete active custom bounds.
+const platformOptions = computed(() => buildOpsPlatformOptions(t('common.all')))
 
 const timeRangeOptions = computed(() => [
   { value: '5m', label: t('admin.ops.timeRange.5m') },
@@ -116,30 +199,48 @@ const timeRangeOptions = computed(() => [
   { value: '24h', label: t('admin.ops.timeRange.24h') },
   {
     value: 'custom',
-    label: props.timeRange === 'custom' && props.customStartTime && props.customEndTime
-      ? `${t('admin.ops.timeRange.custom')} (${formatCustomTimeRangeLabel(props.customStartTime, props.customEndTime)})`
-      : t('admin.ops.timeRange.custom')
-  }
+    label:
+      props.timeRange === 'custom' && props.customStartTime && props.customEndTime
+        ? `${t('admin.ops.timeRange.custom')} (${formatCustomTimeRangeLabel(props.customStartTime, props.customEndTime)})`
+        : t('admin.ops.timeRange.custom'),
+  },
 ])
 
 const groupOptions = computed(() => {
   const groups = props.groups ?? []
   const filtered = groups
-  return [{ value: null, label: t('common.all') }, ...filtered.map((g) => ({ value: g.id, label: g.name }))]
+  return [
+    { value: null, label: t('common.all') },
+    ...filtered.map((g) => ({ value: g.id, label: g.name })),
+  ]
 })
 
-const activeFilterCount = computed(() => [props.platform, props.groupId, props.timeRange !== '1h' ? props.timeRange : ''].filter(Boolean).length)
+// activeFilterCount counts platform, group, and nondefault range selections for
+// the filter dropdown indicator in the toolbar.
+const activeFilterCount = computed(
+  () =>
+    [props.platform, props.groupId, props.timeRange !== '1h' ? props.timeRange : ''].filter(Boolean)
+      .length,
+)
 
+// resetOpsFilters clears platform and group filters and selects the one-hour
+// range.
 function resetOpsFilters() {
   emit('update:platform', '')
   emit('update:group', null)
   emit('update:timeRange', '1h')
 }
 
+// handlePlatformChange converts the selector value into the parent platform
+// filter. Falsy values emit an empty string to clear selection, while other
+// values are stringified before the parent receives them.
 function handlePlatformChange(val: string | number | boolean | null) {
   emit('update:platform', String(val || ''))
 }
 
+// handleGroupChange emits a positive group identifier or null to clear
+// filtering. Boolean, empty, nonfinite, and nonpositive values clear the filter,
+// while string input is parsed as an integer.
 function handleGroupChange(val: string | number | boolean | null) {
   if (val === null || val === '' || typeof val === 'boolean') {
     emit('update:group', null)
@@ -149,10 +250,13 @@ function handleGroupChange(val: string | number | boolean | null) {
   emit('update:group', Number.isFinite(id) && id > 0 ? id : null)
 }
 
+// handleTimeRangeChange opens an editor for custom ranges or emits the chosen
+// preset. The editor starts with the previous hour encoded as sliced ISO
+// timestamp strings and defers publication until confirmation.
 function handleTimeRangeChange(val: string | number | boolean | null) {
   const newValue = String(val || '1h')
   if (newValue === 'custom') {
-    // 初始化为最近1小时
+    // Seed the editor with a one-hour interval.
     const now = new Date()
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000)
     customStartTimeInput.value = oneHourAgo.toISOString().slice(0, 16)
@@ -163,42 +267,57 @@ function handleTimeRangeChange(val: string | number | boolean | null) {
   }
 }
 
+// handleCustomTimeRangeConfirm converts both editor inputs into ISO timestamps
+// before publishing the selection. Empty inputs leave the editor open; parseable
+// values are expected because conversion errors are not caught.
+//
+// The timestamp event precedes the custom-mode event so the parent range watcher
+// can see both bounds when it builds query parameters. This ordering also
+// supports editing bounds while custom mode is already selected. The editor
+// closes after both events have been emitted to its owner.
 function handleCustomTimeRangeConfirm() {
   if (!customStartTimeInput.value || !customEndTimeInput.value) return
   const startTime = new Date(customStartTimeInput.value).toISOString()
   const endTime = new Date(customEndTimeInput.value).toISOString()
-  // Emit custom time range first so the parent can build correct API params
-  // when it reacts to timeRange switching to "custom".
+  // Emit custom time range first so the parent can build correct API params when
+  // it reacts to timeRange switching to "custom".
   emit('update:customTimeRange', startTime, endTime)
   emit('update:timeRange', 'custom')
   showCustomTimeRangeDialog.value = false
 }
 
+// handleCustomTimeRangeCancel hides the editor while retaining the parent range
+// selection.
 function handleCustomTimeRangeCancel() {
   showCustomTimeRangeDialog.value = false
-  // 如果当前不是 custom，不需要做任何事
-  // 如果当前是 custom，保持不变
+  // Cancel leaves the parent range selection unchanged. An existing custom range
+  // remains applied.
 }
 
+// openDetails forwards an optional request drilldown preset to the dashboard.
 function openDetails(preset?: OpsRequestDetailsPreset) {
   emit('openRequestDetails', preset)
 }
 
+// openErrorDetails forwards the chosen request or upstream error-list category.
 function openErrorDetails(kind: 'request' | 'upstream') {
   emit('openErrorDetails', kind)
 }
 
-// --- Threshold checking helpers ---
+// ThresholdLevel chooses normal, warning, or critical coloring for measured
+// metrics.
 type ThresholdLevel = 'normal' | 'warning' | 'critical'
 
+// getSLAThresholdLevel compares a measured SLA percentage with its configured
+// minimum. Missing data or thresholds are normal; below minimum is critical and
+// the next tenth of a percentage point is warning.
 function getSLAThresholdLevel(slaPercent: number | null): ThresholdLevel {
   if (slaPercent == null) return 'normal'
   const threshold = props.thresholds?.sla_percent_min
   if (threshold == null) return 'normal'
 
-  // SLA is "higher is better":
-  // - below threshold => critical
-  // - within +0.1% buffer => warning
+  // SLA is "higher is better": - below threshold => critical - within +0.1%
+  // buffer => warning
   const warningBuffer = 0.1
 
   if (slaPercent < threshold) return 'critical'
@@ -206,33 +325,48 @@ function getSLAThresholdLevel(slaPercent: number | null): ThresholdLevel {
   return 'normal'
 }
 
+// getTTFTThresholdLevel compares observed milliseconds with the configured P99
+// maximum. Missing data or thresholds are normal; the maximum is critical, and
+// eighty percent of that maximum begins warning.
 function getTTFTThresholdLevel(ttftMs: number | null): ThresholdLevel {
   if (ttftMs == null) return 'normal'
   const threshold = props.thresholds?.ttft_p99_ms_max
   if (threshold == null) return 'normal'
+  // Warn at eighty percent of the maximum before the critical limit.
   if (ttftMs >= threshold) return 'critical'
   if (ttftMs >= threshold * 0.8) return 'warning'
   return 'normal'
 }
 
+// getRequestErrorRateThresholdLevel compares the request error percentage with
+// its configured maximum. Missing data or thresholds are normal; the maximum is
+// critical and eighty percent of that maximum begins warning.
 function getRequestErrorRateThresholdLevel(errorRatePercent: number | null): ThresholdLevel {
   if (errorRatePercent == null) return 'normal'
   const threshold = props.thresholds?.request_error_rate_percent_max
   if (threshold == null) return 'normal'
+  // Warn at eighty percent of the maximum before the critical limit.
   if (errorRatePercent >= threshold) return 'critical'
   if (errorRatePercent >= threshold * 0.8) return 'warning'
   return 'normal'
 }
 
-function getUpstreamErrorRateThresholdLevel(upstreamErrorRatePercent: number | null): ThresholdLevel {
+// getUpstreamErrorRateThresholdLevel compares upstream error percentage with its
+// configured maximum. Missing observations or thresholds are normal; the maximum
+// is critical and eighty percent of that maximum begins warning.
+function getUpstreamErrorRateThresholdLevel(
+  upstreamErrorRatePercent: number | null,
+): ThresholdLevel {
   if (upstreamErrorRatePercent == null) return 'normal'
   const threshold = props.thresholds?.upstream_error_rate_percent_max
   if (threshold == null) return 'normal'
+  // Warn at eighty percent of the maximum before the critical limit.
   if (upstreamErrorRatePercent >= threshold) return 'critical'
   if (upstreamErrorRatePercent >= threshold * 0.8) return 'warning'
   return 'normal'
 }
 
+// getThresholdColorClass maps each metric severity level to its text palette.
 function getThresholdColorClass(level: ThresholdLevel): string {
   switch (level) {
     case 'critical':
@@ -244,14 +378,19 @@ function getThresholdColorClass(level: ThresholdLevel): string {
   }
 }
 
-// --- Realtime / Overview labels ---
-
+// Historical totals format missing counts as zero, independently of the
+// separately queried short-window realtime traffic statistics.
 const totalRequestsLabel = computed(() => formatNumber(overview.value?.request_count_total ?? 0))
 const totalTokensLabel = computed(() => formatNumber(overview.value?.token_consumed ?? 0))
 
+// Realtime request state stores the short-window result and suppresses
+// concurrent reads through its busy flag until completion.
 const realtimeTrafficSummary = ref<OpsRealtimeTrafficSummary | null>(null)
 const realtimeTrafficLoading = ref(false)
 
+// makeZeroRealtimeTrafficSummary constructs an empty measurement for the current
+// filters and window. Start and end share the current ISO timestamp, and all
+// traffic values are zero for disabled monitoring.
 function makeZeroRealtimeTrafficSummary(): OpsRealtimeTrafficSummary {
   const now = new Date().toISOString()
   return {
@@ -261,10 +400,19 @@ function makeZeroRealtimeTrafficSummary(): OpsRealtimeTrafficSummary {
     platform: props.platform,
     group_id: props.groupId,
     qps: { current: 0, peak: 0, avg: 0 },
-    tps: { current: 0, peak: 0, avg: 0 }
+    tps: { current: 0, peak: 0, avg: 0 },
   }
 }
 
+// loadRealtimeTrafficSummary queries the current short traffic window unless a
+// read is already busy. Disabled monitoring publishes a zero summary, and a
+// disabled API response updates the local monitoring flag.
+//
+// The response summary replaces the prior snapshot, while retrieval failure
+// clears it and logs the error. The busy guard suppresses requests triggered
+// during an active read; there is no generation comparison when that read
+// completes, so a filter change can precede publication of the older query
+// result.
 async function loadRealtimeTrafficSummary() {
   if (realtimeTrafficLoading.value) return
   if (!adminSettingsStore.opsRealtimeMonitoringEnabled) {
@@ -273,12 +421,19 @@ async function loadRealtimeTrafficSummary() {
   }
   realtimeTrafficLoading.value = true
   try {
-    const res = await opsAPI.getRealtimeTrafficSummary(realtimeWindow.value, props.platform, props.groupId)
+    const res = await opsAPI.getRealtimeTrafficSummary(
+      realtimeWindow.value,
+      props.platform,
+      props.groupId,
+    )
     if (res && res.enabled === false) {
       adminSettingsStore.setOpsRealtimeMonitoringEnabledLocal(false)
     }
     realtimeTrafficSummary.value = res?.summary ?? null
   } catch (err) {
+    // Clear the failed realtime snapshot so current-rate defaults and
+    // unavailable peak labels reflect the missing result instead of the previous
+    // window.
     console.error('[OpsDashboardHeader] Failed to load realtime traffic summary', err)
     realtimeTrafficSummary.value = null
   } finally {
@@ -291,7 +446,7 @@ watch(
   () => {
     loadRealtimeTrafficSummary()
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 watch(
@@ -304,7 +459,7 @@ watch(
       loadRealtimeTrafficSummary()
     }
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 // Realtime traffic refresh follows the parent (OpsDashboard) refresh cadence.
@@ -317,11 +472,11 @@ watch(
     if (countdown === 0) {
       loadRealtimeTrafficSummary()
     }
-  }
+  },
 )
 
-// no-op: parent controls refresh cadence
-
+// Realtime display values distinguish numeric current rates, which default to
+// zero, from unavailable peak and average labels, which show a dash.
 const displayRealTimeQps = computed(() => {
   const v = realtimeTrafficSummary.value?.qps?.current
   return typeof v === 'number' && Number.isFinite(v) ? v : 0
@@ -349,6 +504,8 @@ const realtimeTpsAvgLabel = computed(() => {
   return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(1) : '-'
 })
 
+// Historical QPS and TPS averages use one decimal place, while absent numeric
+// observations retain a dash in the overview.
 const qpsAvgLabel = computed(() => {
   const v = overview.value?.qps?.avg
   if (typeof v !== 'number') return '-'
@@ -361,6 +518,8 @@ const tpsAvgLabel = computed(() => {
   return v.toFixed(1)
 })
 
+// SLA and error ratios are converted to percentages for display; SLA also
+// requires a positive count of eligible requests.
 const slaPercent = computed(() => {
   const v = overview.value?.sla
   if (typeof v !== 'number') return null
@@ -380,6 +539,8 @@ const upstreamErrorRatePercent = computed(() => {
   return v * 100
 })
 
+// Request-duration selectors retain millisecond units and use null for absent
+// percentile, average, or maximum observations.
 const durationP99Ms = computed(() => overview.value?.duration?.p99_ms ?? null)
 const durationP95Ms = computed(() => overview.value?.duration?.p95_ms ?? null)
 const durationP90Ms = computed(() => overview.value?.duration?.p90_ms ?? null)
@@ -387,6 +548,8 @@ const durationP50Ms = computed(() => overview.value?.duration?.p50_ms ?? null)
 const durationAvgMs = computed(() => overview.value?.duration?.avg_ms ?? null)
 const durationMaxMs = computed(() => overview.value?.duration?.max_ms ?? null)
 
+// First-token selectors retain millisecond units and use null for absent
+// percentile, average, or maximum observations.
 const ttftP99Ms = computed(() => overview.value?.ttft?.p99_ms ?? null)
 const ttftP95Ms = computed(() => overview.value?.ttft?.p95_ms ?? null)
 const ttftP90Ms = computed(() => overview.value?.ttft?.p90_ms ?? null)
@@ -394,8 +557,8 @@ const ttftP50Ms = computed(() => overview.value?.ttft?.p50_ms ?? null)
 const ttftAvgMs = computed(() => overview.value?.ttft?.avg_ms ?? null)
 const ttftMaxMs = computed(() => overview.value?.ttft?.max_ms ?? null)
 
-// --- Health Score & Diagnosis (primary) ---
-
+// Idle detection combines current historical QPS and request error rate,
+// treating an absent overview as idle for health presentation.
 const isSystemIdle = computed(() => {
   const ov = overview.value
   if (!ov) return true
@@ -404,6 +567,8 @@ const isSystemIdle = computed(() => {
   return (qps ?? 0) === 0 && errorRate === 0
 })
 
+// Health score presentation treats unavailable or nonfinite scores as missing
+// and uses idle state before applying score colors.
 const healthScoreValue = computed<number | null>(() => {
   const v = overview.value?.health_score
   return typeof v === 'number' && Number.isFinite(v) ? v : null
@@ -427,24 +592,39 @@ const healthScoreClass = computed(() => {
   return 'text-red-500'
 })
 
-const circleSize = computed(() => props.fullscreen ? 140 : 100)
-const strokeWidth = computed(() => props.fullscreen ? 10 : 8)
+// Gauge geometry scales with fullscreen mode; the dash offset clamps measured
+// scores to the visible zero-to-one-hundred range.
+const circleSize = computed(() => (props.fullscreen ? 140 : 100))
+const strokeWidth = computed(() => (props.fullscreen ? 10 : 8))
 const radius = computed(() => (circleSize.value - strokeWidth.value) / 2)
 const circumference = computed(() => 2 * Math.PI * radius.value)
 const dashOffset = computed(() => {
   if (isSystemIdle.value) return 0
   if (healthScoreValue.value == null) return 0
+  // Clamp score geometry to the visible gauge circumference.
   const score = Math.max(0, Math.min(100, healthScoreValue.value))
   return circumference.value - (score / 100) * circumference.value
 })
 
+// DiagnosisItem carries a translated severity, consequence, and optional action
+// for the health report.
 interface DiagnosisItem {
-  type: 'critical' | 'warning' | 'info'
-  message: string
-  impact: string
-  action?: string
+  type: 'critical' | 'warning' | 'info' // diagnostic severity display band
+  message: string // translated diagnostic message text
+  impact: string // translated diagnostic consequence text
+  action?: string // optional translated recovery suggestion
 }
 
+// diagnosisReport combines resource, latency, error-rate, SLA, and score
+// observations into an ordered report. An absent overview yields no entries,
+// while an idle system returns an informational item before evaluating other
+// measurements.
+//
+// Resource conditions are appended first and health-score conditions last. Each
+// rule uses the fixed cutoffs in this computation, independently of configurable
+// metric badge thresholds. If no condition produces a report item, a healthy
+// informational entry fills the report so the populated header retains an
+// explanation.
 const diagnosisReport = computed<DiagnosisItem[]>(() => {
   const ov = overview.value
   if (!ov) return []
@@ -455,7 +635,7 @@ const diagnosisReport = computed<DiagnosisItem[]>(() => {
     report.push({
       type: 'info',
       message: t('admin.ops.diagnosis.idle'),
-      impact: t('admin.ops.diagnosis.idleImpact')
+      impact: t('admin.ops.diagnosis.idleImpact'),
     })
     return report
   }
@@ -468,7 +648,7 @@ const diagnosisReport = computed<DiagnosisItem[]>(() => {
         type: 'critical',
         message: t('admin.ops.diagnosis.dbDown'),
         impact: t('admin.ops.diagnosis.dbDownImpact'),
-        action: t('admin.ops.diagnosis.dbDownAction')
+        action: t('admin.ops.diagnosis.dbDownAction'),
       })
     }
     if (sm.redis_ok === false) {
@@ -476,7 +656,7 @@ const diagnosisReport = computed<DiagnosisItem[]>(() => {
         type: 'warning',
         message: t('admin.ops.diagnosis.redisDown'),
         impact: t('admin.ops.diagnosis.redisDownImpact'),
-        action: t('admin.ops.diagnosis.redisDownAction')
+        action: t('admin.ops.diagnosis.redisDownAction'),
       })
     }
 
@@ -486,14 +666,14 @@ const diagnosisReport = computed<DiagnosisItem[]>(() => {
         type: 'critical',
         message: t('admin.ops.diagnosis.cpuCritical', { usage: cpuPct.toFixed(1) }),
         impact: t('admin.ops.diagnosis.cpuCriticalImpact'),
-        action: t('admin.ops.diagnosis.cpuCriticalAction')
+        action: t('admin.ops.diagnosis.cpuCriticalAction'),
       })
     } else if (cpuPct > 80) {
       report.push({
         type: 'warning',
         message: t('admin.ops.diagnosis.cpuHigh', { usage: cpuPct.toFixed(1) }),
         impact: t('admin.ops.diagnosis.cpuHighImpact'),
-        action: t('admin.ops.diagnosis.cpuHighAction')
+        action: t('admin.ops.diagnosis.cpuHighAction'),
       })
     }
 
@@ -503,14 +683,14 @@ const diagnosisReport = computed<DiagnosisItem[]>(() => {
         type: 'critical',
         message: t('admin.ops.diagnosis.memoryCritical', { usage: memPct.toFixed(1) }),
         impact: t('admin.ops.diagnosis.memoryCriticalImpact'),
-        action: t('admin.ops.diagnosis.memoryCriticalAction')
+        action: t('admin.ops.diagnosis.memoryCriticalAction'),
       })
     } else if (memPct > 85) {
       report.push({
         type: 'warning',
         message: t('admin.ops.diagnosis.memoryHigh', { usage: memPct.toFixed(1) }),
         impact: t('admin.ops.diagnosis.memoryHighImpact'),
-        action: t('admin.ops.diagnosis.memoryHighAction')
+        action: t('admin.ops.diagnosis.memoryHighAction'),
       })
     }
 
@@ -520,78 +700,82 @@ const diagnosisReport = computed<DiagnosisItem[]>(() => {
         type: 'critical',
         message: t('admin.ops.diagnosis.diskCritical', { usage: diskPct.toFixed(1) }),
         impact: t('admin.ops.diagnosis.diskCriticalImpact'),
-        action: t('admin.ops.diagnosis.diskCriticalAction')
+        action: t('admin.ops.diagnosis.diskCriticalAction'),
       })
     } else if (diskPct > 85) {
       report.push({
         type: 'warning',
         message: t('admin.ops.diagnosis.diskHigh', { usage: diskPct.toFixed(1) }),
         impact: t('admin.ops.diagnosis.diskHighImpact'),
-        action: t('admin.ops.diagnosis.diskHighAction')
+        action: t('admin.ops.diagnosis.diskHighAction'),
       })
     }
   }
 
   const ttftP99 = ov.ttft?.p99_ms ?? 0
+  // The diagnostic warning uses a fixed 500-millisecond first-token cutoff.
   if (ttftP99 > 500) {
     report.push({
       type: 'warning',
       message: t('admin.ops.diagnosis.ttftHigh', { ttft: ttftP99.toFixed(0) }),
       impact: t('admin.ops.diagnosis.ttftHighImpact'),
-      action: t('admin.ops.diagnosis.ttftHighAction')
+      action: t('admin.ops.diagnosis.ttftHighAction'),
     })
   }
 
-  // Error rate diagnostics (adjusted thresholds)
+  // Error rate diagnostics (adjusted thresholds) Convert upstream error ratios
+  // into percentage-point diagnostic thresholds.
   const upstreamRatePct = (ov.upstream_error_rate ?? 0) * 100
   if (upstreamRatePct > 5) {
     report.push({
       type: 'critical',
       message: t('admin.ops.diagnosis.upstreamCritical', { rate: upstreamRatePct.toFixed(2) }),
       impact: t('admin.ops.diagnosis.upstreamCriticalImpact'),
-      action: t('admin.ops.diagnosis.upstreamCriticalAction')
+      action: t('admin.ops.diagnosis.upstreamCriticalAction'),
     })
   } else if (upstreamRatePct > 2) {
     report.push({
       type: 'warning',
       message: t('admin.ops.diagnosis.upstreamHigh', { rate: upstreamRatePct.toFixed(2) }),
       impact: t('admin.ops.diagnosis.upstreamHighImpact'),
-      action: t('admin.ops.diagnosis.upstreamHighAction')
+      action: t('admin.ops.diagnosis.upstreamHighAction'),
     })
   }
 
+  // Convert request error ratios into percentage-point diagnostic thresholds.
   const errorPct = (ov.error_rate ?? 0) * 100
   if (errorPct > 3) {
     report.push({
       type: 'critical',
       message: t('admin.ops.diagnosis.errorHigh', { rate: errorPct.toFixed(2) }),
       impact: t('admin.ops.diagnosis.errorHighImpact'),
-      action: t('admin.ops.diagnosis.errorHighAction')
+      action: t('admin.ops.diagnosis.errorHighAction'),
     })
   } else if (errorPct > 0.5) {
     report.push({
       type: 'warning',
       message: t('admin.ops.diagnosis.errorElevated', { rate: errorPct.toFixed(2) }),
       impact: t('admin.ops.diagnosis.errorElevatedImpact'),
-      action: t('admin.ops.diagnosis.errorElevatedAction')
+      action: t('admin.ops.diagnosis.errorElevatedAction'),
     })
   }
 
-  // SLA diagnostics
+  // SLA diagnostics Convert SLA ratios into percentage-point diagnostic
+  // thresholds.
   const slaPct = (ov.sla ?? 0) * 100
   if (slaPct < 90) {
     report.push({
       type: 'critical',
       message: t('admin.ops.diagnosis.slaCritical', { sla: slaPct.toFixed(2) }),
       impact: t('admin.ops.diagnosis.slaCriticalImpact'),
-      action: t('admin.ops.diagnosis.slaCriticalAction')
+      action: t('admin.ops.diagnosis.slaCriticalAction'),
     })
   } else if (slaPct < 98) {
     report.push({
       type: 'warning',
       message: t('admin.ops.diagnosis.slaLow', { sla: slaPct.toFixed(2) }),
       impact: t('admin.ops.diagnosis.slaLowImpact'),
-      action: t('admin.ops.diagnosis.slaLowAction')
+      action: t('admin.ops.diagnosis.slaLowAction'),
     })
   }
 
@@ -602,14 +786,14 @@ const diagnosisReport = computed<DiagnosisItem[]>(() => {
         type: 'critical',
         message: t('admin.ops.diagnosis.healthCritical', { score: healthScoreValue.value }),
         impact: t('admin.ops.diagnosis.healthCriticalImpact'),
-        action: t('admin.ops.diagnosis.healthCriticalAction')
+        action: t('admin.ops.diagnosis.healthCriticalAction'),
       })
     } else if (healthScoreValue.value < 90) {
       report.push({
         type: 'warning',
         message: t('admin.ops.diagnosis.healthLow', { score: healthScoreValue.value }),
         impact: t('admin.ops.diagnosis.healthLowImpact'),
-        action: t('admin.ops.diagnosis.healthLowAction')
+        action: t('admin.ops.diagnosis.healthLowAction'),
       })
     }
   }
@@ -618,15 +802,16 @@ const diagnosisReport = computed<DiagnosisItem[]>(() => {
     report.push({
       type: 'info',
       message: t('admin.ops.diagnosis.healthy'),
-      impact: t('admin.ops.diagnosis.healthyImpact')
+      impact: t('admin.ops.diagnosis.healthyImpact'),
     })
   }
 
   return report
 })
 
-// --- System health (secondary) ---
-
+// formatTimeShort renders valid heartbeat timestamps in the browser local time
+// format. Missing or invalid timestamps return a dash so the job details can
+// distinguish unavailable observations from actual times.
 function formatTimeShort(ts?: string | null): string {
   if (!ts) return '-'
   const d = new Date(ts)
@@ -634,6 +819,8 @@ function formatTimeShort(ts?: string | null): string {
   return d.toLocaleTimeString()
 }
 
+// CPU, memory, and disk selectors retain finite percentages; each resource color
+// applies its own warning and critical display cutoffs.
 const cpuPercentValue = computed<number | null>(() => {
   const v = systemMetrics.value?.cpu_usage_percent
   return typeof v === 'number' && Number.isFinite(v) ? v : null
@@ -673,14 +860,18 @@ const diskPercentClass = computed(() => {
   return 'text-emerald-600 dark:text-emerald-400'
 })
 
+// diskUsageLabel formats used and total disk capacity after converting API
+// binary-megabyte values back into bytes for shared display.
 const diskUsageLabel = computed(() => {
   const used = systemMetrics.value?.disk_used_mb
   const total = systemMetrics.value?.disk_total_mb
   if (used == null || total == null) return '-'
-  // 后端按 MB 存储，这里转回字节后复用统一容量格式化逻辑。
+  // Convert binary megabytes to bytes for shared formatting.
   return `${formatBytes(used * 1024 * 1024, 1)} / ${formatBytes(total * 1024 * 1024, 1)}`
 })
 
+// Database counters retain missing values as null; open count requires both
+// active and idle counts before utilization can be computed.
 const dbConnActiveValue = computed<number | null>(() => {
   const v = systemMetrics.value?.db_conn_active
   return typeof v === 'number' && Number.isFinite(v) ? v : null
@@ -706,11 +897,22 @@ const dbMaxOpenConnsValue = computed<number | null>(() => {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 })
 
+// Database utilization requires a positive configured maximum and complete
+// active- plus-idle counts, then clamps the percentage used by the text label
+// and its status color to the zero-to-one-hundred range.
 const dbUsagePercent = computed<number | null>(() => {
-  if (dbConnOpenValue.value == null || dbMaxOpenConnsValue.value == null || dbMaxOpenConnsValue.value <= 0) return null
+  if (
+    dbConnOpenValue.value == null ||
+    dbMaxOpenConnsValue.value == null ||
+    dbMaxOpenConnsValue.value <= 0
+  )
+    return null
+  // Bound the database percentage label and color input to zero through one hundred.
   return Math.min(100, Math.max(0, (dbConnOpenValue.value / dbMaxOpenConnsValue.value) * 100))
 })
 
+// Database center labels and colors prioritize failed connectivity, then
+// available utilization, then connectivity success or an unknown-data label.
 const dbMiddleLabel = computed(() => {
   if (systemMetrics.value?.db_ok === false) return 'FAIL'
   if (dbUsagePercent.value != null) return `${dbUsagePercent.value.toFixed(0)}%`
@@ -729,6 +931,8 @@ const dbMiddleClass = computed(() => {
   return 'text-gray-900 dark:text-white'
 })
 
+// Redis counters retain missing values as null; active count subtracts idle from
+// total and clamps negative results to zero.
 const redisConnTotalValue = computed<number | null>(() => {
   const v = systemMetrics.value?.redis_conn_total
   return typeof v === 'number' && Number.isFinite(v) ? v : null
@@ -749,11 +953,21 @@ const redisPoolSizeValue = computed<number | null>(() => {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 })
 
+// Redis utilization compares total observed connections with a positive
+// configured pool size, then clamps the percentage used by its label and status color.
 const redisUsagePercent = computed<number | null>(() => {
-  if (redisConnTotalValue.value == null || redisPoolSizeValue.value == null || redisPoolSizeValue.value <= 0) return null
+  if (
+    redisConnTotalValue.value == null ||
+    redisPoolSizeValue.value == null ||
+    redisPoolSizeValue.value <= 0
+  )
+    return null
+  // Bound the Redis percentage label and color input to zero through one hundred.
   return Math.min(100, Math.max(0, (redisConnTotalValue.value / redisPoolSizeValue.value) * 100))
 })
 
+// Redis center labels and colors prioritize failed connectivity, then available
+// utilization, then connectivity success or an unknown-data label.
 const redisMiddleLabel = computed(() => {
   if (systemMetrics.value?.redis_ok === false) return 'FAIL'
   if (redisUsagePercent.value != null) return `${redisUsagePercent.value.toFixed(0)}%`
@@ -772,11 +986,15 @@ const redisMiddleClass = computed(() => {
   return 'text-gray-900 dark:text-white'
 })
 
+// Runtime goroutine observations retain missing counts as null before applying
+// fixed display thresholds and their translated status labels.
 const goroutineCountValue = computed<number | null>(() => {
   const v = systemMetrics.value?.goroutine_count
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 })
 
+// goroutinesWarnThreshold and goroutinesCriticalThreshold define count bands for
+// the runtime card, independently of persisted metric badge thresholds.
 const goroutinesWarnThreshold = 8_000
 const goroutinesCriticalThreshold = 15_000
 
@@ -814,6 +1032,8 @@ const goroutineStatusClass = computed(() => {
   }
 })
 
+// Job health compares each recorded error timestamp with its latest success;
+// empty heartbeat lists keep the aggregate status unknown.
 const jobHeartbeats = computed(() => overview.value?.job_heartbeats ?? [])
 
 const jobsStatus = computed<'ok' | 'warn' | 'unknown'>(() => {
@@ -821,7 +1041,8 @@ const jobsStatus = computed<'ok' | 'warn' | 'unknown'>(() => {
   if (!list.length) return 'unknown'
   for (const hb of list) {
     if (!hb) continue
-    if (hb.last_error_at && (!hb.last_success_at || hb.last_error_at > hb.last_success_at)) return 'warn'
+    if (hb.last_error_at && (!hb.last_success_at || hb.last_error_at > hb.last_success_at))
+      return 'warn'
   }
   return 'ok'
 })
@@ -835,6 +1056,8 @@ const jobsWarnCount = computed(() => {
   return warn
 })
 
+// Job status labels and colors reflect the aggregate heartbeat classification,
+// while the details dialog exposes the individual observations.
 const jobsStatusLabel = computed(() => {
   switch (jobsStatus.value) {
     case 'ok':
@@ -857,12 +1080,19 @@ const jobsStatusClass = computed(() => {
   }
 })
 
+// showJobsDetails owns visibility of the job-heartbeat inspection dialog within
+// this header component instance and its template.
 const showJobsDetails = ref(false)
 
+// openJobsDetails opens the dialog containing the observed background job
+// heartbeats.
 function openJobsDetails() {
   showJobsDetails.value = true
 }
 
+// handleToolbarRefresh requests realtime traffic and emits the parent refresh
+// action. The traffic helper can suppress its request while busy, and the parent
+// independently owns refreshing historical panels.
 function handleToolbarRefresh() {
   loadRealtimeTrafficSummary()
   emit('refresh')
@@ -870,25 +1100,57 @@ function handleToolbarRefresh() {
 </script>
 
 <template>
-  <div :class="['flex flex-col gap-4 rounded-surface bg-white shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-900 dark:ring-dark-700', props.fullscreen ? 'p-8' : 'p-6']">
+  <div
+    :class="[
+      'flex flex-col gap-4 rounded-surface bg-white shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-900 dark:ring-dark-700',
+      props.fullscreen ? 'p-8' : 'p-6',
+    ]"
+  >
     <!-- Top Toolbar -->
-    <div class="flex flex-wrap items-center gap-2 border-b border-gray-100 pb-4 dark:border-dark-700">
+    <div
+      class="flex flex-wrap items-center gap-2 border-b border-gray-100 pb-4 dark:border-dark-700"
+    >
       <div v-if="props.fullscreen">
         <h1 class="flex items-center gap-2 page-title">
           <Icon name="chart" size="lg" class="h-6 w-6 text-blue-500" />
           {{ t('admin.ops.title') }}
         </h1>
 
-        <div v-if="!props.fullscreen" class="mt-1 flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-          <span class="flex items-center gap-1.5" :title="props.loading ? t('admin.ops.loadingText') : t('admin.ops.ready')">
+        <div
+          v-if="!props.fullscreen"
+          class="mt-1 flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400"
+        >
+          <span
+            class="flex items-center gap-1.5"
+            :title="props.loading ? t('admin.ops.loadingText') : t('admin.ops.ready')"
+          >
             <span class="relative flex h-2 w-2">
-              <span class="relative inline-flex h-2 w-2 rounded-full" :class="props.loading ? 'bg-gray-400' : 'bg-green-500'"></span>
+              <span
+                class="relative inline-flex h-2 w-2 rounded-full"
+                :class="props.loading ? 'bg-gray-400' : 'bg-green-500'"
+              ></span>
             </span>
             {{ props.loading ? t('admin.ops.loadingText') : t('admin.ops.ready') }}
           </span>
 
           <span>·</span>
-          <span>{{ t('common.refresh') }}: {{ props.lastUpdated ? props.lastUpdated.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(/\//g, '-') : t('common.unknown') }}</span>
+          <span
+            >{{ t('common.refresh') }}:
+            {{
+              props.lastUpdated
+                ? props.lastUpdated
+                    .toLocaleString('zh-CN', {
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })
+                    .replace(/\//g, '-')
+                : t('common.unknown')
+            }}</span
+          >
 
           <template v-if="props.autoRefreshEnabled && props.autoRefreshCountdown !== undefined">
             <span>·</span>
@@ -906,70 +1168,82 @@ function handleToolbarRefresh() {
             @reset="resetOpsFilters"
           >
             <FilterField :label="t('admin.ops.errorLog.platform')">
-              <Select :model-value="platform" :options="platformOptions" @update:model-value="handlePlatformChange" />
+              <Select
+                :model-value="platform"
+                :options="platformOptions"
+                @update:model-value="handlePlatformChange"
+              />
             </FilterField>
             <FilterField :label="t('admin.ops.errorLog.group')">
-              <Select :model-value="groupId" :options="groupOptions" @update:model-value="handleGroupChange" />
+              <Select
+                :model-value="groupId"
+                :options="groupOptions"
+                @update:model-value="handleGroupChange"
+              />
             </FilterField>
             <FilterField :label="t('admin.dashboard.timeRange')" empty-value="1h" full>
-              <Select :model-value="timeRange" :options="timeRangeOptions" @update:model-value="handleTimeRangeChange" />
+              <Select
+                :model-value="timeRange"
+                :options="timeRangeOptions"
+                @update:model-value="handleTimeRangeChange"
+              />
             </FilterField>
           </FilterDropdown>
         </template>
 
         <div v-if="!props.fullscreen" class="ml-auto flex flex-wrap items-center gap-2">
           <button
-          v-if="!props.fullscreen"
-          type="button"
-          class="flex rounded-control bg-gray-100 text-gray-500 transition-colors hover:bg-gray-200 dark:bg-dark-950 dark:text-gray-400 dark:hover:bg-dark-800 btn-icon-sm"
-          :disabled="loading"
-          :title="t('common.refresh')"
-          @click="handleToolbarRefresh"
-        >
-          <Icon
-            name="refresh"
-            size="sm"
-            :animate-on-hover="false"
-            class="h-4 w-4"
-            :class="{ 'animate-spin': loading }"
-          />
+            v-if="!props.fullscreen"
+            type="button"
+            class="flex rounded-control bg-gray-100 text-gray-500 transition-colors hover:bg-gray-200 dark:bg-dark-950 dark:text-gray-400 dark:hover:bg-dark-800 btn-icon-sm"
+            :disabled="loading"
+            :title="t('common.refresh')"
+            @click="handleToolbarRefresh"
+          >
+            <Icon
+              name="refresh"
+              size="sm"
+              :animate-on-hover="false"
+              class="h-4 w-4"
+              :class="{ 'animate-spin': loading }"
+            />
           </button>
 
           <div class="mx-1 hidden h-4 w-[1px] bg-gray-200 dark:bg-dark-700 sm:block"></div>
 
-        <!-- Alert Rules Button (hidden in fullscreen) -->
+          <!-- Alert Rules Button (hidden in fullscreen) -->
           <button
-          v-if="!props.fullscreen"
-          type="button"
-          class="flex rounded-control bg-primary-100 p-0 text-xs font-bold text-primary-700 transition-colors hover:bg-primary-200 dark:bg-primary-500/8 dark:text-primary-500 dark:hover:bg-primary-500/8 sm:h-8 sm:w-auto sm:gap-1.5 sm:px-3 btn-icon-sm"
-          :title="t('admin.ops.alertRules.title')"
-          @click="emit('openAlertRules')"
-        >
-          <Icon name="bell" size="sm" class="h-4 w-4" />
-          <span class="hidden sm:inline">{{ t('admin.ops.alertRules.manage') }}</span>
+            v-if="!props.fullscreen"
+            type="button"
+            class="flex rounded-control bg-primary-100 p-0 text-xs font-bold text-primary-700 transition-colors hover:bg-primary-200 dark:bg-primary-500/8 dark:text-primary-500 dark:hover:bg-primary-500/8 sm:h-8 sm:w-auto sm:gap-1.5 sm:px-3 btn-icon-sm"
+            :title="t('admin.ops.alertRules.title')"
+            @click="emit('openAlertRules')"
+          >
+            <Icon name="bell" size="sm" class="h-4 w-4" />
+            <span class="hidden sm:inline">{{ t('admin.ops.alertRules.manage') }}</span>
           </button>
 
-        <!-- Settings Button (hidden in fullscreen) -->
+          <!-- Settings Button (hidden in fullscreen) -->
           <button
-          v-if="!props.fullscreen"
-          type="button"
-          class="flex rounded-control bg-gray-100 p-0 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-950 dark:text-gray-300 dark:hover:bg-dark-800 sm:h-8 sm:w-auto sm:gap-1.5 sm:px-3 btn-icon-sm"
-          :title="t('admin.ops.settings.title')"
-          @click="emit('openSettings')"
-        >
-          <Icon name="cog" size="sm" class="h-4 w-4" />
-          <span class="hidden sm:inline">{{ t('common.settings') }}</span>
+            v-if="!props.fullscreen"
+            type="button"
+            class="flex rounded-control bg-gray-100 p-0 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-950 dark:text-gray-300 dark:hover:bg-dark-800 sm:h-8 sm:w-auto sm:gap-1.5 sm:px-3 btn-icon-sm"
+            :title="t('admin.ops.settings.title')"
+            @click="emit('openSettings')"
+          >
+            <Icon name="cog" size="sm" class="h-4 w-4" />
+            <span class="hidden sm:inline">{{ t('common.settings') }}</span>
           </button>
 
-        <!-- Enter Fullscreen Button (hidden in fullscreen mode) -->
+          <!-- Enter Fullscreen Button (hidden in fullscreen mode) -->
           <button
-          v-if="!props.fullscreen"
-          type="button"
-          class="flex rounded-control bg-gray-100 text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-950 dark:text-gray-300 dark:hover:bg-dark-800 btn-icon-sm"
-          :title="t('admin.ops.fullscreen.enter')"
-          @click="emit('enterFullscreen')"
-        >
-          <Icon name="minimize" size="sm" class="h-4 w-4" />
+            v-if="!props.fullscreen"
+            type="button"
+            class="flex rounded-control bg-gray-100 text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-950 dark:text-gray-300 dark:hover:bg-dark-800 btn-icon-sm"
+            :title="t('admin.ops.fullscreen.enter')"
+            @click="emit('enterFullscreen')"
+          >
+            <Icon name="minimize" size="sm" class="h-4 w-4" />
           </button>
         </div>
       </div>
@@ -977,18 +1251,27 @@ function handleToolbarRefresh() {
 
     <div v-if="overview" class="grid grid-cols-1 gap-4 lg:grid-cols-12">
       <!-- Left: Health + Realtime -->
-      <div :class="['rounded-surface bg-gray-50 dark:bg-dark-950 lg:col-span-5', props.fullscreen ? 'p-6' : 'p-4']">
+      <div
+        :class="[
+          'rounded-surface bg-gray-50 dark:bg-dark-950 lg:col-span-5',
+          props.fullscreen ? 'p-6' : 'p-4',
+        ]"
+      >
         <div class="grid h-full grid-cols-1 gap-4 md:grid-cols-[200px_1fr] md:items-center">
           <!-- 1) Health Score -->
           <div
             class="group relative flex cursor-pointer flex-col items-center justify-center rounded-surface py-2 transition hover:bg-white/60 dark:hover:bg-dark-800/60 md:border-r md:border-gray-200 md:pr-6 dark:md:border-dark-700"
           >
-            <!-- 健康诊断浮层：外层定位，内层使用统一面板配色。 -->
+            <!-- The outer diagnostic overlay owns positioning; its inner surface uses the shared panel palette. -->
             <div
               class="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-72 -translate-x-1/2 opacity-0 transition-opacity duration-normal group-hover:pointer-events-auto group-hover:opacity-100 md:left-full md:top-0 md:ml-2 md:mt-0 md:translate-x-0"
             >
-              <div class="rounded-surface bg-white p-4 shadow-xl ring-1 ring-black/5 dark:bg-dark-900 dark:ring-dark-600">
-                <h4 class="mb-3 border-b border-gray-100 pb-2 text-sm font-bold text-gray-900 dark:border-dark-600 dark:text-white flex items-center gap-2">
+              <div
+                class="rounded-surface bg-white p-4 shadow-xl ring-1 ring-black/5 dark:bg-dark-900 dark:ring-dark-600"
+              >
+                <h4
+                  class="mb-3 border-b border-gray-100 pb-2 text-sm font-bold text-gray-900 dark:border-dark-600 dark:text-white flex items-center gap-2"
+                >
                   <Icon name="brain" size="sm" class="text-blue-500" />
                   {{ t('admin.ops.diagnosis.title') }}
                 </h4>
@@ -1012,9 +1295,16 @@ function handleToolbarRefresh() {
                       <Icon name="infoCircle" size="sm" v-else class="h-4 w-4 text-blue-500" />
                     </div>
                     <div class="flex-1">
-                      <div class="text-xs font-semibold text-gray-900 dark:text-white">{{ item.message }}</div>
-                      <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ item.impact }}</div>
-                      <div v-if="item.action" class="mt-1 text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                      <div class="text-xs font-semibold text-gray-900 dark:text-white">
+                        {{ item.message }}
+                      </div>
+                      <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                        {{ item.impact }}
+                      </div>
+                      <div
+                        v-if="item.action"
+                        class="mt-1 text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1"
+                      >
                         <Icon name="lightbulb" size="xs" />
                         {{ item.action }}
                       </div>
@@ -1022,7 +1312,9 @@ function handleToolbarRefresh() {
                   </div>
                 </div>
 
-                <div class="mt-3 border-t border-gray-100 pt-2 text-xs text-gray-400 dark:border-dark-600">
+                <div
+                  class="mt-3 border-t border-gray-100 pt-2 text-xs text-gray-400 dark:border-dark-600"
+                >
                   {{ t('admin.ops.diagnosis.footer') }}
                 </div>
               </div>
@@ -1054,10 +1346,22 @@ function handleToolbarRefresh() {
               </svg>
 
               <div class="absolute flex flex-col items-center">
-                <span :class="[props.fullscreen ? 'text-5xl' : 'text-3xl', 'font-black', healthScoreClass]">
+                <span
+                  :class="[
+                    props.fullscreen ? 'text-5xl' : 'text-3xl',
+                    'font-black',
+                    healthScoreClass,
+                  ]"
+                >
                   {{ isSystemIdle ? t('admin.ops.idleStatus') : (overview.health_score ?? '--') }}
                 </span>
-                <span :class="[props.fullscreen ? 'text-xs' : 'text-xs', 'font-bold uppercase tracking-wider text-gray-400']">{{ t('admin.ops.health') }}</span>
+                <span
+                  :class="[
+                    props.fullscreen ? 'text-xs' : 'text-xs',
+                    'font-bold uppercase tracking-wider text-gray-400',
+                  ]"
+                  >{{ t('admin.ops.health') }}</span
+                >
               </div>
             </div>
 
@@ -1083,10 +1387,14 @@ function handleToolbarRefresh() {
             <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div class="flex items-center gap-2">
                 <div class="relative flex h-3 w-3 shrink-0">
-                  <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75"></span>
+                  <span
+                    class="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75"
+                  ></span>
                   <span class="relative inline-flex h-3 w-3 rounded-full bg-blue-500"></span>
                 </div>
-                <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.realtime.title') }}</h3>
+                <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400">
+                  {{ t('admin.ops.realtime.title') }}
+                </h3>
                 <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.qps')" />
               </div>
 
@@ -1097,9 +1405,11 @@ function handleToolbarRefresh() {
                   :key="window"
                   type="button"
                   class="rounded-compact px-1.5 py-0.5 text-xs font-bold transition-colors sm:px-2 sm:text-xs"
-                  :class="realtimeWindow === window
-                    ? 'bg-primary-100 text-primary-700 dark:bg-primary-500/8 dark:text-primary-500'
-                    : 'bg-gray-200 text-gray-600 hover:bg-gray-300 dark:bg-dark-950 dark:text-gray-400 dark:hover:bg-dark-800'"
+                  :class="
+                    realtimeWindow === window
+                      ? 'bg-primary-100 text-primary-700 dark:bg-primary-500/8 dark:text-primary-500'
+                      : 'bg-gray-200 text-gray-600 hover:bg-gray-300 dark:bg-dark-950 dark:text-gray-400 dark:hover:bg-dark-800'
+                  "
                   @click="realtimeWindow = window"
                 >
                   {{ window }}
@@ -1110,13 +1420,35 @@ function handleToolbarRefresh() {
             <div :class="props.fullscreen ? 'space-y-4' : 'space-y-3'">
               <!-- Row 1: Current -->
               <div>
-                <div :class="[props.fullscreen ? 'text-xs' : 'text-xs', 'font-bold uppercase text-gray-400']">{{ t('admin.ops.current') }}</div>
+                <div
+                  :class="[
+                    props.fullscreen ? 'text-xs' : 'text-xs',
+                    'font-bold uppercase text-gray-400',
+                  ]"
+                >
+                  {{ t('admin.ops.current') }}
+                </div>
                 <div class="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-2">
                   <div class="flex items-baseline gap-1.5">
-                    <span :class="[props.fullscreen ? 'text-4xl' : 'text-xl sm:text-2xl', 'font-black text-gray-900 dark:text-white']">{{ displayRealTimeQps.toFixed(1) }}</span>
-                    <span :class="[props.fullscreen ? 'text-sm' : 'text-xs', 'font-bold text-gray-500']">QPS</span>
+                    <span
+                      :class="[
+                        props.fullscreen ? 'text-4xl' : 'text-xl sm:text-2xl',
+                        'font-black text-gray-900 dark:text-white',
+                      ]"
+                      >{{ displayRealTimeQps.toFixed(1) }}</span
+                    >
+                    <span
+                      :class="[props.fullscreen ? 'text-sm' : 'text-xs', 'font-bold text-gray-500']"
+                      >QPS</span
+                    >
                   </div>
-                  <span :class="[props.fullscreen ? 'text-4xl' : 'text-xl sm:text-2xl', 'font-black tabular-nums text-gray-900 dark:text-white']">{{ displayRealTimeTps.toFixed(1) }}</span>
+                  <span
+                    :class="[
+                      props.fullscreen ? 'text-4xl' : 'text-xl sm:text-2xl',
+                      'font-black tabular-nums text-gray-900 dark:text-white',
+                    ]"
+                    >{{ displayRealTimeTps.toFixed(1) }}</span
+                  >
                 </div>
               </div>
 
@@ -1124,25 +1456,57 @@ function handleToolbarRefresh() {
               <div class="grid grid-cols-2 gap-3">
                 <!-- Peak -->
                 <div>
-                  <div :class="[props.fullscreen ? 'text-xs' : 'text-xs', 'font-bold uppercase text-gray-400']">{{ t('admin.ops.peak') }}</div>
-                  <div :class="[props.fullscreen ? 'text-base' : 'text-sm', 'mt-1 space-y-0.5 font-medium text-gray-600 dark:text-gray-400']">
+                  <div
+                    :class="[
+                      props.fullscreen ? 'text-xs' : 'text-xs',
+                      'font-bold uppercase text-gray-400',
+                    ]"
+                  >
+                    {{ t('admin.ops.peak') }}
+                  </div>
+                  <div
+                    :class="[
+                      props.fullscreen ? 'text-base' : 'text-sm',
+                      'mt-1 space-y-0.5 font-medium text-gray-600 dark:text-gray-400',
+                    ]"
+                  >
                     <div class="flex items-baseline gap-1.5">
-                      <span class="font-black text-gray-900 dark:text-white">{{ realtimeQpsPeakLabel }}</span>
+                      <span class="font-black text-gray-900 dark:text-white">{{
+                        realtimeQpsPeakLabel
+                      }}</span>
                       <span class="text-xs">QPS</span>
                     </div>
-                    <div class="font-black tabular-nums text-gray-900 dark:text-white">{{ realtimeTpsPeakLabel }}</div>
+                    <div class="font-black tabular-nums text-gray-900 dark:text-white">
+                      {{ realtimeTpsPeakLabel }}
+                    </div>
                   </div>
                 </div>
 
                 <!-- Average -->
                 <div>
-                  <div :class="[props.fullscreen ? 'text-xs' : 'text-xs', 'font-bold uppercase text-gray-400']">{{ t('admin.ops.average') }}</div>
-                  <div :class="[props.fullscreen ? 'text-base' : 'text-sm', 'mt-1 space-y-0.5 font-medium text-gray-600 dark:text-gray-400']">
+                  <div
+                    :class="[
+                      props.fullscreen ? 'text-xs' : 'text-xs',
+                      'font-bold uppercase text-gray-400',
+                    ]"
+                  >
+                    {{ t('admin.ops.average') }}
+                  </div>
+                  <div
+                    :class="[
+                      props.fullscreen ? 'text-base' : 'text-sm',
+                      'mt-1 space-y-0.5 font-medium text-gray-600 dark:text-gray-400',
+                    ]"
+                  >
                     <div class="flex items-baseline gap-1.5">
-                      <span class="font-black text-gray-900 dark:text-white">{{ realtimeQpsAvgLabel }}</span>
+                      <span class="font-black text-gray-900 dark:text-white">{{
+                        realtimeQpsAvgLabel
+                      }}</span>
                       <span class="text-xs">QPS</span>
                     </div>
-                    <div class="font-black tabular-nums text-gray-900 dark:text-white">{{ realtimeTpsAvgLabel }}</div>
+                    <div class="font-black tabular-nums text-gray-900 dark:text-white">
+                      {{ realtimeTpsAvgLabel }}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1175,13 +1539,20 @@ function handleToolbarRefresh() {
       </div>
 
       <!-- Right: 6 cards (3 cols x 2 rows) -->
-      <div class="grid h-full grid-cols-1 content-center gap-4 sm:grid-cols-2 lg:col-span-7 lg:grid-cols-3">
+      <div
+        class="grid h-full grid-cols-1 content-center gap-4 sm:grid-cols-2 lg:col-span-7 lg:grid-cols-3"
+      >
         <!-- Card 1: Requests -->
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 1;">
+        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 1">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-1">
-              <span class="text-xs font-bold uppercase text-gray-400">{{ t('admin.ops.requestsTitle') }}</span>
-              <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.totalRequests')" />
+              <span class="text-xs font-bold uppercase text-gray-400">{{
+                t('admin.ops.requestsTitle')
+              }}</span>
+              <HelpTooltip
+                v-if="!props.fullscreen"
+                :content="t('admin.ops.tooltips.totalRequests')"
+              />
             </div>
             <button
               v-if="!props.fullscreen"
@@ -1207,47 +1578,83 @@ function handleToolbarRefresh() {
             </div>
             <div class="flex justify-between">
               <span class="text-gray-500">{{ t('admin.ops.avgTps') }}:</span>
-              <span class="font-bold tabular-nums text-gray-900 dark:text-white">{{ tpsAvgLabel }}</span>
+              <span class="font-bold tabular-nums text-gray-900 dark:text-white">{{
+                tpsAvgLabel
+              }}</span>
             </div>
           </div>
         </div>
 
         <!-- Card 2: SLA -->
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 2;">
+        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 2">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
-              <span class="text-xs font-bold uppercase text-gray-400">{{ t('admin.ops.sla') }}</span>
+              <span class="text-xs font-bold uppercase text-gray-400">{{
+                t('admin.ops.sla')
+              }}</span>
               <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.sla')" />
-              <span class="h-1.5 w-1.5 rounded-full" :class="getSLAThresholdLevel(slaPercent) === 'critical' ? 'bg-red-500' : getSLAThresholdLevel(slaPercent) === 'warning' ? 'bg-yellow-500' : 'bg-green-500'"></span>
+              <span
+                class="h-1.5 w-1.5 rounded-full"
+                :class="
+                  getSLAThresholdLevel(slaPercent) === 'critical'
+                    ? 'bg-red-500'
+                    : getSLAThresholdLevel(slaPercent) === 'warning'
+                      ? 'bg-yellow-500'
+                      : 'bg-green-500'
+                "
+              ></span>
             </div>
             <button
               v-if="!props.fullscreen"
               class="text-xs font-bold text-primary-500 hover:underline"
               type="button"
-              @click="openDetails({ title: t('admin.ops.requestDetails.title'), kind: 'error', sla_only: true })"
+              @click="
+                openDetails({
+                  title: t('admin.ops.requestDetails.title'),
+                  kind: 'error',
+                  sla_only: true,
+                })
+              "
             >
               {{ t('admin.ops.requestDetails.details') }}
             </button>
           </div>
-          <div class="mt-2 text-3xl font-black" :class="getThresholdColorClass(getSLAThresholdLevel(slaPercent))">
+          <div
+            class="mt-2 text-3xl font-black"
+            :class="getThresholdColorClass(getSLAThresholdLevel(slaPercent))"
+          >
             {{ slaPercent == null ? '-' : `${slaPercent.toFixed(3)}%` }}
           </div>
           <div class="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
-            <div class="h-full transition-[width,background-color]" :class="getSLAThresholdLevel(slaPercent) === 'critical' ? 'bg-red-500' : getSLAThresholdLevel(slaPercent) === 'warning' ? 'bg-yellow-500' : 'bg-green-500'" :style="{ width: `${Math.max((slaPercent ?? 0) - 90, 0) * 10}%` }"></div>
+            <div
+              class="h-full transition-[width,background-color]"
+              :class="
+                getSLAThresholdLevel(slaPercent) === 'critical'
+                  ? 'bg-red-500'
+                  : getSLAThresholdLevel(slaPercent) === 'warning'
+                    ? 'bg-yellow-500'
+                    : 'bg-green-500'
+              "
+              :style="{ width: `${Math.max((slaPercent ?? 0) - 90, 0) * 10}%` }"
+            ></div>
           </div>
           <div class="mt-3 text-xs">
             <div class="flex justify-between">
               <span class="text-gray-500">{{ t('admin.ops.exceptions') }}:</span>
-              <span class="font-bold text-gray-900 dark:text-white">{{ formatNumber((overview.request_count_sla ?? 0) - (overview.success_count ?? 0)) }}</span>
+              <span class="font-bold text-gray-900 dark:text-white">{{
+                formatNumber((overview.request_count_sla ?? 0) - (overview.success_count ?? 0))
+              }}</span>
             </div>
           </div>
         </div>
 
         <!-- Card 4: Request Duration -->
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 4;">
+        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 4">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-1">
-              <span class="text-xs font-bold uppercase text-gray-400">{{ t('admin.ops.latencyDuration') }}</span>
+              <span class="text-xs font-bold uppercase text-gray-400">{{
+                t('admin.ops.latencyDuration')
+              }}</span>
               <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.latency')" />
             </div>
             <button
@@ -1268,34 +1675,44 @@ function handleToolbarRefresh() {
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-1 text-xs 2xl:grid-cols-2">
             <div class="flex items-baseline gap-1 whitespace-nowrap">
               <span class="text-gray-500">P95:</span>
-              <span class="font-bold text-gray-900 dark:text-white">{{ durationP95Ms ?? '-' }}</span>
+              <span class="font-bold text-gray-900 dark:text-white">{{
+                durationP95Ms ?? '-'
+              }}</span>
               <span class="text-gray-400">ms</span>
             </div>
             <div class="flex items-baseline gap-1 whitespace-nowrap">
               <span class="text-gray-500">P90:</span>
-              <span class="font-bold text-gray-900 dark:text-white">{{ durationP90Ms ?? '-' }}</span>
+              <span class="font-bold text-gray-900 dark:text-white">{{
+                durationP90Ms ?? '-'
+              }}</span>
               <span class="text-gray-400">ms</span>
             </div>
             <div class="flex items-baseline gap-1 whitespace-nowrap">
               <span class="text-gray-500">P50:</span>
-              <span class="font-bold text-gray-900 dark:text-white">{{ durationP50Ms ?? '-' }}</span>
+              <span class="font-bold text-gray-900 dark:text-white">{{
+                durationP50Ms ?? '-'
+              }}</span>
               <span class="text-gray-400">ms</span>
             </div>
             <div class="flex items-baseline gap-1 whitespace-nowrap">
               <span class="text-gray-500">Avg:</span>
-              <span class="font-bold text-gray-900 dark:text-white">{{ durationAvgMs ?? '-' }}</span>
+              <span class="font-bold text-gray-900 dark:text-white">{{
+                durationAvgMs ?? '-'
+              }}</span>
               <span class="text-gray-400">ms</span>
             </div>
             <div class="flex items-baseline gap-1 whitespace-nowrap">
               <span class="text-gray-500">Max:</span>
-              <span class="font-bold text-gray-900 dark:text-white">{{ durationMaxMs ?? '-' }}</span>
+              <span class="font-bold text-gray-900 dark:text-white">{{
+                durationMaxMs ?? '-'
+              }}</span>
               <span class="text-gray-400">ms</span>
             </div>
           </div>
         </div>
 
         <!-- Card 5: TTFT -->
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 5;">
+        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 5">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-1">
               <span class="text-xs font-bold uppercase text-gray-400">TTFT</span>
@@ -1311,7 +1728,10 @@ function handleToolbarRefresh() {
             </button>
           </div>
           <div class="mt-2 flex items-baseline gap-2">
-            <div class="text-3xl font-black" :class="getThresholdColorClass(getTTFTThresholdLevel(ttftP99Ms))">
+            <div
+              class="text-3xl font-black"
+              :class="getThresholdColorClass(getTTFTThresholdLevel(ttftP99Ms))"
+            >
               {{ ttftP99Ms ?? '-' }}
             </div>
             <span class="text-xs font-bold text-gray-400">ms (P99)</span>
@@ -1319,80 +1739,135 @@ function handleToolbarRefresh() {
           <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-1 text-xs 2xl:grid-cols-2">
             <div class="flex items-baseline gap-1 whitespace-nowrap">
               <span class="text-gray-500">P95:</span>
-              <span class="font-bold" :class="getThresholdColorClass(getTTFTThresholdLevel(ttftP95Ms))">{{ ttftP95Ms ?? '-' }}</span>
+              <span
+                class="font-bold"
+                :class="getThresholdColorClass(getTTFTThresholdLevel(ttftP95Ms))"
+                >{{ ttftP95Ms ?? '-' }}</span
+              >
               <span class="text-gray-400">ms</span>
             </div>
             <div class="flex items-baseline gap-1 whitespace-nowrap">
               <span class="text-gray-500">P90:</span>
-              <span class="font-bold" :class="getThresholdColorClass(getTTFTThresholdLevel(ttftP90Ms))">{{ ttftP90Ms ?? '-' }}</span>
+              <span
+                class="font-bold"
+                :class="getThresholdColorClass(getTTFTThresholdLevel(ttftP90Ms))"
+                >{{ ttftP90Ms ?? '-' }}</span
+              >
               <span class="text-gray-400">ms</span>
             </div>
             <div class="flex items-baseline gap-1 whitespace-nowrap">
               <span class="text-gray-500">P50:</span>
-              <span class="font-bold" :class="getThresholdColorClass(getTTFTThresholdLevel(ttftP50Ms))">{{ ttftP50Ms ?? '-' }}</span>
+              <span
+                class="font-bold"
+                :class="getThresholdColorClass(getTTFTThresholdLevel(ttftP50Ms))"
+                >{{ ttftP50Ms ?? '-' }}</span
+              >
               <span class="text-gray-400">ms</span>
             </div>
             <div class="flex items-baseline gap-1 whitespace-nowrap">
               <span class="text-gray-500">Avg:</span>
-              <span class="font-bold" :class="getThresholdColorClass(getTTFTThresholdLevel(ttftAvgMs))">{{ ttftAvgMs ?? '-' }}</span>
+              <span
+                class="font-bold"
+                :class="getThresholdColorClass(getTTFTThresholdLevel(ttftAvgMs))"
+                >{{ ttftAvgMs ?? '-' }}</span
+              >
               <span class="text-gray-400">ms</span>
             </div>
             <div class="flex items-baseline gap-1 whitespace-nowrap">
               <span class="text-gray-500">Max:</span>
-              <span class="font-bold" :class="getThresholdColorClass(getTTFTThresholdLevel(ttftMaxMs))">{{ ttftMaxMs ?? '-' }}</span>
+              <span
+                class="font-bold"
+                :class="getThresholdColorClass(getTTFTThresholdLevel(ttftMaxMs))"
+                >{{ ttftMaxMs ?? '-' }}</span
+              >
               <span class="text-gray-400">ms</span>
             </div>
           </div>
         </div>
 
         <!-- Card 3: Request Errors -->
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 3;">
+        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 3">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-1">
-              <span class="text-xs font-bold uppercase text-gray-400">{{ t('admin.ops.requestErrors') }}</span>
+              <span class="text-xs font-bold uppercase text-gray-400">{{
+                t('admin.ops.requestErrors')
+              }}</span>
               <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.errors')" />
             </div>
-            <button v-if="!props.fullscreen" class="text-xs font-bold text-primary-500 hover:underline" type="button" @click="openErrorDetails('request')">
+            <button
+              v-if="!props.fullscreen"
+              class="text-xs font-bold text-primary-500 hover:underline"
+              type="button"
+              @click="openErrorDetails('request')"
+            >
               {{ t('admin.ops.requestDetails.details') }}
             </button>
           </div>
-          <div class="mt-2 text-3xl font-black" :class="getThresholdColorClass(getRequestErrorRateThresholdLevel(errorRatePercent))">
+          <div
+            class="mt-2 text-3xl font-black"
+            :class="getThresholdColorClass(getRequestErrorRateThresholdLevel(errorRatePercent))"
+          >
             {{ errorRatePercent == null ? '-' : `${errorRatePercent.toFixed(2)}%` }}
           </div>
           <div class="mt-3 space-y-1 text-xs">
             <div class="flex justify-between">
               <span class="text-gray-500">{{ t('admin.ops.errorCount') }}:</span>
-              <span class="font-bold text-gray-900 dark:text-white">{{ formatNumber(overview.error_count_sla ?? 0) }}</span>
+              <span class="font-bold text-gray-900 dark:text-white">{{
+                formatNumber(overview.error_count_sla ?? 0)
+              }}</span>
             </div>
             <div class="flex justify-between">
               <span class="text-gray-500">{{ t('admin.ops.businessLimited') }}:</span>
-              <span class="font-bold text-gray-900 dark:text-white">{{ formatNumber(overview.business_limited_count ?? 0) }}</span>
+              <span class="font-bold text-gray-900 dark:text-white">{{
+                formatNumber(overview.business_limited_count ?? 0)
+              }}</span>
             </div>
           </div>
         </div>
 
         <!-- Card 6: Upstream Errors -->
-        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 6;">
+        <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-950" style="order: 6">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-1">
-              <span class="text-xs font-bold uppercase text-gray-400">{{ t('admin.ops.upstreamErrors') }}</span>
-              <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.upstreamErrors')" />
+              <span class="text-xs font-bold uppercase text-gray-400">{{
+                t('admin.ops.upstreamErrors')
+              }}</span>
+              <HelpTooltip
+                v-if="!props.fullscreen"
+                :content="t('admin.ops.tooltips.upstreamErrors')"
+              />
             </div>
-            <button v-if="!props.fullscreen" class="text-xs font-bold text-primary-500 hover:underline" type="button" @click="openErrorDetails('upstream')">
+            <button
+              v-if="!props.fullscreen"
+              class="text-xs font-bold text-primary-500 hover:underline"
+              type="button"
+              @click="openErrorDetails('upstream')"
+            >
               {{ t('admin.ops.requestDetails.details') }}
             </button>
           </div>
-          <div class="mt-2 text-3xl font-black" :class="getThresholdColorClass(getUpstreamErrorRateThresholdLevel(upstreamErrorRatePercent))">
+          <div
+            class="mt-2 text-3xl font-black"
+            :class="
+              getThresholdColorClass(getUpstreamErrorRateThresholdLevel(upstreamErrorRatePercent))
+            "
+          >
             {{ upstreamErrorRatePercent == null ? '-' : `${upstreamErrorRatePercent.toFixed(2)}%` }}
           </div>
           <div class="mt-3 space-y-1 text-xs">
             <div class="flex justify-between">
               <span class="text-gray-500">{{ t('admin.ops.errorCountExcl429529') }}:</span>
-              <span class="font-bold text-gray-900 dark:text-white">{{ formatNumber(overview.upstream_error_count_excl_429_529 ?? 0) }}</span>
+              <span class="font-bold text-gray-900 dark:text-white">{{
+                formatNumber(overview.upstream_error_count_excl_429_529 ?? 0)
+              }}</span>
             </div>
             <div class="flex justify-between">
               <span class="text-gray-500">429/529:</span>
-              <span class="font-bold text-gray-900 dark:text-white">{{ formatNumber((overview.upstream_429_count ?? 0) + (overview.upstream_529_count ?? 0)) }}</span>
+              <span class="font-bold text-gray-900 dark:text-white">{{
+                formatNumber(
+                  (overview.upstream_429_count ?? 0) + (overview.upstream_529_count ?? 0),
+                )
+              }}</span>
             </div>
           </div>
         </div>
@@ -1419,7 +1894,9 @@ function handleToolbarRefresh() {
         <!-- MEM -->
         <div class="rounded-surface bg-gray-50 p-3 dark:bg-dark-950">
           <div class="flex items-center gap-1">
-            <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.memory') }}</div>
+            <div class="text-xs font-bold uppercase tracking-wider text-gray-400">
+              {{ t('admin.ops.memory') }}
+            </div>
             <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.memory')" />
           </div>
           <div class="mt-1 text-lg font-black" :class="memPercentClass">
@@ -1434,10 +1911,12 @@ function handleToolbarRefresh() {
           </div>
         </div>
 
-        <!-- 磁盘 -->
+        <!-- Disk capacity -->
         <div class="rounded-surface bg-gray-50 p-3 dark:bg-dark-950">
           <div class="flex items-center gap-1">
-            <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.disk') }}</div>
+            <div class="text-xs font-bold uppercase tracking-wider text-gray-400">
+              {{ t('admin.ops.disk') }}
+            </div>
             <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.disk')" />
           </div>
           <div class="mt-1 text-lg font-black" :class="diskPercentClass">
@@ -1451,17 +1930,21 @@ function handleToolbarRefresh() {
         <!-- DB -->
         <div class="rounded-surface bg-gray-50 p-3 dark:bg-dark-950">
           <div class="flex items-center gap-1">
-            <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.db') }}</div>
+            <div class="text-xs font-bold uppercase tracking-wider text-gray-400">
+              {{ t('admin.ops.db') }}
+            </div>
             <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.db')" />
           </div>
           <div class="mt-1 text-lg font-black" :class="dbMiddleClass">
             {{ dbMiddleLabel }}
           </div>
           <div v-if="!props.fullscreen" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.ops.conns') }} {{ dbConnOpenValue ?? '-' }} / {{ dbMaxOpenConnsValue ?? '-' }}
-            · {{ t('admin.ops.active') }} {{ dbConnActiveValue ?? '-' }}
-            · {{ t('admin.ops.idle') }} {{ dbConnIdleValue ?? '-' }}
-            <span v-if="dbConnWaitingValue != null"> · {{ t('admin.ops.waiting') }} {{ dbConnWaitingValue }} </span>
+            {{ t('admin.ops.conns') }} {{ dbConnOpenValue ?? '-' }} /
+            {{ dbMaxOpenConnsValue ?? '-' }} · {{ t('admin.ops.active') }}
+            {{ dbConnActiveValue ?? '-' }} · {{ t('admin.ops.idle') }} {{ dbConnIdleValue ?? '-' }}
+            <span v-if="dbConnWaitingValue != null">
+              · {{ t('admin.ops.waiting') }} {{ dbConnWaitingValue }}
+            </span>
           </div>
         </div>
 
@@ -1475,27 +1958,37 @@ function handleToolbarRefresh() {
             {{ redisMiddleLabel }}
           </div>
           <div v-if="!props.fullscreen" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.ops.conns') }} {{ redisConnTotalValue ?? '-' }} / {{ redisPoolSizeValue ?? '-' }}
-            <span v-if="redisConnActiveValue != null"> · {{ t('admin.ops.active') }} {{ redisConnActiveValue }} </span>
-            <span v-if="redisConnIdleValue != null"> · {{ t('admin.ops.idle') }} {{ redisConnIdleValue }} </span>
+            {{ t('admin.ops.conns') }} {{ redisConnTotalValue ?? '-' }} /
+            {{ redisPoolSizeValue ?? '-' }}
+            <span v-if="redisConnActiveValue != null">
+              · {{ t('admin.ops.active') }} {{ redisConnActiveValue }}
+            </span>
+            <span v-if="redisConnIdleValue != null">
+              · {{ t('admin.ops.idle') }} {{ redisConnIdleValue }}
+            </span>
           </div>
         </div>
 
         <!-- Goroutines -->
         <div class="rounded-surface bg-gray-50 p-3 dark:bg-dark-950">
           <div class="flex items-center gap-1">
-            <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.goroutines') }}</div>
+            <div class="text-xs font-bold uppercase tracking-wider text-gray-400">
+              {{ t('admin.ops.goroutines') }}
+            </div>
             <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.goroutines')" />
           </div>
           <div class="mt-1 text-lg font-black" :class="goroutineStatusClass">
             {{ goroutineStatusLabel }}
           </div>
           <div v-if="!props.fullscreen" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.ops.current') }} <span class="font-mono">{{ goroutineCountValue ?? '-' }}</span>
-            · {{ t('common.warning') }} <span class="font-mono">{{ goroutinesWarnThreshold }}</span>
-            · {{ t('common.critical') }} <span class="font-mono">{{ goroutinesCriticalThreshold }}</span>
+            {{ t('admin.ops.current') }}
+            <span class="font-mono">{{ goroutineCountValue ?? '-' }}</span> ·
+            {{ t('common.warning') }} <span class="font-mono">{{ goroutinesWarnThreshold }}</span> ·
+            {{ t('common.critical') }}
+            <span class="font-mono">{{ goroutinesCriticalThreshold }}</span>
             <span v-if="systemMetrics?.concurrency_queue_depth != null">
-              · {{ t('admin.ops.queue') }} <span class="font-mono">{{ systemMetrics.concurrency_queue_depth }}</span>
+              · {{ t('admin.ops.queue') }}
+              <span class="font-mono">{{ systemMetrics.concurrency_queue_depth }}</span>
             </span>
           </div>
         </div>
@@ -1504,10 +1997,17 @@ function handleToolbarRefresh() {
         <div class="rounded-surface bg-gray-50 p-3 dark:bg-dark-950">
           <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-1">
-              <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.jobs') }}</div>
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400">
+                {{ t('admin.ops.jobs') }}
+              </div>
               <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.jobs')" />
             </div>
-            <button v-if="!props.fullscreen" class="text-xs font-bold text-primary-500 hover:underline" type="button" @click="openJobsDetails">
+            <button
+              v-if="!props.fullscreen"
+              class="text-xs font-bold text-primary-500 hover:underline"
+              type="button"
+              @click="openJobsDetails"
+            >
               {{ t('admin.ops.requestDetails.details') }}
             </button>
           </div>
@@ -1517,14 +2017,19 @@ function handleToolbarRefresh() {
           </div>
 
           <div v-if="!props.fullscreen" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('common.total') }} <span class="font-mono">{{ jobHeartbeats.length }}</span>
-            · {{ t('common.warning') }} <span class="font-mono">{{ jobsWarnCount }}</span>
+            {{ t('common.total') }} <span class="font-mono">{{ jobHeartbeats.length }}</span> ·
+            {{ t('common.warning') }} <span class="font-mono">{{ jobsWarnCount }}</span>
           </div>
         </div>
       </div>
     </div>
 
-    <BaseDialog :show="showJobsDetails" :title="t('admin.ops.jobs')" width="wide" @close="showJobsDetails = false">
+    <BaseDialog
+      :show="showJobsDetails"
+      :title="t('admin.ops.jobs')"
+      width="wide"
+      @close="showJobsDetails = false"
+    >
       <div v-if="!jobHeartbeats.length" class="text-sm text-gray-500 dark:text-gray-400">
         {{ t('admin.ops.noData') }}
       </div>
@@ -1535,19 +2040,27 @@ function handleToolbarRefresh() {
           class="rounded-surface border border-gray-100 bg-white p-4 dark:border-dark-700 dark:bg-dark-950"
         >
           <div class="flex items-center justify-between gap-3">
-            <div class="truncate text-sm font-semibold text-gray-900 dark:text-white">{{ hb.job_name }}</div>
+            <div class="truncate text-sm font-semibold text-gray-900 dark:text-white">
+              {{ hb.job_name }}
+            </div>
             <div class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-              <span v-if="hb.last_duration_ms != null" class="font-mono">{{ hb.last_duration_ms }}ms</span>
+              <span v-if="hb.last_duration_ms != null" class="font-mono"
+                >{{ hb.last_duration_ms }}ms</span
+              >
               <span>{{ formatTimeShort(hb.updated_at) }}</span>
             </div>
           </div>
 
-          <div class="mt-2 grid grid-cols-1 gap-2 text-xs text-gray-600 dark:text-gray-300 sm:grid-cols-2">
+          <div
+            class="mt-2 grid grid-cols-1 gap-2 text-xs text-gray-600 dark:text-gray-300 sm:grid-cols-2"
+          >
             <div>
-              {{ t('admin.ops.lastSuccess') }} <span class="font-mono">{{ formatTimeShort(hb.last_success_at) }}</span>
+              {{ t('admin.ops.lastSuccess') }}
+              <span class="font-mono">{{ formatTimeShort(hb.last_success_at) }}</span>
             </div>
             <div>
-              {{ t('admin.ops.lastError') }} <span class="font-mono">{{ formatTimeShort(hb.last_error_at) }}</span>
+              {{ t('admin.ops.lastError') }}
+              <span class="font-mono">{{ formatTimeShort(hb.last_error_at) }}</span>
             </div>
             <div>
               {{ t('admin.ops.result') }} <span class="font-mono">{{ hb.last_result || '-' }}</span>
@@ -1565,41 +2078,30 @@ function handleToolbarRefresh() {
     </BaseDialog>
 
     <!-- Custom Time Range Dialog -->
-    <BaseDialog :show="showCustomTimeRangeDialog" :title="t('admin.ops.timeRange.custom')" width="narrow" @close="handleCustomTimeRangeCancel">
+    <BaseDialog
+      :show="showCustomTimeRangeDialog"
+      :title="t('admin.ops.timeRange.custom')"
+      width="narrow"
+      @close="handleCustomTimeRangeCancel"
+    >
       <div class="space-y-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             {{ t('admin.ops.customTimeRange.startTime') }}
           </label>
-          <input
-            v-model="customStartTimeInput"
-            type="datetime-local"
-            class="input"
-          />
+          <input v-model="customStartTimeInput" type="datetime-local" class="input" />
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             {{ t('admin.ops.customTimeRange.endTime') }}
           </label>
-          <input
-            v-model="customEndTimeInput"
-            type="datetime-local"
-            class="input"
-          />
+          <input v-model="customEndTimeInput" type="datetime-local" class="input" />
         </div>
         <div class="flex justify-end gap-3 pt-2">
-          <button
-            type="button"
-            class="btn btn-secondary"
-            @click="handleCustomTimeRangeCancel"
-          >
+          <button type="button" class="btn btn-secondary" @click="handleCustomTimeRangeCancel">
             {{ t('common.cancel') }}
           </button>
-          <button
-            type="button"
-            class="btn btn-primary"
-            @click="handleCustomTimeRangeConfirm"
-          >
+          <button type="button" class="btn btn-primary" @click="handleCustomTimeRangeConfirm">
             {{ t('common.confirm') }}
           </button>
         </div>

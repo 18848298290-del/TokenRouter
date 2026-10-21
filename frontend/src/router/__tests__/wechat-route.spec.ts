@@ -1,63 +1,29 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { getRouter, resetRouterHarness, runGuard } from './routerHarness'
 
-const authStore = vi.hoisted(() => ({
-  checkAuth: vi.fn(),
-  isAuthenticated: false,
-  isAdmin: false,
-}))
+// wechat-route.spec.ts checks the public registration of WeChat identity and
+// payment callback destinations. Both callbacks need to resolve before browser
+// authentication succeeds, and their names and titles identify separate pages
+// during navigation and payment completion.
 
-const appStore = vi.hoisted(() => ({
-  siteName: 'TokenRouter',
-  backendModeEnabled: false,
-  cachedPublicSettings: null as null | Record<string, unknown>,
-}))
+beforeEach(resetRouterHarness)
 
-vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => authStore,
-}))
-
-vi.mock('@/stores/app', () => ({
-  useAppStore: () => appStore,
-}))
-
-vi.mock('@/stores/adminSettings', () => ({
-  useAdminSettingsStore: () => ({
-    customMenuItems: [],
-  }),
-}))
-
-vi.mock('@/composables/useNavigationLoading', () => ({
-  useNavigationLoadingState: () => ({
-    startNavigation: vi.fn(),
-    endNavigation: vi.fn(),
-    isLoading: { value: false },
-  }),
-}))
-
-vi.mock('@/composables/useRoutePrefetch', () => ({
-  useRoutePrefetch: () => ({
-    triggerPrefetch: vi.fn(),
-    cancelPendingPrefetch: vi.fn(),
-    resetPrefetchState: vi.fn(),
-  }),
-}))
-
-describe('router WeChat OAuth route', () => {
-  it('registers the WeChat callback route as a public route', async () => {
-    const { default: router } = await import('@/router')
-    const route = router.getRoutes().find((record) => record.name === 'WeChatOAuthCallback')
-
-    expect(route?.path).toBe('/auth/wechat/callback')
+describe('router WeChat OAuth routes', () => {
+  // WeChat redirects unauthenticated browsers into separate identity and
+  // payment callback pages. Their registered names, paths, and titles remain
+  // public and the installed authentication guard permits access.
+  it.each([
+    ['WeChatOAuthCallback', '/auth/wechat/callback', 'WeChat OAuth Callback'],
+    ['WeChatPaymentOAuthCallback', '/auth/wechat/payment/callback', 'WeChat Payment Callback'],
+  ])('registers %s as a public callback', async (name, path, title) => {
+    const route = getRouter()
+      .getRoutes()
+      .find((record) => record.name === name)
+    expect(route?.path).toBe(path)
     expect(route?.meta.requiresAuth).toBe(false)
-    expect(route?.meta.title).toBe('WeChat OAuth Callback')
-  })
-
-  it('registers the WeChat payment callback route as a public route', async () => {
-    const { default: router } = await import('@/router')
-    const route = router.getRoutes().find((record) => record.name === 'WeChatPaymentOAuthCallback')
-
-    expect(route?.path).toBe('/auth/wechat/payment/callback')
-    expect(route?.meta.requiresAuth).toBe(false)
-    expect(route?.meta.title).toBe('WeChat Payment Callback')
+    expect(route?.meta.title).toBe(title)
+    const { navigation, next } = runGuard(path)
+    await navigation
+    expect(next).toHaveBeenCalledExactlyOnceWith()
   })
 })

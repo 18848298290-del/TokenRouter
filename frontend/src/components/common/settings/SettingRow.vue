@@ -1,20 +1,16 @@
 <template>
-  <div
-    class="flex justify-between gap-4"
-    :class="layoutClass"
-    :data-setting-row="setting"
-  >
+  <div class="flex justify-between gap-4" :class="layoutClass" :data-setting-row="setting">
     <div class="min-w-0">
       <div class="flex items-center gap-2">
         <label
           v-if="labelFor"
           :for="labelFor"
           class="text-sm font-medium text-primary-900 dark:text-dark-50"
-        >{{ label }}</label>
-        <span
-          v-else
-          class="text-sm font-medium text-primary-900 dark:text-dark-50"
-        >{{ label }}</span>
+          >{{ label }}</label
+        >
+        <span v-else class="text-sm font-medium text-primary-900 dark:text-dark-50">{{
+          label
+        }}</span>
         <HelpTooltip
           v-if="help"
           :content="help"
@@ -48,22 +44,42 @@ import { computed, useSlots } from 'vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Icon from '@/components/icons/Icon.vue'
 
-// 设置行统一左侧标题说明、右侧控件的布局；field 用于右侧放选择框或输入框的行，窄屏改为上下排列。
+/**
+ * SettingRow.vue lays out a setting label, explanation, help tooltip, and slotted
+ * control. Field rows stack on narrow screens, while desktop alignment depends on
+ * whether a text or slot hint exists; input identifiers connect labels and help
+ * descriptions.
+ */
+
+/**
+ * props supplies label and explanation content, optional input association, and the
+ * responsive layout choice for the slotted control.
+ */
 const props = defineProps<{
-  id: string
-  label: string
-  hint?: string
-  help?: string
-  setting?: string
-  /** 标题关联的控件 id，选择框和输入框行传入以便点击标题聚焦。 */
+  id: string /* input association identifier */
+  label: string /* visible field label */
+  hint?: string /* inline explanation text */
+  help?: string /* tooltip explanation text */
+  setting?: string /* setting data identifier */
+
+  /**
+   * labelFor connects the visible label to an input or selector; omission renders an
+   * ordinary text label without a focus target.
+   */
   labelFor?: string
-  field?: boolean
+  field?: boolean /* responsive input layout */
 }>()
 
+/**
+ * slots provides the named hint slot presence used alongside hint text to choose
+ * control alignment.
+ */
 const slots = useSlots()
 
-// 没有说明文字时，单行标题和控件垂直居中；有说明时控件和标题顶部对齐。
-// 输入框行在窄屏上下排列，只在 sm 及以上应用对齐方式。
+/**
+ * layoutClass aligns controls with the top of explanatory hints or centers a lone
+ * label; field rows stack before the small breakpoint.
+ */
 const layoutClass = computed(() => {
   const hasHint = Boolean(props.hint || slots.hint)
   if (!props.field) return hasHint ? 'items-start' : 'items-center'

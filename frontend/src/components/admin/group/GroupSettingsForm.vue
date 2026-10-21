@@ -19,9 +19,7 @@
               required
               class="input"
               :placeholder="t('admin.groups.enterGroupName')"
-              :data-tour="
-                mode === 'create' ? 'group-form-name' : 'edit-group-form-name'
-              "
+              :data-tour="mode === 'create' ? 'group-form-name' : 'edit-group-form-name'"
             />
           </div>
           <div>
@@ -43,13 +41,21 @@
           <div class="md:col-span-2">
             <LocalizedFieldsEditor
               :model-value="form.localization"
-              :source-locale="mode === 'create' ? (locale || 'en') : null"
+              :source-locale="mode === 'create' ? locale || 'en' : null"
               :source="{ display_name: form.name, description: form.description }"
               :fields="[
                 { key: 'display_name', label: t('localization.displayName') },
-                { key: 'description', label: t('admin.groups.form.description'), placeholder: t('admin.groups.optionalDescription'), multiline: true },
+                {
+                  key: 'description',
+                  label: t('admin.groups.form.description'),
+                  placeholder: t('admin.groups.optionalDescription'),
+                  multiline: true,
+                },
               ]"
-              @update:model-value="form.localization = $event; form.description = $event.source.description"
+              @update:model-value="
+                form.localization = $event;
+                form.description = $event.source.description;
+              "
             />
           </div>
         </div>
@@ -88,13 +94,7 @@
           :id="`${idPrefix}-exclusive`"
           v-model="form.is_exclusive"
           :label="t('admin.groups.form.exclusive')"
-          :hint="
-            t(
-              form.is_exclusive
-                ? 'admin.groups.exclusive'
-                : 'admin.groups.public',
-            )
-          "
+          :hint="t(form.is_exclusive ? 'admin.groups.exclusive' : 'admin.groups.public')"
           :help="`${t('admin.groups.exclusiveTooltip.description')} ${t('admin.groups.exclusiveTooltip.exampleContent')}`"
           setting="is_exclusive"
           data-tour="group-form-exclusive"
@@ -103,10 +103,7 @@
     </template>
 
     <template #models>
-      <GroupRoutingPolicyFields
-        :id-prefix="idPrefix"
-        v-model="form.routing_policy"
-      />
+      <GroupRoutingPolicyFields :id-prefix="idPrefix" v-model="form.routing_policy" />
       <GroupModelRoutingFields
         :id-prefix="idPrefix"
         :enabled="form.model_routing_enabled"
@@ -119,9 +116,7 @@
         @pattern="(rule, value) => emit('rulePattern', rule, value)"
         @search="(rule, keyword) => emit('searchProviders', rule, keyword)"
         @focus="emit('focusProviders', $event)"
-        @select-provider="
-          (rule, provider) => emit('selectProvider', rule, provider)
-        "
+        @select-provider="(rule, provider) => emit('selectProvider', rule, provider)"
         @remove-provider="(rule, id) => emit('removeProvider', rule, id)"
       />
       <GroupModelsListFields
@@ -140,11 +135,9 @@
       <SettingsSection :title="t('admin.groups.settings.providerSelection')">
         <div v-if="options.copyProviders.length">
           <div class="mb-2 flex items-center gap-2">
-            <label
-              :for="`${idPrefix}-copy-providers`"
-              class="input-label mb-0"
-              >{{ t('admin.groups.copyProviders.title') }}</label
-            >
+            <label :for="`${idPrefix}-copy-providers`" class="input-label mb-0">{{
+              t('admin.groups.copyProviders.title')
+            }}</label>
             <HelpTooltip
               :content="t('admin.groups.copyProviders.tooltip')"
               :tooltip-id="`${idPrefix}-copy-help`"
@@ -163,18 +156,13 @@
               </template>
             </HelpTooltip>
           </div>
-          <div
-            v-if="form.copy_providers_from_group_ids.length"
-            class="mb-2 flex flex-wrap gap-2"
-          >
+          <div v-if="form.copy_providers_from_group_ids.length" class="mb-2 flex flex-wrap gap-2">
             <span
               v-for="groupId in form.copy_providers_from_group_ids"
               :key="groupId"
               class="inline-flex max-w-full items-center gap-2 rounded-compact bg-primary-100 px-2 py-1 text-xs text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
             >
-              <span class="min-w-0 break-all">{{
-                copyGroupLabel(groupId)
-              }}</span>
+              <span class="min-w-0 break-all">{{ copyGroupLabel(groupId) }}</span>
               <button
                 type="button"
                 class="shrink-0 rounded-compact focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
@@ -184,10 +172,9 @@
                   })
                 "
                 @click="
-                  form.copy_providers_from_group_ids =
-                    form.copy_providers_from_group_ids.filter(
-                      (id) => id !== groupId,
-                    )
+                  form.copy_providers_from_group_ids = form.copy_providers_from_group_ids.filter(
+                    (id) => id !== groupId,
+                  )
                 "
               >
                 <Icon name="x" size="sm" />
@@ -236,17 +223,12 @@
             class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-surface border border-gray-200 bg-gray-50/50 p-4 dark:border-dark-600 dark:bg-dark-800/40"
           >
             <div class="min-w-0">
-              <span
-                class="text-sm font-medium text-primary-900 dark:text-dark-50"
-                >{{ t('admin.groups.advancedSchedulerOverrides.label') }}</span
-              >
+              <span class="text-sm font-medium text-primary-900 dark:text-dark-50">{{
+                t('admin.groups.advancedSchedulerOverrides.label')
+              }}</span>
               <p class="input-hint">{{ advancedSummary }}</p>
             </div>
-            <button
-              type="button"
-              class="btn btn-secondary"
-              @click="emit('configureScheduler')"
-            >
+            <button type="button" class="btn btn-secondary" @click="emit('configureScheduler')">
               <Icon name="cog" size="sm" />{{
                 t('admin.groups.advancedSchedulerOverrides.configure')
               }}
@@ -264,11 +246,9 @@
       <SettingsSection :title="t('admin.groups.settings.fallbacks')">
         <div class="grid gap-4 md:grid-cols-2">
           <div>
-            <label
-              :for="`${idPrefix}-unavailable-fallback`"
-              class="input-label"
-              >{{ t('admin.groups.unavailableFallback.title') }}</label
-            >
+            <label :for="`${idPrefix}-unavailable-fallback`" class="input-label">{{
+              t('admin.groups.unavailableFallback.title')
+            }}</label>
             <Select
               :aria-label="t('admin.groups.form.schedulerType')"
               :id="`${idPrefix}-unavailable-fallback`"
@@ -372,9 +352,7 @@
               type="text"
               maxlength="512"
               class="input"
-              :placeholder="
-                t('admin.groups.availabilityProbe.userAgentPlaceholder')
-              "
+              :placeholder="t('admin.groups.availabilityProbe.userAgentPlaceholder')"
             />
           </div>
           <div class="md:col-span-2">
@@ -387,9 +365,7 @@
               data-group-field="probe-prompt"
               rows="3"
               class="input"
-              :placeholder="
-                t('admin.groups.availabilityProbe.promptPlaceholder')
-              "
+              :placeholder="t('admin.groups.availabilityProbe.promptPlaceholder')"
             />
           </div>
         </div>
@@ -459,10 +435,7 @@
           v-model:mappings="form.reasoning_effort_mappings"
         />
       </SettingsSection>
-      <GroupRequestCompatibilityFields
-        :id-prefix="idPrefix"
-        v-model="form.routing_policy"
-      />
+      <GroupRequestCompatibilityFields :id-prefix="idPrefix" v-model="form.routing_policy" />
     </template>
   </SettingsTabs>
 </template>
@@ -484,7 +457,7 @@ import GroupModelsListFields from './GroupModelsListFields.vue'
 import GroupClientProtocolSelector from './GroupClientProtocolSelector.vue'
 import ReasoningEffortPolicyFields from './ReasoningEffortPolicyFields.vue'
 import GroupRequestCompatibilityFields from './GroupRequestCompatibilityFields.vue'
-import type { ModelsListState } from '@/views/admin/groupsModelsList'
+import type { ModelsListState } from '@/components/admin/group/groupsModelsList'
 import type {
   GroupProviderSearchState,
   GroupModelRoutingRule,
@@ -493,56 +466,108 @@ import type {
   GroupSettingsOptions,
 } from './groupSettingsTypes'
 
-const props = defineProps<{
-  mode: 'create' | 'edit'
-  modelValue: GroupSettingsDraft
-  options: GroupSettingsOptions
-  routingRules: GroupModelRoutingRule[]
-  modelsList: ModelsListState
-  modelsListLoading: boolean
-  providerSearch: GroupProviderSearchState
-  getRuleKey: (rule: GroupModelRoutingRule) => string
-}>()
-const emit = defineEmits<{
-  patch: [value: Partial<GroupSettingsDraft>]
-  configureScheduler: []
-  addRule: []
-  removeRule: [rule: GroupModelRoutingRule]
-  rulePattern: [rule: GroupModelRoutingRule, value: string]
-  searchProviders: [rule: GroupModelRoutingRule, keyword: string]
-  focusProviders: [rule: GroupModelRoutingRule]
-  selectProvider: [rule: GroupModelRoutingRule, provider: GroupRoutingProvider]
-  removeProvider: [rule: GroupModelRoutingRule, providerId: number]
-  modelsEnabled: [value: boolean]
-  selectModel: [id: string, value: boolean]
-  selectAllModels: []
-  invertModels: []
-  moveModel: [from: number, to: number]
-}>()
-const { t, locale } = useI18n()
-const idPrefix = computed(() => `${props.mode}-group`)
-// 所有平台共用同一组页签，平台差异体现在页内字段。
-const tabs = computed(() =>
-  (['general', 'models', 'scheduling', 'protocol', 'request'] as const).map(
-    (key) => ({ key, label: t(`admin.groups.tabs.${key}`) }),
-  ),
-)
-const tabsRef = ref<InstanceType<typeof SettingsTabs> | null>(null)
-const reasoningRef = ref<InstanceType<
-  typeof ReasoningEffortPolicyFields
-> | null>(null)
+// GroupSettingsForm.vue composes the tabbed group editor and forwards draft updates to its
+// page. Models, scheduling, protocol, and request sections share one group draft, while
+// provider searches and model-list selections remain page-owned state. Child events carry rule
+// identities back to that owner.
+//
+// A computed proxy translates field assignments into partial updates, allowing the page to
+// retain the reactive draft object. Validation first asks the tab container to inspect fields,
+// then checks reasoning mappings and reveals their error after Vue renders it. Exposed methods
+// let page submission locate business validation failures in the appropriate tab.
 
-// 字段更新以补丁交给页面，保留响应式草稿的身份以及页面持有的兼容字段。
+// props supplies parent-owned editor values and display controls consumed by the fields below.
+const props = defineProps<{
+  mode: 'create' | 'edit' // selected editor mode
+  // modelValue supplies the parent-owned value edited by these controls. Updates are emitted to
+  // the parent for publication back through this prop.
+  modelValue: GroupSettingsDraft
+  options: GroupSettingsOptions // available form choices
+  routingRules: GroupModelRoutingRule[] // page-owned routing rules
+  modelsList: ModelsListState // editable model-list state
+  modelsListLoading: boolean // candidate loading flag
+  providerSearch: GroupProviderSearchState // page-owned search state
+  getRuleKey: (rule: GroupModelRoutingRule) => string // stable rule-key resolver
+}>()
+// emit forwards typed edits and actions to the parent that owns the displayed draft.
+const emit = defineEmits<{
+  patch: [
+    value: Partial<GroupSettingsDraft>, // replacement field value
+  ] // partial group draft update
+  configureScheduler: [] // open scheduler overrides
+  addRule: [] // append routing rule
+  removeRule: [
+    rule: GroupModelRoutingRule, // owning routing rule
+  ] // remove routing rule
+  rulePattern: [
+    rule: GroupModelRoutingRule, // owning routing rule
+    value: string, // replacement field value
+  ] // rule pattern update
+  searchProviders: [
+    rule: GroupModelRoutingRule, // owning routing rule
+    keyword: string, // provider search text
+  ] // rule and search keyword
+  focusProviders: [
+    rule: GroupModelRoutingRule, // owning routing rule
+  ] // focused provider search
+  selectProvider: [
+    rule: GroupModelRoutingRule, // owning routing rule
+    provider: GroupRoutingProvider, // selected provider record
+  ] // rule and selected provider
+  removeProvider: [
+    rule: GroupModelRoutingRule, // owning routing rule
+    providerId: number, // removed provider identifier
+  ] // rule and removed provider
+  modelsEnabled: [
+    value: boolean, // replacement field value
+  ] // custom-list enablement change
+  selectModel: [
+    id: string, // selected model identifier
+    value: boolean, // replacement field value
+  ] // model selection change
+  selectAllModels: [] // select every model
+  invertModels: [] // invert model selections
+  moveModel: [
+    from: number, // source list index
+    to: number, // destination list index
+  ] // source and destination indexes
+}>()
+// t resolves the current locale messages used by labels, validation, and action notifications.
+const { t, locale } = useI18n()
+// idPrefix namespaces field identifiers by create or edit mode so both form instances can
+// coexist on the page.
+const idPrefix = computed(() => `${props.mode}-group`)
+
+// tabs organizes general, models, scheduling, protocol, and request settings under translated
+// labels shared by every group.
+const tabs = computed(() =>
+  (['general', 'models', 'scheduling', 'protocol', 'request'] as const).map((key) => ({
+    key,
+    label: t(`admin.groups.tabs.${key}`),
+  })),
+)
+// tabsRef and reasoningRef expose child validation and field-reveal methods used during
+// whole-form submission from the page.
+const tabsRef = ref<InstanceType<typeof SettingsTabs> | null>(null)
+const reasoningRef = ref<InstanceType<typeof ReasoningEffortPolicyFields> | null>(null)
+
+// form turns assignments into patch events, retaining the page-owned reactive draft and
+// compatibility fields through child edits.
 const form = computed(
   () =>
     new Proxy(props.modelValue, {
+      // set forwards an assigned draft property as a partial update to the page.
       set(_target, key, value) {
         emit('patch', { [key]: value })
         return true
       },
     }),
 )
+// providerBrandOptions, statusOptions, schedulerOptions, and fastOptions supply the supported
+// values shown by the general and scheduling controls.
 const providerBrandOptions = defaultProviderBrandOptions
+// statusOptions offers active and inactive values for the existing group editor, using the same
+// translated activation labels as provider controls.
 const statusOptions = computed(() =>
   ['active', 'inactive'].map((value) => ({
     value,
@@ -567,52 +592,56 @@ const fastOptions = computed(() => [
   },
   { value: 'force_off', label: t('admin.groups.openaiFast.forceOff') },
 ])
+// advancedSummary counts configured scheduler keys so the closed override dialog still exposes
+// whether group-specific values exist.
 const advancedSummary = computed(() => {
-  const count = Object.keys(
-    props.modelValue.advanced_scheduler_overrides,
-  ).length
+  const count = Object.keys(props.modelValue.advanced_scheduler_overrides).length
   return count
     ? t('admin.groups.advancedSchedulerOverrides.overriddenCount', { count })
     : t('admin.groups.advancedSchedulerOverrides.allInherited')
 })
+// copyOptions disables already selected provider-copy sources, leaving their stored IDs
+// available for removal in the form.
 const copyOptions = computed(() =>
   props.options.copyProviders.map((option) => ({
     ...option,
-    disabled: props.modelValue.copy_providers_from_group_ids.includes(
-      Number(option.value),
-    ),
+    disabled: props.modelValue.copy_providers_from_group_ids.includes(Number(option.value)),
   })),
 )
+// copyGroupLabel resolves a provider-copy group identifier to its option label. Unavailable
+// identifiers display their numeric ID so a saved selection remains recognizable when its
+// option is missing.
 function copyGroupLabel(id: number) {
-  return (
-    props.options.copyProviders.find((option) => option.value === id)?.label ??
-    `#${id}`
-  )
+  return props.options.copyProviders.find((option) => option.value === id)?.label ?? `#${id}`
 }
+// addCopyGroup appends a nonzero numeric group identifier to the draft selection. Already
+// selected IDs are ignored, and assignment passes through the form proxy to emit a page patch.
 function addCopyGroup(value: string | number | boolean | null) {
   const id = Number(value)
   if (id && !form.value.copy_providers_from_group_ids.includes(id)) {
-    form.value.copy_providers_from_group_ids = [
-      ...form.value.copy_providers_from_group_ids,
-      id,
-    ]
+    form.value.copy_providers_from_group_ids = [...form.value.copy_providers_from_group_ids, id]
   }
 }
 
+// validate checks tabbed fields and reasoning mappings before page submission. Failed reasoning
+// validation waits for Vue to render the alert before revealing it; successful validation
+// returns true to the caller.
 async function validate() {
   if (tabsRef.value && !(await tabsRef.value.validate())) return false
   if (reasoningRef.value && !reasoningRef.value.validate()) {
+    // Wait for reasoning validation to render its alert before asking the tab container to
+    // reveal and focus the affected field.
     await nextTick()
-    await tabsRef.value?.revealField(
-      '[data-group-field="reasoning"] [role="alert"]',
-    )
+    await tabsRef.value?.revealField('[data-group-field="reasoning"] [role="alert"]')
     return false
   }
   return true
 }
+// revealField delegates field discovery and tab selection to the settings container.
 function revealField(selector: string) {
   return tabsRef.value?.revealField(selector)
 }
+// resetValidation clears visible reasoning errors through the mounted reasoning editor.
 function resetValidation() {
   reasoningRef.value?.resetValidation()
 }

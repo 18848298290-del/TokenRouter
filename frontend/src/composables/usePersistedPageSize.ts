@@ -1,13 +1,18 @@
 import { getConfiguredTableDefaultPageSize, normalizeTablePageSize } from '@/utils/tablePreferences'
 
-/**
- * 读取当前系统配置的表格默认每页条数。
- * 各页面使用通用表格设置中的默认值。
- */
+// usePersistedPageSize.ts exposes the configured default table page size through the
+// existing pagination helper API. Runtime table preferences supply the default for every
+// page, and the retained setter accepts calls without writing a separate browser
+// preference.
+
+// getPersistedPageSize returns the normalized runtime default for table pagination. The
+// supplied fallback is used only when the configured default is falsy, and normalization
+// enforces the table preference rules.
 export function getPersistedPageSize(fallback = getConfiguredTableDefaultPageSize()): number {
   return normalizeTablePageSize(getConfiguredTableDefaultPageSize() || fallback)
 }
 
-export function setPersistedPageSize(_size: number): void {
-  // 每页条数由运行时表格配置控制。
-}
+// setPersistedPageSize accepts the compatibility setter call without persisting its
+// argument. Runtime table configuration owns the default page size, while callers may
+// still update their current table state separately.
+export function setPersistedPageSize(_size: number): void {}

@@ -1,20 +1,27 @@
 <template>
   <div ref="cardRef" class="card relative p-4" :aria-busy="loading">
-    <!-- 数据未返回时直接用日期格子占位，保留自适应网格和月份标签。 -->
+    <!-- Date-shaped placeholders retain the responsive grid while its first request is pending. -->
 
     <div class="mb-4 flex items-center justify-between gap-2">
-      <h3 class="text-sm font-semibold text-gray-900 dark:text-dark-50">{{ t('dashboard.activityHeatmap') }}</h3>
-      <!-- 色阶图例 -->
+      <h3 class="text-sm font-semibold text-gray-900 dark:text-dark-50">
+        {{ t('dashboard.activityHeatmap') }}
+      </h3>
+      <!-- Token-volume intensity legend. -->
       <div class="flex shrink-0 items-center gap-1 text-xs text-gray-500 dark:text-dark-400">
         <span>{{ t('dashboard.heatmapLess') }}</span>
-        <span v-for="level in 5" :key="level" class="heatmap-cell h-3 w-3" :class="levelClass(level - 1)" />
+        <span
+          v-for="level in 5"
+          :key="level"
+          class="heatmap-cell h-3 w-3"
+          :class="levelClass(level - 1)"
+        />
         <span>{{ t('dashboard.heatmapMore') }}</span>
       </div>
     </div>
 
     <!--
-      格子固定 12px、间距 3px，周列数随容器宽度自适应（宽屏显示更多历史周），
-      justify-between 把不足一格的零头均摊到列间隙，保证左右贴齐。
+      Fixed cell geometry determines how many recent weeks fit the container.
+      Distribute leftover width between columns so the grid reaches both edges.
     -->
     <div
       ref="gridWrapRef"
@@ -25,8 +32,8 @@
       @animationend="onWaveEnd"
     >
       <!--
-        统一网格：第 1 列是星期标签，第 1 行是月份标签，其余为日期格子。
-        格子显式指定 gridColumn/gridRow，保证标签与格子严格对齐。
+        Weekday labels occupy the first column and month labels the first row.
+        Explicit cell coordinates keep both label axes aligned with calendar dates.
       -->
       <div
         class="grid justify-between"
@@ -35,7 +42,7 @@
           gap: CELL_GAP,
         }"
       >
-        <!-- 首次取数还没有日期数据，也要按当前可见周数填满占位格。 -->
+        <!-- Fill the measured visible week count with placeholders until the first dates arrive. -->
         <template v-if="loading && days.length === 0">
           <div
             aria-hidden="true"
@@ -51,26 +58,30 @@
             :style="{ gridColumn: Math.floor((cell - 1) / 7) + 2, gridRow: ((cell - 1) % 7) + 2 }"
           ></div>
         </template>
-        <!-- 月份标签：本周首格月份与上一列不同才显示 -->
+        <!-- Label month changes at the first cell of each week. -->
         <div
           v-for="m in monthItems"
           :key="`m-${m.weekIndex}`"
           class="overflow-visible whitespace-nowrap text-xs leading-4 text-gray-400 dark:text-gray-500"
           :style="{ gridColumn: m.weekIndex + 2, gridRow: 1 }"
-        >{{ m.label }}</div>
+        >
+          {{ m.label }}
+        </div>
 
-        <!-- 星期标签：只标周一/周三/周五 -->
+        <!-- Label Monday, Wednesday, and Friday rows. -->
         <div
           v-for="w in weekdayLabels"
           :key="`w-${w.row}`"
           class="flex items-center pr-1 text-xs leading-none text-gray-400 dark:text-gray-500"
           :style="{ gridColumn: 1, gridRow: w.row + 2 }"
-        >{{ w.label }}</div>
+        >
+          {{ w.label }}
+        </div>
 
-        <!-- 日期格子 -->
+        <!-- Calendar date cells. -->
         <!--
-          格子可点击查看当天按小时的用量。键盘使用漫游焦点：只有一个格子可 Tab 进入，
-          方向键在日期间移动，Enter / Space 选中。
+          Selecting a cell opens hourly usage for that date. Roving focus gives one
+          cell a tab stop, with arrows moving dates and Enter or Space selecting.
         -->
         <div
           v-for="day in visibleDays"
@@ -80,7 +91,11 @@
           :data-wave-last="day.weekIndex === visibleWeeks - 1 ? 'true' : undefined"
           class="heatmap-cell h-3 w-3"
           :class="cellClasses(day)"
-          :style="{ gridColumn: day.weekIndex + 2, gridRow: day.dayOfWeek + 2, '--wave-delay': waveDelay(day.weekIndex) }"
+          :style="{
+            gridColumn: day.weekIndex + 2,
+            gridRow: day.dayOfWeek + 2,
+            '--wave-delay': waveDelay(day.weekIndex),
+          }"
           :role="day.future ? undefined : 'button'"
           :tabindex="day.future ? undefined : day.date === focusDate ? 0 : -1"
           :aria-label="day.future ? undefined : cellLabel(day)"
@@ -93,8 +108,8 @@
     </div>
 
     <!--
-      悬停提示：卡片内绝对定位，避免被滚动容器裁剪。
-      前两行格子改为下方弹出，避免超出卡片顶部。
+      Position hover details relative to the card so the grid does not clip them.
+      Early-week cells place details below to keep them away from the card top.
     -->
     <div
       data-testid="heatmap-tooltip"
@@ -108,7 +123,10 @@
           <template v-if="hoveredDay.requests > 0">
             <div>{{ t('dashboard.requests') }}: {{ formatNumber(hoveredDay.requests) }}</div>
             <div>{{ t('dashboard.tokens') }}: {{ formatTokens(hoveredDay.tokens) }}</div>
-            <div>{{ t('dashboard.heatmapCost') }}: {{ formatBalanceAmount(hoveredDay.actualCost, { fractionDigits: 4 }) }}</div>
+            <div>
+              {{ t('dashboard.heatmapCost') }}:
+              {{ formatBalanceAmount(hoveredDay.actualCost, { fractionDigits: 4 }) }}
+            </div>
           </template>
           <div v-else>{{ t('dashboard.heatmapNoUsage') }}</div>
           <div class="mt-1 opacity-70">{{ t('dashboard.heatmapSelectDay') }}</div>
@@ -123,7 +141,11 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usageAPI } from '@/api/usage'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-import { formatDateLocalInput, formatNumberLocaleString as formatNumber, formatTokensK as formatTokens } from '@/utils/format'
+import {
+  formatDateLocalInput,
+  formatNumberLocaleString as formatNumber,
+  formatTokensK as formatTokens,
+} from '@/utils/format'
 import { HEATMAP_WAVE_MAX_MS, HEATMAP_WAVE_STEP_MS } from './dashboardMotion'
 import { injectUsageChartState } from './usageChartState'
 
@@ -137,16 +159,21 @@ import { injectUsageChartState } from './usageChartState'
 // measured text dimensions to stay within the card. Dark-theme outlines belong
 // to individual date cells, including their selected and keyboard-focus states.
 
+// CELL_SIZE and CELL_GAP define rendered cell geometry; numeric counterparts below calculate
+// how many complete weeks fit the measured container.
 const CELL_SIZE = '12px'
 const CELL_GAP = '3px'
-// 自适应列数计算用的像素常量；LABEL_COL_PX 是星期标签列的近似宽度
+// CELL_PX, GAP_PX, and LABEL_COL_PX estimate the grid width available after reserving space
+// for weekday labels.
 const CELL_PX = 12
 const GAP_PX = 3
 const LABEL_COL_PX = 24
-// 拉取近三年的按日数据，宽屏时可以显示更多历史周；测不出宽度时回退到 53 周（近一年）
+// FETCH_DAYS bounds the requested daily history, and FALLBACK_WEEKS supplies a recent-year
+// viewport when container width is unavailable.
 const FETCH_DAYS = 3 * 364
 const FALLBACK_WEEKS = 53
-// 格子分档色：0 为无用量，1-4 按用量分位递增
+// LEVEL_CLASSES maps zero usage and four increasing token-volume bands to matching light and
+// dark cell colors.
 const LEVEL_CLASSES = [
   'bg-gray-100 dark:bg-dark-700',
   'bg-green-200 dark:bg-green-800',
@@ -154,54 +181,79 @@ const LEVEL_CLASSES = [
   'bg-green-500 dark:bg-green-400',
   'bg-green-700 dark:bg-green-300',
 ]
-// 方向键在日期间移动的步长：上下为前后一天，左右为前后一周
-const KEY_OFFSETS: Record<string, number> = { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -7, ArrowRight: 7 }
-
-interface HeatmapDay {
-  date: string // YYYY-MM-DD（本地时区）
-  weekIndex: number // 所在列
-  dayOfWeek: number // 0-6，周日为 0
-  tokens: number
-  requests: number
-  actualCost: number
-  level: number
-  future?: boolean // 补齐最后一周的未来占位格，不展示不响应悬停
+// KEY_OFFSETS moves keyboard focus by one calendar day vertically or one whole week
+// horizontally within visible cells.
+const KEY_OFFSETS: Record<string, number> = {
+  ArrowUp: -1,
+  ArrowDown: 1,
+  ArrowLeft: -7,
+  ArrowRight: 7,
 }
 
+// HeatmapDay combines one local date with its grid location and usage summary.
+interface HeatmapDay {
+  date: string // YYYY-MM-DD in local time.
+  weekIndex: number // Zero-based week column.
+  dayOfWeek: number // Sunday-based weekday index.
+  tokens: number // Daily total token count.
+  requests: number // Daily completed request count.
+  actualCost: number // Daily charged balance amount.
+  level: number // Zero-to-four intensity band.
+  // future marks padding after today; cells remain invisible and cannot trigger
+  // hover details, keyboard movement destinations, or daily trend selection.
+  future?: boolean
+}
+
+// emit reports date selection so the dashboard can bring the corresponding hourly trend into
+// the visible viewport.
 const emit = defineEmits<{
-  // 用户选中某一天，页面据此把趋势图滚动到可见区域
+  // select-day sends a local date key after shared selection updates; the parent
+  // scrolls the usage chart into view for that date's hourly details.
   (event: 'select-day', date: string): void
 }>()
 
+// Locale, balance formatting, and shared chart selection connect heatmap labels and selected
+// dates to the dashboard controls.
 const { t, locale } = useI18n()
 const { formatBalanceAmount } = useBalanceDisplay()
 const { selectDay, selectedDay } = injectUsageChartState()
 
+// loading and days retain the fetched grid; element refs and hoveredDay connect its current
+// interaction to card-relative tooltip measurements.
 const loading = ref(true)
 const days = ref<HeatmapDay[]>([])
 const hoveredDay = ref<HeatmapDay | null>(null)
 const cardRef = ref<HTMLElement | null>(null)
 const gridWrapRef = ref<HTMLElement | null>(null)
 const tooltipContentRef = ref<HTMLElement | null>(null)
-// 悬停格子中心相对卡片左上角的坐标，用于 tooltip 定位
+// hoverPos records the hovered cell center relative to the card so tooltip coordinates
+// remain independent of page scroll.
 const hoverPos = ref({ left: 0, top: 0 })
-// 记录 tooltip 上一次弹出方向，离开格子时仍保留位置以完成淡出动画。
+// tooltipAbove retains the last placement direction after hover ends, letting the same
+// positioned tooltip finish its opacity transition.
 const tooltipAbove = ref(false)
 const tooltipSize = ref({ width: 0, height: 0 })
-// 网格容器宽度，驱动可见周数自适应
+// gridWidth drives the visible week count; resizeObserver owns updates until component
+// disposal disconnects it from the grid container.
 const gridWidth = ref(0)
 let resizeObserver: ResizeObserver | null = null
-// 今天的日期键，每次取数时更新，跨午夜后刷新即可对上
+// todayKey refreshes at each load so the highlighted local date follows manual refreshes
+// after midnight.
 const todayKey = ref(formatDateLocalInput(new Date()))
-// 首次拿到数据时格子按列错峰入场，最后一列播放完后关闭
+// waveActive enables the initial column stagger until the last visible column reports its
+// animation has ended.
 const waveActive = ref(true)
-// 键盘焦点所在日期；未设置时落在选中日或今天
+// focusOverride remembers the date reached by manual keyboard movement before selection and
+// today are considered for the tab stop.
 const focusOverride = ref<string | null>(null)
 
+// levelClass returns the band class or the zero-usage class for an unknown level. Its
+// default keeps unexpected values visibly neutral instead of emitting an undefined class.
 const levelClass = (level: number) => LEVEL_CLASSES[level] ?? LEVEL_CLASSES[0]
 
-// 拉取范围：近三年，向前对齐到周日，保证整周列
-// start 从 end 克隆，保证两者时分秒一致，最后一天比较不会出现毫秒级漂移
+// buildDateRange creates the recent-history interval and aligns its first date to Sunday.
+// Cloning the end retains identical time-of-day components, so cursor comparison includes
+// the final day consistently.
 const buildDateRange = () => {
   const end = new Date()
   const start = new Date(end)
@@ -210,17 +262,30 @@ const buildDateRange = () => {
   return { start, end }
 }
 
-// 按非零用量的 25/50/75 分位划分 1-4 档，无用量为 0 档；峰值日固定为最高档
+// computeLevel assigns a token total to zero usage or one of four positive intensity bands.
+// Positive observations are supplied sorted in ascending order, and their quartile positions
+// set the intermediate cutoffs. The maximum observation always occupies the strongest band,
+// including datasets whose repeated values would otherwise fall below a quartile cutoff.
+// Empty or nonpositive usage remains level zero for inactive-date styling.
 const computeLevel = (tokens: number, sortedNonZero: number[]): number => {
   if (tokens <= 0 || sortedNonZero.length === 0) return 0
   if (tokens >= sortedNonZero[sortedNonZero.length - 1]) return 4
-  const percentile = (p: number) => sortedNonZero[Math.min(sortedNonZero.length - 1, Math.floor(sortedNonZero.length * p))]
+  // percentile selects the bounded observation index used by the positive-usage band
+  // cutoffs.
+  const percentile = (p: number) =>
+    sortedNonZero[Math.min(sortedNonZero.length - 1, Math.floor(sortedNonZero.length * p))]
   if (tokens <= percentile(0.25)) return 1
   if (tokens <= percentile(0.5)) return 2
   if (tokens <= percentile(0.75)) return 3
   return 4
 }
 
+// load fetches daily usage and expands it into a complete Sunday-aligned calendar grid.
+// Missing API dates receive zero usage, while future cells complete the final week and
+// remain inactive in interaction handlers. Intensity bands use the returned positive token
+// totals, and the local today marker refreshes at invocation. Request failures retain the
+// previously published grid and clear loading; overlapping loads publish in completion order
+// because this component has no request generation guard.
 const load = async () => {
   loading.value = true
   hoveredDay.value = null
@@ -232,7 +297,8 @@ const load = async () => {
       end_date: formatDateLocalInput(end),
       granularity: 'day',
     })
-    // 趋势接口只返回有用量的日期，按日期建索引后补零
+    // Index the sparse API results by local date before filling calendar gaps so
+    // dates without recorded usage remain selectable zero-usage cells in the grid.
     const byDate = new Map((res.trend || []).map((p) => [p.date, p]))
     const sortedNonZero = (res.trend || [])
       .map((p) => p.total_tokens)
@@ -256,7 +322,8 @@ const load = async () => {
       })
       cursor.setDate(cursor.getDate() + 1)
     }
-    // 用不可见的未来占位格补齐最后一周，保证网格按整周列对齐
+    // Complete the final week with inactive future cells so each grid column has
+    // seven positions and its month and weekday labels remain aligned.
     while (cursor.getDay() !== 0) {
       result.push({
         date: formatDateLocalInput(cursor),
@@ -278,10 +345,12 @@ const load = async () => {
   }
 }
 
-// 数据覆盖的总周数（含占位格）
+// totalWeeks includes future placeholders so the grid always occupies complete seven-day
+// columns after data has loaded.
 const totalWeeks = computed(() => Math.ceil(days.value.length / 7))
 
-// 可见周数随容器宽度自适应；测不出宽度（如测试环境）时回退 53 周
+// visibleWeeks fits recent complete weeks into the measured container, with a minimum of
+// four columns and a bounded historical fallback when measurement is unavailable.
 const visibleWeeks = computed(() => {
   const total = totalWeeks.value
   if (gridWidth.value <= 0) return total > 0 ? Math.min(FALLBACK_WEEKS, total) : FALLBACK_WEEKS
@@ -289,19 +358,25 @@ const visibleWeeks = computed(() => {
   return Math.max(4, Math.min(fit, total || fit))
 })
 
-// 只渲染最近 visibleWeeks 周，weekIndex 重新从 0 编排
+// visibleDays keeps the recent visible slice and rewrites column indices so its cells begin
+// immediately after the weekday label column.
 const visibleDays = computed(() =>
   days.value.slice(-visibleWeeks.value * 7).map((day, i) => ({
     ...day,
     weekIndex: Math.floor(i / 7),
-  }))
+  })),
 )
 
-// 月份标签：每周首格（周日）月份与上一列不同才显示；
-// 相邻月份标签间距小于 MIN_MONTH_LABEL_GAP 列时保留较新的标签。
+// MIN_MONTH_LABEL_GAP reserves three week columns between month labels; a newer month
+// replaces a crowded earlier label.
 const MIN_MONTH_LABEL_GAP = 3
+// monthItems marks month changes at Sunday columns, keeping the newer label when adjacent
+// month names would occupy overlapping grid space.
 const monthItems = computed(() => {
-  const items: { weekIndex: number; label: string }[] = []
+  const items: {
+    weekIndex: number // Visible week column index.
+    label: string // Localized abbreviated month name.
+  }[] = []
   let prevMonth = -1
   for (const day of visibleDays.value) {
     if (day.dayOfWeek !== 0) continue
@@ -318,22 +393,30 @@ const monthItems = computed(() => {
   return items
 })
 
-// 星期标签：只标周一/周三/周五，用窄格式（如英文 M/W/F、中文 一/三/五）
+// weekdayLabels displays narrow Monday, Wednesday, and Friday names to reduce text within
+// the fixed-height grid rows.
 const weekdayLabels = computed(() =>
   [1, 3, 5].map((dayOfWeek) => ({
     row: dayOfWeek,
-    // 2024-01-01 是周一，依次偏移得到对应星期
+    // January 1, 2024 is Monday, anchoring these narrow weekday labels.
     label: new Date(2024, 0, dayOfWeek).toLocaleDateString(locale.value, { weekday: 'narrow' }),
-  }))
+  })),
 )
 
+// formatMonth formats a local date as the locale's abbreviated month label.
 const formatMonth = (date: string) =>
   new Date(`${date}T00:00:00`).toLocaleDateString(locale.value, { month: 'short' })
 
+// formatDayLabel formats a local date with year, month, and day for accessible labels.
 const formatDayLabel = (date: string) =>
-  new Date(`${date}T00:00:00`).toLocaleDateString(locale.value, { year: 'numeric', month: 'short', day: 'numeric' })
+  new Date(`${date}T00:00:00`).toLocaleDateString(locale.value, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
 
-// 漫游焦点所在的日期：优先手动移动到的日期，其次是选中日，最后是今天
+// focusDate chooses a visible nonfuture tab stop, preferring manually moved focus, then the
+// selected day, then today.
 const focusDate = computed(() => {
   const visible = new Set(visibleDays.value.filter((day) => !day.future).map((day) => day.date))
   for (const candidate of [focusOverride.value, selectedDay.value, todayKey.value]) {
@@ -342,12 +425,17 @@ const focusDate = computed(() => {
   return null
 })
 
-// waveDelay 按列计算入场延迟；列数很多时压缩步长，最后一列不晚于上限
+// waveDelay formats a column entrance delay capped through an adjusted step. Wider histories
+// reduce the per-column stagger so the final columns begin within the configured maximum
+// wave duration.
 const waveDelay = (weekIndex: number): string => {
   const step = Math.min(HEATMAP_WAVE_STEP_MS, HEATMAP_WAVE_MAX_MS / Math.max(1, visibleWeeks.value))
   return `${Math.round(weekIndex * step)}ms`
 }
 
+// cellClasses derives hidden, loading, or interactive styling from a grid cell. Future
+// placeholders remain invisible, and loaded cells independently mark today, selection, and
+// the initial entrance animation.
 const cellClasses = (day: HeatmapDay) => {
   if (day.future) return 'invisible'
   if (loading.value) return 'animate-pulse bg-gray-200 dark:bg-dark-700 motion-reduce:animate-none'
@@ -362,14 +450,18 @@ const cellClasses = (day: HeatmapDay) => {
   ]
 }
 
+// cellLabel describes a local date and either its request count or empty usage.
 const cellLabel = (day: HeatmapDay): string => {
-  const usage = day.requests > 0
-    ? `${t('dashboard.requests')} ${formatNumber(day.requests)}`
-    : t('dashboard.heatmapNoUsage')
+  const usage =
+    day.requests > 0
+      ? `${t('dashboard.requests')} ${formatNumber(day.requests)}`
+      : t('dashboard.heatmapNoUsage')
   return `${formatDayLabel(day.date)}, ${usage}`
 }
 
-// selectCell 把趋势图切到这一天，按小时查看
+// selectCell selects a loaded historical date for hourly trend inspection. Loading and
+// future cells are ignored; accepted selections update keyboard focus, shared chart state,
+// and the page notification.
 const selectCell = (day: HeatmapDay) => {
   if (day.future || loading.value) return
   focusOverride.value = day.date
@@ -377,13 +469,17 @@ const selectCell = (day: HeatmapDay) => {
   emit('select-day', day.date)
 }
 
-// focusCell 把焦点移到指定日期的格子
+// focusCell records the desired keyboard date and focuses its rendered cell. A missing grid
+// or matching element leaves only the remembered date, allowing computed visibility rules to
+// choose the tab stop.
 const focusCell = (date: string) => {
   focusOverride.value = date
   gridWrapRef.value?.querySelector<HTMLElement>(`[data-date="${date}"]`)?.focus()
 }
 
-// onGridKeydown 处理格子上的方向键和选中键，越界或落到未来日期时不移动
+// onGridKeydown handles activation and directional movement from a visible heatmap cell.
+// Enter and Space select the date, arrows move through calendar positions, and out-of-range
+// or future destinations retain focus.
 const onGridKeydown = (event: KeyboardEvent) => {
   const date = (event.target as HTMLElement).dataset?.date
   if (!date || loading.value) return
@@ -401,17 +497,21 @@ const onGridKeydown = (event: KeyboardEvent) => {
   if (next && !next.future) focusCell(next.date)
 }
 
-// 焦点离开网格时收起提示
+// onGridFocusOut hides details when focus leaves the grid entirely.
 const onGridFocusOut = (event: FocusEvent) => {
   if (!gridWrapRef.value?.contains(event.relatedTarget as Node | null)) hoveredDay.value = null
 }
 
-// 最后一列入场结束后去掉入场类，之后新增的格子（如窗口变宽）直接显示
+// onWaveEnd disables entrance classes after an element marked as the final column completes
+// animation. Cells added by later resizing then appear directly rather than replaying the
+// initial wave.
 const onWaveEnd = (event: AnimationEvent) => {
   if ((event.target as HTMLElement).dataset?.waveLast) waveActive.value = false
 }
 
-// 以格子中心相对卡片的位置定位 tooltip
+// onCellHover records the date and card-relative position used by its tooltip. Future
+// placeholders are ignored, early-week rows place details below the cell, and content
+// measurement waits for the updated DOM.
 const onCellHover = (day: HeatmapDay, event: Event) => {
   if (day.future) return
   const cell = event.currentTarget as HTMLElement
@@ -429,10 +529,12 @@ const onCellHover = (day: HeatmapDay, event: Event) => {
   void updateTooltipSize()
 }
 
-// tooltip 与卡片左右边缘保持的最小距离
+// TOOLTIP_EDGE_PX reserves horizontal breathing room between measured tooltip contents and
+// the card edges during position clamping.
 const TOOLTIP_EDGE_PX = 8
 
-// 提示以格子中心定位，靠近两侧时向卡片内调整。
+// tooltipLeft clamps the hovered center using measured tooltip width, or centers an
+// oversized tooltip within the available card width.
 const tooltipLeft = computed(() => {
   const half = tooltipSize.value.width / 2
   const cardWidth = cardRef.value?.clientWidth ?? 0
@@ -442,6 +544,8 @@ const tooltipLeft = computed(() => {
   return max < min ? cardWidth / 2 : Math.min(Math.max(hoverPos.value.left, min), max)
 })
 
+// tooltipStyle retains placement while fading visibility, using measured dimensions so
+// changing dates does not animate tooltip position.
 const tooltipStyle = computed(() => {
   const above = tooltipAbove.value
   return {
@@ -453,13 +557,16 @@ const tooltipStyle = computed(() => {
     opacity: hoveredDay.value ? '1' : '0',
     overflow: 'hidden',
     boxSizing: 'border-box' as const,
-    // 定位随日期立即更新，提示只做淡入淡出。
+    // Date changes reposition immediately; opacity alone animates visibility so the
+    // tooltip does not slide across unrelated cells while pointer movement continues.
     transition: 'opacity var(--motion-fast) var(--motion-ease)',
     willChange: 'opacity',
   }
 })
 
-// 内容更新后测量自然尺寸，让 tooltip 的容器匹配当前日期的内容。
+// updateTooltipSize measures the rendered date details after Vue has updated the DOM.
+// Missing or empty content retains the prior dimensions, while successful measurements
+// include the tooltip container padding.
 const updateTooltipSize = async () => {
   await nextTick()
   const content = tooltipContentRef.value
@@ -474,7 +581,8 @@ const updateTooltipSize = async () => {
 }
 
 onMounted(() => {
-  // 监听容器宽度变化，窗口缩放时实时调整可见周数
+  // Observe the grid container rather than the window so layout changes update the
+  // visible history even when the browser viewport itself has not resized.
   if (gridWrapRef.value && typeof ResizeObserver !== 'undefined') {
     gridWidth.value = gridWrapRef.value.clientWidth
     resizeObserver = new ResizeObserver((entries) => {
@@ -485,26 +593,31 @@ onMounted(() => {
   void load()
 })
 
+// Disconnect the component-owned width observer before disposing the grid so detached
+// elements no longer drive viewport calculations.
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
 })
 
-// 供仪表盘刷新按钮联动调用
+// The page-wide refresh action awaits reload through this component ref so heatmap loading
+// participates in the dashboard refresh indicator.
 defineExpose({ reload: load })
 </script>
 
 <style scoped>
-/* 格子只有 12px,全局最小档 compact(6px)已达边长一半、近似椭圆;
-   保持迁移前 sm 尺度的 4px,用组件级局部变量承载,不占用全局档位。 */
+/* Twelve-pixel cells use a local four-pixel radius. The six-pixel compact
+   radius would round half the cell width and make the calendar cells circular. */
 .heatmap-cell {
   --radius-cell: 4px;
   border-radius: var(--radius-cell);
 }
 
-/* 可点击的格子：悬停或键盘聚焦时放大并加外环 */
+/* Interactive cells enlarge and gain an outer ring on pointer hover or keyboard focus. */
 .heatmap-cell-interactive {
   cursor: pointer;
-  transition: transform var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease);
+  transition:
+    transform var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-fast) var(--motion-ease);
 }
 
 .heatmap-cell-interactive:hover,
@@ -519,7 +632,7 @@ defineExpose({ reload: load })
   box-shadow: 0 0 0 1px theme('colors.dark.300');
 }
 
-/* 今天与选中日的描边用中性色，和绿色色阶搭配；选中日更粗更深 */
+/* Neutral outlines distinguish today and the selected date from green intensity bands; selection uses the stronger outline. */
 .heatmap-cell-today {
   outline: 1px solid theme('colors.gray.400');
   outline-offset: 1px;
@@ -538,9 +651,10 @@ defineExpose({ reload: load })
   outline-color: theme('colors.dark.50');
 }
 
-/* 首次入场：按列错峰从小到大淡入，延迟由 --wave-delay 提供 */
+/* Initial cells fade and grow with column delays supplied through --wave-delay. */
 .heatmap-cell-enter {
-  animation: heatmap-cell-enter var(--dash-heatmap-enter-ms, 320ms) var(--motion-ease) var(--wave-delay, 0ms) both;
+  animation: heatmap-cell-enter var(--dash-heatmap-enter-ms, 320ms) var(--motion-ease)
+    var(--wave-delay, 0ms) both;
 }
 
 @keyframes heatmap-cell-enter {

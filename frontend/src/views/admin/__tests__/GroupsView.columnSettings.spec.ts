@@ -2,9 +2,16 @@ import { useProtocolCatalogFixture } from '@/__tests__/helpers/protocolCatalog'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
-import type { AdminGroup } from '@/types'
+import type { AdminGroup } from '@/api/groups.types'
 import GroupsView from '../GroupsView.vue'
 
+// GroupsView.columnSettings.spec.ts checks persisted table column choices and conditional group
+// summary requests. Mounted components or pure helper calls exercise the real owning
+// implementation, while controlled API and display dependencies expose the observable updates
+// asserted by each scenario.
+
+// Hoisted group API and notification mocks let each scenario control request outcomes before
+// the mounted page imports its dependencies.
 const {
   listGroups,
   getAllGroups,
@@ -31,6 +38,8 @@ const {
   nextStep: vi.fn(),
 }))
 
+// messages provides the test translations used to locate rendered controls and inspect
+// notification text through the mounted groups page.
 const messages: Record<string, string> = {
   'admin.groups.columnSettings': 'Column Settings',
   'admin.groups.form.sortOrder': 'Manual Sort Value',
@@ -99,6 +108,7 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
+// createGroup builds a complete group fixture with the requested field overrides.
 const createGroup = (overrides: Partial<AdminGroup> = {}): AdminGroup => ({
   id: 1,
   name: 'Core Anthropic',
@@ -136,6 +146,8 @@ const createGroup = (overrides: Partial<AdminGroup> = {}): AdminGroup => ({
   ...overrides,
 })
 
+// The layout and table stubs expose page slots, row actions, and displayed columns so these
+// tests can inspect the actual page state.
 const AppLayoutStub = {
   template: '<div><slot /></div>',
 }
@@ -161,6 +173,8 @@ const DataTableStub = {
   `,
 }
 
+// SelectStub forwards selection updates through a compact test control so assertions exercise
+// the owning component data flow.
 const SelectStub = {
   props: ['modelValue', 'options', 'placeholder'],
   emits: ['update:modelValue', 'change'],
@@ -176,6 +190,8 @@ const SelectStub = {
   `,
 }
 
+// BaseDialogStub and adjacent control stubs expose test-visible slots and events while keeping
+// dialog layout outside the tested page behavior.
 const BaseDialogStub = {
   props: ['show'],
   template: '<div v-if="show"><slot /><slot name="footer" /></div>',
@@ -186,6 +202,9 @@ const IconStub = {
   template: '<span data-test="icon">{{ name }}</span>',
 }
 
+// mountView mounts the administrator page with controlled API and display dependencies. The
+// returned wrapper exposes real page actions while stubs keep unrelated layout and dialog
+// rendering outside the assertions.
 const mountView = async () => {
   const wrapper = mount(GroupsView, {
     global: {
@@ -211,17 +230,20 @@ const mountView = async () => {
   return wrapper
 }
 
+// columnKeys reads the column identifiers published by the data-table test stub.
 const columnKeys = (wrapper: ReturnType<typeof mount>) =>
   wrapper.get('[data-test="columns"]').text().split(',').filter(Boolean)
 
+// openColumnSettings clicks the page control that exposes optional table column choices.
 const openColumnSettings = async (wrapper: ReturnType<typeof mount>) => {
   await wrapper.get('button[title="Column Settings"]').trigger('click')
 }
 
+// clickColumnToggle finds the requested column action and clicks it. It asserts that the button
+// exists and waits for queued work so the caller can inspect the resulting table and storage
+// state.
 const clickColumnToggle = async (wrapper: ReturnType<typeof mount>, label: string) => {
-  const button = wrapper
-    .findAll('button')
-    .find((item) => item.text().includes(label))
+  const button = wrapper.findAll('button').find((item) => item.text().includes(label))
   expect(button, `column toggle ${label}`).toBeTruthy()
   await button!.trigger('click')
   await flushPromises()
@@ -263,6 +285,8 @@ describe('admin GroupsView column settings', () => {
     localStorage.clear()
   })
 
+  // The groups page mounts with the Live capability endpoint mocked. Initialization requests
+  // that capability once so repeated consumers share the page's recorded result.
   it('loads the Live capability once on mount', async () => {
     const wrapper = await mountView()
 
@@ -270,16 +294,21 @@ describe('admin GroupsView column settings', () => {
     wrapper.unmount()
   })
 
+  // The group toolbar and initial list request are inspected together. Exclusive-group
+  // filtering is absent from both surfaces so the visible controls match the submitted query.
   it('omits the exclusive-group filter from the toolbar and list request', async () => {
     const wrapper = await mountView()
 
-    // 筛选项已聚合到按钮，展开后只保留平台和状态筛选。
+    // The filter panel exposes the currently supported filter controls after the toolbar button
+    // is opened.
     await wrapper.get('button[aria-label="common.filter"]').trigger('click')
     await flushPromises()
     expect(wrapper.findAll('select')).toHaveLength(1)
     expect(listGroups.mock.calls[0]?.[2]).not.toHaveProperty('is_exclusive')
   })
 
+  // A first-time administrator has no stored column preference. The table hides the ID column
+  // and internal sort values according to the configured initial visibility rules.
   it('hides the id column and internal sort values by default', async () => {
     const wrapper = await mountView()
 
@@ -299,6 +328,8 @@ describe('admin GroupsView column settings', () => {
     expect(localStorage.getItem('group-column-settings-version')).toBe('2')
   })
 
+  // The create form is opened from the group page. It exposes group settings while omitting a
+  // manual sort-order input, leaving ordering to the dedicated sorting action.
   it('does not expose a manual sort value in the create form', async () => {
     const wrapper = await mountView()
 
@@ -307,6 +338,8 @@ describe('admin GroupsView column settings', () => {
     expect(wrapper.text()).not.toContain('Manual Sort Value')
   })
 
+  // Saved hidden keys include known and unknown columns. Mount restores valid optional keys and
+  // ignores stale entries so unsupported columns cannot distort table visibility.
   it('applies saved hidden columns on mount and ignores unknown keys', async () => {
     localStorage.setItem(
       'group-hidden-columns',
@@ -329,9 +362,13 @@ describe('admin GroupsView column settings', () => {
     ])
   })
 
+  // Stored column preferences predate the current settings version. Migration adds the new
+  // default-hidden ID column and persists the upgraded version alongside the resulting
+  // preference set.
   it('auto-hides id for existing saved column prefs after version bump', async () => {
     localStorage.setItem('group-hidden-columns', JSON.stringify(['usage']))
-    // 没有版本键时按版本 1 处理，并迁移到版本 2。
+    // An absent preference version selects version one, which applies the migration introducing
+    // version two's default-hidden column.
 
     const wrapper = await mountView()
 
@@ -352,6 +389,9 @@ describe('admin GroupsView column settings', () => {
     expect(localStorage.getItem('group-column-settings-version')).toBe('2')
   })
 
+  // The stored column preference version is malformed. Loading treats it as the initial version
+  // and applies pending default-hidden migrations so the current table reaches valid preference
+  // state.
   it('treats an invalid column settings version as version 1', async () => {
     localStorage.setItem('group-hidden-columns', JSON.stringify([]))
     localStorage.setItem('group-column-settings-version', 'invalid')
@@ -363,6 +403,8 @@ describe('admin GroupsView column settings', () => {
     expect(localStorage.getItem('group-column-settings-version')).toBe('2')
   })
 
+  // An optional column is toggled through the settings menu. The rendered table changes and
+  // local storage records the updated hidden keys for the next page mount.
   it('toggles a column and persists hidden column keys', async () => {
     const wrapper = await mountView()
 
@@ -385,6 +427,8 @@ describe('admin GroupsView column settings', () => {
     )
   })
 
+  // The ID column begins hidden under the default configuration. Enabling it through column
+  // settings adds the column to the visible table and updates the stored preference.
   it('can show the id column from column settings', async () => {
     const wrapper = await mountView()
 
@@ -404,14 +448,25 @@ describe('admin GroupsView column settings', () => {
       'status',
       'actions',
     ])
+    // columns defines the displayed table fields and their translated headings, ordering, and
+    // sorting controls.
     const columns = wrapper.findComponent(DataTableStub).props('columns')
-    expect(columns.find((column: { key: string }) => column.key === 'id')).toMatchObject({
+    expect(
+      columns.find(
+        (column: {
+          key: string // selected property identifier
+        }) => column.key === 'id',
+      ),
+    ).toMatchObject({
       key: 'id',
       sortable: true,
     })
     expect(localStorage.getItem('group-hidden-columns')).toBe(JSON.stringify([]))
   })
 
+  // Usage and capacity columns begin hidden and are then revealed individually. Their summary
+  // endpoints are skipped until needed, and showing each column requests its corresponding
+  // data.
   it('skips hidden usage and capacity fetches until those columns are shown', async () => {
     localStorage.setItem('group-hidden-columns', JSON.stringify(['usage', 'capacity']))
 

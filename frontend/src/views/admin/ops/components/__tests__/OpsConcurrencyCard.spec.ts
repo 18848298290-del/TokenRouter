@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import OpsConcurrencyCard from '../OpsConcurrencyCard.vue'
 
+// OpsConcurrencyCard.spec.ts checks concurrency dimensions, source selection,
+// and group filtering with mocked Ops responses. Mounted controls exercise the
+// real row builders, while assertions inspect both request filters and the
+// resulting scrollable card content.
+
+// Independent API doubles reveal which source is loaded when the card changes
+// its selected concurrency dimension.
 const mockGetConcurrencyStats = vi.fn()
 const mockGetProviderAvailabilityStats = vi.fn()
 const mockGetUserConcurrencyStats = vi.fn()
@@ -24,6 +31,8 @@ vi.mock('vue-i18n', async (importOriginal) => {
   }
 })
 
+// concurrencyResponse supplies one platform, group, and provider with matching
+// identities and measured active, capacity, and queue counters.
 const concurrencyResponse = {
   enabled: true,
   platform: {
@@ -61,6 +70,8 @@ const concurrencyResponse = {
   },
 }
 
+// availabilityResponse shares those fixture identities so the component can join
+// availability observations to the corresponding concurrency rows.
 const availabilityResponse = {
   enabled: true,
   platform: {
@@ -120,6 +131,9 @@ describe('OpsConcurrencyCard', () => {
     })
   })
 
+  // The card switches through platform, group, provider, and user dimensions
+  // using its controls. Each selection must show the corresponding identity and
+  // load the appropriate API source.
   it('支持平台、分组、提供商、用户四种维度并切换对应数据源', async () => {
     const wrapper = mount(OpsConcurrencyCard, {
       props: {
@@ -132,7 +146,7 @@ describe('OpsConcurrencyCard', () => {
     expect(wrapper.get('h3').classes()).toContain('whitespace-nowrap')
     expect(wrapper.get('[role="group"]').classes()).toContain('grid-cols-4')
     expect(wrapper.get('[data-test="concurrency-refresh"]').classes()).toEqual(
-      expect.arrayContaining(['h-7', 'w-7', 'justify-center', 'p-0'])
+      expect.arrayContaining(['h-7', 'w-7', 'justify-center', 'p-0']),
     )
     expect(wrapper.text()).toContain('ANTHROPIC')
 
@@ -154,6 +168,9 @@ describe('OpsConcurrencyCard', () => {
     expect(mockGetConcurrencyStats).toHaveBeenCalledTimes(4)
   })
 
+  // A selected group starts the card at provider detail inside a fixed-height
+  // container. The query must include platform and group constraints while the
+  // remaining card area stays scrollable.
   it('在固定高度卡片内使用剩余空间滚动，并按分组筛选提供商', async () => {
     const wrapper = mount(OpsConcurrencyCard, {
       props: {
@@ -172,6 +189,9 @@ describe('OpsConcurrencyCard', () => {
     expect(mockGetConcurrencyStats).toHaveBeenCalledWith('anthropic', 7)
   })
 
+  // The availability response includes a group outside the selected identifier.
+  // Switching to group display must retain the selected group and suppress that
+  // extra response row.
   it('分组视图不会展示筛选分组之外的后端数据', async () => {
     mockGetProviderAvailabilityStats.mockResolvedValue({
       ...availabilityResponse,

@@ -1,14 +1,15 @@
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ProfileEditForm from '@/components/user/profile/ProfileEditForm.vue'
-import type { User } from '@/types'
+import type { User } from '@/api/identity.types'
 
-const {
-  updateProfileMock,
-  showSuccessMock,
-  showErrorMock,
-  authStoreState,
-} = vi.hoisted(() => ({
+// ProfileEditForm.spec.ts checks username editing through the production profile form with a
+// controlled API response and auth store. The test protects the submitted field scope and
+// publication of the returned profile after successful form submission.
+
+// Hoisted request, notification, and auth-state mocks keep the production component and test
+// assertions attached to the same mutable account response.
+const { updateProfileMock, showSuccessMock, showErrorMock, authStoreState } = vi.hoisted(() => ({
   updateProfileMock: vi.fn(),
   showSuccessMock: vi.fn(),
   showErrorMock: vi.fn(),
@@ -54,6 +55,9 @@ vi.mock('vue-i18n', async (importOriginal) => {
   }
 })
 
+// createUser supplies a complete ordinary account fixture with optional scenario overrides.
+// Callers replace binding, source, or balance fields while retaining profile fields required
+// by the mounted component.
 function createUser(overrides: Partial<User> = {}): User {
   return {
     id: 5,
@@ -81,6 +85,9 @@ describe('ProfileEditForm', () => {
     authStoreState.user = null
   })
 
+  // The user changes the username and submits the profile form. The test protects a
+  // username-only request, publication of the returned account record, and successful update
+  // feedback.
   it('updates username without sending email', async () => {
     const updatedUser = createUser()
     updateProfileMock.mockResolvedValue(updatedUser)

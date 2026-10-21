@@ -1,8 +1,12 @@
 <template>
-  <!-- 跨页校验定位价格字段时，先展开条目以便聚焦并显示错误。 -->
-  <div class="rounded-surface border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-800" @form-field-reveal="collapsed = false">
+  <!-- Reveal the card before field validation requests focus so the targeted price input and its error can be displayed. -->
+  <div
+    class="rounded-surface border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-800"
+    @form-field-reveal="collapsed = false"
+  >
     <!-- Collapsed summary header (clickable) -->
-    <div data-icon-trigger
+    <div
+      data-icon-trigger
       class="flex cursor-pointer select-none items-center gap-2"
       @click="collapsed = !collapsed"
     >
@@ -17,7 +21,7 @@
 
       <!-- Summary: model tags + billing badge -->
       <div v-if="collapsed" class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-        <!-- Compact model tags (show first 3) -->
+        <!-- Show three model tags and summarize remaining models by count to keep the collapsed card header compact. -->
         <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           <span
             v-for="(m, i) in entry.models.slice(0, 3)"
@@ -27,16 +31,10 @@
           >
             {{ m }}
           </span>
-          <span
-            v-if="entry.models.length > 3"
-            class="whitespace-nowrap text-xs text-gray-400"
-          >
+          <span v-if="entry.models.length > 3" class="whitespace-nowrap text-xs text-gray-400">
             +{{ entry.models.length - 3 }}
           </span>
-          <span
-            v-if="entry.models.length === 0"
-            class="text-xs italic text-gray-400"
-          >
+          <span v-if="entry.models.length === 0" class="text-xs italic text-gray-400">
             {{ t('admin.pricing.form.noModels', '未添加模型') }}
           </span>
         </div>
@@ -48,43 +46,71 @@
           {{ billingModeLabel }}
         </span>
         <span
-          v-if="entry.price_multiplier !== null && entry.price_multiplier !== undefined && entry.price_multiplier !== ''"
+          v-if="
+            entry.price_multiplier !== null &&
+            entry.price_multiplier !== undefined &&
+            entry.price_multiplier !== ''
+          "
           class="flex-shrink-0 rounded-compact bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-dark-600 dark:text-gray-300"
         >
           {{ entry.price_multiplier }}x
         </span>
         <span
-          v-if="props.showFastModeMultiplier && entry.billing_mode === 'token' && entry.fast_mode_multiplier !== null && entry.fast_mode_multiplier !== undefined && entry.fast_mode_multiplier !== ''"
+          v-if="
+            props.showFastModeMultiplier &&
+            entry.billing_mode === 'token' &&
+            entry.fast_mode_multiplier !== null &&
+            entry.fast_mode_multiplier !== undefined &&
+            entry.fast_mode_multiplier !== ''
+          "
           class="flex-shrink-0 rounded-compact bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
         >
           Fast {{ entry.fast_mode_multiplier }}x
         </span>
         <span
-          v-if="props.enableTierMultipliers && entry.billing_mode === 'token' && effectiveFastMultiplier !== null && effectiveFastMultiplier !== undefined && effectiveFastMultiplier !== ''"
+          v-if="
+            props.enableTierMultipliers &&
+            entry.billing_mode === 'token' &&
+            effectiveFastMultiplier !== null &&
+            effectiveFastMultiplier !== undefined &&
+            effectiveFastMultiplier !== ''
+          "
           class="flex-shrink-0 rounded-compact bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
         >
           Fast {{ effectiveFastMultiplier }}x
         </span>
         <span
-          v-if="props.enableTierMultipliers && entry.billing_mode === 'token' && entry.flex_multiplier !== null && entry.flex_multiplier !== undefined && entry.flex_multiplier !== ''"
+          v-if="
+            props.enableTierMultipliers &&
+            entry.billing_mode === 'token' &&
+            entry.flex_multiplier !== null &&
+            entry.flex_multiplier !== undefined &&
+            entry.flex_multiplier !== ''
+          "
           class="flex-shrink-0 rounded-compact bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
         >
           Flex {{ entry.flex_multiplier }}x
         </span>
         <span
-          v-if="props.enableTierMultipliers && entry.billing_mode === 'token' && entry.max_reasoning_effort_multiplier !== null && entry.max_reasoning_effort_multiplier !== undefined && entry.max_reasoning_effort_multiplier !== ''"
+          v-if="
+            props.enableTierMultipliers &&
+            entry.billing_mode === 'token' &&
+            entry.max_reasoning_effort_multiplier !== null &&
+            entry.max_reasoning_effort_multiplier !== undefined &&
+            entry.max_reasoning_effort_multiplier !== ''
+          "
           class="flex-shrink-0 rounded-compact bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
         >
           Max {{ entry.max_reasoning_effort_multiplier }}x
         </span>
       </div>
 
-      <!-- Expanded: show the label "Pricing Entry" or similar -->
+      <!-- The expanded header displays the translated price-entry label. -->
       <div v-else class="flex-1 text-xs font-medium text-gray-500 dark:text-gray-400">
         {{ t('admin.pricing.form.pricingEntry', '定价配置') }}
       </div>
 
-      <!-- Remove button (always visible, stop propagation) -->
+      <!-- The removable card stops click propagation on deletion so the action does not also toggle its collapsed state. -->
       <button
         v-if="removable"
         type="button"
@@ -95,15 +121,17 @@
       </button>
     </div>
 
-    <!-- 折叠保留输入组件，校验定位可通过 form-field-reveal 立即展开。 -->
+    <!-- Collapsing retains mounted inputs, and form-field-reveal expands the card before validation attempts to focus an invalid field. -->
     <Collapse :open="!collapsed">
       <div>
         <!-- Header: Models + Billing Mode -->
         <div
           class="mt-3 grid grid-cols-1 items-start gap-2"
-          :class="props.showFastModeMultiplier && entry.billing_mode === 'token'
-            ? 'sm:grid-cols-[minmax(0,1fr)_10rem_8rem_8rem]'
-            : 'sm:grid-cols-[minmax(0,1fr)_10rem_8rem]'"
+          :class="
+            props.showFastModeMultiplier && entry.billing_mode === 'token'
+              ? 'sm:grid-cols-[minmax(0,1fr)_10rem_8rem_8rem]'
+              : 'sm:grid-cols-[minmax(0,1fr)_10rem_8rem]'
+          "
         >
           <div>
             <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
@@ -113,7 +141,9 @@
               :models="entry.models"
               :platform="props.platform"
               @update:models="onModelsUpdate($event)"
-              :placeholder="t('admin.pricing.form.modelsPlaceholder', '输入模型名后按回车添加，支持通配符 *')"
+              :placeholder="
+                t('admin.pricing.form.modelsPlaceholder', '输入模型名后按回车添加，支持通配符 *')
+              "
               class="mt-1"
             />
           </div>
@@ -168,43 +198,111 @@
           </label>
           <div class="mt-1 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.pricing.form.inputPrice', '输入') }}</label>
-              <input :value="entry.input_price" @input="emitField('input_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')" />
+              <label class="text-xs text-gray-400">{{
+                t('admin.pricing.form.inputPrice', '输入')
+              }}</label>
+              <input
+                :value="entry.input_price"
+                @input="emitField('input_price', ($event.target as HTMLInputElement).value)"
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.pricing.form.outputPrice', '输出') }}</label>
-              <input :value="entry.output_price" @input="emitField('output_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')" />
+              <label class="text-xs text-gray-400">{{
+                t('admin.pricing.form.outputPrice', '输出')
+              }}</label>
+              <input
+                :value="entry.output_price"
+                @input="emitField('output_price', ($event.target as HTMLInputElement).value)"
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.pricing.form.cacheWrite5mPrice', '缓存写入（5m）') }}</label>
-              <input :value="entry.cache_write_price" @input="emitField('cache_write_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')" />
+              <label class="text-xs text-gray-400">{{
+                t('admin.pricing.form.cacheWrite5mPrice', '缓存写入（5m）')
+              }}</label>
+              <input
+                :value="entry.cache_write_price"
+                @input="emitField('cache_write_price', ($event.target as HTMLInputElement).value)"
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.pricing.form.cacheWrite1hPrice', '缓存写入（1h）') }}</label>
-              <input :value="entry.cache_write_1h_price" @input="emitField('cache_write_1h_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')" />
+              <label class="text-xs text-gray-400">{{
+                t('admin.pricing.form.cacheWrite1hPrice', '缓存写入（1h）')
+              }}</label>
+              <input
+                :value="entry.cache_write_1h_price"
+                @input="
+                  emitField('cache_write_1h_price', ($event.target as HTMLInputElement).value)
+                "
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.pricing.form.cacheReadPrice', '缓存读取') }}</label>
-              <input :value="entry.cache_read_price" @input="emitField('cache_read_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')" />
+              <label class="text-xs text-gray-400">{{
+                t('admin.pricing.form.cacheReadPrice', '缓存读取')
+              }}</label>
+              <input
+                :value="entry.cache_read_price"
+                @input="emitField('cache_read_price', ($event.target as HTMLInputElement).value)"
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.pricing.form.imageInputPrice', '图片输入') }}</label>
-              <input :value="entry.image_input_price" @input="emitField('image_input_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')" />
+              <label class="text-xs text-gray-400">{{
+                t('admin.pricing.form.imageInputPrice', '图片输入')
+              }}</label>
+              <input
+                :value="entry.image_input_price"
+                @input="emitField('image_input_price', ($event.target as HTMLInputElement).value)"
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')"
+              />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.pricing.form.imageTokenPrice', '图片输出') }}</label>
-              <input :value="entry.image_output_price" @input="emitField('image_output_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')" />
+              <label class="text-xs text-gray-400">{{
+                t('admin.pricing.form.imageTokenPrice', '图片输出')
+              }}</label>
+              <input
+                :value="entry.image_output_price"
+                @input="emitField('image_output_price', ($event.target as HTMLInputElement).value)"
+                type="number"
+                step="any"
+                min="0"
+                class="input mt-0.5 text-sm"
+                :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')"
+              />
             </div>
           </div>
 
-          <div v-if="props.enableTierMultipliers" class="mt-3 grid max-w-2xl grid-cols-1 gap-2 sm:grid-cols-3">
+          <div
+            v-if="props.enableTierMultipliers"
+            class="mt-3 grid max-w-2xl grid-cols-1 gap-2 sm:grid-cols-3"
+          >
             <div>
               <label class="text-xs text-gray-400">
                 {{ t('admin.pricing.form.fastMultiplier', 'Fast / Priority 倍率') }}
@@ -241,7 +339,12 @@
               </label>
               <input
                 :value="entry.max_reasoning_effort_multiplier"
-                @input="emitField('max_reasoning_effort_multiplier', ($event.target as HTMLInputElement).value)"
+                @input="
+                  emitField(
+                    'max_reasoning_effort_multiplier',
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
                 type="number"
                 step="any"
                 min="0.000001"
@@ -252,7 +355,7 @@
             </div>
           </div>
 
-          <!-- 分组和共享价格配置使用相同的上下文区间编辑器。 -->
+          <!-- Group and shared price configurations use the same context interval editor. -->
           <RuleListEditor
             class="mt-3"
             :items="entry.intervals || []"
@@ -288,8 +391,15 @@
             <span class="ml-1 font-normal text-gray-400">$</span>
           </label>
           <div class="mt-1 w-48">
-            <input :value="entry.per_request_price" @input="emitField('per_request_price', ($event.target as HTMLInputElement).value)"
-              type="number" step="any" min="0" class="input text-sm" :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')" />
+            <input
+              :value="entry.per_request_price"
+              @input="emitField('per_request_price', ($event.target as HTMLInputElement).value)"
+              type="number"
+              step="any"
+              min="0"
+              class="input text-sm"
+              :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')"
+            />
           </div>
 
           <!-- Tiers -->
@@ -313,27 +423,42 @@
           </RuleListEditor>
         </div>
 
-        <!-- 图片或视频计费模式。 -->
+        <!-- Image and video pricing fields. -->
         <div v-else-if="entry.billing_mode === 'image' || entry.billing_mode === 'video'">
-          <!-- Default image price (per-request, same as per_request mode) -->
+          <!-- The default media amount uses USD per second for video and USD per image for image billing. -->
           <label class="mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400">
-            {{ entry.billing_mode === 'video'
-              ? t('admin.pricing.form.defaultVideoPrice', '默认视频价格（未命中层级时使用）')
-              : t('admin.pricing.form.defaultImagePrice', '默认图片价格（未命中层级时使用）') }}
-            <span class="ml-1 font-normal text-gray-400">{{ entry.billing_mode === 'video' ? '$/s' : '$/image' }}</span>
+            {{
+              entry.billing_mode === 'video'
+                ? t('admin.pricing.form.defaultVideoPrice', '默认视频价格（未命中层级时使用）')
+                : t('admin.pricing.form.defaultImagePrice', '默认图片价格（未命中层级时使用）')
+            }}
+            <span class="ml-1 font-normal text-gray-400">{{
+              entry.billing_mode === 'video' ? '$/s' : '$/image'
+            }}</span>
           </label>
           <div class="mt-1 w-48">
-            <input :value="entry.per_request_price" @input="emitField('per_request_price', ($event.target as HTMLInputElement).value)"
-              type="number" step="any" min="0" class="input text-sm" :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')" />
+            <input
+              :value="entry.per_request_price"
+              @input="emitField('per_request_price', ($event.target as HTMLInputElement).value)"
+              type="number"
+              step="any"
+              min="0"
+              class="input text-sm"
+              :placeholder="t('admin.pricing.form.pricePlaceholder', '默认')"
+            />
           </div>
 
-          <!-- Image tiers -->
+          <!-- Resolution-based image and video tiers. -->
           <RuleListEditor
             class="mt-3"
             :items="entry.intervals || []"
             @remove="removeInterval"
             test-id="pricing-media-intervals"
-            :title="entry.billing_mode === 'video' ? t('admin.pricing.form.videoTiers') : t('admin.pricing.form.imageTiers')"
+            :title="
+              entry.billing_mode === 'video'
+                ? t('admin.pricing.form.videoTiers')
+                : t('admin.pricing.form.imageTiers')
+            "
             :add-label="t('admin.pricing.form.addTier')"
             @add="addMediaTier"
           >
@@ -366,59 +491,101 @@ import { perTokenToMTok, getPlatformTagClass } from './types'
 import type { BillingMode } from '@/api/admin/pricing'
 import pricingAPI from '@/api/admin/pricing'
 
+// PricingEntryCard.vue edits one model pricing entry and its optional intervals and schedules.
+// Parent-owned entries are published through update events, with card collapse state retained
+// locally. Clearing fields keeps null distinct from a configured free price, and service-tier
+// controls can display a legacy free Fast setting.
+//
+// Changing billing mode resets intervals and clears tier multipliers and scheduled periods
+// when leaving token billing. Interval edits retain row objects so input focus survives parent
+// updates. Adding models can fetch a default quote when the inspected token-price fields are
+// empty; the result fills converted prices and query failures leave manual editing available.
+
+// t resolves the current locale messages used by labels, validation, and action notifications.
 const { t } = useI18n()
 
-const props = withDefaults(defineProps<{
-  removable?: boolean
-  entry: PricingFormEntry
-  platform?: string
-  showFastModeMultiplier?: boolean
-  hideTokenIntervals?: boolean
-  enableTimePricing?: boolean
-  enableTierMultipliers?: boolean
-}>(), {
-  removable: true,
-  showFastModeMultiplier: false,
-  hideTokenIntervals: false,
-  enableTimePricing: false,
-  enableTierMultipliers: false,
-})
+// props supplies parent-owned editor values and display controls consumed by the fields below.
+const props = withDefaults(
+  defineProps<{
+    removable?: boolean // card removal enabled
+    // entry is the parent-owned card draft. Scalar updates emit a copied entry, while interval
+    // edits retain and mutate the existing row object.
+    entry: PricingFormEntry
+    platform?: string // provider platform identifier
+    // showFastModeMultiplier exposes the legacy Fast field for token billing. The default is
+    // false when the parent omits this control option.
+    showFastModeMultiplier?: boolean
+    // hideTokenIntervals suppresses the token interval editor when true. Existing interval data
+    // remains in the draft until another operation changes it.
+    hideTokenIntervals?: boolean
+    enableTimePricing?: boolean // schedule editor enabled
+    enableTierMultipliers?: boolean // tier multiplier controls enabled
+  }>(),
+  {
+    removable: true,
+    showFastModeMultiplier: false,
+    hideTokenIntervals: false,
+    enableTimePricing: false,
+    enableTierMultipliers: false,
+  },
+)
 
+// emit forwards typed edits and actions to the parent that owns the displayed draft.
 const emit = defineEmits<{
-  update: [entry: PricingFormEntry]
-  remove: []
+  update: [
+    entry: PricingFormEntry, // replacement price draft
+  ] // replacement edited row value
+  remove: [] // remove selected row
 }>()
 
-// Collapse state: entries with existing models default to collapsed
+// collapsed starts closed for entries with model tags and remains local so parent field updates
+// retain the card state.
 const collapsed = ref(props.entry.models.length > 0)
 
+// billingModeOptions and billingModeLabel describe the supported billing modes shown in the
+// selector and collapsed price-card header.
 const billingModeOptions = computed(() => [
   { value: 'token', label: 'Token' },
   { value: 'per_request', label: t('admin.pricing.billingMode.perRequest', '按次') },
   { value: 'image', label: t('admin.pricing.billingMode.image', '图片（按次）') },
-  { value: 'video', label: t('admin.pricing.billingMode.video', '视频') }
+  { value: 'video', label: t('admin.pricing.billingMode.video', '视频') },
 ])
 
 const billingModeLabel = computed(() => {
-  const opt = billingModeOptions.value.find(o => o.value === props.entry.billing_mode)
+  const opt = billingModeOptions.value.find((o) => o.value === props.entry.billing_mode)
   return opt ? opt.label : props.entry.billing_mode
 })
 
+// maxReasoningEffortMultiplierPlaceholder selects the Fable 5.1 default hint when any model
+// pattern matches that configured family expression.
 const maxReasoningEffortMultiplierPlaceholder = computed(() =>
-  props.entry.models.some(model => /fable(?:-5-1|-5\.1|5\.1|51)(?!\d)/i.test(model))
+  props.entry.models.some((model) => /fable(?:-5-1|-5\.1|5\.1|51)(?!\d)/i.test(model))
     ? t('admin.pricing.form.fable51DefaultMaxReasoningMultiplier', '默认 3')
     : t('admin.pricing.form.multiplierPlaceholder', '沿用默认'),
 )
 
-// 旧 Fast 倍率允许零值，未编辑时保留旧字段；用户修改后统一写新版正数倍率。
-const effectiveFastMultiplier = computed(() => props.entry.fast_multiplier ?? props.entry.fast_mode_multiplier)
-const preservingLegacyFreeFast = computed(() => props.entry.fast_multiplier == null && props.entry.fast_mode_multiplier === 0)
+// effectiveFastMultiplier prefers the current Fast field, while preservingLegacyFreeFast marks
+// a legacy zero that remains visible until edited.
+const effectiveFastMultiplier = computed(
+  () => props.entry.fast_multiplier ?? props.entry.fast_mode_multiplier,
+)
+const preservingLegacyFreeFast = computed(
+  () => props.entry.fast_multiplier == null && props.entry.fast_mode_multiplier === 0,
+)
 
+// emitField updates one price input in a copied entry. Empty input becomes null, and editing
+// the current Fast multiplier clears the legacy Fast field so the new field takes precedence.
 function emitField(field: keyof PricingFormEntry, value: string) {
-  emit('update', { ...props.entry, ...(field === 'fast_multiplier' ? { fast_mode_multiplier: null } : {}), [field]: value === '' ? null : value })
+  emit('update', {
+    ...props.entry,
+    ...(field === 'fast_multiplier' ? { fast_mode_multiplier: null } : {}),
+    [field]: value === '' ? null : value,
+  })
 }
 
-// 服务层级倍率适用于 token 计费，切换模式时清除隐藏字段。
+// onBillingModeUpdate publishes the selected billing mode and resets its interval rows. Leaving
+// token mode also clears service-tier multipliers and schedule periods, because those hidden
+// fields apply to token billing.
 function onBillingModeUpdate(billingMode: BillingMode) {
   emit('update', {
     ...props.entry,
@@ -426,71 +593,115 @@ function onBillingModeUpdate(billingMode: BillingMode) {
     fast_mode_multiplier: billingMode === 'token' ? props.entry.fast_mode_multiplier : null,
     fast_multiplier: billingMode === 'token' ? props.entry.fast_multiplier : null,
     flex_multiplier: billingMode === 'token' ? props.entry.flex_multiplier : null,
-    max_reasoning_effort_multiplier: billingMode === 'token' ? props.entry.max_reasoning_effort_multiplier : null,
+    max_reasoning_effort_multiplier:
+      billingMode === 'token' ? props.entry.max_reasoning_effort_multiplier : null,
     intervals: [],
-    time_pricing: billingMode === 'token'
-      ? props.entry.time_pricing
-      : { ...props.entry.time_pricing, periods: [] },
+    time_pricing:
+      billingMode === 'token'
+        ? props.entry.time_pricing
+        : { ...props.entry.time_pricing, periods: [] },
   })
 }
 
+// addInterval appends an empty token or per-request row with its next sort position.
 function addInterval() {
   const intervals = [...(props.entry.intervals || [])]
   intervals.push({
-    min_tokens: 0, max_tokens: null, tier_label: '',
-    input_price: null, output_price: null, cache_write_price: null, cache_write_1h_price: null,
-    cache_read_price: null, per_request_price: null,
-    input_multiplier: null, output_multiplier: null,
-    cache_write_multiplier: null, cache_read_multiplier: null,
-    sort_order: intervals.length
+    min_tokens: 0,
+    max_tokens: null,
+    tier_label: '',
+    input_price: null,
+    output_price: null,
+    cache_write_price: null,
+    cache_write_1h_price: null,
+    cache_read_price: null,
+    per_request_price: null,
+    input_multiplier: null,
+    output_multiplier: null,
+    cache_write_multiplier: null,
+    cache_read_multiplier: null,
+    sort_order: intervals.length,
   })
   emit('update', { ...props.entry, intervals })
 }
 
+// addMediaTier appends a media interval with a suggested resolution label. Video and image
+// modes use separate label sequences; rows beyond the suggestions begin with an empty label for
+// manual entry.
 function addMediaTier() {
   const intervals = [...(props.entry.intervals || [])]
-  const labels = props.entry.billing_mode === 'video'
-    ? ['480p', '720p', '1080p']
-    : ['1K', '2K', '4K', 'HD']
+  const labels =
+    props.entry.billing_mode === 'video' ? ['480p', '720p', '1080p'] : ['1K', '2K', '4K', 'HD']
   intervals.push({
-    min_tokens: 0, max_tokens: null, tier_label: labels[intervals.length] || '',
-    input_price: null, output_price: null, cache_write_price: null, cache_write_1h_price: null,
-    cache_read_price: null, per_request_price: null,
-    input_multiplier: null, output_multiplier: null,
-    cache_write_multiplier: null, cache_read_multiplier: null,
-    sort_order: intervals.length
+    min_tokens: 0,
+    max_tokens: null,
+    tier_label: labels[intervals.length] || '',
+    input_price: null,
+    output_price: null,
+    cache_write_price: null,
+    cache_write_1h_price: null,
+    cache_read_price: null,
+    per_request_price: null,
+    input_multiplier: null,
+    output_multiplier: null,
+    cache_write_multiplier: null,
+    cache_read_multiplier: null,
+    sort_order: intervals.length,
   })
   emit('update', { ...props.entry, intervals })
 }
 
+// updateInterval applies edited fields to the parent-owned interval row and emits a copied
+// entry with a copied interval array. Callers supply an existing interval index and return the
+// emitted entry through props. Object.assign retains the edited child object, and the copied
+// array also retains the other interval objects. RuleListEditor uses these identities as display
+// keys, so the parent round trip keeps interval inputs mounted and preserves the active input
+// while its field values change.
 function updateInterval(idx: number, updated: IntervalFormEntry) {
   const intervals = [...(props.entry.intervals || [])]
-  // 原地更新行字段，输入框继续使用同一行对象。
+  // Keep the existing interval row object when publishing its copied list so the mounted input
+  // continues editing the same row.
   Object.assign(intervals[idx], updated)
   emit('update', { ...props.entry, intervals })
 }
 
+// removeInterval emits a copied interval list with the indexed row removed.
 function removeInterval(idx: number) {
   const intervals = [...(props.entry.intervals || [])]
   intervals.splice(idx, 1)
   emit('update', { ...props.entry, intervals })
 }
 
+// onModelsUpdate publishes model tags and optionally fills their first added model's default
+// token prices. Existing values in the five inspected token-price fields suppress lookup, and a
+// missing quote leaves the current entry available for manual editing. Quote amounts are
+// converted to the form's million-token units.
+//
+// The request is not canceled or checked against a later model edit. Its successful response
+// merges with the current entry and restores the model array passed to this invocation; lookup
+// failures are consumed.
 async function onModelsUpdate(newModels: string[]) {
   const oldModels = props.entry.models
   emit('update', { ...props.entry, models: newModels })
 
-  // 只在新增模型且当前无价格时自动填充
-  const addedModels = newModels.filter(m => !oldModels.includes(m))
+  // A newly added model can supply initial prices when the card has no configured values in the
+  // inspected token fields.
+  const addedModels = newModels.filter((m) => !oldModels.includes(m))
   if (addedModels.length === 0) return
 
-  // 检查是否所有价格字段都为空
+  // Inspect the five token amount fields that guard automatic catalog price filling for this
+  // card.
   const e = props.entry
-  const hasPrice = e.input_price != null || e.output_price != null ||
-                   e.cache_write_price != null || e.cache_write_1h_price != null || e.cache_read_price != null
+  const hasPrice =
+    e.input_price != null ||
+    e.output_price != null ||
+    e.cache_write_price != null ||
+    e.cache_write_1h_price != null ||
+    e.cache_read_price != null
   if (hasPrice) return
 
-  // 查询第一个新增模型的默认价格
+  // Use the first newly added model as the catalog reference for the initial token price
+  // values.
   try {
     const result = await pricingAPI.getModelDefaultPricing(addedModels[0])
     if (result.found) {
@@ -506,7 +717,8 @@ async function onModelsUpdate(newModels: string[]) {
       })
     }
   } catch {
-    // 查询失败不影响用户操作
+    // Catalog lookup is optional; keeping the draft after failure lets administrators continue
+    // entering the model and prices manually.
   }
 }
 </script>

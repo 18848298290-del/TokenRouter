@@ -5,53 +5,105 @@ import RequestDetailCard from '../RequestDetailCard.vue'
 import requests from '@/i18n/locales/en/requests'
 import type { RequestDetail } from '@/api/requests'
 
+// RequestDetailCard.spec.ts tests request identifier ownership and timing captions in the
+// detail card. Shallow mounting keeps the card selection logic active while nested
+// presentation components and identifier links are replaced for focused text assertions.
+
 vi.mock('vue-i18n', async (importOriginal) => ({
-  ...await importOriginal<typeof import('vue-i18n')>(),
+  ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({
     t: (key: string, params?: unknown) => {
-      const value = key.split('.').reduce<unknown>((node, part) =>
-        node && typeof node === 'object' ? (node as Record<string, unknown>)[part] : undefined,
-      { requests })
+      const value = key
+        .split('.')
+        .reduce<unknown>(
+          (node, part) =>
+            node && typeof node === 'object' ? (node as Record<string, unknown>)[part] : undefined,
+          { requests },
+        )
       if (typeof value !== 'string') return key
       // Named placeholders such as {source} are filled the way vue-i18n fills them.
-      const named = params && typeof params === 'object' ? params as Record<string, unknown> : {}
-      return value.replace(/\{(\w+)\}/g, (match, name: string) => name in named ? String(named[name]) : match)
-    }
-  })
+      const named = params && typeof params === 'object' ? (params as Record<string, unknown>) : {}
+      return value.replace(/\{(\w+)\}/g, (match, name: string) =>
+        name in named ? String(named[name]) : match,
+      )
+    },
+  }),
 }))
 
 vi.mock('@/composables/useBalanceDisplay', () => ({
-  useBalanceDisplay: () => ({ formatBalanceAmount: (value: number) => String(value) })
+  useBalanceDisplay: () => ({ formatBalanceAmount: (value: number) => String(value) }),
 }))
 
-// renderDetail mounts diagnostic identity rows with real translations and visible ID values.
+// renderDetail shallow-mounts a request card with a supplied detail record. Identifier
+// links render plain values so ownership assertions can inspect the card text independently
+// of navigation controls.
 function renderDetail(item: RequestDetail) {
   return shallowMount(RequestDetailCard, {
     props: { item },
     global: {
       stubs: {
-        RequestIdLink: defineComponent({ props: ['value'], template: '<span>{{ value }}</span>' })
-      }
-    }
+        RequestIdLink: defineComponent({
+          props: [
+            'value', // complete request identifier text
+          ],
+          template: '<span>{{ value }}</span>',
+        }),
+      },
+    },
   })
 }
 
-// detail provides one completed request with no unrelated usage or error content.
+// detail returns a fresh completed request fixture with empty usage and error arrays.
 function detail(): RequestDetail {
-  return { request_id: 'local', started_at: '2026-10-17T10:00:00Z', method: 'POST', path: '/v1/responses', state: 'completed', legacy: false, usage: [], errors: [] }
+  return {
+    request_id: 'local',
+    started_at: '2026-10-17T10:00:00Z',
+    method: 'POST',
+    path: '/v1/responses',
+    state: 'completed',
+    legacy: false,
+    usage: [],
+    errors: [],
+  }
 }
 
 describe('RequestDetailCard identifiers', () => {
-  // Each attempt shows the upstream request ID with its header and the response ID it owns.
-  // Related identifiers keep only the rest, including an ID whose attempt is not listed.
+  // Identifiers include matched attempt ownership and unmatched aliases with source
+  // metadata. The test protects placement under the owning attempt and retaining unmatched
+  // identifiers in the related section.
   it('shows owned identifiers on their attempt and lists each identifier once', () => {
     const item = detail()
-    item.attempts = [{ number: 1, provider_id: 7, upstream_request_id: 'chosen', upstream_request_id_header: 'X-Client-Request-Id' }]
+    item.attempts = [
+      {
+        number: 1,
+        provider_id: 7,
+        upstream_request_id: 'chosen',
+        upstream_request_id_header: 'X-Client-Request-Id',
+      },
+    ]
     item.aliases = [
       { kind: 'caller', value: 'client', source: 'X-Client-Request-ID' },
-      { kind: 'upstream_request', value: 'chosen', source: 'X-Client-Request-Id', attempt_number: 1, provider_id: 7 },
-      { kind: 'response', value: 'resp_result', source: 'response.id', attempt_number: 1, provider_id: 7 },
-      { kind: 'upstream_request', value: 'chosen', source: 'X-Request-Id', attempt_number: 2, provider_id: 8 }
+      {
+        kind: 'upstream_request',
+        value: 'chosen',
+        source: 'X-Client-Request-Id',
+        attempt_number: 1,
+        provider_id: 7,
+      },
+      {
+        kind: 'response',
+        value: 'resp_result',
+        source: 'response.id',
+        attempt_number: 1,
+        provider_id: 7,
+      },
+      {
+        kind: 'upstream_request',
+        value: 'chosen',
+        source: 'X-Request-Id',
+        attempt_number: 2,
+        provider_id: 8,
+      },
     ]
     const wrapper = renderDetail(item)
     const [attemptDetails, related] = wrapper.findAll('dl').slice(-2)
@@ -66,13 +118,26 @@ describe('RequestDetailCard identifiers', () => {
     expect(related.text()).not.toContain('resp_result')
   })
 
-  // Pre-dispatch failures have no HTTP ordinal but retain their selected providers.
-  // Rendering must keep both entries visible with a readable stage, without presenting them as a numbered exchange.
+  // Several provider authentication failures have no attempt number recorded. The test
+  // protects retaining every failure reason and the unnumbered label instead of presenting
+  // attempt zero.
   it('shows multiple unnumbered provider failures', () => {
     const item = detail()
     item.attempts = [
-      { number: 0, provider_id: 7, outcome: 'failed', stage: 'provider_auth', reason: 'first failure' },
-      { number: 0, provider_id: 8, outcome: 'failed', stage: 'provider_auth', reason: 'second failure' }
+      {
+        number: 0,
+        provider_id: 7,
+        outcome: 'failed',
+        stage: 'provider_auth',
+        reason: 'first failure',
+      },
+      {
+        number: 0,
+        provider_id: 8,
+        outcome: 'failed',
+        stage: 'provider_auth',
+        reason: 'second failure',
+      },
     ]
     const wrapper = renderDetail(item)
     expect(wrapper.text()).toContain('Provider authentication error')
@@ -82,8 +147,9 @@ describe('RequestDetailCard identifiers', () => {
     expect(wrapper.text()).not.toContain('#0')
   })
 
-  // Historical identifiers lack reliable provenance even when their spelling resembles Responses.
-  // Rendering must retain the generic label and explicitly report the missing source.
+  // A historical unclassified identifier happens to begin with a response-like prefix. The
+  // test protects its recorded classification and unknown source instead of inferring
+  // response identity.
   it('does not infer historical response identity from a prefix', () => {
     const item = detail()
     item.aliases = [{ kind: 'upstream', value: 'resp_historical' }]
@@ -94,14 +160,28 @@ describe('RequestDetailCard identifiers', () => {
     expect(wrapper.text()).toContain('resp_historical')
   })
 
-  // A request can carry failure stages and usage performance at once.
-  // A lone failure timeline names the section, while several timelines each get a caption.
+  // A request first has one failure timeline, then gains usage performance data. The test
+  // protects the single-timeline title and separate captions when several timelines
+  // coexist.
   it('titles one failure timeline and captions several timelines', () => {
     const item = detail()
     item.failure_timings = { upstream_started_ms: 12 }
     expect(renderDetail(item).find('section h3').text()).toBe('Failure timing')
 
-    item.usage = [{ id: 3, model: 'model-a', input_tokens: 1, output_tokens: 1, actual_cost: 0, timings: { ttft_mode: 'first_output', upstream_stream: true, values: { attempt_number: 2, upstream_started_ms: 40 } } }]
+    item.usage = [
+      {
+        id: 3,
+        model: 'model-a',
+        input_tokens: 1,
+        output_tokens: 1,
+        actual_cost: 0,
+        timings: {
+          ttft_mode: 'first_output',
+          upstream_stream: true,
+          values: { attempt_number: 2, upstream_started_ms: 40 },
+        },
+      },
+    ]
     const wrapper = renderDetail(item)
     expect(wrapper.find('section h3').text()).toBe('Timing')
     expect(wrapper.text()).toContain('Failure timing')

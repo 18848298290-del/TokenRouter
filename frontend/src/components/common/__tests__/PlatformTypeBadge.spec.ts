@@ -4,29 +4,40 @@ import { mount } from '@vue/test-utils'
 import GrokFreeIcon from '../GrokFreeIcon.vue'
 import PlatformTypeBadge from '../PlatformTypeBadge.vue'
 
+/**
+ * PlatformTypeBadge.spec.ts checks provider authentication and subscription tier
+ * presentation through mounted badges. Qoder identity, OpenAI credential subtypes,
+ * Grok free aliases, and paid tier changes exercise labels, graphics, palettes, and
+ * expiration visibility using the component computed rules.
+ */
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
-    })
+      t: (key: string) => key,
+    }),
   }
 })
 
 describe('PlatformTypeBadge', () => {
+  /**
+   * A Qoder provider uses the COSY credential type in the compact badge. The displayed
+   * labels identify Qoder and COSY while excluding the default Gemini name.
+   */
   it('renders Qoder COSY providers as Qoder instead of Gemini', () => {
     const wrapper = mount(PlatformTypeBadge, {
       props: {
         platform: 'qoder',
-        type: 'cosy'
+        type: 'cosy',
       },
       global: {
         stubs: {
           PlatformIcon: true,
-          Icon: true
-        }
-      }
+          Icon: true,
+        },
+      },
     })
 
     expect(wrapper.text()).toContain('Qoder')
@@ -34,19 +45,24 @@ describe('PlatformTypeBadge', () => {
     expect(wrapper.text()).not.toContain('Gemini')
   })
 
+  /**
+   * An OpenAI OAuth provider changes between agent identity, personal access token,
+   * and ordinary authentication. The badge updates the type label for each supplied
+   * authentication mode.
+   */
   it('distinguishes Agent Identity, PAT, and OAuth providers', async () => {
     const wrapper = mount(PlatformTypeBadge, {
       props: {
         platform: 'openai',
         type: 'oauth',
-        authMode: 'agentIdentity'
+        authMode: 'agentIdentity',
       },
       global: {
         stubs: {
           PlatformIcon: true,
-          Icon: true
-        }
-      }
+          Icon: true,
+        },
+      },
     })
 
     expect(wrapper.text()).toContain('Agent Identity')
@@ -59,14 +75,18 @@ describe('PlatformTypeBadge', () => {
     expect(wrapper.text()).toContain('OAuth')
   })
 
+  /**
+   * A Grok provider supplies free plan aliases together with an expiration timestamp.
+   * The badge uses the dedicated free graphic and omits a paid expiration row.
+   */
   it('renders Grok free aliases with the dedicated icon and without expiration', async () => {
     const wrapper = mount(PlatformTypeBadge, {
       props: {
         platform: 'grok',
         type: 'oauth',
         planType: 'BASIC',
-        subscriptionExpiresAt: '2027-01-01T00:00:00Z'
-      }
+        subscriptionExpiresAt: '2027-01-01T00:00:00Z',
+      },
     })
 
     expect(wrapper.text()).toContain('Grok Free')
@@ -80,9 +100,14 @@ describe('PlatformTypeBadge', () => {
     expect(wrapper.findComponent(GrokFreeIcon).exists()).toBe(true)
   })
 
+  /**
+   * A Grok paid plan changes between Heavy and Lite aliases before becoming an OpenAI
+   * free plan. Labels, palettes, and Grok graphics follow the active platform and
+   * tier.
+   */
   it('normalizes and colors paid Grok tiers', async () => {
     const wrapper = mount(PlatformTypeBadge, {
-      props: { platform: 'grok', type: 'oauth', planType: 'SuperGrok Heavy' }
+      props: { platform: 'grok', type: 'oauth', planType: 'SuperGrok Heavy' },
     })
 
     expect(wrapper.text()).toContain('SuperGrok Heavy')
@@ -99,6 +124,10 @@ describe('PlatformTypeBadge', () => {
     expect(wrapper.find('[data-testid="grok-plan-icon"]').exists()).toBe(false)
   })
 
+  /**
+   * The dedicated Grok free graphic is mounted by itself. Its SVG retains the compact
+   * dimensions, inherited text color, and two paths expected by plan badges.
+   */
   it('uses a compact currentColor Grok free mark', () => {
     const wrapper = mount(GrokFreeIcon)
 

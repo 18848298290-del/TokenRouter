@@ -1,6 +1,7 @@
-/**
- * Layout Components
- * Export all layout components for easy importing
+/*
+ * index.ts exports the shared application and authentication layout components.
+ * Consumers can import the page shell, sidebar, header, or authentication frame from
+ * this entry while each component retains its own rendering and lifecycle.
  */
 
 export { default as AppLayout } from './AppLayout.vue'

@@ -56,203 +56,154 @@
       "name": "Gemini GenerateContent",
       "endpoint": "POST /v1beta/models/{model}:generateContent / :streamGenerateContent",
       "upstream_only": false,
-      "platforms": [
-        "gemini",
-        "antigravity"
-      ]
+      "platforms": ["gemini", "antigravity"]
     },
     {
       "id": "systemone",
       "name": "SystemOne",
       "endpoint": "POST /v1/systemone",
       "upstream_only": false,
-      "platforms": [
-        "jev"
-      ]
+      "platforms": ["jev"]
     },
     {
       "id": "openai_embeddings",
       "name": "Embeddings",
       "endpoint": "POST /v1/embeddings",
       "upstream_only": false,
-      "platforms": [
-        "openai"
-      ]
+      "platforms": ["openai"]
     },
     {
       "id": "openai_images_generations",
       "name": "Images Generations",
       "endpoint": "POST /v1/images/generations",
       "upstream_only": false,
-      "platforms": [
-        "openai",
-        "grok"
-      ]
+      "platforms": ["openai", "grok"]
     },
     {
       "id": "openai_images_edits",
       "name": "Images Edits",
       "endpoint": "POST /v1/images/edits",
       "upstream_only": false,
-      "platforms": [
-        "openai",
-        "grok"
-      ]
+      "platforms": ["openai", "grok"]
     },
     {
       "id": "image_batches",
       "name": "Image Batches",
       "endpoint": "POST /v1/images/batches",
       "upstream_only": false,
-      "platforms": [
-        "gemini"
-      ]
+      "platforms": ["gemini"]
     },
     {
       "id": "grok_videos_generations",
       "name": "Video Generations",
       "endpoint": "POST /v1/videos/generations",
       "upstream_only": false,
-      "platforms": [
-        "grok"
-      ]
+      "platforms": ["grok"]
     },
     {
       "id": "grok_videos_edits",
       "name": "Video Edits",
       "endpoint": "POST /v1/videos/edits",
       "upstream_only": false,
-      "platforms": [
-        "grok"
-      ]
+      "platforms": ["grok"]
     },
     {
       "id": "grok_videos_extensions",
       "name": "Video Extensions",
       "endpoint": "POST /v1/videos/extensions",
       "upstream_only": false,
-      "platforms": [
-        "grok"
-      ]
+      "platforms": ["grok"]
     },
     {
       "id": "grok_tts",
       "name": "TTS",
       "endpoint": "POST /v1/tts",
       "upstream_only": false,
-      "platforms": [
-        "grok"
-      ]
+      "platforms": ["grok"]
     },
     {
       "id": "grok_stt",
       "name": "STT",
       "endpoint": "POST /v1/stt",
       "upstream_only": false,
-      "platforms": [
-        "grok"
-      ]
+      "platforms": ["grok"]
     },
     {
       "id": "grok_custom_voices",
       "name": "Custom Voices",
       "endpoint": "/v1/custom-voices",
       "upstream_only": false,
-      "platforms": [
-        "grok"
-      ]
+      "platforms": ["grok"]
     },
     {
       "id": "grok_voice_realtime",
       "name": "Voice Realtime",
       "endpoint": "GET /v1/realtime (WebSocket)",
       "upstream_only": false,
-      "platforms": [
-        "grok"
-      ]
+      "platforms": ["grok"]
     },
     {
       "id": "openai_responses_websocket",
       "name": "Responses WebSocket",
       "endpoint": "GET /v1/responses (WebSocket)",
       "upstream_only": false,
-      "platforms": [
-        "openai",
-        "grok"
-      ]
+      "platforms": ["openai", "grok"]
     },
     {
       "id": "openai_live",
       "name": "OpenAI Live",
       "endpoint": "POST /v1/live",
       "upstream_only": false,
-      "platforms": [
-        "openai"
-      ]
+      "platforms": ["openai"]
     },
     {
       "id": "openai_responses_compact",
       "name": "Responses Compact",
       "endpoint": "POST /v1/responses/compact",
       "upstream_only": false,
-      "platforms": [
-        "openai",
-        "grok"
-      ]
+      "platforms": ["openai", "grok"]
     },
     {
       "id": "openai_alpha_search",
       "name": "Alpha Search",
       "endpoint": "POST /v1/alpha/search",
       "upstream_only": false,
-      "platforms": [
-        "openai"
-      ]
+      "platforms": ["openai"]
     },
     {
       "id": "grok_web_search",
       "name": "Web Search",
       "endpoint": "POST /v1/web_search",
       "upstream_only": false,
-      "platforms": [
-        "grok"
-      ]
+      "platforms": ["grok"]
     },
     {
       "id": "grok_x_search",
       "name": "X Search",
       "endpoint": "POST /v1/x_search",
       "upstream_only": false,
-      "platforms": [
-        "grok"
-      ]
+      "platforms": ["grok"]
     },
     {
       "id": "qoder_chat",
       "name": "Qoder Chat",
       "endpoint": "agent_chat_generation (SSE)",
       "upstream_only": true,
-      "platforms": [
-        "qoder"
-      ]
+      "platforms": ["qoder"]
     },
     {
       "id": "gemini_batch_generate_content",
       "name": "Gemini Batch GenerateContent",
       "endpoint": "POST /v1beta/models/{model}:batchGenerateContent",
       "upstream_only": true,
-      "platforms": [
-        "gemini"
-      ]
+      "platforms": ["gemini"]
     },
     {
       "id": "vertex_batch_prediction",
       "name": "Vertex Batch Prediction",
       "endpoint": "POST /v1/projects/{project}/locations/{location}/batchPredictionJobs",
       "upstream_only": true,
-      "platforms": [
-        "gemini"
-      ]
+      "platforms": ["gemini"]
     }
   ],
   "providers": [
@@ -260,25 +211,19 @@
       "platform": "anthropic",
       "type": "oauth",
       "auth_mode": "",
-      "protocols": [
-        "anthropic_messages"
-      ]
+      "protocols": ["anthropic_messages"]
     },
     {
       "platform": "anthropic",
       "type": "setup-token",
       "auth_mode": "",
-      "protocols": [
-        "anthropic_messages"
-      ]
+      "protocols": ["anthropic_messages"]
     },
     {
       "platform": "anthropic",
       "type": "apikey",
       "auth_mode": "",
-      "protocols": [
-        "anthropic_messages"
-      ]
+      "protocols": ["anthropic_messages"]
     },
     {
       "platform": "anthropic",
@@ -290,17 +235,13 @@
       "platform": "anthropic",
       "type": "bedrock",
       "auth_mode": "",
-      "protocols": [
-        "anthropic_messages"
-      ]
+      "protocols": ["anthropic_messages"]
     },
     {
       "platform": "anthropic",
       "type": "service_account",
       "auth_mode": "",
-      "protocols": [
-        "anthropic_messages"
-      ]
+      "protocols": ["anthropic_messages"]
     },
     {
       "platform": "anthropic",
@@ -324,11 +265,7 @@
       "platform": "openai",
       "type": "oauth",
       "auth_mode": "personalAccessToken",
-      "protocols": [
-        "openai_responses",
-        "openai_responses_websocket",
-        "openai_responses_compact"
-      ]
+      "protocols": ["openai_responses", "openai_responses_websocket", "openai_responses_compact"]
     },
     {
       "platform": "openai",
@@ -390,9 +327,7 @@
       "platform": "gemini",
       "type": "oauth",
       "auth_mode": "",
-      "protocols": [
-        "gemini_generate_content"
-      ]
+      "protocols": ["gemini_generate_content"]
     },
     {
       "platform": "gemini",
@@ -404,10 +339,7 @@
       "platform": "gemini",
       "type": "apikey",
       "auth_mode": "",
-      "protocols": [
-        "gemini_generate_content",
-        "gemini_batch_generate_content"
-      ]
+      "protocols": ["gemini_generate_content", "gemini_batch_generate_content"]
     },
     {
       "platform": "gemini",
@@ -425,10 +357,7 @@
       "platform": "gemini",
       "type": "service_account",
       "auth_mode": "",
-      "protocols": [
-        "gemini_generate_content",
-        "vertex_batch_prediction"
-      ]
+      "protocols": ["gemini_generate_content", "vertex_batch_prediction"]
     },
     {
       "platform": "gemini",
@@ -440,9 +369,7 @@
       "platform": "antigravity",
       "type": "oauth",
       "auth_mode": "",
-      "protocols": [
-        "gemini_generate_content"
-      ]
+      "protocols": ["gemini_generate_content"]
     },
     {
       "platform": "grok",
@@ -550,9 +477,7 @@
       "platform": "qoder",
       "type": "cosy",
       "auth_mode": "",
-      "protocols": [
-        "qoder_chat"
-      ]
+      "protocols": ["qoder_chat"]
     },
     {
       "platform": "kimi",
@@ -570,11 +495,7 @@
       "platform": "kimi",
       "type": "apikey",
       "auth_mode": "",
-      "protocols": [
-        "anthropic_messages",
-        "openai_responses",
-        "openai_chat_completions"
-      ]
+      "protocols": ["anthropic_messages", "openai_responses", "openai_chat_completions"]
     },
     {
       "platform": "kimi",
@@ -616,10 +537,7 @@
       "platform": "zhipu",
       "type": "apikey",
       "auth_mode": "",
-      "protocols": [
-        "anthropic_messages",
-        "openai_chat_completions"
-      ]
+      "protocols": ["anthropic_messages", "openai_chat_completions"]
     },
     {
       "platform": "zhipu",
@@ -661,11 +579,7 @@
       "platform": "deepseek",
       "type": "apikey",
       "auth_mode": "",
-      "protocols": [
-        "anthropic_messages",
-        "openai_responses",
-        "openai_chat_completions"
-      ]
+      "protocols": ["anthropic_messages", "openai_responses", "openai_chat_completions"]
     },
     {
       "platform": "deepseek",
@@ -707,9 +621,7 @@
       "platform": "jev",
       "type": "apikey",
       "auth_mode": "",
-      "protocols": [
-        "systemone"
-      ]
+      "protocols": ["systemone"]
     },
     {
       "platform": "jev",
@@ -762,11 +674,7 @@
         "grok_web_search",
         "grok_x_search"
       ],
-      "defaults": [
-        "anthropic_messages",
-        "openai_responses",
-        "openai_chat_completions"
-      ],
+      "defaults": ["anthropic_messages", "openai_responses", "openai_chat_completions"],
       "fallback_targets": {
         "anthropic_messages": [
           "openai_responses",
@@ -782,16 +690,10 @@
         "grok_videos_extensions": [],
         "grok_videos_generations": [],
         "grok_voice_realtime": [],
-        "grok_web_search": [
-          "openai_responses"
-        ],
-        "grok_x_search": [
-          "openai_responses"
-        ],
+        "grok_web_search": ["openai_responses"],
+        "grok_x_search": ["openai_responses"],
         "image_batches": [],
-        "openai_alpha_search": [
-          "openai_responses"
-        ],
+        "openai_alpha_search": ["openai_responses"],
         "openai_chat_completions": [
           "openai_responses",
           "anthropic_messages",
@@ -799,12 +701,8 @@
           "qoder_chat"
         ],
         "openai_embeddings": [],
-        "openai_images_edits": [
-          "openai_responses"
-        ],
-        "openai_images_generations": [
-          "openai_responses"
-        ],
+        "openai_images_edits": ["openai_responses"],
+        "openai_images_generations": ["openai_responses"],
         "openai_live": [],
         "openai_responses": [
           "openai_chat_completions",
@@ -812,12 +710,8 @@
           "gemini_generate_content",
           "qoder_chat"
         ],
-        "openai_responses_compact": [
-          "openai_responses"
-        ],
-        "openai_responses_websocket": [
-          "openai_responses"
-        ],
+        "openai_responses_compact": ["openai_responses"],
+        "openai_responses_websocket": ["openai_responses"],
         "systemone": []
       },
       "default_fallbacks": {}

@@ -1,9 +1,6 @@
 <template>
-  <!-- 分段标题由父组件提供。EasyPay 方法由管理员动态配置，网格必须在面板内换行。 -->
-  <div
-    data-testid="payment-method-grid"
-    class="grid grid-cols-2 gap-3 sm:grid-cols-3"
-  >
+  <!-- The parent supplies the section heading. Administrator-defined EasyPay methods wrap inside the panel grid as the method list grows. -->
+  <div data-testid="payment-method-grid" class="grid grid-cols-2 gap-3 sm:grid-cols-3">
     <button
       v-for="method in sortedMethods"
       :key="method.type"
@@ -21,10 +18,17 @@
       ]"
       @click="method.available && emit('select', method.type)"
     >
-      <!-- 品牌色只保留在图标上，选中态统一使用品牌青描边。 -->
-      <img :src="methodIcon(method.type)" :alt="methodLabel(method)" class="h-7 w-7 shrink-0 object-contain" />
+      <!-- Method icons retain their brand colors while selected cards share the application accent border. -->
+      <img
+        :src="methodIcon(method.type)"
+        :alt="methodLabel(method)"
+        class="h-7 w-7 shrink-0 object-contain"
+      />
       <span class="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span data-testid="payment-method-label" class="block w-full truncate text-sm font-semibold">
+        <span
+          data-testid="payment-method-label"
+          class="block w-full truncate text-sm font-semibold"
+        >
           {{ methodLabel(method) }}
         </span>
         <span
@@ -34,7 +38,7 @@
           {{ methodFeeLabel(method) }}
         </span>
       </span>
-      <!-- 窄屏两列宽度有限，只靠描边表达选中，把空间留给名称和手续费。 -->
+      <!-- At narrow widths the selection border leaves room for method names and fees within the two-column grid. -->
       <span
         v-if="selected === method.type && method.available"
         class="hidden h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary-500 text-white sm:flex"
@@ -49,32 +53,48 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
-import { METHOD_ORDER, isBuiltInAlipayMethod, isBuiltInWxpayMethod } from './providerConfig'
+import {
+  METHOD_ORDER,
+  isBuiltInAlipayMethod,
+  isBuiltInWxpayMethod,
+} from '@/utils/payment/paymentMethods'
 import alipayIcon from '@/assets/icons/alipay.svg'
 import wxpayIcon from '@/assets/icons/wxpay.svg'
 import stripeIcon from '@/assets/icons/stripe.svg'
 import airwallexIcon from '@/assets/icons/airwallex.svg'
 import paymentIcon from '@/assets/icons/payment.svg'
 
+/**
+ * PaymentMethodSelector.vue renders available payment methods with fees, icons, and
+ * controlled selection. Built-in methods follow the shared display order, while
+ * administrator-defined methods retain their labels and use a generic payment icon when no
+ * built-in mapping applies.
+ */
+
+/**
+ * PaymentMethodOption carries one method's display name, fee preview, and availability.
+ */
 export interface PaymentMethodOption {
-  type: string
-  fee_fixed: number
-  display_name?: string
-  fee_rate: number
-  available: boolean
+  type: string // visible payment method code
+  fee_fixed: number // fixed fee display amount
+  display_name?: string // configured optional display label
+  fee_rate: number // percentage fee display rate
+  available: boolean // current checkout eligibility
 }
 
 const props = defineProps<{
-  methods: PaymentMethodOption[]
-  selected: string
+  methods: PaymentMethodOption[] // offered checkout payment methods
+  selected: string // controlled selected method code
 }>()
 
 const emit = defineEmits<{
-  select: [type: string]
+  select: [type: string] // requested method selection
 }>()
 
 const { t } = useI18n()
 
+// Method icons identify the built-in gateways while administrator-defined codes use the
+// generic payment artwork when no mapping exists.
 const METHOD_ICONS: Record<string, string> = {
   alipay: alipayIcon,
   wxpay: wxpayIcon,
@@ -83,6 +103,8 @@ const METHOD_ICONS: Record<string, string> = {
   credit_card: paymentIcon,
 }
 
+// Sorting copies the input array so the selector can order cards without changing the checkout
+// page's method collection.
 const sortedMethods = computed(() => {
   const order: readonly string[] = METHOD_ORDER
   return [...props.methods].sort((a, b) => {
@@ -92,6 +114,11 @@ const sortedMethods = computed(() => {
   })
 })
 
+/**
+ * methodIcon returns the icon for exact built-in aliases or known methods. Other method
+ * codes use the generic payment icon, allowing administrator-defined EasyPay options to
+ * remain selectable without a bundled asset.
+ */
 function methodIcon(type: string): string {
   if (isBuiltInAlipayMethod(type)) return METHOD_ICONS.alipay
   if (isBuiltInWxpayMethod(type)) return METHOD_ICONS.wxpay
@@ -99,10 +126,20 @@ function methodIcon(type: string): string {
   return METHOD_ICONS[type] || paymentIcon
 }
 
+/**
+ * methodLabel prefers the configured display name and otherwise resolves its localized
+ * method label. Unknown translation keys use the supplied method code, so custom methods
+ * remain identifiable in the selector.
+ */
 function methodLabel(method: PaymentMethodOption): string {
   return method.display_name || t(`payment.methods.${method.type}`, method.type)
 }
 
+/**
+ * methodFeeLabel joins positive fixed and percentage fees for display. Fixed fees
+ * currently use a yuan prefix with two decimals, and a method with no positive fee returns
+ * an empty label.
+ */
 function methodFeeLabel(method: PaymentMethodOption): string {
   const parts: string[] = []
   if ((method.fee_fixed || 0) > 0) parts.push(`¥${method.fee_fixed.toFixed(2)}`)

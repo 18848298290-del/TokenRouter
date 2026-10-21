@@ -1,10 +1,14 @@
-/**
- * 公告 store 强制刷新测试
- */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAnnouncementStore } from '@/stores/announcements'
 
+// announcements.spec.ts verifies announcement fetch admission and retention of the full
+// visible list. The API double records ordinary and forced request arguments. A list
+// larger than the popup window protects the complete visible catalog used by other
+// announcement surfaces.
+
+// mockList records the announcement API's visibility and force arguments while each test
+// controls the returned visible list.
 const mockList = vi.fn()
 
 vi.mock('@/api', () => ({
@@ -21,6 +25,8 @@ describe('useAnnouncementStore', () => {
     mockList.mockResolvedValue([])
   })
 
+  // An ordinary announcement fetch is followed immediately by a forced fetch. The second
+  // request bypasses admission throttling and forwards force to the API cache controls.
   it('强制刷新时同时绕过请求节流和浏览器缓存', async () => {
     const store = useAnnouncementStore()
 
@@ -31,16 +37,21 @@ describe('useAnnouncementStore', () => {
     expect(mockList).toHaveBeenNthCalledWith(2, false, true)
   })
 
+  // The announcement endpoint returns more records than the popup candidate limit. The
+  // store retains the complete visible list so consumers can sort and count all
+  // announcements.
   it('保留完整可见公告列表供不同界面独立排序', async () => {
     const store = useAnnouncementStore()
-    mockList.mockResolvedValue(Array.from({ length: 25 }, (_, index) => ({
-      id: index + 1,
-      title: `公告 ${index + 1}`,
-      content: `内容 ${index + 1}`,
-      notify_mode: 'silent',
-      created_at: '2026-08-01T12:00:00Z',
-      updated_at: '2026-08-01T12:00:00Z',
-    })))
+    mockList.mockResolvedValue(
+      Array.from({ length: 25 }, (_, index) => ({
+        id: index + 1,
+        title: `公告 ${index + 1}`,
+        content: `内容 ${index + 1}`,
+        notify_mode: 'silent',
+        created_at: '2026-08-01T12:00:00Z',
+        updated_at: '2026-08-01T12:00:00Z',
+      })),
+    )
 
     await store.fetchAnnouncements()
 

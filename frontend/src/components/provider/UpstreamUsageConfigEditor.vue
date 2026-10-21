@@ -24,18 +24,28 @@
             v-model="baseUrlModel"
             type="text"
             class="input"
-            :placeholder="adapterModel === 'derouter'
-              ? 'https://cf-api.derouter.ai'
-              : t('admin.providers.upstreamUsage.baseUrlPlaceholder')"
+            :placeholder="
+              adapterModel === 'derouter'
+                ? 'https://cf-api.derouter.ai'
+                : t('admin.providers.upstreamUsage.baseUrlPlaceholder')
+            "
             data-testid="upstream-usage-base-url"
           />
-          <p class="input-hint">{{ t(adapterModel === 'derouter'
-            ? 'admin.providers.upstreamUsage.derouterBaseUrlHint'
-            : 'admin.providers.upstreamUsage.baseUrlHint') }}</p>
+          <p class="input-hint">
+            {{
+              t(
+                adapterModel === 'derouter'
+                  ? 'admin.providers.upstreamUsage.derouterBaseUrlHint'
+                  : 'admin.providers.upstreamUsage.baseUrlHint',
+              )
+            }}
+          </p>
         </div>
         <template v-if="adapterModel === 'new_api'">
           <div>
-            <label class="input-label">{{ t('admin.providers.upstreamUsage.walletAccessToken') }}</label>
+            <label class="input-label">{{
+              t('admin.providers.upstreamUsage.walletAccessToken')
+            }}</label>
             <input
               v-model="walletAccessTokenModel"
               type="password"
@@ -73,76 +83,103 @@ import SettingToggleRow from '@/components/common/settings/SettingToggleRow.vue'
 import { computed, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
-import type { UpstreamUsageAdapter } from '@/types'
+import type { UpstreamUsageAdapter } from '@/api/admin/providers.types'
 
-// UpstreamUsageConfigEditor.vue edits the query adapter and its independent
-// management address for API Key providers. Each input emits its own scalar
-// update to the parent form. Derouter exposes its account management default,
-// and New API exposes optional wallet authentication fields.
+// UpstreamUsageConfigEditor.vue edits a provider usage-query adapter, management address,
+// and optional wallet credentials. Each input emits its own value to the parent form. The
+// automatic adapter flag changes the visible controls, and New API exposes wallet
+// authentication independently from inference credentials.
 
-const props = withDefaults(defineProps<{
-  enabled: boolean
-  adapter: UpstreamUsageAdapter
-  baseUrl: string
-  walletAccessToken?: string
-  walletUserId?: string
-  automaticAdapter?: boolean
-}>(), {
-  enabled: true,
-  adapter: 'sub2api',
-  baseUrl: '',
-  walletAccessToken: '',
-  walletUserId: '',
-  automaticAdapter: false
-})
+// props exposes caller-owned inputs used by the template and derived state in this
+// component.
+const props = withDefaults(
+  defineProps<{
+    // enabled, adapter, and baseUrl describe the management query. walletAccessToken and
+    // walletUserId belong to New API wallet authentication; parent hydration and patch
+    // construction keep blank token drafts and clear blank nonsecret user identifiers.
+    enabled: boolean // Parent-owned feature enable draft.
+    adapter: UpstreamUsageAdapter // Usage-query adapter wire identifier.
+    baseUrl: string // Independent management query address.
+    // New API replacement token; EditProviderModal keeps the server-stored secret when
+    // this draft is empty.
+    walletAccessToken?: string
+    walletUserId?: string // New API wallet user identifier.
+    // When true, hides manual adapter selection while retaining the caller-supplied
+    // adapter draft value.
+    automaticAdapter?: boolean
+  }>(),
+  {
+    enabled: true,
+    adapter: 'sub2api',
+    baseUrl: '',
+    walletAccessToken: '',
+    walletUserId: '',
+    automaticAdapter: false,
+  },
+)
 
+// emit publishes typed draft changes and actions to the parent that owns this component.
 const emit = defineEmits<{
-  'update:enabled': [value: boolean]
-  'update:adapter': [value: UpstreamUsageAdapter]
-  'update:baseUrl': [value: string]
-  'update:walletAccessToken': [value: string]
-  'update:walletUserId': [value: string]
+  'update:enabled': [value: boolean] // Replacement enabled draft value.
+  'update:adapter': [value: UpstreamUsageAdapter] // Replacement adapter draft value.
+  'update:baseUrl': [value: string] // Replacement base url draft value.
+  'update:walletAccessToken': [value: string] // Replacement wallet access token draft value.
+  'update:walletUserId': [value: string] // Replacement wallet user id draft value.
 }>()
 
+// t resolves interface labels from the active component locale while reactive consumers
+// update their displayed text.
 const { t } = useI18n()
+// uid supplies one stable instance ID so labels target their own input when several
+// editors are mounted.
 const uid = useId()
 
-// adapterOptions lists registered manual query formats with localized labels
-// for the shared configuration selector.
+// adapterOptions lists manually selectable usage formats with localized names while their
+// wire values remain stable for parent payload construction.
 const adapterOptions = computed<SelectOption[]>(() => [
   { value: 'sub2api', label: t('admin.providers.upstreamUsage.adapters.sub2api') },
   { value: 'new_api', label: t('admin.providers.upstreamUsage.adapters.newApi') },
   { value: 'zivv', label: t('admin.providers.upstreamUsage.adapters.zivv') },
-  { value: 'derouter', label: t('admin.providers.upstreamUsage.adapters.derouter') }
+  { value: 'derouter', label: t('admin.providers.upstreamUsage.adapters.derouter') },
 ])
 
+// enabledModel forwards the query switch to the parent and reflects its current value in
+// the shared toggle row.
 const enabledModel = computed({
   get: () => props.enabled,
-  set: (value: boolean) => emit('update:enabled', value)
+  set: (value: boolean) => emit('update:enabled', value),
 })
 
-// adapterModel forwards supported selections to the owning provider form.
-// Unknown selector values are ignored, so clearing or malformed input cannot
-// replace the saved adapter with an unregistered format.
+// adapterModel accepts registered manual adapter values and ignores cleared or unknown
+// selector values before emitting a parent update.
 const adapterModel = computed({
   get: () => props.adapter,
   set: (value: string | number | boolean | null) => {
-    if (value === 'sub2api' || value === 'new_api' || value === 'zivv' || value === 'derouter') emit('update:adapter', value)
-  }
+    if (value === 'sub2api' || value === 'new_api' || value === 'zivv' || value === 'derouter')
+      emit('update:adapter', value)
+  },
 })
 
+// baseUrlModel forwards the independent management address draft to the parent without
+// normalizing its text inside this editor.
 const baseUrlModel = computed({
   get: () => props.baseUrl,
-  set: (value: string) => emit('update:baseUrl', value)
+  set: (value: string) => emit('update:baseUrl', value),
 })
 
+// walletAccessTokenModel forwards replacement token text. EditProviderModal initializes
+// this draft empty for redacted credentials and writes a replacement only when the
+// administrator enters nonblank text.
 const walletAccessTokenModel = computed({
   get: () => props.walletAccessToken,
-  set: (value: string) => emit('update:walletAccessToken', value)
+  set: (value: string) => emit('update:walletAccessToken', value),
 })
 
+// walletUserIdModel forwards the optional wallet user ID. EditProviderModal removes its
+// nonsecret credential key when this draft is empty and writes the trimmed value
+// otherwise.
 const walletUserIdModel = computed({
   get: () => props.walletUserId,
-  set: (value: string) => emit('update:walletUserId', value)
+  set: (value: string) => emit('update:walletUserId', value),
 })
 </script>

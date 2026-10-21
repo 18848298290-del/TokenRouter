@@ -1,13 +1,7 @@
-export { default as CreateProviderModal } from './CreateProviderModal.vue'
-export { default as EditProviderModal } from './EditProviderModal.vue'
-export { default as BulkEditProviderModal } from './BulkEditProviderModal.vue'
+// index.ts exports shared provider authorization and statistics components from a single
+// import entry. Consumers resolve the same component implementations through these named
+// exports, and lifecycle ownership remains with each exported component and the dialog
+// that mounts it.
 export { default as ReAuthProviderModal } from './ReAuthProviderModal.vue'
 export { default as OAuthAuthorizationFlow } from './OAuthAuthorizationFlow.vue'
-export { default as ProviderStatusIndicator } from './ProviderStatusIndicator.vue'
-export { default as ProviderUsageCell } from './ProviderUsageCell.vue'
-export { default as ProviderUpstreamUsageQueryButton } from './ProviderUpstreamUsageQueryButton.vue'
-export { default as UsageProgressBar } from './UsageProgressBar.vue'
 export { default as ProviderStatsModal } from './ProviderStatsModal.vue'
-export { default as ProviderTodayStatsCell } from './ProviderTodayStatsCell.vue'
-export { default as TempUnschedStatusModal } from './TempUnschedStatusModal.vue'
-export { default as SyncFromCrsModal } from './SyncFromCrsModal.vue'

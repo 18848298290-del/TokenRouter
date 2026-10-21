@@ -1,107 +1,200 @@
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
 import { defineComponent, h } from 'vue'
-import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
-
+import { mount, enableAutoUnmount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import postcss from 'postcss'
+import ts from 'typescript'
+import {
+  applyTokens,
+  classes,
+  cssRules,
+  directive,
+  nodes,
+  parseScript,
+  parseVue,
+  readSource,
+} from '@/__tests__/helpers/sourceSyntax'
 import Pagination from '../Pagination.vue'
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key })
-}))
+// controlSizing.spec.ts checks shared control recipes and their component users.
+// Parsed template classes and stylesheet rules bind size assertions to actual
+// elements and selectors, while a mounted pagination fixture checks every visible
+// button without depending on source quotes, line breaks, or attribute ordering.
 
-const testDirectory = dirname(fileURLToPath(import.meta.url))
-const readSource = (relativePath: string) => readFileSync(resolve(testDirectory, relativePath), 'utf8')
+vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+enableAutoUnmount(afterEach)
 
+// SelectStub supplies the shared input height while keeping pagination independent of dropdown interaction details.
 const SelectStub = defineComponent({
   name: 'PaginationSelectStub',
   props: ['modelValue', 'options'],
+  // setup renders the selected page size as a fixed-height trigger.
   setup(props) {
-    // Select 的 36px 来自 .input 的 min-h-9，stub 用 h-9 模拟该高度。
     return () => h('button', { class: 'select-trigger h-9' }, String(props.modelValue))
-  }
+  },
 })
 
-const IconStub = defineComponent({
-  name: 'Icon',
-  setup() {
-    return () => h('span')
-  }
-})
+// hasClasses reports whether one template element declares all requested utility classes.
+// Bound class expressions contribute their string literals; callers use this for
+// recipe presence and inspect conditional expressions separately when state matters.
+function hasClasses(path: string, expected: string[]): boolean {
+  return parseVue(path).elements.some((element) => {
+    const binding = directive(element, 'bind', 'class')
+    const dynamic = binding
+      ? nodes(parseScript(`const classes = ${binding}`), ts.isStringLiteral).flatMap((node) =>
+          node.text.split(/\s+/),
+        )
+      : []
+    const tokens = [...classes(element), ...dynamic]
+    return expected.every((token) => tokens.includes(token))
+  })
+}
 
 describe('36px control sizing', () => {
-  it('uses the 36px baseline in shared controls', () => {
-    const globalStyle = readSource('../../../style.css')
-    const selectSource = readSource('../Select.vue')
-    const proxySelectorSource = readSource('../ProxySelector.vue')
-    const dateRangePickerSource = readSource('../DateRangePicker.vue')
-    const paginationSource = readSource('../Pagination.vue')
-
-    expect(globalStyle).toContain('@apply rounded-control px-4 py-1.5 text-sm font-medium;')
-    expect(globalStyle).toContain('@apply min-h-9;')
-    expect(globalStyle).toContain('@apply inline-flex h-9 w-9 items-center justify-center rounded-control p-0;')
-    expect(globalStyle).toContain('@apply w-full rounded-control px-4 py-1.5 text-sm;')
-    expect(globalStyle).toContain('@apply flex h-9 items-center gap-3 rounded-control py-1.5;')
-    // 三个下拉触发器在模板中组合 input input-trigger，共用 36px 基线。
-    expect(selectSource).toContain("'input input-trigger'")
-    expect(proxySelectorSource).toContain("'input input-trigger'")
-    expect(dateRangePickerSource).toContain("'input input-trigger'")
-    for (const source of [selectSource, proxySelectorSource, dateRangePickerSource]) {
-      expect(source).not.toContain('@apply h-9 min-h-9 rounded-control px-4 py-1.5 text-sm;')
+  // Shared controls derive geometry from the button and input recipes. Each
+  // selector must retain the relevant size, spacing, and typography utility tokens.
+  it('defines the 36px baseline on the owning shared style rules', () => {
+    const style = postcss.parse(readSource('style.css'))
+    for (const [selector, expected] of [
+      ['.btn', ['rounded-control', 'px-4', 'py-1.5', 'text-sm', 'font-medium', 'min-h-9']],
+      [
+        '.btn-icon',
+        ['inline-flex', 'h-9', 'w-9', 'items-center', 'justify-center', 'rounded-control', 'p-0'],
+      ],
+      ['.input', ['w-full', 'rounded-control', 'px-4', 'py-1.5', 'text-sm', 'min-h-9']],
+      ['.sidebar-link', ['flex', 'h-9', 'items-center', 'gap-3', 'rounded-control', 'py-1.5']],
+    ] as const) {
+      expect(cssRules(style, selector).flatMap(applyTokens)).toEqual(
+        expect.arrayContaining(expected),
+      )
     }
-    // 弹层内的确认按钮直接使用共享按钮配方。
-    expect(dateRangePickerSource).toContain('class="btn btn-primary btn-sm h-8"')
-    expect(dateRangePickerSource).not.toContain('.date-picker-apply')
-    // 分页控件由模板中的 h-9 提供 36px 高度。
-    expect(paginationSource).toContain('pagination-jump-button btn btn-ghost btn-sm h-9')
-    expect(paginationSource).not.toContain('--pagination-control-height')
   })
 
+  // Dropdown triggers inherit their dimensions from the common input recipe.
+  // Local duplicate size recipes would diverge when the shared baseline changes.
+  it.each([
+    'components/common/Select.vue',
+    'components/admin/proxy/ProxySelector.vue',
+    'components/common/DateRangePicker.vue',
+  ])('%s uses the shared trigger recipe', (path) => {
+    expect(hasClasses(path, ['input', 'input-trigger'])).toBe(true)
+    parseVue(path).styles.walkRules((rule) => {
+      expect(applyTokens(rule)).not.toEqual(
+        expect.arrayContaining(['h-9', 'min-h-9', 'rounded-control', 'px-4', 'py-1.5', 'text-sm']),
+      )
+    })
+  })
+
+  // Date confirmation uses the shared compact button while pagination raises its
+  // compact jump button to the normal baseline. Neither keeps a private size recipe.
+  it('uses shared confirmation and pagination button recipes', () => {
+    expect(
+      hasClasses('components/common/DateRangePicker.vue', ['btn', 'btn-primary', 'btn-sm', 'h-8']),
+    ).toBe(true)
+    expect(
+      cssRules(parseVue('components/common/DateRangePicker.vue').styles, '.date-picker-apply'),
+    ).toEqual([])
+    expect(
+      hasClasses('components/common/Pagination.vue', [
+        'pagination-jump-button',
+        'btn',
+        'btn-ghost',
+        'btn-sm',
+        'h-9',
+      ]),
+    ).toBe(true)
+    const heightOverrides: string[] = []
+    parseVue('components/common/Pagination.vue').styles.walkDecls(
+      '--pagination-control-height',
+      (node) => {
+        heightOverrides.push(node.value)
+      },
+    )
+    expect(heightOverrides).toEqual([])
+  })
+
+  // A middle page displays navigation, numbered pages, selection, and jump controls.
+  // Every rendered button must use the same 36px utility in this fixture.
   it('renders every pagination button on the 36px baseline', () => {
     const wrapper = mount(Pagination, {
-      props: {
-        total: 30,
-        page: 2,
-        pageSize: 10
-      },
-      global: {
-        stubs: {
-          Select: SelectStub,
-          Icon: IconStub
-        }
-      }
+      props: { total: 30, page: 2, pageSize: 10 },
+      global: { stubs: { Select: SelectStub, Icon: true } },
     })
-
     const buttons = wrapper.findAll('button')
-    expect(buttons.length).toBe(8)
+    expect(buttons).toHaveLength(8)
     expect(buttons.every((button) => button.classes().includes('h-9'))).toBe(true)
   })
 
-  it('uses shared sizing in page controls', () => {
-    const userUsageSource = readSource('../../../views/user/UsageView.vue')
-    const adminUsageSource = readSource('../../../views/admin/UsageView.vue')
-    const riskControlSource = readSource('../../../views/admin/RiskControlView.vue')
-    const settingsSource = readSource('../../../views/admin/SettingsView.vue')
-    const emailTemplateSource = readSource('../../../views/admin/settings/EmailTemplateEditor.vue')
-    const backupSource = readSource('../../../views/admin/BackupView.vue')
-    const providerListSource = readSource('../../payment/PaymentProviderList.vue')
-    const adminOrdersSource = readSource('../../../views/admin/orders/AdminOrdersView.vue')
-    const adminPaymentPlansSource = readSource('../../../views/admin/orders/AdminPaymentPlansView.vue')
+  // Page-level controls compose the common recipes with their local layout needs.
+  // Matching tokens on the same element protects sizing through template formatting.
+  it.each([
+    ['views/user/UsageView.vue', ['card', 'p-4']],
+    ['views/admin/UsageView.vue', ['card', 'p-4']],
+    [
+      'views/admin/RiskControlView.vue',
+      [
+        'grid',
+        'grid-cols-1',
+        'items-start',
+        'gap-4',
+        'p-4',
+        'xl:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]',
+      ],
+    ],
+    ['views/admin/settings/AdminApiKeySettings.vue', ['btn', 'btn-primary', 'btn-sm', 'h-9']],
+    [
+      'views/admin/settings/IdentitySettings.vue',
+      ['btn', 'btn-secondary', 'btn-sm', 'h-9', 'shrink-0'],
+    ],
+    ['views/admin/settings/EmailTemplateEditor.vue', ['btn', 'btn-secondary', 'btn-sm', 'h-9']],
+    ['views/admin/settings/BackupSettings.vue', ['btn', 'btn-primary', 'btn-sm', 'h-9']],
+    ['components/admin/payment/PaymentProviderList.vue', ['btn', 'btn-secondary', 'btn-icon']],
+  ] as const)('%s uses the expected page control classes', (path, expected) => {
+    expect(hasClasses(path, [...expected])).toBe(true)
+  })
 
-    expect(userUsageSource).toContain('<div class="card p-4">')
-    expect(adminUsageSource).toContain('<div class="card p-4">')
-    expect(riskControlSource).toContain('class="grid grid-cols-1 items-start gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]"')
-    expect(riskControlSource).toContain(":class=\"apiKeyRowsExpanded ? 'overflow-visible' : ''\"")
-    expect(settingsSource).toContain('class="btn btn-primary btn-sm h-9"')
-    expect(settingsSource).toContain('class="btn btn-secondary btn-sm h-9 shrink-0"')
-    expect(emailTemplateSource).toContain('class="btn btn-secondary btn-sm h-9"')
-    expect(backupSource).toContain('class="btn btn-primary btn-sm h-9"')
-    expect(providerListSource).toContain('class="btn btn-secondary btn-icon"')
-    expect(adminOrdersSource).toContain('<TablePageLayout>')
-    expect(adminOrdersSource).toContain('<template #table>')
-    expect(adminPaymentPlansSource).toContain('<TablePageLayout>')
-    expect(adminPaymentPlansSource).toContain('<template #table>')
+  // Expanded API-key rows need room for their contents outside the collapsed
+  // region. The class binding applies overflow visibility only to the expanded branch.
+  it('ties risk-control overflow visibility to row expansion', () => {
+    const expressions = parseVue('views/admin/RiskControlView.vue').elements.flatMap((element) => {
+      const expression = directive(element, 'bind', 'class')
+      return expression
+        ? nodes(parseScript(`const value = ${expression}`), ts.isConditionalExpression)
+        : []
+    })
+    expect(
+      expressions.some(
+        (node) =>
+          ts.isIdentifier(node.condition) &&
+          node.condition.text === 'apiKeyRowsExpanded' &&
+          ts.isStringLiteral(node.whenTrue) &&
+          node.whenTrue.text === 'overflow-visible' &&
+          ts.isStringLiteral(node.whenFalse) &&
+          node.whenFalse.text === '',
+      ),
+    ).toBe(true)
+  })
+
+  // Admin order and plan lists place their table content in the shared layout.
+  // The named table slot must belong to that component's actual child template.
+  it.each([
+    'views/admin/orders/AdminOrdersView.vue',
+    'views/admin/orders/AdminPaymentPlansView.vue',
+  ])('%s uses the shared table slot', (path) => {
+    const layout = parseVue(path).elements.find((element) => element.tag === 'TablePageLayout')
+    expect(layout).toBeDefined()
+    expect(
+      layout?.children.some(
+        (child) =>
+          child.type === 1 &&
+          child.tag === 'template' &&
+          child.props.some(
+            (prop) =>
+              prop.type === 7 &&
+              prop.name === 'slot' &&
+              prop.arg?.type === 4 &&
+              prop.arg.content === 'table',
+          ),
+      ),
+    ).toBe(true)
   })
 })

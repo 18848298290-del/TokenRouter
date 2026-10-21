@@ -2,6 +2,15 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import WechatCallbackView from '@/views/auth/WechatCallbackView.vue'
 
+// WechatCallbackView.spec.ts checks Wechat callback progression with controlled
+// authentication and pending-account responses. The mounted view exercises legacy
+// fragments, invitation completion, profile adoption, account creation and
+// binding, and TOTP transitions while assertions inspect persistence, requests,
+// and navigation.
+
+// These fixtures provide controllable dependencies and component handles for the
+// cases below. Each test configures the responses it needs and inspects calls or
+// rendered state at that boundary.
 const {
   exchangePendingOAuthCompletionMock,
   completeWeChatOAuthRegistrationMock,
@@ -47,29 +56,45 @@ const {
       href: 'http://localhost/auth/wechat/callback',
       hash: '',
       search: '',
-      pathname: '/auth/wechat/callback'
-    } as { href: string; hash: string; search: string; pathname: string },
+      pathname: '/auth/wechat/callback',
+    } as {
+      href: string // mock complete browser URL
+      hash: string // mock URL fragment
+      search: string // mock URL query string
+      pathname: string // mock browser path
+    },
   },
   appStoreState: {
     cachedPublicSettings: null as null | Record<string, unknown>,
     publicSettingsLoaded: false,
   },
-}))
+})) // hoisted dependency and routing fixtures
 
 vi.mock('vue-router', () => ({
+  // useRoute supplies the callback query fixture read by the component.
   useRoute: () => routeState,
+  // useRouter supplies observable navigation handlers for the mounted
+  // authentication component.
   useRouter: () => ({
     replace: replaceMock,
   }),
 }))
 
 vi.mock('vue-i18n', () => ({
+  // createI18n supplies the global translator needed by imported authentication
+  // dependencies.
   createI18n: () => ({
     global: {
+      // t returns translation keys directly for stable component text assertions.
       t: (key: string) => key,
     },
   }),
+  // useI18n supplies the translation fixture used by rendered authentication
+  // labels.
   useI18n: () => ({
+    // t resolves the translation keys needed by this test fixture. Unhandled keys
+    // remain visible as their identifiers so assertions can inspect copy selection
+    // without loading locale catalogs.
     t: (key: string, params?: Record<string, string>) => {
       if (key === 'auth.oauthFlow.totpHint') {
         return `verify ${params?.account ?? ''}`.trim()
@@ -116,11 +141,14 @@ vi.mock('vue-i18n', () => ({
 }))
 
 vi.mock('@/stores', () => ({
+  // useAuthStore exposes the mocked session state and authentication actions
+  // consumed by the component.
   useAuthStore: () => ({
     setToken: setTokenMock,
     setPendingAuthSession: setPendingAuthSessionMock,
     clearPendingAuthSession: clearPendingAuthSessionMock,
   }),
+  // useAppStore exposes the toast and settings fixtures consumed by the component.
   useAppStore: () => ({
     ...appStoreState,
     showSuccess: showSuccessMock,
@@ -131,8 +159,13 @@ vi.mock('@/stores', () => ({
 
 vi.mock('@/api/client', () => ({
   apiClient: {
+    // post records account-action paths and payloads through the configured API
+    // mock.
     post: (...args: any[]) => apiClientPostMock(...args),
   },
+  // buildApiUrl prefixes the fixture API root to callback endpoint paths. It
+  // accepts paths with or without a leading slash so navigation assertions can
+  // inspect the constructed browser address.
   buildApiUrl: (path: string) => `/api/v1${path.startsWith('/') ? path : `/${path}`}`,
 }))
 
@@ -140,18 +173,40 @@ vi.mock('@/api/auth', async () => {
   const actual = await vi.importActual<typeof import('@/api/auth')>('@/api/auth')
   return {
     ...actual,
+    // exchangePendingOAuthCompletion records adoption choices and returns the
+    // configured continuation response.
     exchangePendingOAuthCompletion: (...args: any[]) => exchangePendingOAuthCompletionMock(...args),
-    completeWeChatOAuthRegistration: (...args: any[]) => completeWeChatOAuthRegistrationMock(...args),
+    // completeWeChatOAuthRegistration records provider invitation-completion
+    // arguments and returns the configured account response.
+    completeWeChatOAuthRegistration: (...args: any[]) =>
+      completeWeChatOAuthRegistrationMock(...args),
+    // login2FA forwards the challenge credential and code to the verification
+    // mock.
     login2FA: (...args: any[]) => login2FAMock(...args),
+    // sendVerifyCode records ordinary signup email delivery requests and their
+    // proofs.
     sendVerifyCode: (...args: any[]) => sendVerifyCodeMock(...args),
+    // sendPendingOAuthVerifyCode records email delivery requests for the pending
+    // provider session.
     sendPendingOAuthVerifyCode: (...args: any[]) => sendPendingOAuthVerifyCodeMock(...args),
+    // getPublicSettings returns the configured public policy response for the
+    // current case.
     getPublicSettings: (...args: any[]) => getPublicSettingsMock(...args),
-    prepareOAuthBindAccessTokenCookie: (...args: any[]) => prepareOAuthBindAccessTokenCookieMock(...args),
+    // prepareOAuthBindAccessTokenCookie records cookie preparation before the
+    // browser binding redirect.
+    prepareOAuthBindAccessTokenCookie: (...args: any[]) =>
+      prepareOAuthBindAccessTokenCookieMock(...args),
+    // getAuthToken supplies the stored-token fixture used to choose binding
+    // recovery.
     getAuthToken: (...args: any[]) => getAuthTokenMock(...args),
   }
 })
 
 describe('WechatCallbackView', () => {
+  // Reset the dependency fixtures before each case so request histories and
+  // configured responses belong to the scenario being asserted in that case. Clear
+  // stored authentication or registration values before seeding the next
+  // continuation.
   beforeEach(() => {
     exchangePendingOAuthCompletionMock.mockReset()
     completeWeChatOAuthRegistrationMock.mockReset()
@@ -177,7 +232,7 @@ describe('WechatCallbackView', () => {
       href: 'http://localhost/auth/wechat/callback',
       hash: '',
       search: '',
-      pathname: '/auth/wechat/callback'
+      pathname: '/auth/wechat/callback',
     }
     Object.defineProperty(window, 'location', {
       configurable: true,
@@ -194,6 +249,9 @@ describe('WechatCallbackView', () => {
     })
   })
 
+  // Binding recovery receives an mp query while explicit settings confirm open
+  // capability. The prepared binding redirect must use open and discard the
+  // incompatible query mode.
   it('overrides an incompatible query mode with the configured open capability during bind recovery', async () => {
     routeState.query = {
       wechat_bind_existing: '1',
@@ -226,6 +284,9 @@ describe('WechatCallbackView', () => {
     expect(locationState.current.href).not.toContain('mode=mp')
   })
 
+  // Binding recovery cannot obtain confirmed per-mode capabilities. The callback
+  // must still prepare the binding cookie and retain the valid mp mode supplied by
+  // its query.
   it('falls back to the query mode when capability settings cannot be confirmed', async () => {
     routeState.query = {
       wechat_bind_existing: '1',
@@ -252,6 +313,9 @@ describe('WechatCallbackView', () => {
     expect(locationState.current.href).toContain('mode=mp')
   })
 
+  // Only the old aggregate WeChat setting is available during recovery. The
+  // callback must use the supplied query mode and prepare the binding cookie for
+  // that continuation.
   it('ignores legacy aggregate wechat settings and reuses the query mode during bind recovery', async () => {
     routeState.query = {
       wechat_bind_existing: '1',
@@ -281,6 +345,9 @@ describe('WechatCallbackView', () => {
     expect(locationState.current.href).toContain('mode=open')
   })
 
+  // The callback fragment contains legacy access and refresh credentials. The view
+  // must install that session and follow its destination without calling
+  // pending-session exchange first.
   it('accepts the legacy fragment token success callback without pending-session exchange', async () => {
     locationState.current.hash =
       '#access_token=legacy-access-token&refresh_token=legacy-refresh-token&expires_in=3600&token_type=Bearer&redirect=%2Flegacy-dashboard'
@@ -311,6 +378,9 @@ describe('WechatCallbackView', () => {
     expect(replaceMock).toHaveBeenCalledWith('/legacy-dashboard')
   })
 
+  // The legacy fragment supplies an invitation requirement and explicit pending
+  // token. Submission must use that token at provider completion without an
+  // initial cookie-session exchange.
   it('accepts the legacy pending oauth invitation fragment without pending-session exchange', async () => {
     locationState.current.hash =
       '#error=invitation_required&pending_oauth_token=legacy-pending-token&redirect=%2Flegacy-invite'
@@ -356,6 +426,9 @@ describe('WechatCallbackView', () => {
     expect(replaceMock).toHaveBeenCalledWith('/legacy-invite')
   })
 
+  // The callback begins with a cookie-backed pending session. Its first exchange
+  // must have no adoption argument so profile choices remain available for
+  // explicit user confirmation.
   it('does not send adoption decisions during the initial exchange', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       access_token: 'access-token',
@@ -383,6 +456,9 @@ describe('WechatCallbackView', () => {
     expect(exchangePendingOAuthCompletionMock).toHaveBeenCalledTimes(1)
   })
 
+  // The initial response requires confirmation of suggested profile details. The
+  // view must defer token installation and navigation until the user submits
+  // explicit name and avatar choices.
   it('waits for explicit adoption confirmation before finishing a non-invitation login', async () => {
     exchangePendingOAuthCompletionMock
       .mockResolvedValueOnce({
@@ -436,6 +512,9 @@ describe('WechatCallbackView', () => {
     expect(localStorage.getItem('refresh_token')).toBe('wechat-refresh-token')
   })
 
+  // The user confirms profile adoption and the next response completes account
+  // binding. The view must show binding success and follow its profile redirect
+  // without installing another access token.
   it('supports bind completion after adoption confirmation', async () => {
     exchangePendingOAuthCompletionMock
       .mockResolvedValueOnce({
@@ -474,6 +553,9 @@ describe('WechatCallbackView', () => {
     expect(replaceMock).toHaveBeenCalledWith('/profile/connections')
   })
 
+  // An invitation response includes suggested profile details. The callback must
+  // render both choices and send the user's selected adoption values when
+  // completing the provider registration.
   it('renders adoption choices for invitation flow and submits the selected values', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       error: 'invitation_required',
@@ -510,14 +592,21 @@ describe('WechatCallbackView', () => {
     await wrapper.get('button').trigger('click')
     await flushPromises()
 
-    expect(completeWeChatOAuthRegistrationMock).toHaveBeenCalledWith('INVITE-CODE', {
-      adoptDisplayName: false,
-      adoptAvatar: true,
-    }, undefined)
+    expect(completeWeChatOAuthRegistrationMock).toHaveBeenCalledWith(
+      'INVITE-CODE',
+      {
+        adoptDisplayName: false,
+        adoptAvatar: true,
+      },
+      undefined,
+    )
     expect(setTokenMock).toHaveBeenCalledWith('wechat-invite-token')
     expect(replaceMock).toHaveBeenCalledWith('/subscriptions')
   })
 
+  // Invitation completion succeeds at HTTP level but returns an account-choice
+  // step. The callback must render the remaining choices without installing a
+  // token or navigating away.
   it('keeps the oauth flow active when complete-registration returns another pending step', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       error: 'invitation_required',
@@ -552,16 +641,23 @@ describe('WechatCallbackView', () => {
     await wrapper.find('button').trigger('click')
     await flushPromises()
 
-    expect(completeWeChatOAuthRegistrationMock).toHaveBeenCalledWith('invite-code', {
-      adoptDisplayName: true,
-      adoptAvatar: true,
-    }, undefined)
+    expect(completeWeChatOAuthRegistrationMock).toHaveBeenCalledWith(
+      'invite-code',
+      {
+        adoptDisplayName: true,
+        adoptAvatar: true,
+      },
+      undefined,
+    )
     expect(setTokenMock).not.toHaveBeenCalled()
     expect(replaceMock).not.toHaveBeenCalled()
     expect(wrapper.get('[data-testid="wechat-choice-bind-existing"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="wechat-choice-create-account"]').exists()).toBe(true)
   })
 
+  // An unauthenticated user selects existing-account binding from the invitation
+  // screen. The login redirect must retain the entered email and nested WeChat
+  // resume marker and mode.
   it('offers existing-account email collection during invitation flow', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       error: 'invitation_required',
@@ -593,6 +689,9 @@ describe('WechatCallbackView', () => {
     expect(replaceMock.mock.calls[0]?.[0]).toContain('mode%3Dopen')
   })
 
+  // The invitation screen already has an authenticated account token. It must omit
+  // email collection, prepare the binding cookie, and navigate directly to
+  // current-account WeChat authorization.
   it('binds directly to the current signed-in account during invitation flow', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       error: 'invitation_required',
@@ -623,6 +722,9 @@ describe('WechatCallbackView', () => {
     expect(locationState.current.href).toContain('mode=open')
   })
 
+  // Preparing the binding cookie fails for the signed-in account. The callback
+  // must show that failure and leave the browser on its current page instead of
+  // authorizing.
   it('shows an error and stays on the page when preparing bind-token for the current account fails', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       error: 'invitation_required',
@@ -644,13 +746,19 @@ describe('WechatCallbackView', () => {
 
     await flushPromises()
 
-    await wrapper.get('[data-testid="existing-account-submit"]').trigger('click').catch(() => undefined)
+    await wrapper
+      .get('[data-testid="existing-account-submit"]')
+      .trigger('click')
+      .catch(() => undefined)
     await flushPromises()
 
     expect(showErrorMock).toHaveBeenCalledWith('bind token failed')
     expect(locationState.current.href).toBe('http://localhost/auth/wechat/callback')
   })
 
+  // The user completes a pending account draft and selects profile adoption
+  // values. The creation request must carry those fields, and its authenticated
+  // result must install a token before navigation.
   it('collects email, password, and verify code for pending oauth account creation and submits adoption decisions', async () => {
     getPublicSettingsMock.mockResolvedValue({
       invitation_code_enabled: true,
@@ -693,7 +801,9 @@ describe('WechatCallbackView', () => {
     await wrapper.get('[data-testid="wechat-create-account-email"]').setValue('  new@example.com  ')
     await wrapper.get('[data-testid="wechat-create-account-password"]').setValue('secret-123')
     await wrapper.get('[data-testid="wechat-create-account-verify-code"]').setValue('246810')
-    await wrapper.get('[data-testid="wechat-create-account-invitation-code"]').setValue(' INVITE123 ')
+    await wrapper
+      .get('[data-testid="wechat-create-account-invitation-code"]')
+      .setValue(' INVITE123 ')
     await wrapper.get('[data-testid="wechat-create-account-submit"]').trigger('click')
     await flushPromises()
 
@@ -709,6 +819,9 @@ describe('WechatCallbackView', () => {
     expect(replaceMock).toHaveBeenCalledWith('/welcome')
   })
 
+  // The initial exchange requires creating an account before authentication can
+  // complete. The callback must record the provider, pending token representation,
+  // and redirect for that continuation.
   it('persists a pending auth session when the oauth flow still needs account creation', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       error: 'email_required',
@@ -736,6 +849,9 @@ describe('WechatCallbackView', () => {
     })
   })
 
+  // The creation endpoint reports that the submitted email already belongs to an
+  // account. The callback must reopen existing-account authentication with that
+  // email retained in its input.
   it('switches to bind-login when create-account returns EMAIL_EXISTS', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       error: 'email_required',
@@ -762,16 +878,21 @@ describe('WechatCallbackView', () => {
     })
 
     await flushPromises()
-    await wrapper.get('[data-testid="wechat-create-account-email"]').setValue('existing@example.com')
+    await wrapper
+      .get('[data-testid="wechat-create-account-email"]')
+      .setValue('existing@example.com')
     await wrapper.get('[data-testid="wechat-create-account-password"]').setValue('secret-123')
     await wrapper.get('[data-testid="wechat-create-account-submit"]').trigger('click')
     await flushPromises()
 
-    expect((wrapper.get('[data-testid="wechat-bind-login-email"]').element as HTMLInputElement).value).toBe(
-      'existing@example.com'
-    )
+    expect(
+      (wrapper.get('[data-testid="wechat-bind-login-email"]').element as HTMLInputElement).value,
+    ).toBe('existing@example.com')
   })
 
+  // The pending creation endpoint rejects the submitted account draft. The
+  // callback must report the failure through its toast path without duplicating
+  // the message inside the form content.
   it('shows create-account failures through toast without inline error text', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       error: 'email_required',
@@ -800,6 +921,9 @@ describe('WechatCallbackView', () => {
     expect(wrapper.text()).not.toContain('create failed')
   })
 
+  // The callback displays its shared pending-account form and the user requests
+  // verification. The pending email-code endpoint must receive the entered address
+  // and expected proof fields.
   it('sends a verify code for pending oauth account creation', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       error: 'email_required',
@@ -832,6 +956,9 @@ describe('WechatCallbackView', () => {
     })
   })
 
+  // The server requests password authentication for an existing account. The
+  // callback must submit credentials and selected profile choices, then install
+  // the returned session and follow its destination.
   it('shows bind-login form for existing account binding and submits credentials with adoption decisions', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       step: 'bind_login_required',
@@ -882,6 +1009,9 @@ describe('WechatCallbackView', () => {
     expect(replaceMock).toHaveBeenCalledWith('/profile/security')
   })
 
+  // The server opens existing-account authentication with an email suggestion.
+  // Switching to account creation must keep that address in the new account form
+  // for continued editing.
   it('allows switching from server-driven bind-login to create-account mode', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       step: 'bind_login_required',
@@ -909,6 +1039,9 @@ describe('WechatCallbackView', () => {
     expect((createAccountEmail.element as HTMLInputElement).value).toBe('existing@example.com')
   })
 
+  // The resumed callback query contains an email absent from the backend response.
+  // The binding input must recover that address from the query when resolving its
+  // draft.
   it('reuses query email for bind-login when backend does not echo it back', async () => {
     routeState.query = {
       email: 'resume@example.com',
@@ -935,6 +1068,9 @@ describe('WechatCallbackView', () => {
     expect((bindEmail.element as HTMLInputElement).value).toBe('resume@example.com')
   })
 
+  // Adoption confirmation returns another pending existing-account login step. The
+  // callback must show the supplied binding email and keep success notifications
+  // and final navigation uncalled.
   it('keeps rendering pending bind-login UI when adoption confirmation leads to another pending step', async () => {
     exchangePendingOAuthCompletionMock
       .mockResolvedValueOnce({
@@ -969,11 +1105,14 @@ describe('WechatCallbackView', () => {
 
     expect(showSuccessMock).not.toHaveBeenCalled()
     expect(replaceMock).not.toHaveBeenCalled()
-    expect((wrapper.get('[data-testid="wechat-bind-login-email"]').element as HTMLInputElement).value).toBe(
-      'existing@example.com'
-    )
+    expect(
+      (wrapper.get('[data-testid="wechat-bind-login-email"]').element as HTMLInputElement).value,
+    ).toBe('existing@example.com')
   })
 
+  // Existing-account password authentication returns a masked-email second-factor
+  // challenge. The callback must wait for the code, send the temporary token with
+  // it, and navigate only after authentication succeeds.
   it('handles bind-login 2FA challenge before redirecting', async () => {
     exchangePendingOAuthCompletionMock.mockResolvedValue({
       error: 'adopt_existing_user_by_email',
@@ -1030,6 +1169,9 @@ describe('WechatCallbackView', () => {
     expect(localStorage.getItem('refresh_token')).toBe('2fa-refresh-token')
   })
 
+  // The callback resumes existing-account binding with an authenticated token. It
+  // must prepare the binding cookie and restart authorization with the saved mode
+  // and destination, bypassing pending exchange.
   it('restarts the current-user bind flow after returning from login', async () => {
     routeState.query = {
       wechat_bind_existing: '1',
@@ -1059,6 +1201,9 @@ describe('WechatCallbackView', () => {
     expect(locationState.current.href).toContain('redirect=%2Fprofile')
   })
 
+  // The binding-resume marker is present but authentication is still absent. The
+  // callback must return to login with email and nested continuation intact,
+  // without exchanging a pending session.
   it('redirects back to login instead of falling through when bind-existing resume has no auth token', async () => {
     routeState.query = {
       wechat_bind_existing: '1',

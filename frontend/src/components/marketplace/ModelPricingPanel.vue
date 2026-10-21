@@ -1,6 +1,6 @@
 <template>
   <div v-if="hasDisplayPricing" class="min-w-0">
-    <!-- 展开/收起触发条：右下角箭头指示面板状态，展开时向上、收起时向下。 -->
+    <!-- The toggle exposes expansion state while its trailing arrow follows the same state visually. -->
     <button
       type="button"
       class="mt-3 flex w-full items-center justify-between gap-2 border-t border-gray-100 pt-3 text-sm font-medium text-primary-600 transition hover:text-primary-700 dark:border-dark-700 dark:text-primary-300 dark:hover:text-primary-200"
@@ -12,15 +12,26 @@
         <Icon name="eye" size="sm" />
         {{ expanded ? t('marketplace.collapsePricing') : t('marketplace.viewPricing') }}
       </span>
-      <Icon name="chevronDown" class="transition-transform duration-normal" :class="{ 'rotate-180': expanded }" size="sm" :animate-on-hover="false" />
+      <Icon
+        name="chevronDown"
+        class="transition-transform duration-normal"
+        :class="{ 'rotate-180': expanded }"
+        size="sm"
+        :animate-on-hover="false"
+      />
     </button>
 
-    <!-- 收起后保留上下文区间和 fast mode，退出期间同步折叠高度。 -->
+    <!-- Retain pricing selections when the panel closes, and let Collapse coordinate its height during exit. -->
     <Collapse :open="expanded">
       <div class="pt-3">
-        <!-- 右上角：上下文区间、fast mode、推理档位和分时切换，定价行随选择联动。 -->
+        <!-- Keep context, speed, effort, and time controls together so their selections update the same displayed quote. -->
         <div
-          v-if="selectableIntervals.length > 0 || hasFastPricing || hasMaxEffortPricing || timeOptions.length > 0"
+          v-if="
+            selectableIntervals.length > 0 ||
+            hasFastPricing ||
+            hasMaxEffortPricing ||
+            timeOptions.length > 0
+          "
           class="mb-3 flex flex-wrap items-center justify-end gap-2"
         >
           <div
@@ -106,22 +117,28 @@
           </div>
         </div>
 
-        <!-- 定价信息在窄卡片内换行，抽屉宽度随父网格收缩。 -->
+        <!-- Allow labels and amounts to wrap within narrow cards as the parent marketplace grid contracts. -->
         <div v-if="activeRows.length > 0" class="space-y-2.5" data-testid="pricing-rows">
           <div
             v-for="row in activeRows"
             :key="row.key"
             class="flex items-baseline justify-between gap-3 border-b border-gray-100 pb-2 text-sm dark:border-dark-700"
           >
-            <span class="min-w-0 max-w-[45%] shrink-0 break-words text-gray-500 dark:text-dark-400">{{ row.label }}</span>
-            <span class="min-w-0 break-words text-right font-medium [overflow-wrap:anywhere] tabular-nums text-gray-900 dark:text-white">{{ row.value }}</span>
+            <span
+              class="min-w-0 max-w-[45%] shrink-0 break-words text-gray-500 dark:text-dark-400"
+              >{{ row.label }}</span
+            >
+            <span
+              class="min-w-0 break-words text-right font-medium [overflow-wrap:anywhere] tabular-nums text-gray-900 dark:text-white"
+              >{{ row.value }}</span
+            >
           </div>
         </div>
         <p v-else class="text-sm text-gray-400 dark:text-dark-500">
           {{ t('marketplace.pricingUnavailable') }}
         </p>
 
-        <!-- 分时价格的时区和生效日写在价格行下方，切换项只放时段。 -->
+        <!-- Time choices name the periods; the shared note below the rows explains their timezone and applicable days. -->
         <p
           v-if="timePricingNote"
           class="mt-2.5 text-xs leading-relaxed text-gray-400 dark:text-dark-500"
@@ -143,110 +160,198 @@ import Icon from '@/components/icons/Icon.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { formatCompactTokenRange } from '@/utils/formatters'
 import { formatPriceNumber, pricingKind, videoPricingEntries } from '@/utils/marketplacePricing'
-import type { MarketplaceModel, MarketplaceModelPricing, MarketplacePricingInterval } from '@/types'
+import type {
+  MarketplaceModel,
+  MarketplaceModelPricing,
+  MarketplacePricingInterval,
+} from '@/api/marketplace.types'
 
-// ModelPricingPanel.vue displays public model prices in the existing marketplace layout.
-// Backend quotes already contain the group multiplier; rows add the selected
-// balance unit and billing unit. Named video dimensions and the explicit default
-// retain separate labels, including when their amounts are zero.
+// ModelPricingPanel.vue presents public model prices inside an expandable
+// marketplace card. Backend quotes already contain the group multiplier; the
+// display adds the selected balance unit and billing unit. Token pricing chooses
+// a context interval, speed tier, reasoning tier, and time period, while image
+// and video rows retain their own units and zero-price handling.
+//
+// Selection state belongs to the mounted panel and survives collapsing its
+// content. Available intervals and periods clamp stale selection indexes when
+// pricing data changes. The default time choice samples the configured timezone
+// when its computed dependencies update; no timer continuously advances that
+// choice. Explicit user selections take precedence over the sampled default,
+// and only token rows apply the time and reasoning multipliers.
 
-// 完整定价面板在卡片内展开、收起，并提供上下文区间与 fast mode 切换。
+// The model supplies a server-prepared public quote; this panel only chooses
+// display variants and never requests prices or persists its local selections.
 const props = defineProps<{
+  // Public model with pricing modes and optional context, effort, and time variants.
   model: MarketplaceModel
 }>()
 
+// Translation and balance-unit services format every visible row using the
+// current interface language and the site's selected internal unit name.
 const { t } = useI18n()
 const { balanceUnitName } = useBalanceDisplay()
 
+// Panel visibility and quote selectors remain local to the mounted component;
+// closing the collapse preserves these choices for the next expansion.
 const expanded = ref(false)
 const fastMode = ref(false)
 const maxEffortMode = ref(false)
 const selectedIntervalIndex = ref(0)
 
-
+// PricingRow pairs a stable display identity with a translated label and amount.
 interface PricingRow {
-  key: string
-  label: string
-  value: string
+  key: string // Stable row identity.
+  label: string // Translated price category.
+  value: string // Formatted amount and unit.
 }
 
+// hasPositiveValue recognizes finite numeric prices strictly greater than zero.
 function hasPositiveValue(value?: number | null): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
+// formatPrice appends the selected balance unit to the shared numerical formatter.
 function formatPrice(value: number): string {
   return `${formatPriceNumber(value)} ${balanceUnitName.value}`
 }
 
-// token 单价乘上当前选中的推理档位和分时倍率。
+// formatPerMillion converts a per-token quote into the displayed million-token unit.
+// It also applies the currently selected time and reasoning factors; the incoming
+// amount already contains any group multiplier supplied by the server.
 function formatPerMillion(value: number): string {
   return `${formatPrice(value * tokenPriceFactor.value * 1_000_000)} ${t('usage.perMillionTokens')}`
 }
 
+// formatPerImage appends the translated per-image billing unit without token multipliers.
 function formatPerImage(value: number): string {
   return `${formatPrice(value)} ${t('marketplace.perImage')}`
 }
 
-// 构建定价行。
-
-function tokenPricingRowsFromValues(pricing: MarketplaceModelPricing | MarketplacePricingInterval): PricingRow[] {
+// tokenPricingRowsFromValues emits positive standard token prices in display order.
+// Missing, nonfinite, and zero values produce no row here. The caller supplies
+// explicit zero fallback rows when the overall quote is marked priced.
+function tokenPricingRowsFromValues(
+  pricing: MarketplaceModelPricing | MarketplacePricingInterval,
+): PricingRow[] {
   const rows: PricingRow[] = []
 
   if (hasPositiveValue(pricing.input_price_per_token)) {
-    rows.push({ key: 'input', label: t('marketplace.input'), value: formatPerMillion(pricing.input_price_per_token) })
+    rows.push({
+      key: 'input',
+      label: t('marketplace.input'),
+      value: formatPerMillion(pricing.input_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.image_input_price_per_token)) {
-    rows.push({ key: 'image_input', label: t('marketplace.imageInput'), value: formatPerMillion(pricing.image_input_price_per_token) })
+    rows.push({
+      key: 'image_input',
+      label: t('marketplace.imageInput'),
+      value: formatPerMillion(pricing.image_input_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.output_price_per_token)) {
-    rows.push({ key: 'output', label: t('marketplace.output'), value: formatPerMillion(pricing.output_price_per_token) })
+    rows.push({
+      key: 'output',
+      label: t('marketplace.output'),
+      value: formatPerMillion(pricing.output_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.cache_write_price_per_token)) {
-    rows.push({ key: 'cache_write', label: t('marketplace.cacheWrite'), value: formatPerMillion(pricing.cache_write_price_per_token) })
+    rows.push({
+      key: 'cache_write',
+      label: t('marketplace.cacheWrite'),
+      value: formatPerMillion(pricing.cache_write_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.cache_write_1h_price_per_token)) {
-    rows.push({ key: 'cache_write_1h', label: t('marketplace.cacheWrite1h'), value: formatPerMillion(pricing.cache_write_1h_price_per_token) })
+    rows.push({
+      key: 'cache_write_1h',
+      label: t('marketplace.cacheWrite1h'),
+      value: formatPerMillion(pricing.cache_write_1h_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.cache_read_price_per_token)) {
-    rows.push({ key: 'cache_read', label: t('marketplace.cacheRead'), value: formatPerMillion(pricing.cache_read_price_per_token) })
+    rows.push({
+      key: 'cache_read',
+      label: t('marketplace.cacheRead'),
+      value: formatPerMillion(pricing.cache_read_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.image_output_price_per_token)) {
-    rows.push({ key: 'image_output', label: t('marketplace.imageOutput'), value: formatPerMillion(pricing.image_output_price_per_token) })
+    rows.push({
+      key: 'image_output',
+      label: t('marketplace.imageOutput'),
+      value: formatPerMillion(pricing.image_output_price_per_token),
+    })
   }
 
   return rows
 }
 
-// fast mode 价格行：只取 fast_* 字段，没有 fast 定价时返回空列表。
-function fastTokenPricingRows(pricing: MarketplaceModelPricing | MarketplacePricingInterval): PricingRow[] {
+// fastTokenPricingRows emits only positive prices from the fast-prefixed fields.
+// It does not borrow standard prices for absent fields, so an empty result leaves
+// the caller using its standard rows and hides the fast selector.
+function fastTokenPricingRows(
+  pricing: MarketplaceModelPricing | MarketplacePricingInterval,
+): PricingRow[] {
   const rows: PricingRow[] = []
 
   if (hasPositiveValue(pricing.fast_input_price_per_token)) {
-    rows.push({ key: 'fast_input', label: t('marketplace.fastInput'), value: formatPerMillion(pricing.fast_input_price_per_token) })
+    rows.push({
+      key: 'fast_input',
+      label: t('marketplace.fastInput'),
+      value: formatPerMillion(pricing.fast_input_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.fast_image_input_price_per_token)) {
-    rows.push({ key: 'fast_image_input', label: t('marketplace.fastImageInput'), value: formatPerMillion(pricing.fast_image_input_price_per_token) })
+    rows.push({
+      key: 'fast_image_input',
+      label: t('marketplace.fastImageInput'),
+      value: formatPerMillion(pricing.fast_image_input_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.fast_output_price_per_token)) {
-    rows.push({ key: 'fast_output', label: t('marketplace.fastOutput'), value: formatPerMillion(pricing.fast_output_price_per_token) })
+    rows.push({
+      key: 'fast_output',
+      label: t('marketplace.fastOutput'),
+      value: formatPerMillion(pricing.fast_output_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.fast_cache_write_price_per_token)) {
-    rows.push({ key: 'fast_cache_write', label: t('marketplace.fastCacheWrite'), value: formatPerMillion(pricing.fast_cache_write_price_per_token) })
+    rows.push({
+      key: 'fast_cache_write',
+      label: t('marketplace.fastCacheWrite'),
+      value: formatPerMillion(pricing.fast_cache_write_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.fast_cache_write_1h_price_per_token)) {
-    rows.push({ key: 'fast_cache_write_1h', label: t('marketplace.fastCacheWrite1h'), value: formatPerMillion(pricing.fast_cache_write_1h_price_per_token) })
+    rows.push({
+      key: 'fast_cache_write_1h',
+      label: t('marketplace.fastCacheWrite1h'),
+      value: formatPerMillion(pricing.fast_cache_write_1h_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.fast_cache_read_price_per_token)) {
-    rows.push({ key: 'fast_cache_read', label: t('marketplace.fastCacheRead'), value: formatPerMillion(pricing.fast_cache_read_price_per_token) })
+    rows.push({
+      key: 'fast_cache_read',
+      label: t('marketplace.fastCacheRead'),
+      value: formatPerMillion(pricing.fast_cache_read_price_per_token),
+    })
   }
   if (hasPositiveValue(pricing.fast_image_output_price_per_token)) {
-    rows.push({ key: 'fast_image_output', label: t('marketplace.fastImageOutput'), value: formatPerMillion(pricing.fast_image_output_price_per_token) })
+    rows.push({
+      key: 'fast_image_output',
+      label: t('marketplace.fastImageOutput'),
+      value: formatPerMillion(pricing.fast_image_output_price_per_token),
+    })
   }
 
   return rows
 }
 
-// 价格为 0 表示免费，priced 状态下缺少正价时展示 0。
+// zeroTokenPricingRows supplies input and output rows for an explicitly priced
+// quote without positive standard fields. Both rows retain the token unit and
+// selected factors while displaying zero as a free price.
 function zeroTokenPricingRows(): PricingRow[] {
   return [
     { key: 'input', label: t('marketplace.input'), value: formatPerMillion(0) },
@@ -260,13 +365,16 @@ function zeroTokenPricingRows(): PricingRow[] {
  * translated label, and every row retains the per-second billing unit.
  */
 function videoPricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
-  return videoPricingEntries(pricing).map(item => ({
+  return videoPricingEntries(pricing).map((item) => ({
     key: item.key,
     label: item.resolution ?? t('marketplace.defaultVideoPrice'),
     value: `${formatPrice(item.price)} ${t('marketplace.perSecond')}`,
   }))
 }
 
+// imagePricingRows emits supported image-resolution prices, including finite zero values.
+// Negative, missing, and nonfinite values are omitted. Rows keep the fixed
+// resolution order and per-image unit without time or reasoning multipliers.
 function imagePricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
   const values = [
     { key: '1k', label: '1K', price: pricing.image_price_1k },
@@ -279,32 +387,41 @@ function imagePricingRows(pricing: MarketplaceModelPricing): PricingRow[] {
       return []
     }
 
-    return [{
-      key: item.key,
-      label: item.label,
-      value: formatPerImage(item.price),
-    }]
+    return [
+      {
+        key: item.key,
+        label: item.label,
+        value: formatPerImage(item.price),
+      },
+    ]
   })
 }
 
+// Quote availability gates the whole disclosure; interval indexes refer to the
+// server's ordered context ranges and are clamped again before selecting a source.
 const hasDisplayPricing = computed(() => pricingKind(props.model.pricing) !== 'unpriced')
 
-// 后端返回有定价的区间，JSON 省略的零价字段仍表示免费区间。
+// Context ranges remain selectable even when zero-valued price fields were
+// omitted from JSON, because those ranges still represent explicit free pricing.
 const selectableIntervals = computed(() =>
-  (props.model.pricing.context_intervals ?? [])
-    .map((interval, index) => ({ interval, key: `${interval.min_tokens}-${interval.max_tokens ?? 'up'}-${index}` }))
+  (props.model.pricing.context_intervals ?? []).map((interval, index) => ({
+    interval,
+    key: `${interval.min_tokens}-${interval.max_tokens ?? 'up'}-${index}`,
+  })),
 )
 
 const activeIntervalIndex = computed(() =>
-  Math.min(selectedIntervalIndex.value, Math.max(0, selectableIntervals.value.length - 1))
+  Math.min(selectedIntervalIndex.value, Math.max(0, selectableIntervals.value.length - 1)),
 )
 
-// 定价数据来源：选中区间优先，否则用模型顶层价格。
-const activeSource = computed<MarketplaceModelPricing | MarketplacePricingInterval>(() =>
-  selectableIntervals.value[activeIntervalIndex.value]?.interval ?? props.model.pricing
+// activeSource prefers the selected context interval, falling back to top-level
+// model prices when the public quote has no selectable context ranges.
+const activeSource = computed<MarketplaceModelPricing | MarketplacePricingInterval>(
+  () => selectableIntervals.value[activeIntervalIndex.value]?.interval ?? props.model.pricing,
 )
 
-// standardRows selects video, image, or token rows for the expanded quote.
+// standardRows dispatches to the quote's billing mode before applying token
+// fallback rules; named video dimensions and image resolutions keep separate rows.
 const standardRows = computed<PricingRow[]>(() => {
   if (pricingKind(props.model.pricing) === 'video') {
     return videoPricingRows(props.model.pricing)
@@ -320,36 +437,57 @@ const standardRows = computed<PricingRow[]>(() => {
   return props.model.pricing.price_status === 'priced' ? zeroTokenPricingRows() : []
 })
 
+// Fast rows follow the same active source, and only a token quote with actual
+// positive fast fields exposes the speed selector to the user.
 const fastRows = computed(() => fastTokenPricingRows(activeSource.value))
 
-// 当前定价来源存在 fast mode 加价时才展示切换。
-const hasFastPricing = computed(() => pricingKind(props.model.pricing) === 'token' && fastRows.value.length > 0)
+const hasFastPricing = computed(
+  () => pricingKind(props.model.pricing) === 'token' && fastRows.value.length > 0,
+)
 
-// 分时切换项：multiplier 是该时段乘到 token 单价上的倍率，其他时段为 1。
+// TimeOption describes a displayed time-pricing interval and its token multiplier.
 interface TimeOption {
-  key: string
-  label: string
+  key: string // Stable period identity.
+  label: string // Displayed period range.
+  // multiplier scales token prices; the synthetic other-hours option uses one to
+  // leave the selected token prices unchanged.
   multiplier: number
+  // start is the inclusive seconds-after-midnight bound; the synthetic other-hours
+  // option uses zero and is excluded from clock-based interval matching.
   start: number
+  // end is the exclusive seconds-after-midnight bound; midnight endings use 86400,
+  // while the synthetic other-hours option uses zero and bypasses interval matching.
   end: number
 }
 
+// SECONDS_PER_DAY converts a midnight period endpoint into an exclusive day-end
+// bound and identifies whether configured periods leave any other hours uncovered.
 const SECONDS_PER_DAY = 24 * 60 * 60
 
-// 后端接受 HH:mm 和 HH:mm:ss，整分钟的时刻统一显示为 HH:mm，结束时间 00:00 显示为 24:00。
+// formatPeriodTime shortens whole-minute values and labels midnight endings as 24:00.
+// Inputs follow the server's HH:mm or HH:mm:ss forms. Start times retain midnight
+// as 00:00 so ranges distinguish the beginning and end of a day.
 function formatPeriodTime(value: string, end: boolean): string {
   const short = value.endsWith(':00') && value.length === 8 ? value.slice(0, 5) : value
   return end && short === '00:00' ? '24:00' : short
 }
 
+// periodSeconds converts a server time into seconds after midnight.
+// Missing components use zero, and an ending midnight becomes the day-end bound.
+// The function assumes server-validated time text rather than validating ranges itself.
 function periodSeconds(value: string, end: boolean): number {
   const [hours = 0, minutes = 0, seconds = 0] = value.split(':').map(Number)
   const total = hours * 3600 + minutes * 60 + seconds
   return end && total === 0 ? SECONDS_PER_DAY : total
 }
 
-// 读取规则时区下的当前时刻；时区无效时返回 null，切换默认停在其他时段。
-function currentZonedTime(timezone: string): { weekend: boolean; second: number } | null {
+// currentZonedTime samples the current clock in the configured pricing timezone.
+// It returns weekday classification and seconds after midnight. An unsupported
+// timezone or formatting failure returns null for the caller's default-choice path.
+function currentZonedTime(timezone: string): {
+  weekend: boolean // Saturday or Sunday flag.
+  second: number // Seconds after local midnight.
+} | null {
   try {
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: timezone,
@@ -359,6 +497,9 @@ function currentZonedTime(timezone: string): { weekend: boolean; second: number 
       second: '2-digit',
       hourCycle: 'h23',
     }).formatToParts(new Date())
+    // part reads the first Intl value matching the requested part type.
+    // Missing parts return empty text, which gives numeric conversions zero and
+    // leaves weekday comparisons unmatched.
     const part = (type: string) => parts.find((item) => item.type === type)?.value ?? ''
     const weekday = part('weekday')
     return {
@@ -366,18 +507,27 @@ function currentZonedTime(timezone: string): { weekend: boolean; second: number 
       second: Number(part('hour')) * 3600 + Number(part('minute')) * 60 + Number(part('second')),
     }
   } catch {
+    // Intl can reject the configured timezone or fail to format it; returning
+    // null sends currentTimeIndex through its first-option selection path.
     return null
   }
 }
 
-// Max 推理档位有独立倍率时才展示档位切换。
-const hasMaxEffortPricing = computed(() =>
-  pricingKind(props.model.pricing) === 'token' && hasPositiveValue(props.model.pricing.max_reasoning_effort_multiplier)
+// Reasoning controls require a positive multiplier on token pricing. Time choices
+// separately map configured periods into ordered bounds and an optional neutral fallback.
+const hasMaxEffortPricing = computed(
+  () =>
+    pricingKind(props.model.pricing) === 'token' &&
+    hasPositiveValue(props.model.pricing.max_reasoning_effort_multiplier),
 )
 
 const timeOptions = computed<TimeOption[]>(() => {
   const timePricing = props.model.pricing.time_pricing
-  if (pricingKind(props.model.pricing) !== 'token' || !timePricing || timePricing.periods.length === 0) {
+  if (
+    pricingKind(props.model.pricing) !== 'token' ||
+    !timePricing ||
+    timePricing.periods.length === 0
+  ) {
     return []
   }
   const periods = timePricing.periods
@@ -390,14 +540,25 @@ const timeOptions = computed<TimeOption[]>(() => {
     }))
     .sort((a, b) => a.start - b.start)
   const coveredSeconds = periods.reduce((sum, period) => sum + period.end - period.start, 0)
-  // 时段之外按 1x 计费；仅工作日生效时周末也属于其他时段。
+  // Preserve a neutral choice for gaps in the daily schedule or for weekends
+  // excluded by a weekdays-only rule, placing that choice before configured periods.
   if (timePricing.weekdays_only || coveredSeconds < SECONDS_PER_DAY) {
-    return [{ key: 'other', label: t('marketplace.timePricingOtherHours'), multiplier: 1, start: 0, end: 0 }, ...periods]
+    return [
+      {
+        key: 'other',
+        label: t('marketplace.timePricingOtherHours'),
+        multiplier: 1,
+        start: 0,
+        end: 0,
+      },
+      ...periods,
+    ]
   }
   return periods
 })
 
-// 默认选中规则时区下当前所在的时段，展开面板看到的就是此刻的价格。
+// A null user selection delegates to the sampled timezone-based default. Explicit
+// selections remain independent of that computed default while the panel stays mounted.
 const selectedTimeIndex = ref<number | null>(null)
 
 const currentTimeIndex = computed(() => {
@@ -406,28 +567,40 @@ const currentTimeIndex = computed(() => {
   if (!timePricing || !now || (timePricing.weekdays_only && now.weekend)) {
     return 0
   }
-  const index = timeOptions.value.findIndex((option) => option.key !== 'other' && now.second >= option.start && now.second < option.end)
+  const index = timeOptions.value.findIndex(
+    (option) => option.key !== 'other' && now.second >= option.start && now.second < option.end,
+  )
   return Math.max(index, 0)
 })
 
 const activeTimeIndex = computed(() =>
-  Math.min(selectedTimeIndex.value ?? currentTimeIndex.value, Math.max(0, timeOptions.value.length - 1))
+  Math.min(
+    selectedTimeIndex.value ?? currentTimeIndex.value,
+    Math.max(0, timeOptions.value.length - 1),
+  ),
 )
 
+// The token factor combines the selected period and optional maximum-effort
+// multiplier; missing selections use one so they do not scale the quote.
 const tokenPriceFactor = computed(() => {
   const timeMultiplier = timeOptions.value[activeTimeIndex.value]?.multiplier ?? 1
-  const effortMultiplier = maxEffortMode.value && hasMaxEffortPricing.value
-    ? props.model.pricing.max_reasoning_effort_multiplier ?? 1
-    : 1
+  const effortMultiplier =
+    maxEffortMode.value && hasMaxEffortPricing.value
+      ? (props.model.pricing.max_reasoning_effort_multiplier ?? 1)
+      : 1
   return timeMultiplier * effortMultiplier
 })
 
+// The note explains the selected schedule's timezone and weekday policy. Row
+// selection independently prefers fast prices only when that mode has available rows.
 const timePricingNote = computed(() => {
   const timePricing = props.model.pricing.time_pricing
   if (timeOptions.value.length === 0 || !timePricing) {
     return ''
   }
-  const key = timePricing.weekdays_only ? 'marketplace.timePricingNoteWeekdays' : 'marketplace.timePricingNoteEveryDay'
+  const key = timePricing.weekdays_only
+    ? 'marketplace.timePricingNoteWeekdays'
+    : 'marketplace.timePricingNoteEveryDay'
   return t(key, { timezone: timePricing.timezone })
 })
 

@@ -1,15 +1,17 @@
 <template>
-  <!-- 协议标签放在深底浮层里，配色和属性浮层的能力标签一致；完整端点在悬停提示里。 -->
+  <!-- Protocol chips share the attribute panel palette; native status and full endpoints remain available in hover text. -->
   <div v-if="items.length" data-testid="model-protocols">
     <div class="flex items-center justify-between gap-4">
       <p class="text-gray-400 dark:text-dark-400">{{ t('marketplace.protocols') }}</p>
-      <!-- 图例的色块和原生协议标签同色，只有出现原生协议时显示。 -->
+      <!-- Show the legend only when a displayed protocol uses the corresponding native-protocol color. -->
       <span
         v-if="hasNative"
         class="inline-flex items-center gap-1.5 text-gray-400 dark:text-dark-400"
         data-testid="model-protocols-native-legend"
       >
-        <span class="h-2.5 w-2.5 rounded-full bg-emerald-500/20 ring-1 ring-inset ring-emerald-400/70"></span>
+        <span
+          class="h-2.5 w-2.5 rounded-full bg-emerald-500/20 ring-1 ring-inset ring-emerald-400/70"
+        ></span>
         {{ t('marketplace.protocolNative') }}
       </span>
     </div>
@@ -26,14 +28,16 @@
           {{ t('marketplace.allProtocols') }}
         </button>
       </li>
-      <!-- 原生协议用绿色描边和淡绿底标出，经过转换的协议保持中性底色。 -->
+      <!-- Native protocols use a green outline and fill; converted protocols retain the neutral panel background. -->
       <li
         v-for="protocol in items"
         :key="protocol.id"
         class="inline-flex items-center gap-1 rounded-compact px-1.5 py-0.5 text-white dark:text-dark-100"
-        :class="protocol.native
-          ? 'bg-emerald-500/15 ring-1 ring-inset ring-emerald-400/60'
-          : 'bg-white/5 dark:bg-dark-800'"
+        :class="
+          protocol.native
+            ? 'bg-emerald-500/15 ring-1 ring-inset ring-emerald-400/60'
+            : 'bg-white/5 dark:bg-dark-800'
+        "
         :data-protocol="protocol.id"
         :data-native="protocol.native"
         :title="`${protocol.endpoint} · ${t(protocol.native ? 'marketplace.protocolNativeHint' : 'marketplace.protocolConvertedHint')}`"
@@ -66,29 +70,40 @@ import { useI18n } from 'vue-i18n'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { marketplaceProtocols } from '@/utils/marketplaceProtocols'
-import type { ProtocolID } from '@/types'
+import type { ProtocolID } from '@/api/protocols.types'
 
 // ModelProtocolChips.vue lists public client protocols and their native status.
 // Selectable chips expose a local single-protocol view with an all-protocol reset;
 // static labels remain available when an older API provides no protocol attributes.
 
+// Display inputs let the owning panel opt into controlled selection while
+// protocol order and endpoint metadata continue to come from the shared catalog.
 const props = defineProps<{
+  // Advertised client protocol identifiers; omission produces no chips, and unknown identifiers are omitted.
   protocols?: ProtocolID[]
-  // Selectable requires complete per-protocol attributes at the owning panel.
+  // Enables selection when the owning panel has complete per-protocol attributes for this model.
   selectable?: boolean
-  // Selected is null for the overall union, or one requestable protocol identifier.
+  // Null selects the overall union; an identifier marks the currently selected client protocol.
   selected?: ProtocolID | null
-  // nativeProtocols 是 protocols 里不经过协议转换的那部分。
+  // Subset of advertised protocols that reach the upstream without an intervening protocol conversion.
   nativeProtocols?: ProtocolID[]
 }>()
 // Protocol controls emit a local selection; catalogue order and native styling
 // remain shared between interactive summaries and legacy static protocol labels.
-const emit = defineEmits<{ 'update:selected': [ProtocolID | null] }>()
+const emit = defineEmits<{
+  // Requests a protocol selection; null restores the all-protocol summary in the owning panel.
+  'update:selected': [ProtocolID | null]
+}>()
 const { t } = useI18n()
 
+// Catalog-resolved items carry native flags only for identifiers in the supplied
+// subset; the legend reflects the resulting visible list rather than raw input.
 const items = computed(() => {
   const native = new Set(props.nativeProtocols ?? [])
-  return marketplaceProtocols(props.protocols).map(protocol => ({ ...protocol, native: native.has(protocol.id) }))
+  return marketplaceProtocols(props.protocols).map((protocol) => ({
+    ...protocol,
+    native: native.has(protocol.id),
+  }))
 })
-const hasNative = computed(() => items.value.some(protocol => protocol.native))
+const hasNative = computed(() => items.value.some((protocol) => protocol.native))
 </script>

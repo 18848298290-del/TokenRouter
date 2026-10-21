@@ -1,154 +1,288 @@
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { shallowMount, enableAutoUnmount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
+import postcss from 'postcss'
+import ts from 'typescript'
+import {
+  applyTokens,
+  attribute,
+  classes,
+  cssRules,
+  declarations,
+  directive,
+  nodes,
+  parseScript,
+  parseVue,
+  readSource,
+  variableInitializer,
+} from '@/__tests__/helpers/sourceSyntax'
+import AppSidebar from '../AppSidebar.vue'
 
-import { describe, expect, it } from 'vitest'
+// AppSidebar.spec.ts exercises navigation visibility, width selection, and
+// scroll restoration using mounted sidebar instances. Styles and the parent
+// layout are checked through parsed rules and template elements because jsdom
+// does not compile Tailwind utilities or calculate responsive page geometry.
 
-const componentPath = resolve(dirname(fileURLToPath(import.meta.url)), '../AppSidebar.vue')
-const componentSource = readFileSync(componentPath, 'utf8')
-const stylePath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../style.css')
-const styleSource = readFileSync(stylePath, 'utf8')
-const layoutPath = resolve(dirname(fileURLToPath(import.meta.url)), '../AppLayout.vue')
-const layoutSource = readFileSync(layoutPath, 'utf8')
+// state supplies independent navigation fixtures and inert settings fetches for each mounted sidebar.
+const state = vi.hoisted(() => ({
+  isAdmin: false, // Administrator navigation fixture switch.
+  collapsed: false, // Sidebar width fixture switch.
+  scrollTop: 0, // Remembered navigation scroll offset.
+  settings: {} as Record<string, boolean>, // Public navigation feature flags.
+}))
+vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ path: '/dashboard', fullPath: '/dashboard' }) }))
+vi.mock('@/stores', () => ({
+  useAppStore: () => ({
+    sidebarCollapsed: state.collapsed,
+    mobileOpen: true,
+    cachedPublicSettings: state.settings,
+    // sidebarScrollTop reads the remembered offset from the current navigation fixture.
+    get sidebarScrollTop() {
+      return state.scrollTop
+    },
+    // sidebarScrollTop records the component's saved offset for later fixture assertions.
+    set sidebarScrollTop(value: number) {
+      state.scrollTop = value
+    },
+    setMobileOpen: vi.fn(),
+  }),
+  useAuthStore: () => ({ isAdmin: state.isAdmin }),
+  useOnboardingStore: () => ({ isCurrentStep: () => false }),
+  useAdminSettingsStore: () => ({
+    customMenuItems: [],
+    paymentEnabled: false,
+    opsMonitoringEnabled: false,
+    fetch: vi.fn(),
+  }),
+}))
+vi.mock('@/composables/useBatchImageAccess', () => ({
+  useBatchImageAccess: () => ({ canUseBatchImage: false, refreshBatchImageAccess: vi.fn() }),
+}))
+
+enableAutoUnmount(afterEach)
+beforeEach(() => {
+  state.isAdmin = false
+  state.collapsed = false
+  state.scrollTop = 0
+  state.settings = {}
+})
+
+// Parsed production sources expose stylesheet ownership and parent layout structure to these assertions.
+const sidebar = parseVue('components/layout/AppSidebar.vue')
+const layout = parseVue('components/layout/AppLayout.vue')
+const styles = postcss.parse(readSource('style.css'))
+
+// mountSidebar keeps navigation slot contents visible and replaces routing with inert link stubs.
+function mountSidebar() {
+  return shallowMount(AppSidebar, {
+    global: { renderStubDefaultSlot: true, stubs: { RouterLink: true } },
+  })
+}
 
 describe('AppSidebar layout controls', () => {
-  it('removes the footer controls and uses the narrower expanded width', () => {
-    // 同时检查侧栏宽度和内容偏移。
-    expect(componentSource).not.toContain('@click="toggleTheme"')
-    expect(componentSource).not.toContain('@click="toggleSidebar"')
-    expect(componentSource).toContain("sidebarCollapsed ? 'w-[var(--sidebar-w-collapsed)]' : 'w-[var(--sidebar-w)]'")
-    expect(layoutSource).toContain("'lg:ml-[var(--sidebar-w-collapsed)]'")
-    expect(layoutSource).toContain("'lg:ml-[var(--sidebar-w)]'")
-    expect(styleSource).toContain('width: var(--sidebar-w);')
-  })
-
-  it('renders the site logo without an outer glow', () => {
-    expect(componentSource).not.toContain('shadow-glow')
-  })
-})
-
-describe('light theme text contrast', () => {
-  it('uses opaque navigation text and isolates stronger muted text to light mode', () => {
-    const sidebarLinkBlock = styleSource.match(/\.sidebar-link\s*\{[\s\S]*?\n {2}\}/)
-
-    expect(sidebarLinkBlock).not.toBeNull()
-    expect(sidebarLinkBlock?.[0]).toContain('@apply text-primary-900 dark:text-dark-100;')
-    expect(sidebarLinkBlock?.[0]).not.toContain('text-primary-900/75')
-    expect(styleSource).toContain('html:not(.dark) :is(')
-    expect(styleSource).toContain('.text-gray-500')
-    expect(styleSource).toContain('.text-primary-900\\/65')
-    expect(styleSource).toContain('color: #426177;')
-  })
-})
-
-describe('AppSidebar custom SVG styles', () => {
-  it('does not override uploaded SVG fill or stroke colors', () => {
-    expect(componentSource).toContain('.sidebar-svg-icon {')
-    expect(componentSource).toContain('color: currentColor;')
-    expect(componentSource).toContain('display: block;')
-    expect(componentSource).not.toContain('stroke: currentColor;')
-    expect(componentSource).not.toContain('fill: none;')
-  })
-})
-
-describe('AppSidebar scroll position persistence', () => {
-  it('binds a template ref to the sidebar nav element', () => {
-    expect(componentSource).toContain('ref="sidebarNavRef"')
-    expect(componentSource).toContain('sidebar-nav')
-  })
-
-  it('declares sidebarNavRef in script setup', () => {
-    expect(componentSource).toContain("const sidebarNavRef = ref<HTMLElement | null>(null)")
-  })
-
-  it('saves scroll position on beforeUnmount', () => {
-    expect(componentSource).toContain('onBeforeUnmount')
-    expect(componentSource).toContain('appStore.sidebarScrollTop')
-    expect(componentSource).toContain('sidebarNavRef.value.scrollTop')
-  })
-
-  it('restores scroll position on mount', () => {
-    expect(componentSource).toContain('onMounted')
-    expect(componentSource).toContain('appStore.sidebarScrollTop')
-    expect(componentSource).toContain('nextTick')
-  })
-})
-
-describe('global header and sidebar hierarchy', () => {
-  it('keeps branding out of the sidebar and places the global header before it', () => {
-    expect(componentSource).not.toContain('sidebar-header')
-    expect(componentSource).not.toContain('sidebar-brand')
-    expect(layoutSource).toContain('<AppHeader />')
-    // AppLayout 改造后侧栏按 hideSidebar 条件渲染，这里只要求 header 出现在侧栏组件之前。
-    const headerIndex = layoutSource.indexOf('<AppHeader />')
-    const sidebarIndex = layoutSource.indexOf('<AppSidebar')
-    expect(headerIndex).toBeGreaterThanOrEqual(0)
-    expect(sidebarIndex).toBeGreaterThan(headerIndex)
-  })
-
-  it('starts the mobile overlay below the global header', () => {
-    // 遮罩不能位于半透明顶栏下方，否则 glass 背景会透出黑色并使顶栏变灰。
-    expect(componentSource).toContain('fixed inset-x-0 bottom-0 top-[var(--header-h)] z-sidebar-overlay bg-black/50 lg:hidden')
-    expect(componentSource).not.toContain('fixed inset-0 z-sidebar-overlay bg-black/50 lg:hidden')
-  })
-
-  it('keeps the scrolling content below the fixed global header', () => {
-    // 主内容不能与顶栏使用同级 z-index，否则滚动时后渲染内容会盖住顶栏。
-    expect(layoutSource).toContain('class="relative z-10 flex min-w-0 flex-col pt-[var(--header-h)] transition-[margin-left] duration-layout"')
-    // 全屏工作区与全尺寸贴合布局都需要明确高度，保证内容在顶栏下方滚动。
-    expect(layoutSource).toContain("if (fullViewport.value || props.fitViewport === 'all') return 'h-full min-h-0'")
-    expect(layoutSource).not.toContain('lg:z-50')
-  })
-
-  it('fades the mobile overlay in and out', () => {
-    // 检查侧栏遮罩渐进显示和隐藏。
-    // 遮罩与全站淡入配方共用时长，不在侧栏保留局部副本。
-    expect(componentSource).toContain('<MotionTransition name="fade">')
-    expect(styleSource).toContain('transition: opacity var(--motion-fast) var(--motion-ease);')
-    expect(styleSource).toContain('transition: opacity var(--motion-exit) var(--motion-ease-exit);')
-  })
-})
-
-describe('AppSidebar admin personal menu', () => {
-  it('shows the regular dashboard under My Provider for admins', () => {
-    const personalNavItemsBlockMatch = componentSource.match(
-      /const personalNavItems = computed\(\(\): NavItem\[\] => \{[\s\S]*?const adminNavItems = computed/
+  // Expanded and collapsed sidebars use the shared width tokens. The content
+  // column references the corresponding margin tokens so the two widths agree.
+  it.each([false, true])('uses shared widths when collapsed=%s', (collapsed) => {
+    state.collapsed = collapsed
+    const wrapper = mountSidebar()
+    expect(wrapper.get('aside').classes()).toContain(
+      collapsed ? 'w-[var(--sidebar-w-collapsed)]' : 'w-[var(--sidebar-w)]',
     )
-
-    expect(personalNavItemsBlockMatch).not.toBeNull()
-    const personalNavItemsBlock = personalNavItemsBlockMatch?.[0] ?? ''
-    const dashboardIndex = personalNavItemsBlock.indexOf("path: '/dashboard'")
-    const modelsIndex = personalNavItemsBlock.indexOf("path: '/models'")
-
-    expect(dashboardIndex).toBeGreaterThanOrEqual(0)
-    expect(modelsIndex).toBeGreaterThanOrEqual(0)
-    expect(dashboardIndex).toBeLessThan(modelsIndex)
+    const column = layout.elements.find((element) => classes(element).includes('duration-layout'))!
+    const binding = parseScript(`const binding = ${directive(column, 'bind', 'class')}`)
+    expect(nodes(binding, ts.isStringLiteral).map((node) => node.text)).toEqual(
+      expect.arrayContaining(['lg:ml-[var(--sidebar-w-collapsed)]', 'lg:ml-[var(--sidebar-w)]']),
+    )
+    expect(cssRules(styles, '.sidebar').flatMap((rule) => declarations(rule, 'width'))).toContain(
+      'var(--sidebar-w)',
+    )
+    expect(
+      sidebar.elements.some((element) =>
+        ['toggleTheme', 'toggleSidebar'].includes(directive(element, 'on', 'click') ?? ''),
+      ),
+    ).toBe(false)
   })
 
-  it('uses the public feature switch for team entries', () => {
-    // 普通用户与管理员入口共用功能开关判断。
-    expect(componentSource).toContain("const flagTeamAccess = () => appStore.cachedPublicSettings?.team_enabled !== false")
-    expect(componentSource.match(/path: '\/admin\/teams'.*featureFlag: flagTeamAccess/g)).toHaveLength(1)
+  // Sidebar branding stays in the global header, where it shares the fixed
+  // header layer. No sidebar element should introduce a decorative glow class.
+  it('keeps branding and outer glows out of the sidebar', () => {
+    expect(sidebar.elements.flatMap(classes)).not.toContain('sidebar-header')
+    expect(sidebar.elements.flatMap(classes)).not.toContain('sidebar-brand')
+    expect(sidebar.elements.flatMap(classes)).not.toContain('shadow-glow')
+    const tags = layout.elements.map((element) => element.tag)
+    expect(tags.indexOf('AppHeader')).toBeGreaterThanOrEqual(0)
+    expect(tags.indexOf('AppSidebar')).toBeGreaterThan(tags.indexOf('AppHeader'))
   })
 
-  it('uses distinct icons for ranking, usage, team, and affiliate entries', () => {
-    // 普通用户菜单与管理员个人菜单共用图标映射。
-    expect(componentSource.match(/path: '\/usage-ranking'.*icon: 'ranking'/g)).toHaveLength(2)
-    expect(componentSource.match(/path: '\/usage'.*icon: 'chart'/g)).toHaveLength(2)
-    expect(componentSource.match(/path: '\/team'.*icon: 'users'/g)).toHaveLength(2)
-    expect(componentSource.match(/path: '\/affiliate',[\s\S]{0,180}?icon: 'affiliate'/g)).toHaveLength(2)
+  // The mobile scrim begins below the fixed header, and content scrolls under
+  // its higher layer. The overlay uses the shared fade transition's timing rules.
+  it('keeps the mobile overlay and content below the header', () => {
+    const overlay = sidebar.elements.find((element) =>
+      classes(element).includes('z-sidebar-overlay'),
+    )!
+    expect(classes(overlay)).toEqual(
+      expect.arrayContaining([
+        'fixed',
+        'inset-x-0',
+        'bottom-0',
+        'top-[var(--header-h)]',
+        'bg-black/50',
+        'lg:hidden',
+      ]),
+    )
+    expect(classes(overlay)).not.toContain('inset-0')
+    const transition = sidebar.elements.find((element) => element.tag === 'MotionTransition')!
+    expect(attribute(transition, 'name')).toBe('fade')
+    expect(transition.children).toContain(overlay)
+    const column = layout.elements.find((element) => classes(element).includes('duration-layout'))!
+    expect(classes(column)).toEqual(
+      expect.arrayContaining([
+        'relative',
+        'z-10',
+        'flex',
+        'min-w-0',
+        'flex-col',
+        'pt-[var(--header-h)]',
+        'transition-[margin-left]',
+      ]),
+    )
+    expect(layout.elements.flatMap(classes)).not.toContain('lg:z-50')
+    const branches = nodes(variableInitializer(layout.script, 'columnClass'), ts.isIfStatement)
+    const lockedBranch = branches.find((branch) =>
+      nodes(branch.thenStatement, ts.isStringLiteral).some(
+        (node) => node.text === 'h-full min-h-0',
+      ),
+    )
+    expect(lockedBranch).toBeDefined()
+    if (!lockedBranch || !ts.isBinaryExpression(lockedBranch.expression))
+      throw new Error('Missing combined locked-height condition')
+    expect(lockedBranch.expression.operatorToken.kind).toBe(ts.SyntaxKind.BarBarToken)
+    expect(nodes(lockedBranch.expression, ts.isIdentifier).map((node) => node.text)).toEqual(
+      expect.arrayContaining(['fullViewport', 'value', 'props', 'fitViewport']),
+    )
+    expect(nodes(lockedBranch.expression, ts.isStringLiteral).map((node) => node.text)).toContain(
+      'all',
+    )
+    expect(
+      cssRules(styles, '.fade-enter-active').flatMap((rule) => declarations(rule, 'transition')),
+    ).toContain('opacity var(--motion-fast) var(--motion-ease)')
+    expect(
+      cssRules(styles, '.fade-leave-active').flatMap((rule) => declarations(rule, 'transition')),
+    ).toContain('opacity var(--motion-exit) var(--motion-ease-exit)')
+  })
+
+  // Route changes remount navigation, so saved scroll position must reach the
+  // real nav element. Unmounting records the user's latest offset for restoration.
+  it('restores and saves the navigation scroll offset', async () => {
+    state.scrollTop = 120
+    const wrapper = mountSidebar()
+    await nextTick()
+    expect(wrapper.get('nav.sidebar-nav').element.scrollTop).toBe(120)
+    wrapper.get('nav.sidebar-nav').element.scrollTop = 260
+    wrapper.unmount()
+    expect(state.scrollTop).toBe(260)
   })
 })
 
-describe('AppSidebar risk control', () => {
-  it('keeps enabled risk control visible to administrators', () => {
-    // 风控入口遵守独立功能开关。
-    const start = componentSource.indexOf("path: '/admin/risk-control'")
-    const end = componentSource.indexOf("path: '/admin/redeem'", start)
-    const riskControlItem = componentSource.slice(start, end)
+describe('AppSidebar styling', () => {
+  // Navigation labels need opaque foreground colors in both themes. The stronger
+  // muted text override applies specifically to the light document root selector.
+  it('uses opaque labels and a light-only muted text override', () => {
+    const tokens = cssRules(styles, '.sidebar-link').flatMap(applyTokens)
+    expect(tokens).toEqual(expect.arrayContaining(['text-primary-900', 'dark:text-dark-100']))
+    expect(tokens).not.toContain('text-primary-900/75')
+    const lightRules: postcss.Rule[] = []
+    styles.walkRules((rule) => {
+      if (/^html:not\(\.dark\)\s+:is\(/.test(rule.selector)) lightRules.push(rule)
+    })
+    expect(
+      lightRules.some(
+        (rule) =>
+          rule.selector.includes('.text-gray-500') &&
+          rule.selector.includes('.text-primary-900\\/65') &&
+          declarations(rule, 'color').includes('#426177'),
+      ),
+    ).toBe(true)
+  })
 
-    expect(start).toBeGreaterThanOrEqual(0)
-    expect(end).toBeGreaterThan(start)
-    expect(riskControlItem).toContain('risk_control_enabled')
+  // Uploaded SVG icons may carry their own fills and strokes. Their wrapper
+  // inherits currentColor while the nested SVG receives block layout without recoloring.
+  it('keeps uploaded SVG colors intact', () => {
+    expect(
+      cssRules(sidebar.styles, '.sidebar-svg-icon').flatMap((rule) => declarations(rule, 'color')),
+    ).toEqual(['currentColor'])
+    expect(
+      cssRules(sidebar.styles, '.sidebar-svg-icon :deep(svg)').flatMap((rule) =>
+        declarations(rule, 'display'),
+      ),
+    ).toEqual(['block'])
+    const overrides: string[] = []
+    sidebar.styles.walkDecls(/^(fill|stroke)$/, (declaration) => {
+      overrides.push(declaration.value)
+    })
+    expect(overrides).toEqual([])
+  })
+})
+
+describe('AppSidebar navigation', () => {
+  // Admin personal navigation keeps the dashboard before model browsing. Its
+  // ordering is checked on rendered links after the separate administrator section.
+  it('places the personal dashboard before models for administrators', () => {
+    state.isAdmin = true
+    const paths = mountSidebar()
+      .findAll('router-link-stub')
+      .map((link) => link.attributes('to'))
+    expect(paths.indexOf('/dashboard')).toBeGreaterThanOrEqual(0)
+    expect(paths.indexOf('/models')).toBeGreaterThan(paths.indexOf('/dashboard'))
+  })
+
+  // Team visibility uses the public switch for both ordinary and administrator
+  // entries. Missing settings retain team access, while an explicit false hides it.
+  it.each([undefined, false, true])('applies team_enabled=%s to both menus', (flag) => {
+    if (flag !== undefined) state.settings.team_enabled = flag
+    state.isAdmin = true
+    const paths = mountSidebar()
+      .findAll('router-link-stub')
+      .map((link) => link.attributes('to'))
+    expect(paths.includes('/team')).toBe(flag !== false)
+    expect(paths.includes('/admin/teams')).toBe(flag !== false)
+    state.isAdmin = false
+    expect(
+      mountSidebar()
+        .findAll('router-link-stub')
+        .some((link) => link.attributes('to') === '/team'),
+    ).toBe(flag !== false)
+  })
+
+  // User and administrator personal menus share distinct icons for common routes.
+  // Enabling affiliate access makes all four entries available for rendered inspection.
+  it.each([false, true])('uses distinct personal icons for admin=%s', (isAdmin) => {
+    state.isAdmin = isAdmin
+    state.settings.affiliate_enabled = true
+    const wrapper = mountSidebar()
+    for (const [path, icon] of [
+      ['/usage-ranking', 'ranking'],
+      ['/usage', 'chart'],
+      ['/team', 'users'],
+      ['/affiliate', 'affiliate'],
+    ]) {
+      const link = wrapper
+        .findAll('router-link-stub')
+        .find((item) => item.attributes('to') === path)!
+      expect(link.get('icon-stub').attributes('name')).toBe(icon)
+    }
+  })
+
+  // Risk-control navigation follows its independent public feature flag. An
+  // administrator sees the entry exactly when that flag is explicitly enabled.
+  it.each([false, true])('gates risk control when enabled=%s', (enabled) => {
+    state.isAdmin = true
+    state.settings.risk_control_enabled = enabled
+    expect(
+      mountSidebar()
+        .findAll('router-link-stub')
+        .some((link) => link.attributes('to') === '/admin/risk-control'),
+    ).toBe(enabled)
   })
 })

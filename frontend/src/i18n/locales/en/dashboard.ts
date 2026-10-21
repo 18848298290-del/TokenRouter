@@ -1,7 +1,8 @@
-// dashboard.ts supplies English labels for dashboard metrics, chart controls,
-// announcements, and account shortcuts. Compact comparison labels retain the
-// previous-period context on narrow cards, while wider cards display the full
-// comparison phrase beside the same values.
+// dashboard.ts supplies English messages for dashboards, API keys, usage,
+// profile settings, and shared table states. Metric labels and comparison
+// phrases support summary cards, while the other namespaces provide account
+// actions, validation messages, and list controls used throughout user pages.
+
 export default {
   dashboard: {
     title: 'Dashboard',
@@ -11,7 +12,7 @@ export default {
         requests: 'Requests',
         tokens: 'Tokens',
         cost: 'Cost',
-        cacheHitRate: 'Cache hit rate'
+        cacheHitRate: 'Cache hit rate',
       },
       series: {
         input: 'Input',
@@ -19,7 +20,7 @@ export default {
         cacheCreation: 'Cache creation',
         cacheRead: 'Cache read',
         actualCost: 'Charged',
-        total: 'Total'
+        total: 'Total',
       },
       currentPeriod: 'This period',
       previousPeriod: 'Previous period',
@@ -31,7 +32,7 @@ export default {
       byHour: 'Hourly',
       byDay: 'Daily',
       trendTitle: 'Usage trend · {metric}',
-      empty: 'No usage in the selected range'
+      empty: 'No usage in the selected range',
     },
     live: {
       rpm: 'RPM',
@@ -39,7 +40,7 @@ export default {
       rpmHint: 'Average requests per minute over the last 5 minutes',
       tpmHint: 'Average tokens per minute over the last 5 minutes',
       latency: 'Avg latency',
-      todayCost: 'Spent today'
+      todayCost: 'Spent today',
     },
     topModels: {
       title: 'Top Models',
@@ -49,7 +50,7 @@ export default {
       empty: 'No model usage in the selected range',
       filterHint: 'Click to filter by this model',
       clearFilter: 'Click again to clear the filter',
-      hitRate: '{rate} hit rate'
+      hitRate: '{rate} hit rate',
     },
     activityHeatmap: 'Usage Activity',
     heatmapSelectDay: 'Click to see hourly usage for this day',
@@ -71,13 +72,13 @@ export default {
     checkDetailedLogs: 'Check detailed usage logs',
     purchasePlanOrRecharge: 'Purchase a plan or add balance',
     redeemCode: 'Redeem Code',
-    addBalanceWithCode: 'Add balance with a code'
+    addBalanceWithCode: 'Add balance with a code',
   },
-// Groups (shared)
+  // Groups (shared)
   groups: {
-    subscription: 'Sub'
+    subscription: 'Sub',
   },
-// API Keys
+  // API Keys
   keys: {
     title: 'API Keys',
     description: 'Manage your API keys and access tokens',
@@ -98,9 +99,11 @@ export default {
     deleteKey: 'Delete API Key',
     rotateKey: 'Rotate credential',
     confirmRotate: 'Confirm rotation',
-    rotateConfirmMessage: "Rotate the API key credential for '{name}'? The old credential will stop working, so clients using it must be updated. The key ID, settings, and usage history will stay the same.",
+    rotateConfirmMessage:
+      "Rotate the API key credential for '{name}'? The old credential will stop working, so clients using it must be updated. The key ID, settings, and usage history will stay the same.",
     keyRotatedSuccess: 'API key credential rotated',
-    rotatedKeyHint: 'Copy the new credential and update your clients. The old credential is no longer valid.',
+    rotatedKeyHint:
+      'Copy the new credential and update your clients. The old credential is no longer valid.',
     failedToRotate: 'Failed to rotate API key credential',
     deleteConfirmMessage: "Are you sure you want to delete '{name}'? This action cannot be undone.",
     id: 'ID',
@@ -121,32 +124,41 @@ export default {
       discoveringTitle: 'Looking for local tf',
       discoveringDescription: 'Your browser may request local network access.',
       verifiedTitle: 'Verified current tf session',
-      verifiedDescription: 'The session proof matches the terminal link. This does not verify the page, API key, or subsequent gateway result.',
+      verifiedDescription:
+        'The session proof matches the terminal link. This does not verify the page, API key, or subsequent gateway result.',
       unverifiedTitle: 'Local tf session not verified',
-      unverifiedDescription: 'This local service could not be verified against the current terminal link. Continuing sends the API key to that service.',
+      unverifiedDescription:
+        'This local service could not be verified against the current terminal link. Continuing sends the API key to that service.',
       destination: 'Local destination',
       group: 'Source group',
-      confirmDescription: 'The terminal must still approve the request before tf validates and saves the key.',
+      confirmDescription:
+        'The terminal must still approve the request before tf validates and saves the key.',
       send: 'Send to TF CLI',
       waiting: 'Waiting for terminal',
       waitingTitle: 'Waiting for terminal confirmation',
-      waitingDescription: 'Review the key source and confirm in the terminal running tf. Closing this window stops web waiting; check the terminal for further status.',
+      waitingDescription:
+        'Review the key source and confirm in the terminal running tf. Closing this window stops web waiting; check the terminal for further status.',
       acceptedTitle: 'Request accepted by terminal',
-      acceptedDescription: 'Return to the terminal to complete remaining steps. The final result will be shown in the terminal.',
+      acceptedDescription:
+        'Return to the terminal to complete remaining steps. The final result will be shown in the terminal.',
       notFoundTitle: 'No local tf session found',
-      notFoundDescription: 'Run tf login --from-web in a terminal, allow local network access in the browser, then retry.',
+      notFoundDescription:
+        'Run tf login --from-web in a terminal, allow local network access in the browser, then retry.',
       errorTitle: 'Import request did not complete',
       retry: 'Retry',
       errors: {
-        rejected: 'The terminal rejected this request. tf is still waiting for another import request.',
+        rejected:
+          'The terminal rejected this request. tf is still waiting for another import request.',
         cancelled: 'The tf session was cancelled or closed in the terminal.',
         busy: 'tf is handling another import request. Try again shortly.',
         originNotAllowed: 'This page origin does not match the service address configured in tf.',
         invalidPayload: 'tf could not read the import data for this key.',
-        unsupportedVersion: 'The local tf version does not support this web import protocol. Update tf and try again.',
-        network: 'The connection to local tf was interrupted. Check that the session is still running.',
-        unexpected: 'Local tf returned an unrecognized response.'
-      }
+        unsupportedVersion:
+          'The local tf version does not support this web import protocol. Update tf and try again.',
+        network:
+          'The connection to local tf was interrupted. Check that the session is still running.',
+        unexpected: 'Local tf returned an unrecognized response.',
+      },
     },
     enable: 'Enable',
     disable: 'Disable',
@@ -169,7 +181,7 @@ export default {
       mappingRequired: 'A composite key needs at least one group mapping',
       tooManyMappings: 'A composite key supports up to 20 group mappings',
       moveUp: 'Move up',
-      moveDown: 'Move down'
+      moveDown: 'Move down',
     },
     billing: {
       modeLabel: 'Billing source',
@@ -182,26 +194,27 @@ export default {
       modes: {
         auto: 'Automatic',
         subscription: 'Selected subscription',
-        balance: 'Balance only'
-      }
+        balance: 'Balance only',
+      },
     },
     fastModePolicyLabel: 'Fast mode policy',
     fastModePolicy: {
       followRequest: 'Follow request',
       forceOn: 'Force Fast on',
-      forceOff: 'Force Fast off'
+      forceOff: 'Force Fast off',
     },
     modelRedirect: {
       label: 'Model redirects',
       help: {
         title: 'How do model redirects work?',
-        description: 'The client sends a model name as usual. This key replaces it with the matching target before routing continues.',
+        description:
+          'The client sends a model name as usual. This key replaces it with the matching target before routing continues.',
         example: 'Example rule',
         replay: 'Replay',
         request: 'Client',
         match: 'Key rule',
         target: 'Routing',
-        flow: 'The client requests {from}. The key rule replaces it with {to} before routing continues.'
+        flow: 'The client requests {from}. The key rule replaces it with {to} before routing continues.',
       },
       hint: 'Exact sources take priority. A source may use one trailing *, while targets must be concrete models.',
       addRule: 'Add rule',
@@ -217,7 +230,7 @@ export default {
       targetWildcardInvalid: 'A target model cannot contain wildcards',
       selfMapping: 'Source and target must differ',
       duplicateSource: 'Source models must be unique',
-      tooManyRules: 'Up to 100 model redirect rules are allowed'
+      tooManyRules: 'Up to 100 model redirect rules are allowed',
     },
     fallbackWhenGroupUnavailable: 'Auto fallback when unavailable',
     statusLabel: 'Status',
@@ -231,10 +244,12 @@ export default {
     keyEnabledSuccess: 'API key enabled successfully',
     keyDisabledSuccess: 'API key disabled successfully',
     teamOwnerLocked: 'Admin locked',
-    teamOwnerDisabledHint: 'This key was disabled by the team administrator. Only the team administrator can enable it again.',
+    teamOwnerDisabledHint:
+      'This key was disabled by the team administrator. Only the team administrator can enable it again.',
     failedToLoad: 'Failed to load API keys',
     failedToSave: 'Failed to save API key',
-    apiKeyLimitReached: 'Cannot create API key: you have {current} keys and your limit is {limit}. Delete an unused key before creating another.',
+    apiKeyLimitReached:
+      'Cannot create API key: you have {current} keys and your limit is {limit}. Delete an unused key before creating another.',
     failedToDelete: 'Failed to delete API key',
     failedToUpdateStatus: 'Failed to update API key status',
     clickToChangeGroup: 'Click to change group',
@@ -254,8 +269,10 @@ export default {
       shell: 'Shell',
       noModels: 'This group has no models available for this client',
       directAuth: 'Store the API key in the configuration file',
-      directAuthDescription: 'Writes the key to config.toml instead of generating auth.json, so any existing sign-in stays untouched.',
-      websocketDescription: 'Connects to the Responses API over WebSocket. Requires a Codex client with WebSocket v2 support; leave it off if unsure.',
+      directAuthDescription:
+        'Writes the key to config.toml instead of generating auth.json, so any existing sign-in stays untouched.',
+      websocketDescription:
+        'Connects to the Responses API over WebSocket. Requires a Codex client with WebSocket v2 support; leave it off if unsure.',
       title: 'Use API Key',
       compositeDescription: 'Prefix each model ID with the group prefix when making requests.',
       description:
@@ -263,25 +280,33 @@ export default {
       copy: 'Copy',
       copied: 'Copied',
       note: 'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
-      claudeSettingsHint: 'User-level persistent configuration. Do not commit this file containing your API key to a project repository.',
+      claudeSettingsHint:
+        'User-level persistent configuration. Do not commit this file containing your API key to a project repository.',
       noGroupTitle: 'Please assign a group first',
-      noGroupDescription: 'This API key has not been assigned to a group. Please click the group column in the key list to assign one before viewing the configuration.',
+      noGroupDescription:
+        'This API key has not been assigned to a group. Please click the group column in the key list to assign one before viewing the configuration.',
       noTextProtocolsTitle: 'No text protocol is available',
-      noTextProtocolsDescription: 'This group does not currently allow any text generation protocol.',
+      noTextProtocolsDescription:
+        'This group does not currently allow any text generation protocol.',
       openai: {
         description: 'Add the following configuration files to your Codex CLI config directory.',
         authModeTitle: 'Codex authentication mode',
-        authModeDescription: 'Use Compatibility mode for everyday requests. Choose API Key Mode only when Codex Desktop needs to call its local image tools.',
+        authModeDescription:
+          'Use Compatibility mode for everyday requests. Choose API Key Mode only when Codex Desktop needs to call its local image tools.',
         authModeLegacy: 'Compatibility mode',
         authModeApiKey: 'API Key Mode',
-        authModeApiKeyRestartNotice: 'After saving this configuration, completely quit and restart Codex Desktop or CLI, then create a new task so the client can rebuild its tool registry.',
+        authModeApiKeyRestartNotice:
+          'After saving this configuration, completely quit and restart Codex Desktop or CLI, then create a new task so the client can rebuild its tool registry.',
         websocketTitle: 'WebSocket connection',
-        websocketDescription: 'Standard HTTP requests are used by default. Enable this only when both your Codex client and the server support WebSocket v2. Composite keys do not support WebSocket.',
+        websocketDescription:
+          'Standard HTTP requests are used by default. Enable this only when both your Codex client and the server support WebSocket v2. Composite keys do not support WebSocket.',
         websocketDisabled: 'Off',
         websocketEnabled: 'On',
-        configTomlHint: 'Make sure the following content is at the beginning of the config.toml file',
+        configTomlHint:
+          'Make sure the following content is at the beginning of the config.toml file',
         note: 'Make sure the config directory exists. macOS/Linux users can run mkdir -p ~/.codex to create it.',
-        noteWindows: 'Press Win+R and enter %userprofile%\\.codex to open the config directory. Create it manually if it does not exist.',
+        noteWindows:
+          'Press Win+R and enter %userprofile%\\.codex to open the config directory. Create it manually if it does not exist.',
       },
       cliTabs: {
         claudeCode: 'Claude Code',
@@ -291,28 +316,41 @@ export default {
         opencode: 'OpenCode',
       },
       antigravity: {
-        description: 'Configure API access for Antigravity group. Select the configuration method based on your client.',
+        description:
+          'Configure API access for Antigravity group. Select the configuration method based on your client.',
         claudeCode: 'Claude Code',
         geminiCli: 'Gemini CLI',
-        claudeNote: 'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
-        geminiNote: 'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
+        claudeNote:
+          'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
+        geminiNote:
+          'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
       },
       gemini: {
-        description: 'Add the following environment variables to your terminal profile or run directly in terminal to configure Gemini CLI access.',
+        description:
+          'Add the following environment variables to your terminal profile or run directly in terminal to configure Gemini CLI access.',
         modelComment: 'If you have Gemini 3 access, you can use: gemini-3-pro-preview',
         note: 'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
       },
       grok: {
-        description: 'Configure Grok Build, Claude Code, Codex, or OpenCode to send requests through your TokenRouter Grok group.',
-        claudeDescription: 'Configure Claude Code to send Messages API traffic through your TokenRouter Grok group.',
-        codexDescription: 'Configure Codex to send Responses API traffic through your TokenRouter Grok group.',
-        configTomlHint: 'Back up an existing config.toml before merging this model entry. Run grok inspect after saving to verify the effective configuration.',
-        codexConfigTomlHint: 'Back up an existing config.toml before merging this provider configuration.',
+        description:
+          'Configure Grok Build, Claude Code, Codex, or OpenCode to send requests through your TokenRouter Grok group.',
+        claudeDescription:
+          'Configure Claude Code to send Messages API traffic through your TokenRouter Grok group.',
+        codexDescription:
+          'Configure Codex to send Responses API traffic through your TokenRouter Grok group.',
+        configTomlHint:
+          'Back up an existing config.toml before merging this model entry. Run grok inspect after saving to verify the effective configuration.',
+        codexConfigTomlHint:
+          'Back up an existing config.toml before merging this provider configuration.',
         note: 'Save the file as ~/.grok/config.toml, then run grok inspect and select grok from /model.',
-        noteWindows: 'Save the file as %USERPROFILE%\\.grok\\config.toml, then run grok inspect and select grok from /model.',
-        claudeNote: 'Choose one method: run the terminal commands for the current session, or save settings.json for user-level persistent configuration.',
-        codexNote: 'Save config.toml under ~/.codex and set TOKENROUTER_API_KEY before starting Codex.',
-        codexNoteWindows: 'Save config.toml under %USERPROFILE%\\.codex and set TOKENROUTER_API_KEY in PowerShell before starting Codex.',
+        noteWindows:
+          'Save the file as %USERPROFILE%\\.grok\\config.toml, then run grok inspect and select grok from /model.',
+        claudeNote:
+          'Choose one method: run the terminal commands for the current session, or save settings.json for user-level persistent configuration.',
+        codexNote:
+          'Save config.toml under ~/.codex and set TOKENROUTER_API_KEY before starting Codex.',
+        codexNoteWindows:
+          'Save config.toml under %USERPROFILE%\\.codex and set TOKENROUTER_API_KEY in PowerShell before starting Codex.',
       },
       opencode: {
         title: 'OpenCode Example',
@@ -334,7 +372,8 @@ export default {
     ipBlacklistPlaceholder: '1.2.3.4\n5.6.0.0/16',
     ipBlacklistHint: 'One IP or CIDR per line. These IPs will be blocked from using this key.',
     ipRestrictionEnabled: 'IP restriction enabled',
-    ccSwitchNotInstalled: 'CC-Switch is not installed or the protocol handler is not registered. Please install CC-Switch first or manually copy the API key.',
+    ccSwitchNotInstalled:
+      'CC-Switch is not installed or the protocol handler is not registered. Please install CC-Switch first or manually copy the API key.',
     ccsClientSelect: {
       title: 'Select Client',
       description: 'Please select the client type to import to CC-Switch:',
@@ -352,14 +391,16 @@ export default {
     reset: 'Reset',
     resetQuotaUsed: 'Reset used quota to 0',
     resetQuotaTitle: 'Confirm Reset Quota',
-    resetQuotaConfirmMessage: 'Are you sure you want to reset the used quota ({used}) for key "{name}" to 0? This action cannot be undone.',
+    resetQuotaConfirmMessage:
+      'Are you sure you want to reset the used quota ({used}) for key "{name}" to 0? This action cannot be undone.',
     quotaResetSuccess: 'Quota reset successfully',
     failedToResetQuota: 'Failed to reset quota',
     rateLimitColumn: 'Rate Limit',
     concurrencyLimit: 'Concurrency limit',
     rpmLimit: 'Requests per minute (RPM)',
     requestLimitsInvalid: 'Request limits must be integers between 0 and 2147483647',
-    requestLimitsHint: '0 means no limit for this key. User and group limits still apply. RPM counts requests admitted to the gateway in the last 60 seconds.',
+    requestLimitsHint:
+      '0 means no limit for this key. User and group limits still apply. RPM counts requests admitted to the gateway in the last 60 seconds.',
     rateLimitSection: 'Rate Limit',
     resetUsage: 'Reset',
     rateLimit5h: '5-Hour Limit',
@@ -369,7 +410,8 @@ export default {
     rateLimitUsage: 'Rate Limit Usage',
     resetRateLimitUsage: 'Reset Rate Limit Usage',
     resetRateLimitTitle: 'Confirm Reset Rate Limit',
-    resetRateLimitConfirmMessage: 'Are you sure you want to reset the rate limit usage for key "{name}"? All time window usage will be reset to zero. This action cannot be undone.',
+    resetRateLimitConfirmMessage:
+      'Are you sure you want to reset the rate limit usage for key "{name}"? All time window usage will be reset to zero. This action cannot be undone.',
     rateLimitResetSuccess: 'Rate limit usage reset successfully',
     failedToResetRateLimit: 'Failed to reset rate limit usage',
     resetNow: 'Resetting soon',
@@ -391,7 +433,7 @@ export default {
       expired: 'Expired',
     },
   },
-// Usage
+  // Usage
   usage: {
     title: 'Usage Records',
     description: 'View and analyze your API usage history',
@@ -411,9 +453,12 @@ export default {
     standardCost: 'Standard',
     actualCost: 'Actual',
     providerCost: 'Cost',
-    actualDescription: 'The amount actually charged to the user. Calculated with the group multiplier and any user-specific multiplier, and used to deduct user balance or subscription quota.',
-    providerCostDescription: 'The provider-side cost. Calculated with provider-side pricing and the provider billing multiplier, used for provider quota statistics and cost analysis, and does not affect the user’s actual charge.',
-    standardDescription: 'The standard billed cost. Calculated from the current model or channel base pricing, and is not affected by group multipliers, user-specific multipliers, or provider billing multipliers.',
+    actualDescription:
+      'The amount actually charged to the user. Calculated with the group multiplier and any user-specific multiplier, and used to deduct user balance or subscription quota.',
+    providerCostDescription:
+      'The provider-side cost. Calculated with provider-side pricing and the provider billing multiplier, used for provider quota statistics and cost analysis, and does not affect the user’s actual charge.',
+    standardDescription:
+      'The standard billed cost. Calculated from the current model or channel base pricing, and is not affected by group multipliers, user-specific multipliers, or provider billing multipliers.',
     userBilled: 'User billed',
     providerBilled: 'Provider billed',
     resetNow: 'Now',
@@ -463,7 +508,8 @@ export default {
     latencyDuration: 'Total',
     tps: 'TPS',
     tpsExport: 'TPS (tok/s)',
-    tpsHint: 'TPS = output tokens divided by the interval from first to last useful upstream content, in seconds. Chunking, network delays, downstream backpressure and hidden reasoning affect this estimate. Single-chunk or incomplete usage shows -; the first-event setting does not change TPS.',
+    tpsHint:
+      'TPS = output tokens divided by the interval from first to last useful upstream content, in seconds. Chunking, network delays, downstream backpressure and hidden reasoning affect this estimate. Single-chunk or incomplete usage shows -; the first-event setting does not change TPS.',
     detailedTiming: 'Detailed Timing',
     timingRequestSize: 'Request size',
     timingAttempts: 'Attempts',
@@ -549,15 +595,31 @@ export default {
     },
     tabs: { usage: 'Usage', errors: 'Error Requests', ranking: 'User Ranking' },
     errors: {
-      time: 'Time', model: 'Model', endpoint: 'Endpoint', status: 'Status',
-      category: 'Category', platform: 'Platform', message: 'Message',
-      keyName: 'Key Name', keyDeleted: 'Deleted', allKeys: 'All keys',
-      modelPlaceholder: 'Search model', allCategories: 'All categories', allStatuses: 'All status codes',
-      empty: 'No error requests', failedToLoad: 'Failed to load error requests',
+      time: 'Time',
+      model: 'Model',
+      endpoint: 'Endpoint',
+      status: 'Status',
+      category: 'Category',
+      platform: 'Platform',
+      message: 'Message',
+      keyName: 'Key Name',
+      keyDeleted: 'Deleted',
+      allKeys: 'All keys',
+      modelPlaceholder: 'Search model',
+      allCategories: 'All categories',
+      allStatuses: 'All status codes',
+      empty: 'No error requests',
+      failedToLoad: 'Failed to load error requests',
       categories: {
-        auth: 'Auth failed', rate_limit: 'Rate limited', quota: 'Balance/Subscription',
-        invalid_request: 'Invalid request', service_unavailable: 'Service unavailable',
-        cyber: 'Cyber policy', upstream: 'Upstream error', internal: 'Platform error', other: 'Other',
+        auth: 'Auth failed',
+        rate_limit: 'Rate limited',
+        quota: 'Balance/Subscription',
+        invalid_request: 'Invalid request',
+        service_unavailable: 'Service unavailable',
+        cyber: 'Cyber policy',
+        upstream: 'Upstream error',
+        internal: 'Platform error',
+        other: 'Other',
       },
       detail: {
         title: 'Error Request Detail',
@@ -567,11 +629,13 @@ export default {
       },
     },
   },
-// Redeem
+  // Redeem
   redeem: {
-    paymentRequired: 'This code requires a previous successful payment. Please complete a payment first.',
+    paymentRequired:
+      'This code requires a previous successful payment. Please complete a payment first.',
     title: 'Redeem Code',
-    description: 'Enter your redeem code to add balance, increase concurrency, or claim subscription access',
+    description:
+      'Enter your redeem code to add balance, increase concurrency, or claim subscription access',
     currentBalance: 'Current Balance',
     concurrency: 'Concurrency',
     requests: 'requests',
@@ -594,14 +658,15 @@ export default {
     balanceReceived: 'Balance credited {amount}',
     concurrencyReceived: 'Concurrency {count}',
     subscriptionReceived: 'Subscription received',
-    dataRefreshFailed: 'Redeemed successfully, but data could not be refreshed. Please reload the page.',
+    dataRefreshFailed:
+      'Redeemed successfully, but data could not be refreshed. Please reload the page.',
     codeExpired: 'This redeem code has expired',
     codeMaxUsed: 'This redeem code has reached its redemption limit',
     codeAlreadyUsed: 'You have already redeemed this code',
     failedToRedeem: 'Failed to redeem code. Please check the code and try again.',
-    pleaseEnterCode: 'Please enter a redeem code'
+    pleaseEnterCode: 'Please enter a redeem code',
   },
-affiliate: {
+  affiliate: {
     title: 'Affiliate Rebates',
     description: 'Invite new users and convert rebate quota into account balance',
     yourCode: 'Your Affiliate Code',
@@ -618,7 +683,7 @@ affiliate: {
       invitedUsers: 'Invited Users',
       availableQuota: 'Available Rebate Quota',
       frozenQuota: 'Frozen',
-      totalQuota: 'Historical Rebate Quota'
+      totalQuota: 'Historical Rebate Quota',
     },
     transfer: {
       title: 'Transfer Rebate Quota',
@@ -626,7 +691,7 @@ affiliate: {
       button: 'Transfer to Balance',
       transferring: 'Transferring...',
       empty: 'No available rebate quota',
-      success: '{amount} has been transferred to your balance'
+      success: '{amount} has been transferred to your balance',
     },
     invitees: {
       title: 'Invited Users',
@@ -635,18 +700,18 @@ affiliate: {
         email: 'Email',
         username: 'Username',
         rebate: 'Rebate ({unitName})',
-        joinedAt: 'Joined At'
-      }
+        joinedAt: 'Joined At',
+      },
     },
     tips: {
       title: 'How It Works',
       line1: 'Share your affiliate code or invite link with new users.',
       line2: 'When invitees recharge, you receive {rate} of the recharge as rebate quota.',
       line3: 'Transfer rebate quota to balance at any time.',
-      line4: 'Newly earned rebates may have a waiting period before they can be transferred.'
-    }
+      line4: 'Newly earned rebates may have a waiting period before they can be transferred.',
+    },
   },
-// Profile
+  // Profile
   profile: {
     title: 'Profile Settings',
     description: 'Manage your account information and settings',
@@ -659,7 +724,8 @@ affiliate: {
     overviewDescription: 'Check account status, profile sources, and common actions at a glance.',
     basicsTitle: 'Profile & Avatar',
     linkedProfileSources: 'Profile Sources',
-    linkedProfileSourcesDescription: 'Some profile details may stay synced from third-party sign-in methods.',
+    linkedProfileSourcesDescription:
+      'Some profile details may stay synced from third-party sign-in methods.',
     securityTitle: 'Security Settings',
     securityDescription: 'Password, two-factor authentication, and alerts live in the right rail.',
     administrator: 'Administrator',
@@ -706,7 +772,8 @@ affiliate: {
       verifyFailed: 'Invalid code, please try again',
       enableSuccess: 'Two-factor authentication enabled',
       disableTitle: 'Disable Two-Factor Authentication',
-      disableWarning: 'After disabling, you will no longer need a verification code to log in. This may reduce your account security.',
+      disableWarning:
+        'After disabling, you will no longer need a verification code to log in. This may reduce your account security.',
       enterPassword: 'Enter your current password to confirm',
       confirmDisable: 'Confirm Disable',
       disableSuccess: 'Two-factor authentication disabled',
@@ -714,18 +781,19 @@ affiliate: {
       loginTitle: 'Two-Factor Authentication',
       loginHint: 'Enter the 6-digit code from your authenticator app',
       loginFailed: 'Verification failed, please try again',
-      // New translations for email verification
+      // Email verification messages
       verifyEmailFirst: 'Please verify your email first',
       verifyPasswordFirst: 'Please verify your identity first',
       emailCode: 'Email Verification Code',
       enterEmailCode: 'Enter 6-digit code',
       sendCode: 'Send Code',
       codeSent: 'Verification code sent to your email',
-      sendCodeFailed: 'Failed to send verification code'
+      sendCodeFailed: 'Failed to send verification code',
     },
     passkey: {
       title: 'Passkeys',
-      description: 'Use Face ID, Touch ID, Windows Hello, or a security key to sign in without a password.',
+      description:
+        'Use Face ID, Touch ID, Windows Hello, or a security key to sign in without a password.',
       add: 'Add passkey',
       continue: 'Create passkey',
       name: 'Passkey name',
@@ -744,7 +812,7 @@ affiliate: {
       renameFailed: 'Failed to rename passkey.',
       deleteConfirm: 'Delete “{name}”? You will no longer be able to sign in with it.',
       deleted: 'Passkey deleted.',
-      deleteFailed: 'Failed to delete passkey.'
+      deleteFailed: 'Failed to delete passkey.',
     },
     balanceNotify: {
       title: 'Balance Low Notification',
@@ -782,7 +850,8 @@ affiliate: {
       title: 'Profile Avatar',
       description: 'Upload an avatar image. Static uploads are compressed to 20KB before saving.',
       uploadAction: 'Upload',
-      uploadHint: 'Static uploads are compressed to 20KB when possible. GIF uploads must already be within 20KB.',
+      uploadHint:
+        'Static uploads are compressed to 20KB when possible. GIF uploads must already be within 20KB.',
       uploadRequired: 'Upload an avatar image first',
       saveSuccess: 'Avatar updated',
       deleteSuccess: 'Avatar removed',
@@ -831,18 +900,18 @@ affiliate: {
         avatar: 'Avatar is currently synced from {providerName}',
         username: 'Nickname is currently synced from {providerName}',
       },
-    }
+    },
   },
-// Empty States
+  // Empty States
   empty: {
-    noData: 'No data found'
+    noData: 'No data found',
   },
-// Table
+  // Table
   table: {
     expandActions: 'Expand More Actions',
-    collapseActions: 'Collapse Actions'
+    collapseActions: 'Collapse Actions',
   },
-// Pagination
+  // Pagination
   pagination: {
     showing: 'Showing',
     to: 'to',
@@ -856,9 +925,9 @@ affiliate: {
     goToPage: 'Go to page {page}',
     jumpTo: 'Jump to',
     jumpPlaceholder: 'Page',
-    jumpAction: 'Go'
+    jumpAction: 'Go',
   },
-// Errors
+  // Errors
   errors: {
     somethingWentWrong: 'Something went wrong',
     pageNotFound: 'Page not found',
@@ -867,9 +936,9 @@ affiliate: {
     serverError: 'Server error',
     networkError: 'Network error',
     timeout: 'Request timeout',
-    tryAgain: 'Please try again'
+    tryAgain: 'Please try again',
   },
-// Dates
+  // Dates
   dates: {
     today: 'Today',
     yesterday: 'Yesterday',
@@ -895,6 +964,6 @@ affiliate: {
     now: 'Now',
     hour: 'Hour',
     minute: 'Minute',
-    clear: 'Clear'
+    clear: 'Clear',
   },
 }

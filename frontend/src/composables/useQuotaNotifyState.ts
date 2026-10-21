@@ -2,36 +2,44 @@ import { reactive, ref } from 'vue'
 import { adminAPI } from '@/api/admin'
 import { QUOTA_THRESHOLD_TYPE_FIXED, type QuotaThresholdType } from '@/constants/provider'
 
-// useQuotaNotifyState.ts manages provider quota notification drafts and encoding.
-// Daily, weekly, monthly, and total dimensions each carry an enabled flag, a
-// threshold, and its interpretation. Null draft values represent omitted saved
-// configuration, while an enabled draft uses the fixed threshold mode when its
-// mode is absent. The global setting controls whether forms offer notification
-// controls and is read separately from provider-specific values.
+// useQuotaNotifyState.ts manages provider quota notification drafts and their Extra
+// encoding. Daily, weekly, monthly, and total dimensions share enabled, threshold, and
+// threshold-type fields, with null representing missing saved configuration. The global
+// feature setting is fetched separately from each provider draft.
 //
-// Loading and saving iterate the same dimension list so newly enabled monthly
-// notices survive an edit round trip. Update serialization removes disabled
-// notification keys, while create serialization emits configured enabled values.
+// Creation writes enabled notification values into the supplied object. Updates also
+// remove disabled keys and missing enabled thresholds, so changes to an existing provider
+// clear obsolete settings. Both paths iterate the same dimension list, and enabled drafts
+// with no threshold type serialize as fixed thresholds. Callers own submission and when to
+// reload the draft.
 
-// QUOTA_NOTIFY_DIMS determines the shared iteration order for loading, saving,
-// and resetting quota notification drafts.
+// QUOTA_NOTIFY_DIMS defines the shared dimension order used when loading, writing, and
+// resetting provider notification drafts.
 export const QUOTA_NOTIFY_DIMS = ['daily', 'weekly', 'monthly', 'total'] as const
-// QuotaNotifyDim identifies one supported local spending notification dimension.
+
+// QuotaNotifyDim identifies one supported local spending notification dimension for
+// providers.
 export type QuotaNotifyDim = (typeof QUOTA_NOTIFY_DIMS)[number]
 
-// QuotaNotifyDimState represents nullable notification settings in provider
-// form drafts.
+// QuotaNotifyDimState holds nullable quota notification fields for one provider dimension.
 export interface QuotaNotifyDimState {
-  enabled: boolean | null // quota alert enablement flag
-  threshold: number | null // configured alert threshold value
-  thresholdType: QuotaThresholdType | null // alert threshold interpretation selector
+  // enabled, threshold, and thresholdType represent one dimension's draft. Null values
+  // mark missing saved configuration, and writeToExtra applies different clearing rules
+  // for creation and updates. thresholdType selects USD for fixed thresholds or percentage
+  // points of the dimension limit, where 100 represents the whole limit. A null
+  // thresholdType serializes as fixed mode when the dimension is enabled.
+  enabled: boolean | null // nullable alert enablement flag
+  threshold: number | null // nullable alert threshold value
+  thresholdType: QuotaThresholdType | null // nullable threshold interpretation selector
 }
 
-// useQuotaNotifyState creates dialog-local notification drafts and their
-// serializers.
-// Callers load provider Extra when opening the dialog and write its drafts into
-// the appropriate create or update payload before submission.
+// useQuotaNotifyState creates dialog-local provider notification drafts and serializers.
+// Load provider Extra before editing, then write the draft into the create or update
+// payload; this composable does not submit it.
 export function useQuotaNotifyState() {
+  // globalEnabled controls feature availability separately from state, whose four
+  // dimension drafts retain provider notification values until loading or resetting
+  // replaces them.
   const globalEnabled = ref(false)
   const state = reactive<Record<QuotaNotifyDim, QuotaNotifyDimState>>({
     daily: { enabled: null, threshold: null, thresholdType: null },
@@ -40,25 +48,42 @@ export function useQuotaNotifyState() {
     total: { enabled: null, threshold: null, thresholdType: null },
   })
 
+  // loadGlobalState starts loading the global notification feature flag and returns
+  // immediately. Success enables it only for a true setting; request failure disables it,
+  // with no stale-result guard between calls.
   function loadGlobalState() {
     adminAPI.settings
       .getSettings()
       .then((settings) => {
         globalEnabled.value = settings.provider_quota_notify_enabled === true
       })
+      // A failed settings request disables notification controls for this draft, keeping
+      // an unknown global feature flag from enabling them.
       .catch(() => {
         globalEnabled.value = false
       })
   }
 
+  // loadFromExtra replaces each dimension draft with values from provider Extra. Missing
+  // or null fields become null, so loading another provider also clears values absent from
+  // that provider.
   function loadFromExtra(extra: Record<string, unknown> | null | undefined) {
     for (const d of QUOTA_NOTIFY_DIMS) {
       state[d].enabled = (extra?.[`quota_notify_${d}_enabled`] as boolean) ?? null
       state[d].threshold = (extra?.[`quota_notify_${d}_threshold`] as number) ?? null
-      state[d].thresholdType = (extra?.[`quota_notify_${d}_threshold_type`] as QuotaThresholdType) ?? null
+      state[d].thresholdType =
+        (extra?.[`quota_notify_${d}_threshold_type`] as QuotaThresholdType) ?? null
     }
   }
 
+  // writeToExtra mutates the supplied Extra object according to the current notification
+  // drafts and submission mode. Enabled dimensions write their flag and use fixed
+  // threshold mode when no type is selected.
+  //
+  // Update mode removes missing thresholds and all keys for disabled dimensions, allowing
+  // existing values to be cleared. Create mode leaves those keys untouched, so callers
+  // should supply an appropriate new payload. The function performs encoding only;
+  // persistence and submission errors belong to its caller.
   function writeToExtra(extra: Record<string, unknown>, mode: 'create' | 'update') {
     for (const d of QUOTA_NOTIFY_DIMS) {
       const s = state[d]
@@ -67,10 +92,16 @@ export function useQuotaNotifyState() {
         if (s.threshold != null) {
           extra[`quota_notify_${d}_threshold`] = s.threshold
         } else if (mode === 'update') {
+          // Remove the absent threshold from copied Extra so clearing an enabled draft
+          // does not retain its previously saved threshold.
           delete extra[`quota_notify_${d}_threshold`]
         }
+        // Enabled drafts without a selected threshold type serialize fixed mode so the API
+        // receives a concrete interpretation for the configured threshold.
         extra[`quota_notify_${d}_threshold_type`] = s.thresholdType || QUOTA_THRESHOLD_TYPE_FIXED
       } else if (mode === 'update') {
+        // Remove all disabled dimension keys from copied Extra so saving the update
+        // clears the previous notification configuration for this dimension.
         delete extra[`quota_notify_${d}_enabled`]
         delete extra[`quota_notify_${d}_threshold`]
         delete extra[`quota_notify_${d}_threshold_type`]
@@ -78,15 +109,16 @@ export function useQuotaNotifyState() {
     }
   }
 
-  // 表单组件通过 setField 逐项回写共享状态中的通知阈值。
+  // setField writes a caller-supplied notification value into one draft dimension.
   function setField(
     dim: QuotaNotifyDim,
     field: keyof QuotaNotifyDimState,
     value: QuotaNotifyDimState[keyof QuotaNotifyDimState],
   ) {
-    (state[dim] as Record<keyof QuotaNotifyDimState, unknown>)[field] = value
+    ;(state[dim] as Record<keyof QuotaNotifyDimState, unknown>)[field] = value
   }
 
+  // reset clears every notification draft dimension back to null fields.
   function reset() {
     for (const d of QUOTA_NOTIFY_DIMS) {
       state[d].enabled = null

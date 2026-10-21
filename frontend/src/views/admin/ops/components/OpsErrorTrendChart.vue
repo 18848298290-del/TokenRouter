@@ -11,7 +11,7 @@ import {
   LinearScale,
   PointElement,
   Title,
-  Tooltip
+  Tooltip,
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import type { OpsErrorTrendPoint } from '@/api/admin/ops'
@@ -20,25 +20,61 @@ import { formatHistoryLabel, sumNumbers } from '../utils/opsFormatters'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { externalTooltipHandler, hideExternalTooltip } from '@/utils/chartExternalTooltip'
-import { useChartTheme, CHART_TICK_FONT_SIZE, CHART_LEGEND_FONT_SIZE } from '@/composables/useChartTheme'
+import {
+  useChartTheme,
+  CHART_TICK_FONT_SIZE,
+  CHART_LEGEND_FONT_SIZE,
+} from '@/composables/useChartTheme'
 
-ChartJS.register(Title, Tooltip, Legend, LineElement, LinearScale, PointElement, CategoryScale, Filler)
+// OpsErrorTrendChart.vue plots SLA errors, upstream failures excluding 429 and
+// 529, and business-limit events as separate time series. Each plotted count
+// follows a different recorded classification, so combining them into one
+// request-failure total would lose the distinction between final outcomes and
+// upstream attempts.
+//
+// Chart visibility follows the three plotted series. The request drilldown
+// button follows SLA-counted failures, while the upstream drilldown button
+// includes 429 and 529 attempt counts even though that plotted upstream line
+// excludes them. Existing datasets remain visible during refresh, and the
+// external tooltip is hidden when the component unmounts.
 
+ChartJS.register(
+  Title,
+  Tooltip,
+  Legend,
+  LineElement,
+  LinearScale,
+  PointElement,
+  CategoryScale,
+  Filler,
+)
+
+// Hide the shared external tooltip when this chart leaves the page so its
+// detached overlay does not outlive the displayed dataset.
 onBeforeUnmount(hideExternalTooltip)
 
+// Props supplies measured history and display controls for this Ops chart.
 interface Props {
-  points: OpsErrorTrendPoint[]
-  loading: boolean
-  timeRange: string
+  points: OpsErrorTrendPoint[] // ordered API history buckets
+  loading: boolean // parent request in progress
+  timeRange: string // selected history range token
 }
 
+// Component bindings read dashboard-owned measurements and translate labels for
+// the rendered chart and its controls.
 const props = defineProps<Props>()
 const emit = defineEmits<{
+  // openRequestErrors requests the SLA-counted request-error drilldown from the
+  // dashboard.
   (e: 'openRequestErrors'): void
+  // openUpstreamErrors requests upstream attempts, including rate-limit and
+  // overload failures.
   (e: 'openUpstreamErrors'): void
 }>()
 const { t } = useI18n()
 
+// Theme colors provide reactive axis and label contrast while dataset colors
+// identify the metric series.
 const { colors: themeColors } = useChartTheme()
 const colors = computed(() => ({
   red: '#ef4444',
@@ -47,24 +83,46 @@ const colors = computed(() => ({
   purpleAlpha: '#8b5cf620',
   gray: '#A1A1AA',
   grid: themeColors.value.grid,
-  text: themeColors.value.muted
+  text: themeColors.value.muted,
 }))
 
-const totalRequestErrors = computed(() => sumNumbers(props.points.map((p) => p.error_count_sla ?? 0)))
+// Request detail availability follows SLA errors, while upstream detail
+// availability also includes throttling and overload attempts.
+const totalRequestErrors = computed(() =>
+  sumNumbers(props.points.map((p) => p.error_count_sla ?? 0)),
+)
 
 const totalUpstreamErrors = computed(() =>
   sumNumbers(
-    props.points.map((p) => (p.upstream_error_count_excl_429_529 ?? 0) + (p.upstream_429_count ?? 0) + (p.upstream_529_count ?? 0))
-  )
+    props.points.map(
+      (p) =>
+        (p.upstream_error_count_excl_429_529 ?? 0) +
+        (p.upstream_429_count ?? 0) +
+        (p.upstream_529_count ?? 0),
+    ),
+  ),
 )
 
+// totalDisplayed sums the three plotted series so unplotted upstream 429 and 529
+// counts do not create a chart.
 const totalDisplayed = computed(() =>
-  sumNumbers(props.points.map((p) => (p.error_count_sla ?? 0) + (p.upstream_error_count_excl_429_529 ?? 0) + (p.business_limited_count ?? 0)))
+  sumNumbers(
+    props.points.map(
+      (p) =>
+        (p.error_count_sla ?? 0) +
+        (p.upstream_error_count_excl_429_529 ?? 0) +
+        (p.business_limited_count ?? 0),
+    ),
+  ),
 )
 
+// These flags enable detail navigation independently for SLA request failures
+// and all recorded upstream failures.
 const hasRequestErrors = computed(() => totalRequestErrors.value > 0)
 const hasUpstreamErrors = computed(() => totalUpstreamErrors.value > 0)
 
+// chartData combines the supplied bucket labels and values into datasets
+// consumed by the chart renderer.
 const chartData = computed(() => {
   if (!props.points.length || totalDisplayed.value <= 0) return null
   return {
@@ -78,7 +136,7 @@ const chartData = computed(() => {
         fill: true,
         tension: 0.35,
         pointRadius: 0,
-        pointHitRadius: 10
+        pointHitRadius: 10,
       },
       {
         label: t('admin.ops.upstreamExcl429529'),
@@ -88,7 +146,7 @@ const chartData = computed(() => {
         fill: true,
         tension: 0.35,
         pointRadius: 0,
-        pointHitRadius: 10
+        pointHitRadius: 10,
       },
       {
         label: t('admin.ops.businessLimited'),
@@ -99,18 +157,22 @@ const chartData = computed(() => {
         fill: false,
         tension: 0.35,
         pointRadius: 0,
-        pointHitRadius: 10
-      }
-    ]
+        pointHitRadius: 10,
+      },
+    ],
   }
 })
 
+// state prefers a populated chart during background refresh, then selects
+// loading or empty presentation.
 const state = computed<ChartState>(() => {
   if (chartData.value) return 'ready'
   if (props.loading) return 'loading'
   return 'empty'
 })
 
+// options configures responsive chart axes and the shared external tooltip used
+// for point inspection.
 const options = computed(() => {
   const c = colors.value
   return {
@@ -121,12 +183,17 @@ const options = computed(() => {
       legend: {
         position: 'top' as const,
         align: 'end' as const,
-        labels: { color: c.text, usePointStyle: true, boxWidth: 6, font: { size: CHART_LEGEND_FONT_SIZE } }
+        labels: {
+          color: c.text,
+          usePointStyle: true,
+          boxWidth: 6,
+          font: { size: CHART_LEGEND_FONT_SIZE },
+        },
       },
       tooltip: {
         enabled: false,
-        external: externalTooltipHandler
-      }
+        external: externalTooltipHandler,
+      },
     },
     scales: {
       x: {
@@ -137,23 +204,25 @@ const options = computed(() => {
           font: { size: CHART_TICK_FONT_SIZE },
           maxTicksLimit: 8,
           autoSkip: true,
-          autoSkipPadding: 10
-        }
+          autoSkipPadding: 10,
+        },
       },
       y: {
         type: 'linear' as const,
         display: true,
         position: 'left' as const,
         grid: { color: c.grid, borderDash: [4, 4] },
-        ticks: { color: c.text, font: { size: CHART_TICK_FONT_SIZE }, precision: 0 }
-      }
-    }
+        ticks: { color: c.text, font: { size: CHART_TICK_FONT_SIZE }, precision: 0 },
+      },
+    },
   }
 })
 </script>
 
 <template>
-  <div class="flex h-full flex-col rounded-surface bg-white p-6 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-900 dark:ring-dark-700">
+  <div
+    class="flex h-full flex-col rounded-surface bg-white p-6 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-900 dark:ring-dark-700"
+  >
     <div class="mb-4 flex shrink-0 items-center justify-between">
       <h3 class="flex items-center gap-2 text-sm font-bold text-gray-900 dark:text-white">
         <Icon name="trendingDown" size="sm" class="h-4 w-4 text-rose-500" />
@@ -183,8 +252,14 @@ const options = computed(() => {
     <div class="min-h-0 flex-1">
       <Line v-if="state === 'ready' && chartData" :data="chartData" :options="options" />
       <div v-else class="flex h-full items-center justify-center">
-        <div v-if="state === 'loading'" class="animate-pulse text-sm text-gray-400">{{ t('common.loading') }}</div>
-        <EmptyState v-else :title="t('common.noData')" :description="t('admin.ops.charts.emptyError')" />
+        <div v-if="state === 'loading'" class="animate-pulse text-sm text-gray-400">
+          {{ t('common.loading') }}
+        </div>
+        <EmptyState
+          v-else
+          :title="t('common.noData')"
+          :description="t('admin.ops.charts.emptyError')"
+        />
       </div>
     </div>
   </div>

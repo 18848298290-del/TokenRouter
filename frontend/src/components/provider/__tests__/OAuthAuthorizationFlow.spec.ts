@@ -2,24 +2,32 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import OAuthAuthorizationFlow from '../OAuthAuthorizationFlow.vue'
 
+// OAuthAuthorizationFlow.spec.ts tests authorization method selection and credential
+// import events. Mounted OpenAI and Grok flows exercise personal access-token and
+// multiline SSO input, while a separate case verifies dropdown presentation when many
+// methods are enabled.
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
-    })
+      t: (key: string) => key,
+    }),
   }
 })
 
 vi.mock('@/composables/useClipboard', () => ({
   useClipboard: () => ({
     copied: false,
-    copyToClipboard: vi.fn()
-  })
+    copyToClipboard: vi.fn(),
+  }),
 }))
 
 describe('OAuthAuthorizationFlow', () => {
+  // OpenAI exposes the personal access-token method alongside manual authorization.
+  // Selecting it and submitting padded input must emit the selected method and the
+  // trimmed token through the PAT event.
   it('emits Codex PAT token for OpenAI PAT auth mode', async () => {
     const wrapper = mount(OAuthAuthorizationFlow, {
       props: {
@@ -27,13 +35,13 @@ describe('OAuthAuthorizationFlow', () => {
         platform: 'openai',
         showCookieOption: false,
         showRefreshTokenOption: false,
-        showCodexPatOption: true
+        showCodexPatOption: true,
       },
       global: {
         stubs: {
-          Icon: true
-        }
-      }
+          Icon: true,
+        },
+      },
     })
 
     const patOption = wrapper.find('[data-testid="oauth-method-codex_pat"]')
@@ -48,18 +56,21 @@ describe('OAuthAuthorizationFlow', () => {
     expect(wrapper.emitted('import-codex-pat')).toEqual([['at-test-token']])
   })
 
+  // Grok exposes its SSO import method and receives two padded input lines. Submission
+  // must trim the outer whitespace while retaining the newline for parent-side batch
+  // parsing.
   it('emits trimmed batch input for Grok SSO auth mode', async () => {
     const wrapper = mount(OAuthAuthorizationFlow, {
       props: {
         addMethod: 'oauth',
         platform: 'grok',
-        showSsoOption: true
+        showSsoOption: true,
       },
       global: {
         stubs: {
-          Icon: true
-        }
-      }
+          Icon: true,
+        },
+      },
     })
 
     const ssoOption = wrapper.find('[data-testid="oauth-method-sso_cookie"]')
@@ -73,6 +84,8 @@ describe('OAuthAuthorizationFlow', () => {
     expect(wrapper.emitted('import-sso')).toEqual([['sso-one\nsso-two']])
   })
 
+  // The caller enables more than four OpenAI authorization methods at once. The method
+  // control must render a dropdown and omit the individual manual segmented option.
   it('授权方式超过四种时改用下拉框', () => {
     const wrapper = mount(OAuthAuthorizationFlow, {
       props: {
@@ -83,9 +96,9 @@ describe('OAuthAuthorizationFlow', () => {
         showMobileRefreshTokenOption: true,
         showCodexSessionImportOption: true,
         showAgentIdentityOption: true,
-        showCodexPatOption: true
+        showCodexPatOption: true,
       },
-      global: { stubs: { Icon: true } }
+      global: { stubs: { Icon: true } },
     })
 
     expect(wrapper.find('[data-testid="oauth-method-select"]').exists()).toBe(true)

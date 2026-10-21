@@ -1,13 +1,10 @@
-/**
- * API Key 创建逻辑测试
- * 通过封装组件测试 API Key 创建的核心流程
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { defineComponent, ref, reactive } from 'vue'
 
-// Mock keysAPI
+// Creation and list spies supply the isolated fixture API, while stable notification spies
+// below capture the shared app-store feedback from its handler.
 const mockCreate = vi.fn()
 const mockList = vi.fn()
 
@@ -32,7 +29,7 @@ vi.mock('@/api/auth', () => ({
   getPublicSettings: vi.fn().mockResolvedValue({}),
 }))
 
-// Mock app store - 使用固定引用确保组件和测试共享同一对象
+// Use a stable app-store mock reference so the fixture and assertions observe the same notification functions.
 const mockShowSuccess = vi.fn()
 const mockShowError = vi.fn()
 
@@ -45,10 +42,15 @@ vi.mock('@/stores/app', () => ({
 
 import { useAppStore } from '@/stores/app'
 
-/**
- * 简化的 API Key 创建测试组件
- */
+// ApiKeyCreate.spec.ts exercises a small API-key creation fixture and its request payload.
+// The fixture reproduces selected form behavior with mocked services, so these assertions
+// cover that harness rather than mounting the production KeysView component.
+
+/* The fixture reproduces key creation inputs and API submission for isolated payload tests; production-page behavior is covered separately. */
+// ApiKeyCreateTestComponent reproduces a minimal name-and-group submission form for isolated
+// API payload checks; it does not mount the production key editor.
 const ApiKeyCreateTestComponent = defineComponent({
+  // setup creates the fixture draft, loading flag, and returned-secret display state.
   setup() {
     const appStore = useAppStore()
     const loading = ref(false)
@@ -58,6 +60,9 @@ const ApiKeyCreateTestComponent = defineComponent({
       group_id: null as number | null,
     })
 
+    // handleCreate submits a nonempty fixture name and selected group to the creation mock.
+    // It exposes the returned secret or notification error and resets loading after the
+    // request settles.
     const handleCreate = async () => {
       if (!formData.name) return
 
@@ -99,6 +104,8 @@ describe('ApiKey 创建流程', () => {
     vi.clearAllMocks()
   })
 
+  // The fixture submits a named key with its default group selection. The test protects the
+  // request payload and display of the secret returned by the mocked creation API.
   it('创建 API Key 调用 API 并显示结果', async () => {
     mockCreate.mockResolvedValue({
       id: 1,
@@ -120,6 +127,8 @@ describe('ApiKey 创建流程', () => {
     expect(wrapper.find('.created-key').text()).toBe('sk-test-key-12345')
   })
 
+  // The user selects a routing group before submitting the fixture form. The test protects
+  // conversion of that selection into the numeric group identity passed to creation.
   it('选择分组后正确传参', async () => {
     mockCreate.mockResolvedValue({
       id: 2,
@@ -130,7 +139,7 @@ describe('ApiKey 创建流程', () => {
     const wrapper = mount(ApiKeyCreateTestComponent)
 
     await wrapper.find('#name').setValue('Group Key')
-    // 选择 group_id = 1
+    // Select the first routing group before submitting this form.
     await wrapper.find('#group').setValue('1')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -141,6 +150,8 @@ describe('ApiKey 创建流程', () => {
     })
   })
 
+  // The fixture creation request rejects with a specific quota error. The test protects
+  // error notification and omission of a created-secret result after the failed request.
   it('创建失败时显示错误', async () => {
     mockCreate.mockRejectedValue(new Error('配额不足'))
 
@@ -154,6 +165,8 @@ describe('ApiKey 创建流程', () => {
     expect(wrapper.find('.created-key').exists()).toBe(false)
   })
 
+  // The fixture form submits with an empty key name. The test protects its required-name
+  // guard by checking that no creation request is issued.
   it('名称为空时不提交', async () => {
     const wrapper = mount(ApiKeyCreateTestComponent)
 
@@ -163,10 +176,15 @@ describe('ApiKey 创建流程', () => {
     expect(mockCreate).not.toHaveBeenCalled()
   })
 
+  // The creation promise remains pending while the fixture is visible. The test protects a
+  // disabled submit button until that request resolves and releases its loading state.
   it('创建过程中按钮被禁用', async () => {
     let resolveCreate: (v: any) => void
     mockCreate.mockImplementation(
-      () => new Promise((resolve) => { resolveCreate = resolve })
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve
+        }),
     )
 
     const wrapper = mount(ApiKeyCreateTestComponent)

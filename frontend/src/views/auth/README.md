@@ -353,8 +353,8 @@ Potential improvements:
 
 ## Related Documentation
 
-- [Auth Store Documentation](/src/stores/README.md#auth-store)
+- [Auth Store Documentation](../../stores/README.md)
 - [AuthLayout Component](/src/components/layout/README.md#authlayout)
 - [Router Configuration](/src/router/index.ts)
 - [API Documentation](/src/api/README.md#authentication)
-- [Type Definitions](/src/types/index.ts)
+- [Authentication Types](../../api/auth.types.ts)

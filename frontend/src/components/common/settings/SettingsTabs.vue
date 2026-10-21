@@ -20,7 +20,7 @@
       </button>
     </div>
     <div ref="contentRef" class="settings-tab-content">
-      <!-- 页签持续挂载，切页与暂时隐藏后编辑器仍保存草稿。 -->
+      <!-- All supplied panels stay mounted while visibility changes, keeping editor drafts and registration state available when users return to a tab. -->
       <section
         v-for="tab in tabs"
         v-show="isShown(tab.key)"
@@ -44,51 +44,123 @@ import { vContentReveal } from '@/directives/contentReveal'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
+/**
+ * SettingsTabs.vue organizes persistent settings panels with keyboard navigation and
+ * field reveal helpers. Hidden tabs lose their buttons but retain mounted panels, so
+ * editors keep local drafts across tab visibility changes. The active key follows the
+ * first visible tab when its current tab disappears.
+ *
+ * Validation and onboarding can request an element inside another panel. The component
+ * activates that panel, emits a reveal event for nested editors, and waits for Vue
+ * updates before scrolling or focusing. A post flush watcher resets panel scrolling
+ * before this delayed positioning, allowing the requested field position to remain
+ * after switching tabs. Native validation reports the first invalid field after this
+ * reveal sequence.
+ */
+
+/**
+ * SettingsTab describes an addressable panel and its corresponding tab button.
+ */
 export interface SettingsTab {
-  key: string
-  label: string
-  /** 隐藏的页签不显示按钮，但面板保持挂载。 */
+  key: string /* stable panel identifier */
+  label: string /* accessible tab label */
+
+  /**
+   * hidden removes the tab button and activation eligibility while its panel stays
+   * mounted to retain local editor drafts.
+   */
   hidden?: boolean
 }
 
+/**
+ * props supplies ordered panel identities and labels plus an ID prefix used to connect
+ * tab buttons with their panels.
+ */
 const props = defineProps<{
-  idPrefix: string
-  tabs: SettingsTab[]
-  /** 页签栏的可访问名称。 */
-  label: string
+  idPrefix: string /* panel identifier prefix */
+  tabs: SettingsTab[] /* ordered tab definitions */
+  label: string /* accessible tab label */
 }>()
 
+/**
+ * rootRef scopes button and field queries to this tab set so callers can mount
+ * multiple independent editors.
+ */
 const rootRef = ref<HTMLElement | null>(null)
+/**
+ * contentRef owns the scrolling panel area that resets when the active key changes
+ * before field reveal positioning.
+ */
 const contentRef = ref<HTMLElement | null>(null)
-const visibleTabs = computed(() => props.tabs.filter(tab => !tab.hidden))
+/**
+ * visibleTabs filters buttons and activation candidates while the template keeps all
+ * supplied panels mounted for draft retention.
+ */
+const visibleTabs = computed(() => props.tabs.filter((tab) => !tab.hidden))
+/**
+ * activeTab holds the current panel key and follows the first visible tab when its
+ * previous key becomes hidden.
+ */
 const activeTab = ref(visibleTabs.value[0]?.key ?? '')
 
-// 当前页签因平台或类型变化被隐藏时，回到第一个可见页签。
-watch(visibleTabs, tabs => {
-  if (!tabs.some(tab => tab.key === activeTab.value)) activeTab.value = tabs[0]?.key ?? ''
+/**
+ * When the active tab becomes hidden or disappears, move selection to the first
+ * visible tab while retaining all supplied panel instances.
+ */
+watch(visibleTabs, (tabs) => {
+  if (!tabs.some((tab) => tab.key === activeTab.value)) activeTab.value = tabs[0]?.key ?? ''
 })
 
-// 回顶在 DOM 更新后的同一刷新周期完成，先于 revealElement 的 nextTick 定位。
-watch(activeTab, () => {
-  if (contentRef.value) contentRef.value.scrollTop = 0
-}, { flush: 'post' })
+/**
+ * Reset panel scrolling after Vue patches the selected tab, before revealElement
+ * resumes its nextTick positioning for a requested field.
+ */
+watch(
+  activeTab,
+  () => {
+    if (contentRef.value) contentRef.value.scrollTop = 0
+  },
+  { flush: 'post' },
+)
 
+/**
+ * isShown reports whether a panel is active and currently visible.
+ */
 function isShown(key: string) {
-  return activeTab.value === key && visibleTabs.value.some(tab => tab.key === key)
+  return activeTab.value === key && visibleTabs.value.some((tab) => tab.key === key)
 }
 
+/**
+ * findTabButton finds the tab button under this component root. Keys are interpolated
+ * into an attribute selector, and a missing root or button produces undefined for
+ * optional scrolling and focus.
+ */
 function findTabButton(key: string) {
   return rootRef.value?.querySelector<HTMLElement>(`[data-settings-tab-button="${key}"]`)
 }
 
+/**
+ * selectTab changes the active key and scrolls its button into view after Vue updates.
+ * Callers supply a visible tab key; field reveal and keyboard handlers coordinate
+ * their own focus separately.
+ */
 async function selectTab(key: string) {
   activeTab.value = key
+  /**
+   * Wait for tab selection to render before scrolling the button, so its active
+   * appearance and the panel scroll reset settle in the same update.
+   */
   await nextTick()
   findTabButton(key)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
 }
 
+/**
+ * onTabKeydown applies wrapped arrow navigation and Home or End selection across
+ * visible tabs. Recognized targets prevent the browser default, request selection, and
+ * focus the corresponding tab button.
+ */
 function onTabKeydown(event: KeyboardEvent, key: string) {
-  const keys = visibleTabs.value.map(tab => tab.key)
+  const keys = visibleTabs.value.map((tab) => tab.key)
   const index = keys.indexOf(key)
   let next: string | undefined
   if (event.key === 'ArrowRight') next = keys[(index + 1) % keys.length]
@@ -101,43 +173,87 @@ function onTabKeydown(event: KeyboardEvent, key: string) {
   findTabButton(next)?.focus()
 }
 
-// 原生校验、业务校验和新手引导共用定位流程，先展示页签，再滚动及聚焦目标。
+/**
+ * revealElement shows the visible tab containing a requested element, then scrolls and
+ * optionally focuses that element. It ignores elements outside visible tab panels. The
+ * active key changes before the bubbling form field reveal event, allowing nested
+ * editors to expose their content.
+ *
+ * Waiting for the next Vue tick lets the post flush scroll reset run before final
+ * positioning. Focus uses the element itself when it is a control, otherwise its
+ * descendant or parent control, with preventScroll retaining the requested scroll
+ * position.
+ */
 async function revealElement(element: HTMLElement, focus = true) {
   const key = element.closest<HTMLElement>('[data-settings-tab]')?.dataset.settingsTab
-  if (!key || !visibleTabs.value.some(tab => tab.key === key)) return
+  if (!key || !visibleTabs.value.some((tab) => tab.key === key)) return
   activeTab.value = key
   element.dispatchEvent(new Event('form-field-reveal', { bubbles: true }))
+  /**
+   * Allow the post flush panel scroll reset to finish before positioning the field,
+   * otherwise the reset could overwrite the requested reveal position.
+   */
   await nextTick()
   element.scrollIntoView?.({ block: 'center', inline: 'nearest' })
   if (focus) {
     const selector = 'input, textarea, button, select, [tabindex]'
-    const target = element.matches(selector) ? element
-      : element.querySelector<HTMLElement>(selector) ?? element.parentElement?.querySelector<HTMLElement>(selector)
+    /**
+     * A field marker can wrap or accompany its control, so focus searches the
+     * marker, its descendants, and then its parent for an input target.
+     */
+    const target = element.matches(selector)
+      ? element
+      : (element.querySelector<HTMLElement>(selector) ??
+        element.parentElement?.querySelector<HTMLElement>(selector))
     target?.focus({ preventScroll: true })
   }
 }
 
+/**
+ * revealField resolves a selector inside this tab set and delegates element
+ * positioning. A selector with no matching element has no effect; callers await
+ * completion before reading the revealed panel position.
+ */
 async function revealField(selector: string) {
   const element = rootRef.value?.querySelector<HTMLElement>(selector)
   if (element) await revealElement(element)
 }
 
+/**
+ * validate checks participating native controls and reports the first invalid field.
+ * It waits for that field reveal before reportValidity, returning false for an invalid
+ * field and true when every participating control passes.
+ */
 async function validate(): Promise<boolean> {
-  const fields = rootRef.value?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
-    'input, textarea, select',
-  )
-  // 不依赖浏览器提交时自动聚焦，隐藏页签中的无效输入也能正常报告。
-  const invalid = fields && Array.from(fields).find(field => field.willValidate && !field.validity.valid)
+  const fields = rootRef.value?.querySelectorAll<
+    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+  >('input, textarea, select')
+
+  /**
+   * Inspect native validity directly before browser submission, allowing an invalid
+   * field in another mounted panel to be revealed before reporting.
+   */
+  const invalid =
+    fields && Array.from(fields).find((field) => field.willValidate && !field.validity.valid)
   if (!invalid) return true
   await revealElement(invalid)
   invalid.reportValidity()
   return false
 }
 
+/**
+ * onTourReveal positions an HTMLElement targeted by a bubbling onboarding event. It
+ * delegates the panel transition to revealElement with focus disabled so the
+ * onboarding controller can retain its own focus management.
+ */
 function onTourReveal(event: Event) {
   if (event.target instanceof HTMLElement) void revealElement(event.target, false)
 }
 
+/**
+ * The exposed helpers let containing forms select panels, reveal fields, and await
+ * native validation while observing the active tab key.
+ */
 defineExpose({ validate, revealField, selectTab, activeTab })
 </script>
 
@@ -167,8 +283,13 @@ defineExpose({ validate, revealField, selectTab, activeTab })
   @apply min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-2 pt-6;
 }
 
-/* 窄屏上限为 BREAKPOINT_SM（640px）减 1，与项目断点保持一致。 */
+/*
+ * The narrow layout ends one pixel below the shared 640 pixel small breakpoint,
+ * keeping tab padding consistent with responsive form controls.
+ */
 @media (max-width: 639px) {
-  .settings-tab { @apply px-3; }
+  .settings-tab {
+    @apply px-3;
+  }
 }
 </style>

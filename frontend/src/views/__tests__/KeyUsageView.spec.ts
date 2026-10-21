@@ -6,8 +6,16 @@ import { createI18n } from 'vue-i18n'
 import KeyUsageView from '../KeyUsageView.vue'
 import { useAppStore } from '@/stores'
 
+// KeyUsageView.spec.ts tests public key lookup rendering and calendar query bounds.
+// Controlled fetch responses and an isolated application store exercise subscription
+// sentinels and daily history through the page input and its rendered result sections.
+
+// mockFetch replaces the gateway fetch and records the URL and bearer headers used
+// after entering an API key.
 const mockFetch = vi.fn()
 
+// createTestI18n creates English test translations with missing-key warnings disabled for
+// the mounted page.
 function createTestI18n() {
   return createI18n({
     legacy: false,
@@ -74,26 +82,29 @@ function createTestI18n() {
           querySuccess: 'Query successful',
           queryFailed: 'Query failed',
           queryFailedRetry: 'Query failed, please try again later',
-          noDailyUsage: 'No daily usage data'
+          noDailyUsage: 'No daily usage data',
         },
         home: {
           viewDocs: 'Docs',
           switchToLight: 'Light',
           switchToDark: 'Dark',
           footer: {
-            allRightsReserved: 'All rights reserved.'
-          }
+            allRightsReserved: 'All rights reserved.',
+          },
         },
         payment: {
           planCard: {
-            unlimited: 'Unlimited'
-          }
-        }
-      }
-    }
+            unlimited: 'Unlimited',
+          },
+        },
+      },
+    },
   })
 }
 
+// mountView renders the page with the suite's application and child-component substitutes.
+// Tests keep the page's own request and rendering logic active while controlling external
+// responses and inspecting visible results.
 async function mountView() {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -113,9 +124,9 @@ async function mountView() {
         LocaleSwitcher: { template: '<div />' },
         BalanceIcon: { template: '<span />' },
         Icon: { template: '<span />' },
-        'router-link': { template: '<a><slot /></a>' }
-      }
-    }
+        'router-link': { template: '<a><slot /></a>' },
+      },
+    },
   })
 }
 
@@ -142,18 +153,23 @@ describe('KeyUsageView', () => {
         removeListener: vi.fn(),
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
-        dispatchEvent: vi.fn()
-      })
+        dispatchEvent: vi.fn(),
+      }),
     })
   })
 
+  // Restore browser substitutes after allowing the delayed animation callback to run;
+  // subsequent cases need their own fetch and timing environment.
   afterEach(async () => {
     vi.useRealTimers()
-    await new Promise(resolve => setTimeout(resolve, 60))
+    await new Promise((resolve) => setTimeout(resolve, 60))
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
+  // A subscription-backed response reports remaining allowance using the negative-one
+  // sentinel. The test protects the translated unlimited label and its healthy color after
+  // a successful key query.
   it('renders unlimited remaining quota for subscription responses with -1 sentinel', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
@@ -169,9 +185,9 @@ describe('KeyUsageView', () => {
           daily_limit_usd: 0,
           weekly_limit_usd: 0,
           monthly_limit_usd: 0,
-          expires_at: '2026-05-01T00:00:00Z'
-        }
-      })
+          expires_at: '2026-05-01T00:00:00Z',
+        },
+      }),
     })
 
     const wrapper = await mountView()
@@ -181,13 +197,18 @@ describe('KeyUsageView', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('keyUsage.remainingQuota')
-    const unlimitedNode = wrapper.findAll('span').find((node) => node.text() === 'payment.planCard.unlimited')
+    const unlimitedNode = wrapper
+      .findAll('span')
+      .find((node) => node.text() === 'payment.planCard.unlimited')
     expect(unlimitedNode).toBeTruthy()
     expect(unlimitedNode?.classes()).toContain('text-emerald-500')
 
     wrapper.unmount()
   })
 
+  // A successful key query returns daily request, token, cache, and cost observations. The
+  // test protects the daily-history request length and rendering the supplied dated row
+  // values.
   it('renders daily usage detail rows after a successful query', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
@@ -199,7 +220,7 @@ describe('KeyUsageView', () => {
           limit: 10,
           used: 1,
           remaining: 9,
-          unit: 'USD'
+          unit: 'USD',
         },
         usage: {
           today: {
@@ -209,7 +230,7 @@ describe('KeyUsageView', () => {
             cache_creation_tokens: 0,
             cache_read_tokens: 0,
             total_tokens: 30,
-            actual_cost: 0.01
+            actual_cost: 0.01,
           },
           total: {
             requests: 12,
@@ -218,10 +239,10 @@ describe('KeyUsageView', () => {
             cache_creation_tokens: 10,
             cache_read_tokens: 30,
             total_tokens: 340,
-            actual_cost: 0.12
+            actual_cost: 0.12,
           },
           rpm: 0,
-          tpm: 0
+          tpm: 0,
         },
         daily_usage: [
           {
@@ -233,10 +254,10 @@ describe('KeyUsageView', () => {
             cache_write_tokens: 10,
             total_tokens: 340,
             cost: 0.15,
-            actual_cost: 0.12
-          }
-        ]
-      })
+            actual_cost: 0.12,
+          },
+        ],
+      }),
     })
 
     const wrapper = await mountView()
@@ -248,8 +269,8 @@ describe('KeyUsageView', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/v1/usage?'),
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: 'Bearer sk-test-key' })
-      })
+        headers: expect.objectContaining({ Authorization: 'Bearer sk-test-key' }),
+      }),
     )
     expect(String(mockFetch.mock.calls[0][0])).toContain('days=30')
 
@@ -269,12 +290,14 @@ describe('KeyUsageView', () => {
     wrapper.unmount()
   })
 
+  // The browser clock is near midnight where local and UTC dates differ. The test protects
+  // using the local calendar date for both query endpoints in today mode.
   it('queries the current local calendar date near midnight', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 6, 13, 0, 30))
     mockFetch.mockResolvedValue({
       ok: true,
-      json: async () => ({ mode: 'unrestricted', isValid: true, remaining: 0 })
+      json: async () => ({ mode: 'unrestricted', isValid: true, remaining: 0 }),
     })
 
     const wrapper = await mountView()

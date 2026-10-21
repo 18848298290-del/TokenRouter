@@ -3,6 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AdminAffiliateRecordsTable from '../affiliates/AdminAffiliateRecordsTable.vue'
 
+// AdminAffiliateRecordsTable.spec.ts checks balance-unit and currency rendering across
+// affiliate record types and the user overview. Mocked endpoints provide invitation,
+// rebate, and transfer examples, while slot-rendering table stubs exercise the
+// production cell formatters and overview interaction.
+
+// Hoisted endpoint, formatter, and notification mocks let each test inspect production
+// rendering against predictable affiliate response fixtures.
 const {
   formatBalanceAmount,
   formatPaymentAmount,
@@ -41,7 +48,7 @@ vi.mock('@/composables/useBalanceDisplay', () => ({
   }),
 }))
 
-vi.mock('@/components/payment/currency', () => ({
+vi.mock('@/utils/payment/currency', () => ({
   formatPaymentAmount,
 }))
 
@@ -59,6 +66,7 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
+// paginated wraps fixture rows in a first-page response with matching total.
 const paginated = (items: Record<string, unknown>[]) => ({
   items,
   total: items.length,
@@ -66,7 +74,11 @@ const paginated = (items: Record<string, unknown>[]) => ({
   page_size: 20,
 })
 
+// DataTableStub renders production cell slots for each fixture row, retaining column
+// keys so assertions observe the selected record presentation.
 const DataTableStub = {
+  // columns names the production slots and data supplies their rows; the fixture
+  // exposes both so assertions exercise the parent cell renderers.
   props: ['columns', 'data'],
   template: `
     <div>
@@ -81,6 +93,9 @@ const DataTableStub = {
   `,
 }
 
+// mountTable mounts the selected affiliate record type with slot-rendering table and
+// dialog stubs. Endpoint and formatting mocks remain observable, so tests can inspect
+// production cell output and trigger the user overview.
 function mountTable(type: 'invites' | 'rebates' | 'transfers') {
   return mount(AdminAffiliateRecordsTable, {
     props: { type },
@@ -88,7 +103,8 @@ function mountTable(type: 'invites' | 'rebates' | 'transfers') {
       stubs: {
         AppLayout: { template: '<div><slot /></div>' },
         TablePageLayout: {
-          template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>',
+          template:
+            '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>',
         },
         DataTable: DataTableStub,
         Pagination: true,
@@ -117,69 +133,83 @@ describe('AdminAffiliateRecordsTable', () => {
       (value: number | null | undefined) => `积分${Number(value ?? 0).toFixed(2)}`,
     )
     formatPaymentAmount.mockImplementation(
-      (value: number, currency?: string | null) => `${currency || 'CNY'} ${Number(value).toFixed(2)}`,
+      (value: number, currency?: string | null) =>
+        `${currency || 'CNY'} ${Number(value).toFixed(2)}`,
     )
-    listInviteRecords.mockResolvedValue(paginated([{
-      inviter_id: 1,
-      inviter_email: 'inviter@example.com',
-      inviter_username: 'inviter',
-      invitee_id: 2,
-      invitee_email: 'invitee@example.com',
-      invitee_username: 'invitee',
-      aff_code: 'AFF123',
-      total_rebate: 120,
-      created_at: '2026-07-20T03:00:00Z',
-    }]))
-    listRebateRecords.mockResolvedValue(paginated([{
-      order_id: 10,
-      out_trade_no: 'ORDER-10',
-      inviter_id: 1,
-      inviter_email: 'inviter@example.com',
-      inviter_username: 'inviter',
-      invitee_id: 2,
-      invitee_email: 'invitee@example.com',
-      invitee_username: 'invitee',
-      order_amount: 1000,
-      pay_amount: 100,
-      order_type: 'balance',
-      order_currency: '',
-      pay_currency: 'CNY',
-      rebate_amount: 200,
-      payment_type: 'alipay',
-      order_status: 'completed',
-      created_at: '2026-07-20T03:00:00Z',
-    }, {
-      order_id: 11,
-      out_trade_no: 'ORDER-11',
-      inviter_id: 1,
-      inviter_email: 'inviter@example.com',
-      inviter_username: 'inviter',
-      invitee_id: 2,
-      invitee_email: 'invitee@example.com',
-      invitee_username: 'invitee',
-      order_amount: 10,
-      pay_amount: 72,
-      order_type: 'subscription',
-      order_currency: 'USD',
-      pay_currency: 'CNY',
-      rebate_amount: 200,
-      payment_type: 'stripe',
-      order_status: 'completed',
-      created_at: '2026-07-20T03:00:00Z',
-    }]))
-    listTransferRecords.mockResolvedValue(paginated([{
-      ledger_id: 20,
-      user_id: 1,
-      user_email: 'inviter@example.com',
-      username: 'inviter',
-      amount: 80,
-      balance_after: 580,
-      available_quota_after: 20,
-      frozen_quota_after: 5,
-      history_quota_after: 300,
-      snapshot_available: true,
-      created_at: '2026-07-20T03:00:00Z',
-    }]))
+    listInviteRecords.mockResolvedValue(
+      paginated([
+        {
+          inviter_id: 1,
+          inviter_email: 'inviter@example.com',
+          inviter_username: 'inviter',
+          invitee_id: 2,
+          invitee_email: 'invitee@example.com',
+          invitee_username: 'invitee',
+          aff_code: 'AFF123',
+          total_rebate: 120,
+          created_at: '2026-07-20T03:00:00Z',
+        },
+      ]),
+    )
+    listRebateRecords.mockResolvedValue(
+      paginated([
+        {
+          order_id: 10,
+          out_trade_no: 'ORDER-10',
+          inviter_id: 1,
+          inviter_email: 'inviter@example.com',
+          inviter_username: 'inviter',
+          invitee_id: 2,
+          invitee_email: 'invitee@example.com',
+          invitee_username: 'invitee',
+          order_amount: 1000,
+          pay_amount: 100,
+          order_type: 'balance',
+          order_currency: '',
+          pay_currency: 'CNY',
+          rebate_amount: 200,
+          payment_type: 'alipay',
+          order_status: 'completed',
+          created_at: '2026-07-20T03:00:00Z',
+        },
+        {
+          order_id: 11,
+          out_trade_no: 'ORDER-11',
+          inviter_id: 1,
+          inviter_email: 'inviter@example.com',
+          inviter_username: 'inviter',
+          invitee_id: 2,
+          invitee_email: 'invitee@example.com',
+          invitee_username: 'invitee',
+          order_amount: 10,
+          pay_amount: 72,
+          order_type: 'subscription',
+          order_currency: 'USD',
+          pay_currency: 'CNY',
+          rebate_amount: 200,
+          payment_type: 'stripe',
+          order_status: 'completed',
+          created_at: '2026-07-20T03:00:00Z',
+        },
+      ]),
+    )
+    listTransferRecords.mockResolvedValue(
+      paginated([
+        {
+          ledger_id: 20,
+          user_id: 1,
+          user_email: 'inviter@example.com',
+          username: 'inviter',
+          amount: 80,
+          balance_after: 580,
+          available_quota_after: 20,
+          frozen_quota_after: 5,
+          history_quota_after: 300,
+          snapshot_available: true,
+          created_at: '2026-07-20T03:00:00Z',
+        },
+      ]),
+    )
     getUserOverview.mockResolvedValue({
       user_id: 1,
       email: 'inviter@example.com',
@@ -193,6 +223,9 @@ describe('AdminAffiliateRecordsTable', () => {
     })
   })
 
+  // Invitation and rebate fixtures contain both balance units and currency-denominated
+  // orders. Cells must use the configured balance formatter for credits and retain
+  // payment currencies for subscription prices and payments.
   it('uses the configured balance unit for invite and rebate records', async () => {
     const invites = mountTable('invites')
     await flushPromises()
@@ -211,6 +244,9 @@ describe('AdminAffiliateRecordsTable', () => {
     expect(formatPaymentAmount).toHaveBeenCalledWith(72, 'CNY')
   })
 
+  // A transfer fixture contains account and affiliate quota snapshots, then opens its
+  // user overview. Both surfaces must format balance amounts through the configured
+  // account-unit formatter.
   it('uses the configured balance unit for transfers and user overview', async () => {
     const wrapper = mountTable('transfers')
     await flushPromises()
@@ -220,7 +256,9 @@ describe('AdminAffiliateRecordsTable', () => {
       expect(formatBalanceAmount).toHaveBeenCalledWith(amount)
     }
 
-    const userButton = wrapper.findAll('button').find((button) => button.text().includes('inviter@example.com'))
+    const userButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('inviter@example.com'))
     expect(userButton).toBeDefined()
     await userButton!.trigger('click')
     await flushPromises()

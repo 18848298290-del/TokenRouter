@@ -23,25 +23,15 @@
           })
         }}</span>
         <div class="flex gap-2">
-          <button
-            type="button"
-            class="btn btn-secondary"
-            @click="emit('selectAll')"
-          >
+          <button type="button" class="btn btn-secondary" @click="emit('selectAll')">
             {{ t('admin.groups.settings.selectAll') }}
           </button>
-          <button
-            type="button"
-            class="btn btn-secondary"
-            @click="emit('invert')"
-          >
+          <button type="button" class="btn btn-secondary" @click="emit('invert')">
             {{ t('admin.groups.settings.invertSelection') }}
           </button>
         </div>
       </div>
-      <div
-        class="max-h-64 divide-y divide-gray-200 overflow-y-auto dark:divide-dark-600"
-      >
+      <div class="max-h-64 divide-y divide-gray-200 overflow-y-auto dark:divide-dark-600">
         <p v-if="loading" class="input-hint p-4">
           {{ t('admin.groups.modelsList.loading') }}
         </p>
@@ -53,10 +43,9 @@
           :key="item.id"
           class="flex items-center gap-2 px-4 py-3"
         >
-          <span
-            class="min-w-0 flex-1 break-all text-sm text-primary-900 dark:text-dark-50"
-            >{{ item.id }}</span
-          >
+          <span class="min-w-0 flex-1 break-all text-sm text-primary-900 dark:text-dark-50">{{
+            item.id
+          }}</span>
           <Toggle
             :model-value="item.selected"
             :aria-label="item.id"
@@ -79,9 +68,7 @@
               type="button"
               class="btn btn-ghost btn-icon"
               :disabled="index === state.items.length - 1"
-              :aria-label="
-                t('admin.groups.settings.moveDown', { name: item.id })
-              "
+              :aria-label="t('admin.groups.settings.moveDown', { name: item.id })"
               @click="emit('move', index, index + 1)"
             >
               <Icon name="arrowDown" size="sm" />
@@ -100,23 +87,40 @@ import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 import SettingToggleRow from '@/components/common/settings/SettingToggleRow.vue'
 import SettingsSection from '@/components/common/settings/SettingsSection.vue'
-import type { ModelsListState } from '@/views/admin/groupsModelsList'
+import type { ModelsListState } from '@/components/admin/group/groupsModelsList'
 
+// GroupModelsListFields.vue displays the group's custom model list, selection controls, and
+// ordering actions. The page owns candidate reconciliation and persistence, while this
+// component reads the supplied state and emits selection or movement requests for that draft.
+
+// props supplies parent-owned editor values and display controls consumed by the fields below.
 const props = defineProps<{
-  idPrefix: string
+  idPrefix: string // field identifier prefix
+  // state belongs to the page and contains saved, candidate, and editable model selections.
+  // Controls emit requests for the page to update it.
   state: ModelsListState
-  loading: boolean
+  loading: boolean // candidate loading flag
 }>()
-// 列表选择和排序写回页面草稿，候选目录更新时合并模型列表。
+
+// emit forwards typed edits and actions to the parent that owns the displayed draft.
 const emit = defineEmits<{
-  enabled: [value: boolean]
-  select: [id: string, value: boolean]
-  selectAll: []
-  invert: []
-  move: [from: number, to: number]
+  enabled: [
+    value: boolean, // replacement field value
+  ] // enablement change notification
+  select: [
+    id: string, // selected model identifier
+    value: boolean, // replacement field value
+  ] // model selection change
+  selectAll: [] // select every model
+  invert: [] // invert model selections
+  move: [
+    from: number, // source list index
+    to: number, // destination list index
+  ] // source and destination indexes
 }>()
+// t resolves the current locale messages used by labels, validation, and action notifications.
 const { t } = useI18n()
-const selectedCount = computed(
-  () => props.state.items.filter((item) => item.selected).length,
-)
+// selectedCount derives the number of checked draft rows for the custom model list selection
+// summary.
+const selectedCount = computed(() => props.state.items.filter((item) => item.selected).length)
 </script>

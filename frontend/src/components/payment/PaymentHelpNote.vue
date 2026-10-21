@@ -1,7 +1,12 @@
 <template>
-  <!-- 管理员配置的购买说明按脚注样式左对齐展示。 -->
+  <!-- Administrator checkout instructions appear as left-aligned supporting text. -->
   <div class="flex items-start gap-3 text-sm text-gray-500 dark:text-dark-400">
-    <Icon name="infoCircle" size="sm" :animate-on-hover="false" class="mt-0.5 shrink-0 text-gray-400 dark:text-dark-500" />
+    <Icon
+      name="infoCircle"
+      size="sm"
+      :animate-on-hover="false"
+      class="mt-0.5 shrink-0 text-gray-400 dark:text-dark-500"
+    />
     <div class="min-w-0 flex-1 space-y-3">
       <div
         v-if="html"
@@ -23,15 +28,21 @@
 <script setup lang="ts">
 import Icon from '@/components/icons/Icon.vue'
 
+/**
+ * PaymentHelpNote.vue displays administrator-provided checkout instructions and an
+ * optional illustration. Its parent supplies sanitized HTML, and clicking the illustration
+ * emits its URL so the page can own the image preview overlay and its lifecycle.
+ */
+
 defineProps<{
-  /** 已经过 Markdown 渲染和 DOMPurify 净化的说明 HTML。 */
+  /** html contains checkout instructions rendered from Markdown and sanitized by the owning page before this component displays them. */
   html: string
-  /** 说明配图地址，为空时不显示。 */
+  /** imageUrl names the supporting illustration; an empty value hides the image and its preview action. */
   imageUrl: string
 }>()
 
 const emit = defineEmits<{
-  preview: [url: string]
+  preview: [url: string] // requested illustration preview URL
 }>()
 </script>
 

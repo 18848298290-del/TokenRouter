@@ -3,13 +3,23 @@ import vue from 'eslint-plugin-vue'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
-// Vue 模板使用 Vue parser，脚本部分交给 TypeScript parser。
+// eslint.config.js applies JavaScript, TypeScript, and Vue syntax checks to the
+// frontend source and its build scripts. Vue templates use the Vue parser while
+// script blocks use the TypeScript parser. Formatting and ownership rules run
+// through their dedicated package commands so each diagnostic identifies its check.
 export default tseslint.config(
   {
     ignores: [
-      'vite.config.js', 'vite.config.d.ts', '**/node_modules/**', '**/dist/**',
-      '**/coverage/**', '**/.cache/**', '**/.vite/**', '**/.vitest/**', '**/*.timestamp-*.mjs'
-    ]
+      'vite.config.js',
+      'vite.config.d.ts',
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/coverage/**',
+      '**/.cache/**',
+      '**/.vite/**',
+      '**/.vitest/**',
+      '**/*.timestamp-*.mjs',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -19,22 +29,26 @@ export default tseslint.config(
       ecmaVersion: 'latest',
       sourceType: 'module',
       globals: { ...globals.browser, ...globals.node },
-      parserOptions: { parser: tseslint.parser, extraFileExtensions: ['.vue'] }
+      parserOptions: { parser: tseslint.parser, extraFileExtensions: ['.vue'] },
     },
     rules: {
       'no-constant-condition': 'off',
       'no-mixed-spaces-and-tabs': 'off',
       'no-useless-escape': 'off',
       'no-unused-vars': 'off',
-      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
-      // 类型规则允许空对象、Function 和装箱类型。
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
+      // Existing API declarations use empty objects, Function, and boxed types; these
+      // rules leave those representations available while syntax and usage checks remain active.
       '@typescript-eslint/no-empty-object-type': 'off',
       '@typescript-eslint/no-unsafe-function-type': 'off',
       '@typescript-eslint/no-wrapper-object-types': 'off',
       '@typescript-eslint/ban-ts-comment': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
       'vue/multi-word-component-names': 'off',
-      'vue/no-use-v-if-with-v-for': 'off'
-    }
-  }
+      'vue/no-use-v-if-with-v-for': 'off',
+    },
+  },
 )

@@ -1,18 +1,11 @@
 <template>
   <AppLayout>
     <TablePageLayout>
-      <!-- Single Row: Search, Filters, and Actions -->
       <template #filters>
         <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <!-- Left: Search + Active Filters -->
           <div class="flex min-w-0 w-full flex-1 flex-wrap items-center gap-2 sm:w-auto">
-            <!-- Search Box -->
             <div class="input-icon-wrap min-w-0 flex-1 sm:flex-none sm:w-64">
-              <Icon
-                name="search"
-                size="md"
-                class="input-icon text-gray-400"
-              />
+              <Icon name="search" size="md" class="input-icon text-gray-400" />
               <input
                 v-model="searchQuery"
                 type="text"
@@ -22,7 +15,6 @@
               />
             </div>
 
-            <!-- 筛选设置下拉菜单 -->
             <div class="relative shrink-0" ref="filterDropdownRef">
               <button
                 type="button"
@@ -35,7 +27,8 @@
               </button>
               <MotionTransition name="dropdown-fade">
                 <div
-                  v-if="showFilterDropdown" :inert="!(showFilterDropdown) || undefined"
+                  v-if="showFilterDropdown"
+                  :inert="!showFilterDropdown || undefined"
                   class="dropdown left-auto right-0 top-full z-50 mt-1 w-48 sm:left-0 sm:right-auto"
                   @click.stop
                 >
@@ -55,7 +48,10 @@
                       :animate-on-hover="false"
                     />
                   </button>
-                  <div v-if="filterableAttributes.length > 0" class="my-1 border-t border-gray-100 dark:border-dark-700"></div>
+                  <div
+                    v-if="filterableAttributes.length > 0"
+                    class="my-1 border-t border-gray-100 dark:border-dark-700"
+                  ></div>
                   <button
                     v-for="attr in filterableAttributes"
                     :key="attr.id"
@@ -76,33 +72,30 @@
               </MotionTransition>
             </div>
 
-            <!-- Role Filter (visible when enabled) -->
             <div v-if="visibleFilters.has('role')" class="w-full sm:w-32">
               <Select
                 v-model="filters.role"
                 :options="[
                   { value: '', label: t('admin.users.allRoles') },
                   { value: 'admin', label: t('admin.users.admin') },
-                  { value: 'user', label: t('admin.users.user') }
+                  { value: 'user', label: t('admin.users.user') },
                 ]"
                 @change="applyFilter"
               />
             </div>
 
-            <!-- Status Filter (visible when enabled) -->
             <div v-if="visibleFilters.has('status')" class="w-full sm:w-32">
               <Select
                 v-model="filters.status"
                 :options="[
                   { value: '', label: t('admin.users.allStatus') },
                   { value: 'active', label: t('common.active') },
-                  { value: 'disabled', label: t('admin.users.disabled') }
+                  { value: 'disabled', label: t('admin.users.disabled') },
                 ]"
                 @change="applyFilter"
               />
             </div>
 
-            <!-- Group Filter (visible when enabled) -->
             <div v-if="visibleFilters.has('group')" class="w-full sm:w-44">
               <Select
                 v-model="filters.group"
@@ -115,7 +108,6 @@
               />
             </div>
 
-            <!-- API Key Group Filter (visible when enabled) -->
             <div v-if="visibleFilters.has('apiKeyGroup')" class="w-full sm:w-44">
               <Select
                 v-model="filters.apiKeyGroup"
@@ -126,49 +118,68 @@
               />
             </div>
 
-            <!-- Dynamic Attribute Filters -->
             <template v-for="(value, attrId) in activeAttributeFilters" :key="attrId">
-              <div
-                v-if="visibleFilters.has(`attr_${attrId}`)"
-                class="relative w-full sm:w-36"
-              >
-                <!-- Text/Email/URL/Textarea/Date type: styled input -->
+              <div v-if="visibleFilters.has(`attr_${attrId}`)" class="relative w-full sm:w-36">
                 <input
-                  v-if="['text', 'textarea', 'email', 'url', 'date'].includes(getAttributeDefinition(Number(attrId))?.type || 'text')"
+                  v-if="
+                    ['text', 'textarea', 'email', 'url', 'date'].includes(
+                      getAttributeDefinition(Number(attrId))?.type || 'text',
+                    )
+                  "
                   :value="value"
-                  @input="(e) => updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)"
+                  @input="
+                    (e) =>
+                      updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)
+                  "
                   @keyup.enter="applyFilter"
                   :placeholder="getAttributeDefinitionName(Number(attrId))"
                   class="input w-full"
                 />
-                <!-- Number type: number input -->
+
                 <input
                   v-else-if="getAttributeDefinition(Number(attrId))?.type === 'number'"
                   :value="value"
                   type="number"
-                  @input="(e) => updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)"
+                  @input="
+                    (e) =>
+                      updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)
+                  "
                   @keyup.enter="applyFilter"
                   :placeholder="getAttributeDefinitionName(Number(attrId))"
                   class="input w-full"
                 />
-                <!-- Select/Multi-select type -->
-                <template v-else-if="['select', 'multi_select'].includes(getAttributeDefinition(Number(attrId))?.type || '')">
+
+                <template
+                  v-else-if="
+                    ['select', 'multi_select'].includes(
+                      getAttributeDefinition(Number(attrId))?.type || '',
+                    )
+                  "
+                >
                   <div class="w-full">
                     <Select
                       :model-value="value"
                       :options="[
                         { value: '', label: getAttributeDefinitionName(Number(attrId)) },
-                        ...(getAttributeDefinition(Number(attrId))?.options || [])
+                        ...(getAttributeDefinition(Number(attrId))?.options || []),
                       ]"
-                      @update:model-value="(val) => { updateAttributeFilter(Number(attrId), String(val ?? '')); applyFilter() }"
+                      @update:model-value="
+                        (val) => {
+                          updateAttributeFilter(Number(attrId), String(val ?? ''))
+                          applyFilter()
+                        }
+                      "
                     />
                   </div>
                 </template>
-                <!-- Fallback -->
+
                 <input
                   v-else
                   :value="value"
-                  @input="(e) => updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)"
+                  @input="
+                    (e) =>
+                      updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)
+                  "
                   @keyup.enter="applyFilter"
                   :placeholder="getAttributeDefinitionName(Number(attrId))"
                   class="input w-full"
@@ -177,11 +188,8 @@
             </template>
           </div>
 
-          <!-- Right: Actions and Settings -->
           <div class="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-            <!-- Mobile: Secondary buttons (icon only) -->
             <div class="flex items-center gap-2 md:contents">
-              <!-- Refresh Button -->
               <button
                 @click="loadUsers"
                 :disabled="loading"
@@ -190,7 +198,7 @@
               >
                 <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
               </button>
-              <!-- Column Settings Dropdown -->
+
               <div class="relative" ref="columnDropdownRef">
                 <button
                   @click="showColumnDropdown = !showColumnDropdown"
@@ -200,10 +208,11 @@
                   <Icon name="columns" size="sm" class="h-4 w-4" />
                   <span class="hidden">{{ t('admin.users.columnSettings') }}</span>
                 </button>
-                <!-- Dropdown menu -->
+
                 <MotionTransition name="dropdown-fade">
                   <div
-                    v-if="showColumnDropdown" :inert="!(showColumnDropdown) || undefined"
+                    v-if="showColumnDropdown"
+                    :inert="!showColumnDropdown || undefined"
                     class="dropdown right-0 top-full z-50 mt-1 max-h-menu w-48 overflow-y-auto"
                   >
                     <button
@@ -215,16 +224,22 @@
                         'dropdown-item justify-between',
                         isForcedVisibleColumn(col.key)
                           ? 'cursor-not-allowed text-gray-400 hover:bg-transparent dark:text-gray-500 dark:hover:bg-transparent'
-                          : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700'
+                          : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700',
                       ]"
-                      :title="isForcedVisibleColumn(col.key) ? t('admin.users.columnAlwaysVisible') : ''"
+                      :title="
+                        isForcedVisibleColumn(col.key) ? t('admin.users.columnAlwaysVisible') : ''
+                      "
                     >
                       <span>{{ col.label }}</span>
                       <Icon
                         v-if="isColumnVisible(col.key)"
                         name="check"
                         size="sm"
-                        :class="isForcedVisibleColumn(col.key) ? 'text-gray-400 dark:text-gray-500' : 'text-primary-500'"
+                        :class="
+                          isForcedVisibleColumn(col.key)
+                            ? 'text-gray-400 dark:text-gray-500'
+                            : 'text-primary-500'
+                        "
                         :stroke-width="2"
                         :animate-on-hover="false"
                       />
@@ -232,7 +247,7 @@
                   </div>
                 </MotionTransition>
               </div>
-              <!-- Attributes Config Button -->
+
               <button
                 @click="showAttributesModal = true"
                 class="btn btn-secondary shrink-0 btn-icon"
@@ -253,8 +268,10 @@
               {{ t('admin.users.bulkLimits.action', { count: selectedCount }) }}
             </button>
 
-            <!-- Create User Button (full width on mobile, auto width on desktop) -->
-            <button @click="showCreateModal = true" class="btn btn-primary flex-none whitespace-nowrap px-3 md:flex-initial">
+            <button
+              @click="showCreateModal = true"
+              class="btn btn-primary flex-none whitespace-nowrap px-3 md:flex-initial"
+            >
               <Icon name="plus" size="sm" class="mr-2" />
               {{ t('admin.users.createUser') }}
             </button>
@@ -262,7 +279,6 @@
         </div>
       </template>
 
-      <!-- Users Table -->
       <template #table>
         <DataTable
           column-order-storage-key="admin-users-column-order"
@@ -289,8 +305,11 @@
                 :alt="value"
                 size-class="h-8 w-8"
               />
-              <!-- 邮箱按基线对齐，移动卡片的标签对齐邮箱。行高 32px 和头像等高，邮箱仍在头像中线上。 -->
-              <span class="self-baseline font-medium leading-8 text-gray-900 dark:text-white">{{ value }}</span>
+
+              <!-- The 32-pixel line matches the avatar height while the email baseline remains available for mobile-card label alignment. -->
+              <span class="self-baseline font-medium leading-8 text-gray-900 dark:text-white">{{
+                value
+              }}</span>
             </div>
           </template>
 
@@ -298,6 +317,7 @@
             <span class="text-sm text-gray-700 dark:text-gray-300">{{ value || '-' }}</span>
           </template>
 
+          <!-- Notes longer than 30 UTF-16 code units show their first 25 units plus an ellipsis; the title retains the full note. -->
           <template #cell-notes="{ value }">
             <div class="max-w-xs">
               <span
@@ -311,9 +331,8 @@
             </div>
           </template>
 
-          <!-- Dynamic attribute columns -->
           <template
-            v-for="def in attributeDefinitions.filter(d => d.enabled)"
+            v-for="def in attributeDefinitions.filter((d) => d.enabled)"
             :key="def.id"
             #[`cell-attr_${def.id}`]="{ row }"
           >
@@ -335,17 +354,26 @@
 
           <template #cell-groups="{ row }">
             <div v-if="allGroups.length > 0" class="flex flex-col gap-1">
-              <!-- 专属分组行 -->
-              <span data-icon-trigger
+              <span
+                data-icon-trigger
                 v-if="getUserGroups(row).exclusive.length > 0"
                 class="group/ex relative inline-flex cursor-pointer items-center gap-1 whitespace-nowrap text-xs"
                 @click.stop="toggleExpandedGroup(row.id)"
               >
-                <Icon name="shield" size="xs" class="h-3.5 w-3.5 text-purple-500 dark:text-purple-400" />
-                <!-- 数量和文字加 self-baseline，移动卡片的标签对齐这行文字。 -->
-                <span class="self-baseline font-medium text-purple-600 dark:text-purple-400">{{ getUserGroups(row).exclusive.length }}</span>
-                <span class="self-baseline text-gray-500 dark:text-dark-400">{{ t('admin.users.exclusiveLabel') }}</span>
-                <!-- Hover tooltip（操作菜单未打开时显示） -->
+                <Icon
+                  name="shield"
+                  size="xs"
+                  class="h-3.5 w-3.5 text-purple-500 dark:text-purple-400"
+                />
+
+                <!-- Align group count and label text with the mobile-card label baseline inside the combined icon and text row. -->
+                <span class="self-baseline font-medium text-purple-600 dark:text-purple-400">{{
+                  getUserGroups(row).exclusive.length
+                }}</span>
+                <span class="self-baseline text-gray-500 dark:text-dark-400">{{
+                  t('admin.users.exclusiveLabel')
+                }}</span>
+
                 <div
                   v-if="expandedGroupUserId !== row.id"
                   class="pointer-events-none absolute left-0 top-full z-50 mt-1.5 tooltip-panel rounded-compact px-2.5 py-1.5 text-xs opacity-0 shadow-lg transition-opacity duration-fast group-hover/ex:opacity-100"
@@ -355,15 +383,18 @@
                     <span v-for="g in getUserGroups(row).exclusive" :key="g.id">{{ g.name }}</span>
                   </div>
                 </div>
-                <!-- 点击展开分组操作菜单 -->
+
                 <div
                   v-if="expandedGroupUserId === row.id"
                   class="dropdown left-0 top-full z-50 mt-1.5 min-w-[160px] overflow-hidden text-xs"
                 >
-                  <div class="border-b border-gray-100 px-3 py-1.5 text-xs font-medium uppercase tracking-wider text-gray-400 dark:border-dark-600 dark:text-dark-400">
+                  <div
+                    class="border-b border-gray-100 px-3 py-1.5 text-xs font-medium uppercase tracking-wider text-gray-400 dark:border-dark-600 dark:text-dark-400"
+                  >
                     {{ t('admin.users.clickToReplace') }}
                   </div>
-                  <div data-icon-trigger
+                  <div
+                    data-icon-trigger
                     v-for="g in getUserGroups(row).exclusive"
                     :key="g.id"
                     class="dropdown-item-sm hover:bg-primary-50 hover:text-primary-600 dark:text-dark-200 dark:hover:bg-primary-900/30 dark:hover:text-primary-400"
@@ -374,27 +405,39 @@
                   </div>
                 </div>
               </span>
-              <!-- 公开分组行 -->
+
               <span
                 v-if="getUserGroups(row).publicGroups.length > 0"
                 class="group/pub relative inline-flex cursor-default items-center gap-1 whitespace-nowrap text-xs"
               >
                 <Icon name="globe" size="xs" class="h-3.5 w-3.5 text-gray-400 dark:text-dark-500" />
-                <span class="self-baseline font-medium text-gray-600 dark:text-dark-300">{{ getUserGroups(row).publicGroups.length }}</span>
-                <span class="self-baseline text-gray-400 dark:text-dark-500">{{ t('admin.users.publicLabel') }}</span>
-                <!-- Tooltip: 向下弹出 -->
-                <div class="pointer-events-none absolute left-0 top-full z-50 mt-1.5 tooltip-panel rounded-compact px-2.5 py-1.5 text-xs opacity-0 shadow-lg transition-opacity duration-fast group-hover/pub:opacity-100">
+                <span class="self-baseline font-medium text-gray-600 dark:text-dark-300">{{
+                  getUserGroups(row).publicGroups.length
+                }}</span>
+                <span class="self-baseline text-gray-400 dark:text-dark-500">{{
+                  t('admin.users.publicLabel')
+                }}</span>
+
+                <div
+                  class="pointer-events-none absolute left-0 top-full z-50 mt-1.5 tooltip-panel rounded-compact px-2.5 py-1.5 text-xs opacity-0 shadow-lg transition-opacity duration-fast group-hover/pub:opacity-100"
+                >
                   <div class="tooltip-caret -top-1 left-4 border-l border-t"></div>
                   <div class="flex flex-col gap-0.5 whitespace-nowrap">
-                    <span v-for="g in getUserGroups(row).publicGroups" :key="g.id">{{ g.name }}</span>
+                    <span v-for="g in getUserGroups(row).publicGroups" :key="g.id">{{
+                      g.name
+                    }}</span>
                   </div>
                 </div>
               </span>
-              <!-- 都没有 -->
+
               <span
-                v-if="getUserGroups(row).exclusive.length === 0 && getUserGroups(row).publicGroups.length === 0"
+                v-if="
+                  getUserGroups(row).exclusive.length === 0 &&
+                  getUserGroups(row).publicGroups.length === 0
+                "
                 class="text-xs text-gray-400 dark:text-dark-500"
-              >-</span>
+                >-</span
+              >
             </div>
             <span v-else class="text-xs text-gray-400 dark:text-dark-500">-</span>
           </template>
@@ -430,10 +473,14 @@
                 >
                   {{ formatBalanceAmount(value) }}
                 </button>
-                <!-- Instant tooltip -->
-                <div class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap tooltip-panel rounded-compact px-2 py-1 text-xs opacity-0 shadow-lg transition-opacity duration-fast group-hover:opacity-100">
+
+                <div
+                  class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap tooltip-panel rounded-compact px-2 py-1 text-xs opacity-0 shadow-lg transition-opacity duration-fast group-hover:opacity-100"
+                >
                   {{ t('admin.users.balanceHistoryTip') }}
-                  <div class="tooltip-caret -bottom-1 left-1/2 -translate-x-1/2 border-b border-r"></div>
+                  <div
+                    class="tooltip-caret -bottom-1 left-1/2 -translate-x-1/2 border-b border-r"
+                  ></div>
                 </div>
               </div>
               <button
@@ -446,11 +493,7 @@
             </div>
           </template>
 
-
-
-          <!-- 用量列自定义表头：列名 + 单个排序图标按钮，点击展开"今日/近30天"菜单。
-               column.sortable=false，DataTable 内置点击逻辑不会触发；
-               菜单项三态循环：desc → asc → off。 -->
+          <!-- Usage headers open a metric menu because these cells sort the current page locally; their columns keep DataTable server sorting disabled. -->
           <template
             v-for="usageKey in USAGE_COLUMN_KEYS"
             :key="usageKey"
@@ -462,9 +505,11 @@
                 <button
                   type="button"
                   class="flex items-center gap-1 rounded-compact px-1 py-0.5 transition-colors hover:bg-gray-200 dark:hover:bg-dark-700"
-                  :class="usageSort && usageSort.key === usageKey
-                    ? 'text-primary-600 dark:text-primary-400'
-                    : 'text-gray-400 dark:text-dark-500'"
+                  :class="
+                    usageSort && usageSort.key === usageKey
+                      ? 'text-primary-600 dark:text-primary-400'
+                      : 'text-gray-400 dark:text-dark-500'
+                  "
                   :title="t('admin.users.sortBy')"
                   :data-test="`usage-sort-trigger-${usageKey}`"
                   @click.stop="toggleUsageSortMenu(usageKey)"
@@ -472,7 +517,10 @@
                   <span
                     v-if="usageSort && usageSort.key === usageKey"
                     class="text-xs normal-case font-medium tracking-normal"
-                  >{{ usageSort.metric === 'today' ? t('admin.users.today') : t('admin.users.total') }}</span>
+                    >{{
+                      usageSort.metric === 'today' ? t('admin.users.today') : t('admin.users.total')
+                    }}</span
+                  >
                   <Icon
                     v-if="usageSort && usageSort.key === usageKey"
                     name="chevronUp"
@@ -483,24 +531,29 @@
                   />
                   <Icon v-else name="sort" size="xs" :stroke-width="2" :animate-on-hover="false" />
                 </button>
-                <!-- 弹出菜单：今日 / 近30天，点击进行三态循环切换。 -->
+
                 <MotionTransition name="dropdown-fade">
                   <div
-                    v-if="openUsageSortMenu === usageKey" :inert="!(openUsageSortMenu === usageKey) || undefined"
+                    v-if="openUsageSortMenu === usageKey"
+                    :inert="!(openUsageSortMenu === usageKey) || undefined"
                     class="dropdown right-0 top-full z-50 mt-1 min-w-[120px]"
                   >
                     <button
-                      v-for="metric in (['today', 'total'] as const)"
+                      v-for="metric in ['today', 'total'] as const"
                       :key="metric"
                       type="button"
                       class="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-xs normal-case tracking-normal hover:bg-gray-100 dark:hover:bg-dark-700"
-                      :class="isUsageSortActive(usageKey, metric)
-                        ? 'font-medium text-primary-600 dark:text-primary-400'
-                        : 'text-gray-700 dark:text-gray-300'"
+                      :class="
+                        isUsageSortActive(usageKey, metric)
+                          ? 'font-medium text-primary-600 dark:text-primary-400'
+                          : 'text-gray-700 dark:text-gray-300'
+                      "
                       :data-test="`usage-sort-${usageKey}-${metric}`"
                       @click.stop="toggleUsageSort(usageKey, metric)"
                     >
-                      <span>{{ metric === 'today' ? t('admin.users.today') : t('admin.users.total') }}</span>
+                      <span>{{
+                        metric === 'today' ? t('admin.users.today') : t('admin.users.total')
+                      }}</span>
                       <Icon
                         v-if="getUsageSortOrder(usageKey, metric)"
                         name="chevronUp"
@@ -510,7 +563,9 @@
                         :animate-on-hover="false"
                       />
                     </button>
-                    <div class="mt-1 border-t border-gray-100 px-3 py-1 text-xs normal-case tracking-normal text-gray-400 dark:border-dark-700 dark:text-dark-500">
+                    <div
+                      class="mt-1 border-t border-gray-100 px-3 py-1 text-xs normal-case tracking-normal text-gray-400 dark:border-dark-700 dark:text-dark-500"
+                    >
                       {{ t('admin.users.sortCurrentPageOnly') }}
                     </div>
                   </div>
@@ -548,10 +603,7 @@
           </template>
 
           <template #cell-concurrency="{ row }">
-            <UserConcurrencyCell
-              :current="row.current_concurrency ?? 0"
-              :max="row.concurrency"
-            />
+            <UserConcurrencyCell :current="row.current_concurrency ?? 0" :max="row.concurrency" />
           </template>
 
           <template #cell-status="{ value }">
@@ -559,10 +611,11 @@
               <span
                 :class="[
                   'inline-block h-2 w-2 rounded-full',
-                  value === 'active' ? 'bg-green-500' : 'bg-red-500'
+                  value === 'active' ? 'bg-green-500' : 'bg-red-500',
                 ]"
               ></span>
-              <!-- 状态文字加 self-baseline，移动卡片的标签对齐文字。 -->
+
+              <!-- Align the mobile-card label with the status text baseline inside its indicator row. -->
               <span class="self-baseline text-sm text-gray-700 dark:text-gray-300">
                 {{ value === 'active' ? t('common.active') : t('admin.users.disabled') }}
               </span>
@@ -570,7 +623,9 @@
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
+            <span class="text-sm text-gray-500 dark:text-dark-400">{{
+              formatDateTime(value)
+            }}</span>
           </template>
 
           <template #cell-last_used_at="{ value }">
@@ -587,7 +642,6 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
-              <!-- Edit Button -->
               <button
                 @click="handleEdit(row)"
                 class="flex flex-col items-center gap-0.5 rounded-control p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
@@ -596,7 +650,6 @@
                 <span class="text-xs">{{ t('common.edit') }}</span>
               </button>
 
-              <!-- Toggle Status Button (not for admin) -->
               <button
                 v-if="row.role !== 'admin'"
                 @click="handleToggleStatus(row)"
@@ -604,19 +657,23 @@
                   'flex flex-col items-center gap-0.5 rounded-control p-1.5 text-gray-500 transition-colors',
                   row.status === 'active'
                     ? 'hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-orange-900/20 dark:hover:text-orange-400'
-                    : 'hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400'
+                    : 'hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400',
                 ]"
               >
                 <Icon v-if="row.status === 'active'" name="ban" size="sm" />
                 <Icon v-else name="checkCircle" size="sm" :animate-on-hover="false" />
-                <span class="text-xs">{{ row.status === 'active' ? t('admin.users.disable') : t('admin.users.enable') }}</span>
+                <span class="text-xs">{{
+                  row.status === 'active' ? t('admin.users.disable') : t('admin.users.enable')
+                }}</span>
               </button>
 
-              <!-- More Actions Menu Trigger -->
               <button
                 @click="openActionMenu(row, $event)"
                 class="action-menu-trigger flex flex-col items-center gap-0.5 rounded-control p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
-                :class="{ 'bg-gray-100 text-gray-900 dark:bg-dark-700 dark:text-white': activeMenuId === row.id }"
+                :class="{
+                  'bg-gray-100 text-gray-900 dark:bg-dark-700 dark:text-white':
+                    activeMenuId === row.id,
+                }"
               >
                 <Icon name="more" size="sm" />
                 <span class="text-xs">{{ t('common.more') }}</span>
@@ -635,20 +692,18 @@
         </DataTable>
       </template>
 
-      <!-- Pagination -->
       <template #pagination>
-      <Pagination
-        v-if="pagination.total > 0"
-        :page="pagination.page"
-        :total="pagination.total"
-        :page-size="pagination.page_size"
-        @update:page="handlePageChange"
-        @update:pageSize="handlePageSizeChange"
-      />
+        <Pagination
+          v-if="pagination.total > 0"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+          @update:pageSize="handlePageSizeChange"
+        />
       </template>
     </TablePageLayout>
 
-    <!-- Action Menu (Teleported) -->
     <Teleport to="body">
       <MotionTransition name="dropdown-fade">
         <div
@@ -659,18 +714,22 @@
           <div class="py-1">
             <template v-for="user in users" :key="user.id">
               <template v-if="user.id === activeMenuId">
-                <!-- View API Keys -->
                 <button
-                  @click="handleViewApiKeys(user); closeActionMenu()"
+                  @click="
+                    handleViewApiKeys(user);
+                    closeActionMenu();
+                  "
                   class="dropdown-item"
                 >
                   <Icon name="key" size="sm" class="text-gray-400" :stroke-width="2" />
                   {{ t('admin.users.apiKeys') }}
                 </button>
 
-                <!-- Allowed Groups -->
                 <button
-                  @click="handleAllowedGroups(user); closeActionMenu()"
+                  @click="
+                    handleAllowedGroups(user);
+                    closeActionMenu();
+                  "
                   class="dropdown-item"
                 >
                   <Icon name="users" size="sm" class="text-gray-400" :stroke-width="2" />
@@ -679,30 +738,33 @@
 
                 <div class="my-1 border-t border-gray-100 dark:border-dark-700"></div>
 
-                <!-- Deposit -->
                 <button
-                  @click="handleDeposit(user); closeActionMenu()"
+                  @click="
+                    handleDeposit(user);
+                    closeActionMenu();
+                  "
                   class="dropdown-item"
                 >
                   <Icon name="plus" size="sm" class="text-emerald-500" :stroke-width="2" />
                   {{ t('admin.users.deposit') }}
                 </button>
 
-                <!-- Withdraw -->
                 <button
-                  @click="handleWithdraw(user); closeActionMenu()"
+                  @click="
+                    handleWithdraw(user);
+                    closeActionMenu();
+                  "
                   class="dropdown-item"
                 >
                   <Icon name="minus" size="sm" class="h-4 w-4 text-amber-500" />
                   {{ t('admin.users.withdraw') }}
                 </button>
 
-                <!-- Platform Quotas -->
-
-
-                <!-- Balance History -->
                 <button
-                  @click="handleBalanceHistory(user); closeActionMenu()"
+                  @click="
+                    handleBalanceHistory(user);
+                    closeActionMenu();
+                  "
                   class="dropdown-item"
                 >
                   <BalanceIcon size="sm" class="text-gray-400" />
@@ -711,10 +773,12 @@
 
                 <div class="my-1 border-t border-gray-100 dark:border-dark-700"></div>
 
-                <!-- Delete (not for admin) -->
                 <button
                   v-if="user.role !== 'admin'"
-                  @click="handleDelete(user); closeActionMenu()"
+                  @click="
+                    handleDelete(user);
+                    closeActionMenu();
+                  "
                   class="dropdown-item text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
                 >
                   <Icon name="trash" size="sm" :stroke-width="2" />
@@ -727,9 +791,25 @@
       </MotionTransition>
     </Teleport>
 
-    <ConfirmDialog :show="showDeleteDialog" :title="t('admin.users.deleteUser')" :message="t('admin.users.deleteConfirm', { email: deletingUser?.email })" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
-    <UserCreateModal :show="showCreateModal" @close="showCreateModal = false" @success="loadUsers" />
-    <UserEditModal :show="showEditModal" :user="editingUser" @close="closeEditModal" @success="loadUsers" />
+    <ConfirmDialog
+      :show="showDeleteDialog"
+      :title="t('admin.users.deleteUser')"
+      :message="t('admin.users.deleteConfirm', { email: deletingUser?.email })"
+      :danger="true"
+      @confirm="confirmDelete"
+      @cancel="showDeleteDialog = false"
+    />
+    <UserCreateModal
+      :show="showCreateModal"
+      @close="showCreateModal = false"
+      @success="loadUsers"
+    />
+    <UserEditModal
+      :show="showEditModal"
+      :user="editingUser"
+      @close="closeEditModal"
+      @success="loadUsers"
+    />
     <BulkEditUserModal
       :show="showBulkEditModal"
       :selected-ids="selectedIds"
@@ -738,10 +818,34 @@
     />
 
     <UserApiKeysModal :show="showApiKeysModal" :user="viewingUser" @close="closeApiKeysModal" />
-    <UserAllowedGroupsModal :show="showAllowedGroupsModal" :user="allowedGroupsUser" @close="closeAllowedGroupsModal" @success="loadUsers" />
-    <UserBalanceModal :show="showBalanceModal" :user="balanceUser" :operation="balanceOperation" @close="closeBalanceModal" @success="loadUsers" />
-    <UserBalanceHistoryModal :show="showBalanceHistoryModal" :user="balanceHistoryUser" @close="closeBalanceHistoryModal" @deposit="handleDepositFromHistory" @withdraw="handleWithdrawFromHistory" />
-    <GroupReplaceModal :show="showGroupReplaceModal" :user="groupReplaceUser" :old-group="groupReplaceOldGroup" :all-groups="allGroups" @close="closeGroupReplaceModal" @success="loadUsers" />
+    <UserAllowedGroupsModal
+      :show="showAllowedGroupsModal"
+      :user="allowedGroupsUser"
+      @close="closeAllowedGroupsModal"
+      @success="loadUsers"
+    />
+    <UserBalanceModal
+      :show="showBalanceModal"
+      :user="balanceUser"
+      :operation="balanceOperation"
+      @close="closeBalanceModal"
+      @success="loadUsers"
+    />
+    <UserBalanceHistoryModal
+      :show="showBalanceHistoryModal"
+      :user="balanceHistoryUser"
+      @close="closeBalanceHistoryModal"
+      @deposit="handleDepositFromHistory"
+      @withdraw="handleWithdrawFromHistory"
+    />
+    <GroupReplaceModal
+      :show="showGroupReplaceModal"
+      :user="groupReplaceUser"
+      :old-group="groupReplaceOldGroup"
+      :all-groups="allGroups"
+      @close="closeGroupReplaceModal"
+      @success="loadUsers"
+    />
     <UserAttributesConfigModal :show="showAttributesModal" @close="handleAttributesModalClose" />
   </AppLayout>
 </template>
@@ -758,15 +862,16 @@ import { formatDateTime } from '@/utils/format'
 import BalanceIcon from '@/components/common/BalanceIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 
-const { t } = useI18n()
 import { adminAPI } from '@/api/admin'
-import type { AdminUser, AdminGroup, UserAttributeDefinition } from '@/types'
+import type { AdminUser } from '@/api/admin/users.types'
+import type { AdminGroup } from '@/api/groups.types'
+import type { UserAttributeDefinition } from '@/api/admin/userAttributes.types'
 import type { BatchUserUsageStats } from '@/api/admin/dashboard'
-import type { Column } from '@/components/common/types'
+import type { Column } from '@/components/common/table/types'
 import type { SelectOption } from '@/components/common/Select.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
-import DataTable from '@/components/common/DataTable.vue'
+import DataTable from '@/components/common/table/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -787,62 +892,85 @@ import UserBalanceModal from '@/components/admin/user/UserBalanceModal.vue'
 import UserBalanceHistoryModal from '@/components/admin/user/UserBalanceHistoryModal.vue'
 import GroupReplaceModal from '@/components/admin/user/GroupReplaceModal.vue'
 
+// UsersView.vue manages administrator user listing, configurable columns and filters,
+// row actions, and bulk selection. The server orders and paginates user rows, while an
+// optional usage sort reorders the loaded page after secondary usage data arrives.
+// Equal usage values keep their current server order through an index tie-breaker.
+//
+// Column preferences use versioned additions so newly hidden usage columns can be
+// applied to existing saved settings. The primary list request owns cancellation, and
+// deferred usage/attribute loads use a separate generation to reject outdated results.
+// Showing optional columns requests their supporting data, while stored filters and
+// column visibility determine which optional lookups run when the page mounts.
+
+// The translation function supplies user-table labels and operation messages throughout
+// this administrator page and its dialogs.
+const { t } = useI18n()
+
+// Application notifications and balance-unit formatting support list failures, account
+// actions, and displayed monetary values on the page.
 const appStore = useAppStore()
 const { formatBalanceAmount } = useBalanceDisplay()
 
-// Generate dynamic attribute columns from enabled definitions
+// attributeColumns exposes each enabled custom definition as a nonsortable column using
+// its stable attribute identifier in the key.
 const attributeColumns = computed<Column[]>(() =>
   attributeDefinitions.value
-    .filter(def => def.enabled)
-    .map(def => ({
+    .filter((def) => def.enabled)
+    .map((def) => ({
       key: `attr_${def.id}`,
       label: def.name,
-      sortable: false
-    }))
+      sortable: false,
+    })),
 )
 
-// Get formatted attribute value for display in table
+// getAttributeValue formats a stored custom attribute using its enabled definition.
+// Missing values display a dash; select values use option labels, and multi-select JSON
+// arrays become comma-separated labels with raw values retained when parsing or option
+// lookup fails.
 const getAttributeValue = (userId: number, attrId: number): string => {
   const userAttrs = userAttributeValues.value[userId]
   if (!userAttrs) return '-'
   const value = userAttrs[attrId]
   if (!value) return '-'
 
-  // Find definition for this attribute
-  const def = attributeDefinitions.value.find(d => d.id === attrId)
+  const def = attributeDefinitions.value.find((d) => d.id === attrId)
   if (!def) return value
 
-  // Format based on type
   if (def.type === 'multi_select' && value) {
     try {
       const arr = JSON.parse(value)
       if (Array.isArray(arr)) {
-        // Map values to labels
-        return arr.map(v => {
-          const opt = def.options?.find(o => o.value === v)
-          return opt?.label || v
-        }).join(', ')
+        return arr
+          .map((v) => {
+            const opt = def.options?.find((o) => o.value === v)
+            return opt?.label || v
+          })
+          .join(', ')
       }
     } catch {
+      // Malformed stored multi-select JSON remains visible as raw text, allowing
+      // administrators to inspect the persisted value instead of losing it during
+      // formatting.
       return value
     }
   }
 
   if (def.type === 'select' && value && def.options) {
-    const opt = def.options.find(o => o.value === value)
+    const opt = def.options.find((o) => o.value === value)
     return opt?.label || value
   }
 
   return value
 }
 
-// All possible columns (for column settings)
+// allColumns combines fixed user fields with custom attributes and platform usage
+// columns for visibility settings and table rendering.
 const allColumns = computed<Column[]>(() => [
   { key: 'email', label: t('admin.users.columns.user'), sortable: true },
   { key: 'id', label: t('admin.users.columns.id'), sortable: true },
   { key: 'username', label: t('admin.users.columns.username'), sortable: true },
   { key: 'notes', label: t('admin.users.columns.notes'), sortable: false },
-  // Dynamic attribute columns
   ...attributeColumns.value,
   { key: 'role', label: t('admin.users.columns.role'), sortable: true },
   { key: 'groups', label: t('admin.users.columns.groups'), sortable: false },
@@ -859,51 +987,61 @@ const allColumns = computed<Column[]>(() => [
   { key: 'last_active_at', label: t('admin.users.columns.lastActive'), sortable: true },
   { key: 'last_used_at', label: t('admin.users.columns.lastUsed'), sortable: true },
   { key: 'created_at', label: t('admin.users.columns.created'), sortable: true },
-  { key: 'actions', label: t('admin.users.columns.actions'), sortable: false }
+  { key: 'actions', label: t('admin.users.columns.actions'), sortable: false },
 ])
 
-// Columns that can be toggled (exclude email and actions which are always visible)
+// toggleableColumns offers every optional field while email and actions remain present
+// in the user table.
 const toggleableColumns = computed(() =>
-  allColumns.value.filter(col => col.key !== 'email' && col.key !== 'actions')
+  allColumns.value.filter((col) => col.key !== 'email' && col.key !== 'actions'),
 )
 
-// Hidden columns (stored in Set - columns NOT in this set are visible)
-// This way, new columns are visible by default
+// hiddenColumns stores keys excluded from display; defaults, retired keys, and
+// forced-visible keys govern restoring this preference.
 const hiddenColumns = reactive<Set<string>>(new Set())
 
-// Default hidden columns (columns hidden by default on first load)
 const DEFAULT_HIDDEN_COLUMNS = [
-  'notes', 'groups', 'subscriptions', 'usage', 'concurrency',
-  'usage_anthropic', 'usage_openai', 'usage_gemini', 'usage_antigravity', 'usage_qoder',
+  'notes',
+  'groups',
+  'subscriptions',
+  'usage',
+  'concurrency',
+  'usage_anthropic',
+  'usage_openai',
+  'usage_gemini',
+  'usage_antigravity',
+  'usage_qoder',
 ]
 const REMOVED_COLUMNS = new Set(['last_login_at'])
-// 强制可见列：加载时会被强制移出 hiddenColumns，并在列设置 UI 上 disabled。
-// 当前强制可见集合为空，用户可以隐藏 last_active_at。
 const FORCED_VISIBLE_COLUMNS = new Set<string>()
 
-// 列设置 localStorage key
+// Column preference keys and version additions migrate saved hidden-column choices when
+// new optional columns acquire default-hidden behavior.
 const HIDDEN_COLUMNS_KEY = 'user-hidden-columns'
-// 列设置结构版本号。每次给 DEFAULT_HIDDEN_COLUMNS 新增列时递增一次，
-// 并在 VERSION_NEW_HIDDEN_COLUMNS 中登记该版本新增的 key。
-// 这样老用户升级后这些新列会被自动隐藏一次，而不会影响他们对其它老列的偏好。
 const COLUMN_SETTINGS_VERSION_KEY = 'user-column-settings-version'
 const COLUMN_SETTINGS_VERSION = 4
 const VERSION_NEW_HIDDEN_COLUMNS: Record<number, string[]> = {
   2: ['usage_anthropic', 'usage_openai', 'usage_gemini', 'usage_antigravity'],
-  4: ['usage_qoder']
+  4: ['usage_qoder'],
 }
 
-// 加载已保存的列设置。
+// loadSavedColumns restores hidden keys and applies unapplied column-preference
+// versions. Removed and forced-visible keys are filtered from stored values before
+// version additions are considered. Each unseen version contributes its default-hidden
+// keys, and changed preferences are saved with the current version. Missing storage
+// applies first-visit defaults; parsing or storage failures log the error and add
+// defaults to the in-memory set so rendering can continue.
 const loadSavedColumns = () => {
   try {
     const saved = localStorage.getItem(HIDDEN_COLUMNS_KEY)
     if (saved) {
       const parsed = JSON.parse(saved) as string[]
       parsed
-        .filter(key => !REMOVED_COLUMNS.has(key) && !FORCED_VISIBLE_COLUMNS.has(key))
-        .forEach(key => hiddenColumns.add(key))
+        .filter((key) => !REMOVED_COLUMNS.has(key) && !FORCED_VISIBLE_COLUMNS.has(key))
+        .forEach((key) => hiddenColumns.add(key))
 
-      // 老用户升级：把每个未应用过的版本里新增的默认隐藏列自动追加到 hiddenColumns。
+      // Apply each unseen hidden-column addition once so older saved choices gain
+      // newly default-hidden columns while keeping their existing selections.
       const storedVersion = Number(localStorage.getItem(COLUMN_SETTINGS_VERSION_KEY) ?? '1')
       if (storedVersion < COLUMN_SETTINGS_VERSION) {
         let mutated = false
@@ -916,35 +1054,49 @@ const loadSavedColumns = () => {
             }
           }
         }
+        // Persist migrated hidden keys before advancing the version so later visits
+        // know which default-hidden additions have already been applied.
         if (mutated) saveColumnsToStorage()
         else localStorage.setItem(COLUMN_SETTINGS_VERSION_KEY, String(COLUMN_SETTINGS_VERSION))
       }
     } else {
-      // 首次加载时使用默认隐藏列。
-      DEFAULT_HIDDEN_COLUMNS.forEach(key => hiddenColumns.add(key))
+      DEFAULT_HIDDEN_COLUMNS.forEach((key) => hiddenColumns.add(key))
       localStorage.setItem(COLUMN_SETTINGS_VERSION_KEY, String(COLUMN_SETTINGS_VERSION))
     }
   } catch (e) {
+    // Use default hidden columns after storage or JSON failure so saved display
+    // preferences cannot prevent the account table from rendering.
     console.error('Failed to load saved columns:', e)
-    DEFAULT_HIDDEN_COLUMNS.forEach(key => hiddenColumns.add(key))
+    DEFAULT_HIDDEN_COLUMNS.forEach((key) => hiddenColumns.add(key))
   }
 }
 
-// Save column settings to localStorage
+// saveColumnsToStorage persists the current hidden-column keys and then their schema
+// version. The version describes which default-hidden additions have been applied,
+// so the keys are written before that marker advances. Both writes share one error
+// handler, but browser storage does not make them atomic; a failure can leave an
+// earlier successful write in place. The current in-memory visibility remains
+// active, and the error is logged for diagnosis.
 const saveColumnsToStorage = () => {
   try {
+    // Write hidden keys before their version marker because the marker describes
+    // which column additions are already represented by the saved set.
     localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
     localStorage.setItem(COLUMN_SETTINGS_VERSION_KEY, String(COLUMN_SETTINGS_VERSION))
   } catch (e) {
+    // A storage error keeps the current hidden set in memory so administrators can
+    // continue using the chosen columns during this session.
     console.error('Failed to save columns:', e)
   }
 }
 
-// Toggle column visibility
+// isForcedVisibleColumn reports membership in the configured fixed-visibility key set.
 const isForcedVisibleColumn = (key: string) => FORCED_VISIBLE_COLUMNS.has(key)
+// toggleColumn changes visibility unless the column is forced visible, then persists
+// preferences. Revealing usage or attribute columns refreshes current-page secondary
+// data, changing subscription visibility reloads users, and revealing groups requests
+// their choices.
 const toggleColumn = (key: string) => {
-  // 强制可见列(如 last_active_at)在加载时会被恢复成可见，
-  // 固定显示的列在当前会话中保持可见。
   if (FORCED_VISIBLE_COLUMNS.has(key)) return
   const wasHidden = hiddenColumns.has(key)
   if (hiddenColumns.has(key)) {
@@ -953,6 +1105,8 @@ const toggleColumn = (key: string) => {
     hiddenColumns.add(key)
   }
   saveColumnsToStorage()
+  // Revealing a secondary-data column starts its missing lookup so cells can populate
+  // even when the primary user page has not changed.
   if (wasHidden && (key === 'usage' || key.startsWith('usage_') || key.startsWith('attr_'))) {
     refreshCurrentPageSecondaryData()
   }
@@ -964,82 +1118,136 @@ const toggleColumn = (key: string) => {
   }
 }
 
-// Check if column is visible (not in hidden set)
+// isColumnVisible reports whether a column key is absent from hidden settings.
 const isColumnVisible = (key: string) => !hiddenColumns.has(key)
-// usage 主列或任意 usage_<platform> 子列可见时都需要批量拉取用量数据
-// 列 key → 平台名（'usage' 主列汇总所有平台时为 null）
-// 数组顺序决定列头排序按钮的渲染顺序。
-// 不会因 JS 引擎差异或 USAGE_COLUMN_PLATFORMS 属性顺序调整而静默变化。
-const USAGE_COLUMN_KEYS: readonly string[] = ['usage', 'usage_anthropic', 'usage_openai', 'usage_gemini', 'usage_antigravity', 'usage_qoder']
+// USAGE_COLUMN_KEYS fixes header control order, while USAGE_COLUMN_PLATFORMS maps
+// aggregate usage to null and platform columns to provider families.
+const USAGE_COLUMN_KEYS: readonly string[] = [
+  'usage',
+  'usage_anthropic',
+  'usage_openai',
+  'usage_gemini',
+  'usage_antigravity',
+  'usage_qoder',
+]
 const USAGE_COLUMN_PLATFORMS: Record<string, string | null> = {
   usage: null,
   usage_anthropic: 'anthropic',
   usage_openai: 'openai',
   usage_gemini: 'gemini',
   usage_antigravity: 'antigravity',
-  usage_qoder: 'qoder'
+  usage_qoder: 'qoder',
 }
 const PLATFORM_USAGE_COLUMNS = USAGE_COLUMN_KEYS.filter((k) => k !== 'usage')
 const hasVisibleUsageColumn = computed(
-  () => !hiddenColumns.has('usage') || PLATFORM_USAGE_COLUMNS.some((k) => !hiddenColumns.has(k))
+  () => !hiddenColumns.has('usage') || PLATFORM_USAGE_COLUMNS.some((k) => !hiddenColumns.has(k)),
 )
+// Visibility predicates decide whether group and attribute supporting data are needed
+// for the currently displayed user columns.
 const hasVisibleGroupsColumn = computed(() => !hiddenColumns.has('groups'))
 const hasVisibleAttributeColumns = computed(() =>
-  attributeDefinitions.value.some((def) => def.enabled && !hiddenColumns.has(`attr_${def.id}`))
+  attributeDefinitions.value.some((def) => def.enabled && !hiddenColumns.has(`attr_${def.id}`)),
 )
 
-// Filtered columns based on visibility
+// columns excludes hidden keys while retaining email and actions for every row of the
+// loaded user page.
 const columns = computed<Column[]>(() =>
-  allColumns.value.filter(col =>
-    col.key === 'email' || col.key === 'actions' || !hiddenColumns.has(col.key)
-  )
+  allColumns.value.filter(
+    (col) => col.key === 'email' || col.key === 'actions' || !hiddenColumns.has(col.key),
+  ),
 )
 
+// Primary user rows, their loading indicator, search text, and saved-sort key support
+// the server-paginated table controls.
 const users = ref<AdminUser[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
 const USER_SORT_STORAGE_KEY = 'admin-users-table-sort'
-const loadInitialSortState = (): { sort_by: string; sort_order: 'asc' | 'desc' } => {
+// loadInitialSortState restores a supported server sort from browser storage. Missing
+// or invalid saved keys use descending creation time; accepted keys use ascending only
+// when the stored order is exactly asc.
+const loadInitialSortState = (): {
+  sort_by: string // server sorting field
+  sort_order: 'asc' | 'desc' // server sorting direction
+} => {
   const fallback = { sort_by: 'created_at', sort_order: 'desc' as 'asc' | 'desc' }
-  const sortable = new Set(['email', 'id', 'username', 'role', 'balance', 'concurrency', 'status', 'last_used_at', 'last_active_at', 'created_at'])
+  const sortable = new Set([
+    'email',
+    'id',
+    'username',
+    'role',
+    'balance',
+    'concurrency',
+    'status',
+    'last_used_at',
+    'last_active_at',
+    'created_at',
+  ])
   try {
     const raw = localStorage.getItem(USER_SORT_STORAGE_KEY)
     if (!raw) return fallback
-    const parsed = JSON.parse(raw) as { key?: string; order?: string }
+    const parsed = JSON.parse(raw) as {
+      key?: string // selected column key
+      order?: string // selected ordering direction
+    }
     const key = typeof parsed.key === 'string' ? parsed.key : ''
+    // Saved keys must belong to the server-supported sort set; invalid preferences
+    // use creation order rather than requesting an unsupported column.
     if (!sortable.has(key)) return fallback
     return {
       sort_by: key,
-      sort_order: parsed.order === 'asc' ? 'asc' : 'desc'
+      sort_order: parsed.order === 'asc' ? 'asc' : 'desc',
     }
   } catch {
+    // Unreadable or malformed browser sort preferences use the default server
+    // ordering so initialization can continue with a valid request.
     return fallback
   }
 }
+// sortState starts from the validated browser preference and supplies server ordering
+// independently of current-page usage sorting.
 const sortState = reactive(loadInitialSortState())
 
-// 分组列和已有“授权分组”筛选器使用的分组数据（仅启用）。
+// allGroups supplies active choices for the group column and authorized-group filter,
+// with lazy loading when those controls need them.
 const allGroups = ref<AdminGroup[]>([])
+// loadAllGroups fetches active groups when the current collection is empty. Failures
+// are logged and keep the existing collection, so the group column and authorization
+// filter can retry on a later call.
 const loadAllGroups = async () => {
   if (allGroups.value.length > 0) return
   try {
     allGroups.value = await adminAPI.groups.getAll()
   } catch (e) {
+    // Keep the current group collection when lookup fails, allowing the existing user
+    // table to remain visible and a later call to retry.
     console.error('Failed to load groups:', e)
   }
 }
 
-// API Key 分组筛选器使用的分组数据；包含禁用分组，方便定位 Key 仍绑定在禁用分组上的用户。
+// allGroupsForApiKeyFilter includes inactive groups so key bindings can be filtered
+// even when their referenced group is disabled.
 const allGroupsForApiKeyFilter = ref<AdminGroup[]>([])
+// loadAllGroupsForApiKeyFilter loads groups including inactive entries when its
+// collection is empty. This lets administrators find users whose keys still reference
+// disabled groups; failures are logged and leave current choices available.
 const loadAllGroupsForApiKeyFilter = async () => {
   if (allGroupsForApiKeyFilter.value.length > 0) return
   try {
     allGroupsForApiKeyFilter.value = await adminAPI.groups.getAllIncludingInactive()
   } catch (e) {
+    // Keep the current key-group choices after lookup failure so existing filters
+    // remain usable and a later opening can retry an empty collection.
     console.error('Failed to load groups for API key filter:', e)
   }
 }
-// 解析用户可访问分组：专属分组优先，其次公开分组。
+// getUserGroups separates the user's accessible active groups into exclusive and
+// public collections. Inactive groups are skipped before either access rule is
+// evaluated. Exclusive groups require their identifiers in allowed_groups, while
+// public groups remain available unless their identifiers appear in
+// disabled_public_groups. The returned arrays keep the loaded collection's order
+// within each category, allowing the template to display counts, tooltips, and
+// replacement actions against the same membership decision.
 const getUserGroups = (user: AdminUser) => {
   const exclusive: AdminGroup[] = []
   const publicGroups: AdminGroup[] = []
@@ -1057,11 +1265,13 @@ const getUserGroups = (user: AdminUser) => {
   return { exclusive, publicGroups }
 }
 
-// 授权分组筛选项：“全部” + 启用的专属分组；value 使用分组名做模糊匹配。
+// Authorized-group choices include active exclusive groups and send their names for
+// fuzzy matching in the user-list endpoint.
 const groupFilterOptions = computed(() => {
-  const options: { value: string; label: string }[] = [
-    { value: '', label: t('admin.users.allAuthorizedGroups') }
-  ]
+  const options: {
+    value: string // selected option value
+    label: string // displayed option label
+  }[] = [{ value: '', label: t('admin.users.allAuthorizedGroups') }]
   for (const g of allGroups.value) {
     if (g.status !== 'active' || !g.is_exclusive) continue
     options.push({ value: g.name, label: g.name })
@@ -1069,66 +1279,71 @@ const groupFilterOptions = computed(() => {
   return options
 })
 
-// API Key 分组筛选项：“全部” + 按类型分区的分组；value 使用分组 ID。
-// 订阅套餐与 group_id 独立，分组选项分为专属、公开和已禁用三类。
-// 使用包含禁用分组的 allGroupsForApiKeyFilter。
-const apiKeyGroupFilterOptions = computed(() =>
-  buildApiKeyGroupFilterOptions(allGroupsForApiKeyFilter.value, {
-    all: t('admin.users.allApiKeyGroups'),
-    exclusive: t('admin.users.apiKeyGroupExclusive'),
-    public: t('admin.users.apiKeyGroupPublic'),
-    disabled: t('admin.users.apiKeyGroupDisabled'),
-  }) as SelectOption[]
+// API-key group choices use numeric identifiers and include exclusive, public, and
+// disabled sections from the complete group collection.
+const apiKeyGroupFilterOptions = computed(
+  () =>
+    buildApiKeyGroupFilterOptions(allGroupsForApiKeyFilter.value, {
+      all: t('admin.users.allApiKeyGroups'),
+      exclusive: t('admin.users.apiKeyGroupExclusive'),
+      public: t('admin.users.apiKeyGroupPublic'),
+      disabled: t('admin.users.apiKeyGroupDisabled'),
+    }) as SelectOption[],
 )
 
-// 筛选值（角色、状态、分组和自定义属性）。
+// Built-in conditions and attribute values store server query filters; empty text and
+// null API-key group mean unselected conditions.
 const filters = reactive({
-  role: '',
-  status: '',
-  group: '',  // 分组名用于模糊匹配，空字符串表示全部
-  apiKeyGroup: null as number | null  // 用户 API Key 绑定的分组 ID，null 表示全部
+  role: '', // account role condition
+  status: '', // configured lifecycle status
+  // group sends a name for fuzzy authorized-group matching; empty text omits this
+  // condition from the user-list query.
+  group: '', // authorized group name
+  // apiKeyGroup filters bindings by numeric group identifier, including inactive
+  // choices; null omits this independent condition from the user-list query.
+  apiKeyGroup: null as number | null, // bound key-group identifier
 })
 const activeAttributeFilters = reactive<Record<number, string>>({})
 
-// Visible filters tracking (which filters are shown in the UI)
-// Keys: 'role', 'status', 'attr_${id}'
+// visibleFilters records which built-in or attr_<id> controls are shown independently
+// of their current matching values.
 const visibleFilters = reactive<Set<string>>(new Set())
 
-// Dropdown states
+// Filter and column dropdown flags pair with DOM references used by the document click
+// handler to close them.
 const showFilterDropdown = ref(false)
 const showColumnDropdown = ref(false)
 
-// Dropdown refs for click outside detection
 const filterDropdownRef = ref<HTMLElement | null>(null)
 const columnDropdownRef = ref<HTMLElement | null>(null)
 
-// 筛选条件 localStorage key
+// Browser storage keeps condition values and visible-control keys separately so both
+// can be restored when this page mounts.
 const FILTER_VALUES_KEY = 'user-filter-values'
 const VISIBLE_FILTERS_KEY = 'user-visible-filters'
 
-// 所有可筛选的启用属性定义。
-const filterableAttributes = computed(() =>
-  attributeDefinitions.value.filter(def => def.enabled)
-)
+// filterableAttributes and builtInFilters describe the available filter controls using
+// enabled definitions and the current translated labels.
+const filterableAttributes = computed(() => attributeDefinitions.value.filter((def) => def.enabled))
 
-// Built-in filter definitions
 const builtInFilters = computed(() => [
   { key: 'role', name: t('admin.users.columns.role'), type: 'select' as const },
   { key: 'status', name: t('admin.users.columns.status'), type: 'select' as const },
   { key: 'group', name: t('admin.users.authorizedGroupFilter'), type: 'select' as const },
-  { key: 'apiKeyGroup', name: t('admin.users.apiKeyGroupFilter'), type: 'select' as const }
+  { key: 'apiKeyGroup', name: t('admin.users.apiKeyGroupFilter'), type: 'select' as const },
 ])
 
-// Load saved filters from localStorage
+// loadSavedFilters restores visible controls and saved filter values from browser
+// storage. Numeric API-key group identifiers and custom-attribute values are restored
+// separately; parse or storage failures are logged while already applied values remain
+// in memory.
 const loadSavedFilters = () => {
   try {
-    // Load visible filters
     const savedVisible = localStorage.getItem(VISIBLE_FILTERS_KEY)
     if (savedVisible) {
       const parsed = JSON.parse(savedVisible) as string[]
-      parsed.forEach(key => visibleFilters.add(key))
+      parsed.forEach((key) => visibleFilters.add(key))
     }
-    // Load filter values
     const savedValues = localStorage.getItem(FILTER_VALUES_KEY)
     if (savedValues) {
       const parsed = JSON.parse(savedValues)
@@ -1141,62 +1356,90 @@ const loadSavedFilters = () => {
       }
     }
   } catch (e) {
+    // Storage parsing may fail after some entries have been applied; retain those
+    // in-memory conditions and allow the user page to continue initializing.
     console.error('Failed to load saved filters:', e)
   }
 }
 
-// Save filters to localStorage
+// saveFiltersToStorage writes visible controls followed by the current filter values.
+// Storage errors are logged while active in-memory conditions remain usable; the two
+// browser entries are written separately and may persist independently.
 const saveFiltersToStorage = () => {
   try {
-    // Save visible filters
+    // Persist visible-control keys before condition values so the saved UI and query
+    // drafts follow the same application order used while restoring preferences.
     localStorage.setItem(VISIBLE_FILTERS_KEY, JSON.stringify([...visibleFilters]))
-    // Save filter values
     const values = {
       role: filters.role,
       status: filters.status,
       group: filters.group,
       apiKeyGroup: filters.apiKeyGroup,
-      attributes: activeAttributeFilters
+      attributes: activeAttributeFilters,
     }
     localStorage.setItem(FILTER_VALUES_KEY, JSON.stringify(values))
   } catch (e) {
+    // Storage errors leave active in-memory filters usable, while separate entries
+    // may retain whichever write completed before the failure occurred.
     console.error('Failed to save filters:', e)
   }
 }
 
-// Get attribute definition by ID
+// getAttributeDefinition returns the currently loaded definition matching an attribute
+// identifier.
 const getAttributeDefinition = (attrId: number): UserAttributeDefinition | undefined => {
-  return attributeDefinitions.value.find(d => d.id === attrId)
+  return attributeDefinitions.value.find((d) => d.id === attrId)
 }
+// usageStats holds batch usage keyed by user identity for aggregate/platform cells and
+// optional current-page cost sorting.
 const usageStats = ref<Record<string, BatchUserUsageStats>>({})
 
+// getPlatformUsage finds one user's loaded usage entry for the requested platform.
 const getPlatformUsage = (userId: number, platform: string) =>
   usageStats.value[userId]?.by_platform?.find((p) => p.platform === platform)
 
-// 用量列前端排序：DataTable 工作在 server-side-sort 模式，所有 sortable
-// 字段都会触发后端查询，而用量列数据是异步批量拉取后再合并到当前页，
-// 因此采用独立的前端排序状态对当前页 users 做本地排序。
-// 排序状态独立于后端 sortState 持久化；缺失数据按 0 处理（desc 沉底、asc 置顶）。
+// UsageMetric selects today or total cost for current-page sorting.
 type UsageMetric = 'today' | 'total'
-type UsageSortState = { key: string; metric: UsageMetric; order: 'asc' | 'desc' } | null
+// UsageSortState records a local cost ordering, with null selecting the server row
+// order.
+type UsageSortState = {
+  key: string // selected column key
+  metric: UsageMetric // selected cost period
+  order: 'asc' | 'desc' // selected ordering direction
+} | null
+// Usage-sort storage and its single open metric menu remain separate from server
+// sorting and column visibility preferences.
 const USAGE_SORT_STORAGE_KEY = 'admin-users-usage-sort'
-// 列头排序按钮点击后弹出的"今日/近30天"选择菜单，同时只允许一个列展开。
 const openUsageSortMenu = ref<string | null>(null)
 
+// loadInitialUsageSort restores a recognized usage-column sort or returns null. Unknown
+// keys and unreadable storage disable local sorting; recognized entries default to
+// today's metric and descending order unless supported alternatives are stored.
 const loadInitialUsageSort = (): UsageSortState => {
   try {
     const raw = localStorage.getItem(USAGE_SORT_STORAGE_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<{ key: string; metric: string; order: string }>
+    const parsed = JSON.parse(raw) as Partial<{
+      key: string // selected column key
+      metric: string // selected cost period
+      order: string // selected ordering direction
+    }>
     if (!parsed.key || !USAGE_COLUMN_KEYS.includes(parsed.key)) return null
     const metric: UsageMetric = parsed.metric === 'total' ? 'total' : 'today'
     const order: 'asc' | 'desc' = parsed.order === 'asc' ? 'asc' : 'desc'
     return { key: parsed.key, metric, order }
   } catch {
+    // Malformed or unavailable saved usage sorting disables local ordering so the
+    // server page can still be rendered in its returned order.
     return null
   }
 }
+// usageSort holds the restored current-page cost ordering, or null when the loaded
+// server row order applies.
 const usageSort = ref<UsageSortState>(loadInitialUsageSort())
+// persistUsageSort writes the current local usage sort or removes its stored key.
+// Storage errors are logged while in-memory sorting remains active, allowing the
+// current table order to follow the selection.
 const persistUsageSort = () => {
   try {
     if (usageSort.value) {
@@ -1205,10 +1448,14 @@ const persistUsageSort = () => {
       localStorage.removeItem(USAGE_SORT_STORAGE_KEY)
     }
   } catch (e) {
+    // Retain the current in-memory ordering when browser storage rejects the
+    // preference write, allowing the selected header action to affect this session.
     console.error('Failed to persist usage sort:', e)
   }
 }
-// 切回服务端排序时清空本地用量排序，列表采用服务端顺序。
+// clearUsageSort clears local usage ordering and its menu before updating storage. With
+// no active usage sort it returns immediately, allowing server sort handlers to call it
+// unconditionally before loading rows.
 const clearUsageSort = () => {
   if (!usageSort.value) return
   usageSort.value = null
@@ -1216,13 +1463,18 @@ const clearUsageSort = () => {
   persistUsageSort()
 }
 
+// isUsageSortActive reports whether the selected column and metric match local sorting.
 const isUsageSortActive = (key: string, metric: UsageMetric) =>
   !!usageSort.value && usageSort.value.key === key && usageSort.value.metric === metric
+// getUsageSortOrder returns the active direction for a matching column and metric. It
+// returns null for other pairs so each header control can distinguish its inactive
+// state from either selected direction.
 const getUsageSortOrder = (key: string, metric: UsageMetric): 'asc' | 'desc' | null =>
   isUsageSortActive(key, metric) ? usageSort.value!.order : null
 
-// 三态循环：desc → asc → off。选完即关闭菜单（用户大多希望"选中即应用"，
-// 想再切换 order 时重新打开菜单点同一项即可）。
+// toggleUsageSort cycles the selected column and metric through descending, ascending,
+// and off. Choosing a different pair starts descending; the resulting preference is
+// persisted and the metric menu closes after selection.
 const toggleUsageSort = (key: string, metric: UsageMetric) => {
   const cur = usageSort.value
   if (cur && cur.key === key && cur.metric === metric) {
@@ -1234,28 +1486,42 @@ const toggleUsageSort = (key: string, metric: UsageMetric) => {
   openUsageSortMenu.value = null
 }
 
-// 点击图标本身不触发排序，仅开关菜单；首次排序由用户在菜单内选择 metric 触发（默认 desc，详见 toggleUsageSort）。
+// toggleUsageSortMenu toggles one column's metric menu without changing the selected
+// ordering.
 const toggleUsageSortMenu = (key: string) => {
   openUsageSortMenu.value = openUsageSortMenu.value === key ? null : key
 }
 
+// getUsageValue reads the selected aggregate or platform cost for a user. Missing user
+// or platform data becomes zero, and the metric selects today's cost or the returned
+// total used by local sorting.
 const getUsageValue = (userId: number, key: string, metric: UsageMetric): number => {
   const stats = usageStats.value[userId]
+  // A user with no loaded usage contributes zero to local cost sorting until its
+  // secondary response supplies an observed value.
   if (!stats) return 0
   const platform = USAGE_COLUMN_PLATFORMS[key]
   if (platform === null) {
-    return metric === 'today' ? stats.today_actual_cost ?? 0 : stats.total_actual_cost ?? 0
+    return metric === 'today' ? (stats.today_actual_cost ?? 0) : (stats.total_actual_cost ?? 0)
   }
   const p = stats.by_platform?.find((x) => x.platform === platform)
+  // An absent platform entry contributes zero for this column so users can still be
+  // compared while platform-specific observations are missing.
   if (!p) return 0
-  return metric === 'today' ? p.today_actual_cost ?? 0 : p.total_actual_cost ?? 0
+  return metric === 'today' ? (p.today_actual_cost ?? 0) : (p.total_actual_cost ?? 0)
 }
 
-// 在 server-side 排序结果之上叠加用量列的本地排序；无 usageSort 时直接透传原数组。
-// 数值相等时按原 index 排序，刷新用量后保持行间次序。
+// sortedUsers applies the selected usage ordering to the currently loaded user page.
+// With no local sort it returns the server array directly; active sorting copies the
+// array before comparing costs. Usage values are obtained from the latest secondary
+// data and missing observations count as zero. Original row indices break equal-cost
+// ties, keeping the server's relative order for those users while new usage values
+// arrive.
 const sortedUsers = computed(() => {
   const s = usageSort.value
   if (!s) return users.value
+  // Sort a copied page and use original indices to break equal-cost ties so
+  // asynchronous usage values cannot arbitrarily shuffle equal rows.
   return [...users.value]
     .map((row, index) => ({ row, index }))
     .sort((a, b) => {
@@ -1267,33 +1533,42 @@ const sortedUsers = computed(() => {
     .map((x) => x.row)
 })
 
+// The selection composable retains user identifiers across page changes and clears them
+// explicitly after successful bulk updates.
 const {
   selectedIds,
   selectedCount,
   setSelectedIds,
-  clear: clearSelection
+  clear: clearSelection,
 } = useTableSelection<AdminUser>({
   rows: sortedUsers,
-  getId: (user) => user.id
+  getId: (user) => user.id,
 })
 
+// handleSelectedKeysUpdate retains numeric identifiers from table selection events and
+// stores them.
 const handleSelectedKeysUpdate = (keys: Array<string | number>) => {
   setSelectedIds(keys.filter((key): key is number => typeof key === 'number'))
 }
 
+// getUserSelectionLabel formats the accessible bulk-selection label using the user's
+// email.
 const getUserSelectionLabel = (user: AdminUser) =>
   t('admin.users.bulkLimits.selectUser', { email: user.email })
 
-// User attribute definitions and values
+// Enabled definitions and per-user attribute values feed dynamic columns, while
+// pagination stores the primary list response counts.
 const attributeDefinitions = ref<UserAttributeDefinition[]>([])
 const userAttributeValues = ref<Record<number, Record<number, string>>>({})
 const pagination = reactive({
-  page: 1,
-  page_size: getPersistedPageSize(),
-  total: 0,
-  pages: 0
+  page: 1, // requested page number
+  page_size: getPersistedPageSize(), // requested row count
+  total: 0, // matching row count
+  pages: 0, // matching page count
 })
 
+// Dialog visibility and selected account records isolate creation, editing, bulk
+// updates, deletion, key inspection, and attribute configuration.
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const showBulkEditModal = ref(false)
@@ -1304,14 +1579,21 @@ const editingUser = ref<AdminUser | null>(null)
 const deletingUser = ref<AdminUser | null>(null)
 const viewingUser = ref<AdminUser | null>(null)
 
-
+// The primary controller cancels list requests, while secondaryDataSeq invalidates
+// deferred usage and attribute work when its page becomes obsolete.
 let abortController: AbortController | null = null
 let secondaryDataSeq = 0
 
+// loadUsersSecondaryData fetches usage and attribute values required by visible
+// columns. The supplied user identifiers describe one loaded page, and optional
+// abort/generation guards prevent results from being applied after that page becomes
+// obsolete. Usage and attribute requests run independently, logging their own failures
+// while keeping other work available. The function waits for all scheduled tasks to
+// settle, and returns immediately when the identifier list is empty.
 const loadUsersSecondaryData = async (
   userIds: number[],
   signal?: AbortSignal,
-  expectedSeq?: number
+  expectedSeq?: number,
 ) => {
   if (userIds.length === 0) return
 
@@ -1322,14 +1604,23 @@ const loadUsersSecondaryData = async (
       (async () => {
         try {
           const usageResponse = await adminAPI.dashboard.getBatchUsersUsage(userIds)
+          // The primary page may have been replaced while optional data was loading;
+          // aborted page work cannot publish or report into its successor.
           if (signal?.aborted) return
+          // An optional refresh can supersede earlier lookups without aborting their
+          // transport, so generation checks also guard publication to the current
+          // page.
           if (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq) return
           usageStats.value = usageResponse.stats
         } catch (e) {
+          // The primary page may have been replaced while optional data was loading;
+          // aborted page work cannot publish or report into its successor.
           if (signal?.aborted) return
+          // Keep other optional work and primary rows available after usage lookup
+          // failure; the missing usage cells retain their current values.
           console.error('Failed to load usage stats:', e)
         }
-      })()
+      })(),
     )
   }
 
@@ -1338,14 +1629,24 @@ const loadUsersSecondaryData = async (
       (async () => {
         try {
           const attrResponse = await adminAPI.userAttributes.getBatchUserAttributes(userIds)
+          // The primary page may have been replaced while optional data was loading;
+          // aborted page work cannot publish or report into its successor.
           if (signal?.aborted) return
+          // An optional refresh can supersede earlier lookups without aborting their
+          // transport, so generation checks also guard publication to the current
+          // page.
           if (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq) return
           userAttributeValues.value = attrResponse.attributes
         } catch (e) {
+          // The primary page may have been replaced while optional data was loading;
+          // aborted page work cannot publish or report into its successor.
           if (signal?.aborted) return
+          // Attribute lookup failure leaves the primary page and independent usage
+          // work available, with current attribute values retained until another
+          // successful refresh.
           console.error('Failed to load user attribute values:', e)
         }
-      })()
+      })(),
     )
   }
 
@@ -1354,17 +1655,30 @@ const loadUsersSecondaryData = async (
   }
 }
 
+// refreshCurrentPageSecondaryData starts a new generation for the current page's
+// optional data. Empty pages return immediately, while advancing secondaryDataSeq
+// invalidates older optional results before the new requests begin without a list
+// signal.
 const refreshCurrentPageSecondaryData = () => {
   const userIds = users.value.map((u) => u.id)
   if (userIds.length === 0) return
+  // Advance optional-data ownership before dispatch so an older lookup cannot publish
+  // into the refreshed current-page usage or attribute maps.
   const seq = ++secondaryDataSeq
   void loadUsersSecondaryData(userIds, undefined, seq)
 }
 
-// Action Menu State
+// The active menu identifier and viewport coordinates describe one floating user-action
+// menu at a time.
 const activeMenuId = ref<number | null>(null)
-const menuPosition = ref<{ top: number; left: number } | null>(null)
+const menuPosition = ref<{
+  top: number // viewport top pixels
+  left: number // viewport left pixels
+} | null>(null)
 
+// openActionMenu toggles a user action menu using the row trigger and viewport. Narrow
+// screens center around the trigger with vertical flipping, while wider screens
+// position near the pointer and clamp to available space.
 const openActionMenu = (user: AdminUser, e: MouseEvent) => {
   if (activeMenuId.value === user.id) {
     closeActionMenu()
@@ -1376,6 +1690,8 @@ const openActionMenu = (user: AdminUser, e: MouseEvent) => {
     }
 
     const rect = target.getBoundingClientRect()
+    // The position calculation reserves the menu footprint and viewport padding
+    // before clamping the floating action panel around its trigger.
     const menuWidth = 200
     const menuHeight = 240
     const padding = 8
@@ -1384,30 +1700,33 @@ const openActionMenu = (user: AdminUser, e: MouseEvent) => {
 
     let left, top
 
+    // Below the desktop breakpoint, anchor around the trigger and flip vertically
+    // when necessary so the action panel stays within the viewport.
     if (viewportWidth < 768) {
-      // 居中显示,水平位置
-      left = Math.max(padding, Math.min(
-        rect.left + rect.width / 2 - menuWidth / 2,
-        viewportWidth - menuWidth - padding
-      ))
+      left = Math.max(
+        padding,
+        Math.min(rect.left + rect.width / 2 - menuWidth / 2, viewportWidth - menuWidth - padding),
+      )
 
-      // 优先显示在按钮下方
       top = rect.bottom + 4
 
-      // 如果下方空间不够,显示在上方
+      // When the preferred placement exceeds available height, adjust the panel
+      // before publishing coordinates so its actions remain reachable inside the
+      // viewport.
       if (top + menuHeight > viewportHeight - padding) {
         top = rect.top - menuHeight - 4
-        // 如果上方也不够,就贴在视口顶部
+        // If neither vertical side fits, clamp to the viewport inset so the panel
+        // begins at a visible coordinate.
         if (top < padding) {
           top = padding
         }
       }
     } else {
-      left = Math.max(padding, Math.min(
-        e.clientX - menuWidth,
-        viewportWidth - menuWidth - padding
-      ))
+      left = Math.max(padding, Math.min(e.clientX - menuWidth, viewportWidth - menuWidth - padding))
       top = e.clientY
+      // When the preferred placement exceeds available height, adjust the panel
+      // before publishing coordinates so its actions remain reachable inside the
+      // viewport.
       if (top + menuHeight > viewportHeight - padding) {
         top = viewportHeight - menuHeight - padding
       }
@@ -1418,90 +1737,116 @@ const openActionMenu = (user: AdminUser, e: MouseEvent) => {
   }
 }
 
+// closeActionMenu clears the active user action menu and its coordinates.
 const closeActionMenu = () => {
   activeMenuId.value = null
   menuPosition.value = null
 }
 
-// Close menu when clicking outside
+// handleClickOutside closes action, filter, column, usage-sort, and expanded-group
+// menus as applicable. Element containment protects the corresponding menu controls,
+// while the expanded group selection closes whenever this document handler runs.
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement
   if (!target.closest('.action-menu-trigger') && !target.closest('.action-menu-content')) {
     closeActionMenu()
   }
-  // Close filter dropdown when clicking outside
   if (filterDropdownRef.value && !filterDropdownRef.value.contains(target)) {
     showFilterDropdown.value = false
   }
-  // Close column dropdown when clicking outside
   if (columnDropdownRef.value && !columnDropdownRef.value.contains(target)) {
     showColumnDropdown.value = false
   }
-  // 点击用量排序触发器外部时关闭菜单。
   if (openUsageSortMenu.value !== null && !target.closest('.usage-sort-trigger')) {
     openUsageSortMenu.value = null
   }
-  // Close expanded group dropdown when clicking outside
   if (expandedGroupUserId.value !== null) {
     expandedGroupUserId.value = null
   }
 }
 
-// Allowed groups modal state
+// Group-permission dialog visibility and its selected user control the child editor
+// until the dialog is closed.
 const showAllowedGroupsModal = ref(false)
 const allowedGroupsUser = ref<AdminUser | null>(null)
 
-// Expanded group dropdown state (click to show exclusive groups list)
+// expandedGroupUserId selects one row whose exclusive-group list is expanded, or null
+// when all such lists are closed.
 const expandedGroupUserId = ref<number | null>(null)
+// toggleExpandedGroup toggles the expanded exclusive-group list for one user
+// identifier.
 const toggleExpandedGroup = (userId: number) => {
   expandedGroupUserId.value = expandedGroupUserId.value === userId ? null : userId
 }
 
-// Group replace modal state
+// Group replacement retains its dialog visibility, account, and old group so the child
+// can submit the intended substitution.
 const showGroupReplaceModal = ref(false)
 const groupReplaceUser = ref<AdminUser | null>(null)
-const groupReplaceOldGroup = ref<{ id: number; name: string } | null>(null)
+const groupReplaceOldGroup = ref<{
+  id: number // server record identifier
+  name: string // displayed name text
+} | null>(null)
 
-// Balance (Deposit/Withdraw) modal state
+// Balance dialog visibility, account, and addition/subtraction mode determine the
+// operation offered by the shared child editor.
 const showBalanceModal = ref(false)
 const balanceUser = ref<AdminUser | null>(null)
 const balanceOperation = ref<'add' | 'subtract'>('add')
 
-// Balance History modal state
+// Balance-history visibility and its account also supply the target when history
+// actions open deposit or withdrawal.
 const showBalanceHistoryModal = ref(false)
 const balanceHistoryUser = ref<AdminUser | null>(null)
 
-// 计算剩余天数
+// getDaysRemaining returns the ceiling of days between now and subscription expiry.
+// Expired values may be zero or negative because this helper exposes the rounded
+// difference directly to its display callers.
 const getDaysRemaining = (expiresAt: string): number => {
   const now = new Date()
   const expires = new Date(expiresAt)
   const diffMs = expires.getTime() - now.getTime()
+  // Convert elapsed milliseconds to days and round partial days upward.
   return Math.ceil(diffMs / (1000 * 60 * 60 * 24))
 }
 
+// loadAttributeDefinitions requests enabled custom fields used by columns and filters.
+// Failures are logged while current definitions remain available, allowing the user
+// table to continue loading its primary rows independently.
 const loadAttributeDefinitions = async () => {
   try {
     attributeDefinitions.value = await adminAPI.userAttributes.listEnabledDefinitions()
   } catch (e) {
+    // Retain existing definitions when the lookup fails so table initialization can
+    // continue and current custom fields remain available for rendering.
     console.error('Failed to load attribute definitions:', e)
   }
 }
 
-// Handle attributes modal close - reload definitions and users
+// handleAttributesModalClose hides attribute configuration and refreshes definitions
+// before reloading users. Waiting for definitions lets the subsequent list refresh
+// decide which secondary attribute values are needed for the visible columns.
 const handleAttributesModalClose = async () => {
   showAttributesModal.value = false
   await loadAttributeDefinitions()
   loadUsers()
 }
 
+// loadUsers aborts the previous list request and fetches filtered, sorted user rows.
+// Accepted responses replace rows and pagination and clear usage and attribute caches
+// for that page. A short deferred callback starts optional data only if its signal and
+// generation still match, allowing primary rows to render first. Cancellation errors
+// remain silent, while other failures report a message; loading cleanup belongs to the
+// current list controller.
 const loadUsers = async () => {
+  // Cancel the preceding primary page before starting its replacement so deferred
+  // callbacks can also recognize the aborted page through its captured signal.
   abortController?.abort()
   const currentAbortController = new AbortController()
   abortController = currentAbortController
   const { signal } = currentAbortController
   loading.value = true
   try {
-    // Build attribute filters from active filters
     const attrFilters: Record<number, string> = {}
     for (const [attrId, value] of Object.entries(activeAttributeFilters)) {
       if (value) {
@@ -1521,49 +1866,73 @@ const loadUsers = async () => {
         attributes: Object.keys(attrFilters).length > 0 ? attrFilters : undefined,
         include_subscriptions: true,
         sort_by: sortState.sort_by,
-        sort_order: sortState.sort_order
+        sort_order: sortState.sort_order,
       },
-      { signal }
+      { signal },
     )
+    // Discard a response after its controller was aborted because pagination,
+    // filtering, or teardown has already replaced that primary page.
     if (signal.aborted) {
       return
     }
     users.value = response.items
     pagination.total = response.total
     pagination.pages = response.pages
+    // Clear secondary maps when replacing user rows so observations from the
+    // preceding page are not presented as data for the new page.
     usageStats.value = {}
     userAttributeValues.value = {}
 
-    // Defer heavy secondary data so table can render first.
     if (response.items.length > 0) {
       const userIds = response.items.map((u) => u.id)
+      // Advance optional-data ownership before dispatch so an older lookup cannot
+      // publish into the refreshed current-page usage or attribute maps.
       const seq = ++secondaryDataSeq
+      // Defer optional lookups for fifty milliseconds so primary rows can render
+      // first; the captured signal and generation still gate the delayed callback.
       window.setTimeout(() => {
         if (signal.aborted || seq !== secondaryDataSeq) return
         void loadUsersSecondaryData(userIds, signal, seq)
       }, 50)
     }
   } catch (error: any) {
-    const errorInfo = error as { name?: string; code?: string }
-    if (errorInfo?.name === 'AbortError' || errorInfo?.name === 'CanceledError' || errorInfo?.code === 'ERR_CANCELED') {
+    const errorInfo = error as {
+      name?: string // transport exception name
+      code?: string // transport error code
+    }
+    // Cancellation is expected when user queries are replaced, so suppress those
+    // transport errors and reserve feedback for failed list operations.
+    if (
+      errorInfo?.name === 'AbortError' ||
+      errorInfo?.name === 'CanceledError' ||
+      errorInfo?.code === 'ERR_CANCELED'
+    ) {
       return
     }
     const message = error.response?.data?.detail || error.message || t('admin.users.failedToLoad')
     appStore.showError(message)
     console.error('Error loading users:', error)
   } finally {
+    // Only the current primary request releases list loading, because an older
+    // request can finish after a newer query has started.
     if (abortController === currentAbortController) {
       loading.value = false
     }
   }
 }
 
+// handleBulkLimitsSuccess clears selected identifiers and awaits a fresh user page.
 const handleBulkLimitsSuccess = async () => {
   clearSelection()
   await loadUsers()
 }
 
+// searchTimeout owns the delayed first-page query and is cancelled by later typing or
+// component teardown.
 let searchTimeout: ReturnType<typeof setTimeout>
+// handleSearch replaces the pending timer with a delayed first-page user search.
+// Unmount clears this timer and aborts the primary request, preventing queued search
+// work from starting after page teardown.
 const handleSearch = () => {
   clearTimeout(searchTimeout)
   searchTimeout = setTimeout(() => {
@@ -1572,19 +1941,29 @@ const handleSearch = () => {
   }, 300)
 }
 
+// handlePageChange clamps the requested page to the known range before loading it. A
+// missing page count permits page one, so callers cannot request a zero or negative
+// page through this handler.
 const handlePageChange = (page: number) => {
-  // 确保页码在有效范围内
+  // Clamp page controls to the available server page range, using page one when total
+  // pages has not been established.
   const validPage = Math.max(1, Math.min(page, pagination.pages || 1))
   pagination.page = validPage
   loadUsers()
 }
 
+// handlePageSizeChange stores the selected page size and reloads from page one.
+// Resetting the current page before requesting rows presents the beginning of the
+// newly sized result set.
 const handlePageSizeChange = (pageSize: number) => {
   pagination.page_size = pageSize
   pagination.page = 1
   loadUsers()
 }
 
+// handleSort clears local usage ordering before applying a server sort and reloading.
+// This restores server row order as the table's active ordering and resets pagination
+// to the first matching page.
 const handleSort = (key: string, order: 'asc' | 'desc') => {
   clearUsageSort()
   sortState.sort_by = key
@@ -1593,13 +1972,17 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
   loadUsers()
 }
 
-// Filter helpers
+// getAttributeDefinitionName returns a field label or its identifier as display text.
+// Missing definitions use the identifier so saved attribute filters can still be
+// labeled when their definition is unavailable.
 const getAttributeDefinitionName = (attrId: number): string => {
-  const def = attributeDefinitions.value.find(d => d.id === attrId)
+  const def = attributeDefinitions.value.find((d) => d.id === attrId)
   return def?.name || String(attrId)
 }
 
-// Toggle a built-in filter (role/status)
+// toggleBuiltInFilter shows or hides a built-in condition and saves the resulting
+// filter state. Hiding clears its value; showing group controls requests their choices
+// before the first-page list reload is started.
 const toggleBuiltInFilter = (key: string) => {
   if (visibleFilters.has(key)) {
     visibleFilters.delete(key)
@@ -1617,7 +2000,9 @@ const toggleBuiltInFilter = (key: string) => {
   loadUsers()
 }
 
-// Toggle a custom attribute filter
+// toggleAttributeFilter shows or removes a custom-field filter and persists its state.
+// New controls start with an empty value, while removing a control deletes its matching
+// condition before page one reloads.
 const toggleAttributeFilter = (attr: UserAttributeDefinition) => {
   const key = `attr_${attr.id}`
   if (visibleFilters.has(key)) {
@@ -1632,32 +2017,39 @@ const toggleAttributeFilter = (attr: UserAttributeDefinition) => {
   loadUsers()
 }
 
+// updateAttributeFilter changes the draft condition for one custom attribute
+// identifier.
 const updateAttributeFilter = (attrId: number, value: string) => {
   activeAttributeFilters[attrId] = value
 }
 
-// Apply filter and save to localStorage
+// applyFilter persists current conditions and reloads the presently selected user page.
 const applyFilter = () => {
   saveFiltersToStorage()
   loadUsers()
 }
 
+// handleEdit selects a user and opens the account editing modal.
 const handleEdit = (user: AdminUser) => {
   editingUser.value = user
   showEditModal.value = true
 }
 
+// closeEditModal hides account editing and releases the selected user record.
 const closeEditModal = () => {
   showEditModal.value = false
   editingUser.value = null
 }
 
+// handleToggleStatus switches the user's active state and reloads after success.
+// Request failure displays the endpoint detail or translated message, keeping the
+// current rows available until a successful reload replaces them.
 const handleToggleStatus = async (user: AdminUser) => {
   const newStatus = user.status === 'active' ? 'disabled' : 'active'
   try {
     await adminAPI.users.toggleStatus(user.id, newStatus)
     appStore.showSuccess(
-      newStatus === 'active' ? t('admin.users.userEnabled') : t('admin.users.userDisabled')
+      newStatus === 'active' ? t('admin.users.userEnabled') : t('admin.users.userDisabled'),
     )
     loadUsers()
   } catch (error: any) {
@@ -1666,44 +2058,61 @@ const handleToggleStatus = async (user: AdminUser) => {
   }
 }
 
+// handleViewApiKeys selects the user whose API keys the modal displays.
 const handleViewApiKeys = (user: AdminUser) => {
   viewingUser.value = user
   showApiKeysModal.value = true
 }
 
+// closeApiKeysModal hides API-key inspection and clears its selected user.
 const closeApiKeysModal = () => {
   showApiKeysModal.value = false
   viewingUser.value = null
 }
 
+// handleAllowedGroups selects the user whose group permissions the modal edits.
 const handleAllowedGroups = (user: AdminUser) => {
   allowedGroupsUser.value = user
   showAllowedGroupsModal.value = true
 }
 
+// closeAllowedGroupsModal hides group permissions and clears the selected account.
 const closeAllowedGroupsModal = () => {
   showAllowedGroupsModal.value = false
   allowedGroupsUser.value = null
 }
 
-const openGroupReplace = (user: AdminUser, group: { id: number; name: string }) => {
+// openGroupReplace closes the expanded list and selects a user/group replacement
+// target.
+const openGroupReplace = (
+  user: AdminUser,
+  group: {
+    id: number // server record identifier
+    name: string // displayed name text
+  },
+) => {
   expandedGroupUserId.value = null
   groupReplaceUser.value = user
   groupReplaceOldGroup.value = group
   showGroupReplaceModal.value = true
 }
 
+// closeGroupReplaceModal hides replacement and clears its selected user and group.
 const closeGroupReplaceModal = () => {
   showGroupReplaceModal.value = false
   groupReplaceUser.value = null
   groupReplaceOldGroup.value = null
 }
 
+// handleDelete selects the account awaiting confirmation of a deletion request.
 const handleDelete = (user: AdminUser) => {
   deletingUser.value = user
   showDeleteDialog.value = true
 }
 
+// confirmDelete removes the selected account and reloads users after success. With no
+// selected account it returns immediately; failure retains confirmation state and
+// reports the endpoint detail or translated error.
 const confirmDelete = async () => {
   if (!deletingUser.value) return
   try {
@@ -1718,52 +2127,64 @@ const confirmDelete = async () => {
   }
 }
 
+// handleDeposit selects the account and opens its balance dialog in addition mode.
 const handleDeposit = (user: AdminUser) => {
   balanceUser.value = user
   balanceOperation.value = 'add'
   showBalanceModal.value = true
 }
 
+// handleWithdraw selects the account and opens its balance dialog in subtraction mode.
 const handleWithdraw = (user: AdminUser) => {
   balanceUser.value = user
   balanceOperation.value = 'subtract'
   showBalanceModal.value = true
 }
 
+// closeBalanceModal hides balance adjustment and clears the selected account record.
 const closeBalanceModal = () => {
   showBalanceModal.value = false
   balanceUser.value = null
 }
 
+// handleBalanceHistory selects the account whose balance history the modal displays.
 const handleBalanceHistory = (user: AdminUser) => {
   balanceHistoryUser.value = user
   showBalanceHistoryModal.value = true
 }
 
+// closeBalanceHistoryModal hides balance history and clears its selected account.
 const closeBalanceHistoryModal = () => {
   showBalanceHistoryModal.value = false
   balanceHistoryUser.value = null
 }
 
-// Handle deposit from balance history modal
+// handleDepositFromHistory opens balance addition for the history dialog's selected
+// account. With no selected history account it returns without opening another modal,
+// so the action requires an active history target.
 const handleDepositFromHistory = () => {
   if (balanceHistoryUser.value) {
     handleDeposit(balanceHistoryUser.value)
   }
 }
 
-// Handle withdraw from balance history modal
+// handleWithdrawFromHistory opens balance subtraction for the history dialog's selected
+// account. With no selected history account it returns without opening another modal,
+// so the action requires an active history target.
 const handleWithdrawFromHistory = () => {
   if (balanceHistoryUser.value) {
     handleWithdraw(balanceHistoryUser.value)
   }
 }
 
-// 滚动时关闭菜单
+// handleScroll closes the floating user menu when captured scrolling changes its
+// position.
 const handleScroll = () => {
   closeActionMenu()
 }
 
+// Load custom definitions before restoring preferences so visibility-dependent
+// optional lookups can use the enabled fields when the first user page arrives.
 onMounted(async () => {
   await loadAttributeDefinitions()
   loadSavedFilters()
@@ -1775,10 +2196,14 @@ onMounted(async () => {
   if (visibleFilters.has('apiKeyGroup')) {
     loadAllGroupsForApiKeyFilter()
   }
+  // Install the matching click and capture-scroll handlers after setup; unmount
+  // removes these same function references and scroll capture mode.
   document.addEventListener('click', handleClickOutside)
   window.addEventListener('scroll', handleScroll, true)
 })
 
+// Remove global listeners and cancel search/list work during teardown so detached
+// menus and obsolete primary requests cannot keep updating this page.
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('scroll', handleScroll, true)

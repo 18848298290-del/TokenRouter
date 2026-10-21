@@ -2,8 +2,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import axios from 'axios'
 import type { AxiosInstance } from 'axios'
 
-// 需要在导入 client 之前设置 mock
+/**
+ * client.spec.ts checks browser request metadata, response envelopes and
+ * authentication recovery through an Axios adapter. The cases exercise session
+ * storage, UI markers, cancellation and network rejection, including an account
+ * change while token refresh is pending.
+ */
+
+/**
+ * Install the fixed locale mock before importing client so interceptor error
+ * translation uses the controlled locale returned by getLocale.
+ */
 vi.mock('@/i18n', () => ({
+  /**
+   * getLocale supplies the fixed locale used by this request-interceptor test
+   * fixture.
+   */
   getLocale: () => 'zh-CN',
 }))
 
@@ -17,7 +31,10 @@ describe('API Client', () => {
       configurable: true,
       value: undefined,
     })
-    // 每次测试重新导入以获取干净的模块状态
+    /**
+     * Reload the module after resetting mocks so interceptor registrations and
+     * refresh state do not leak between cases.
+     */
     vi.resetModules()
     const mod = await import('@/api/client')
     apiClient = mod.apiClient
@@ -28,9 +45,16 @@ describe('API Client', () => {
     vi.unstubAllEnvs()
   })
 
-  // --- 请求拦截器 ---
+  /**
+   * Request interceptors.
+   */
 
   describe('请求拦截器', () => {
+    /**
+     * A configured API base omits its leading slash. The shared client
+     * normalizes that relative input and builds a callback URL rooted at
+     * /api/v1.
+     */
     it('规范化相对 API base，避免在回调页拼出相对 v1 路径', async () => {
       vi.resetModules()
       vi.stubEnv('VITE_API_BASE_URL', 'api/v1')
@@ -39,14 +63,20 @@ describe('API Client', () => {
 
       expect(mod.apiClient.defaults.baseURL).toBe('/api/v1')
       expect(mod.buildApiUrl('/auth/oauth/github/callback?code=abc')).toBe(
-        '/api/v1/auth/oauth/github/callback?code=abc'
+        '/api/v1/auth/oauth/github/callback?code=abc',
       )
     })
 
+    /**
+     * A stored access token is present when a GET reaches the adapter. The
+     * outgoing Authorization header contains that token with the Bearer prefix.
+     */
     it('自动附加 Authorization 头', async () => {
       localStorage.setItem('auth_token', 'my-jwt-token')
 
-      // 拦截实际请求
+      /**
+       * Capture the outgoing request configuration.
+       */
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
         data: { code: 0, data: {} },
@@ -62,6 +92,11 @@ describe('API Client', () => {
       expect(config.headers.get('Authorization')).toBe('Bearer my-jwt-token')
     })
 
+    /**
+     * An anonymous browser sends a request through the shared client. The
+     * adapter observes no Authorization header when localStorage contains no
+     * access token.
+     */
     it('无 token 时不附加 Authorization 头', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -78,6 +113,11 @@ describe('API Client', () => {
       expect(config.headers.get('Authorization')).toBeFalsy()
     })
 
+    /**
+     * A GET passes through the request interceptor with no query parameters. The
+     * outgoing parameters include a timezone for server-side date
+     * interpretation.
+     */
     it('GET 请求自动附加 timezone 参数', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -94,6 +134,11 @@ describe('API Client', () => {
       expect(config.params).toHaveProperty('timezone')
     })
 
+    /**
+     * A POST passes through the same interceptor used by GET requests. Its
+     * parameters receive no automatic timezone, keeping mutation payload
+     * handling separate from date-filtered reads.
+     */
     it('POST 请求不附加 timezone 参数', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -110,6 +155,11 @@ describe('API Client', () => {
       expect(config.params?.timezone).toBeUndefined()
     })
 
+    /**
+     * An OAuth binding-cookie request uses the shared client defaults. The
+     * adapter sees credentials enabled so browser cookies can participate in the
+     * request.
+     */
     it('请求默认带 withCredentials 以支持跨域 cookie', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -126,6 +176,11 @@ describe('API Client', () => {
       expect(config.withCredentials).toBe(true)
     })
 
+    /**
+     * An administrator endpoint is requested before the browser enters an
+     * administrator page. The target URL alone causes the administrator UI
+     * marker header to be attached.
+     */
     it('Admin API 在进入管理页面前也带 Admin UI 标记', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -142,6 +197,11 @@ describe('API Client', () => {
       expect(config.headers.get('X-Admin-UI-Request')).toBe('1')
     })
 
+    /**
+     * A shared group endpoint is called from an administrator dashboard. The
+     * active page supplies administrator context even though the target itself
+     * is shared with users.
+     */
     it('管理页面调用共享 API 时带 Admin UI 标记', async () => {
       window.history.replaceState({}, '', '/admin/dashboard')
       const adapter = vi.fn().mockResolvedValue({
@@ -159,6 +219,11 @@ describe('API Client', () => {
       expect(config.headers.get('X-Admin-UI-Request')).toBe('1')
     })
 
+    /**
+     * A shared group endpoint is called from an ordinary browser page. The
+     * adapter sees no administrator marker, protecting classification of
+     * user-originated requests.
+     */
     it('普通用户页面调用共享 API 时不带 Admin UI 标记', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -175,6 +240,11 @@ describe('API Client', () => {
       expect(config.headers.get('X-Admin-UI-Request')).toBeFalsy()
     })
 
+    /**
+     * The current-user endpoint is requested from an ordinary page. Its
+     * allowlisted path adds the user timing marker while leaving the
+     * administrator marker absent.
+     */
     it('用户侧 timing API 自动带 User UI 标记', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -192,6 +262,11 @@ describe('API Client', () => {
       expect(config.headers.get('X-Admin-UI-Request')).toBeFalsy()
     })
 
+    /**
+     * Authenticated and public payment endpoints are requested consecutively.
+     * The user timing marker appears on the plan request and remains absent from
+     * public order verification.
+     */
     it('支付用户 API 带 User UI 标记，公开支付 API 不带', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -209,6 +284,11 @@ describe('API Client', () => {
       expect(adapter.mock.calls[1][0].headers.get('X-User-UI-Request')).toBeFalsy()
     })
 
+    /**
+     * An administrator page calls the shared keys endpoint. Both markers appear
+     * because page context and the user timing allowlist independently qualify
+     * this request.
+     */
     it('管理页调用共享 API 时同时带 Admin 与 User UI 标记', async () => {
       window.history.replaceState({}, '', '/admin/dashboard')
       const adapter = vi.fn().mockResolvedValue({
@@ -228,9 +308,16 @@ describe('API Client', () => {
     })
   })
 
-  // --- 响应拦截器 ---
+  /**
+   * Response interceptors.
+   */
 
   describe('响应拦截器', () => {
+    /**
+     * A business error includes a server-generated validation detail. Rejection
+     * retains its reason and localized detail so the form can display the
+     * specific input failure.
+     */
     it('保留服务端已生成的业务错误详情', async () => {
       apiClient.defaults.adapter = vi.fn().mockResolvedValue({
         status: 400,
@@ -245,6 +332,11 @@ describe('API Client', () => {
       })
     })
 
+    /**
+     * A successful response uses the standard zero-code envelope. Callers
+     * receive the nested data object through response.data after the response
+     * interceptor unwraps it.
+     */
     it('code=0 时解包 data 字段', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -259,6 +351,11 @@ describe('API Client', () => {
       expect(response.data).toEqual({ name: 'test' })
     })
 
+    /**
+     * A successful HTTP response carries a nonzero business code. The client
+     * rejects with that code and message so business failures cannot masquerade
+     * as successful data.
+     */
     it('code!=0 时拒绝并返回结构化错误', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -273,17 +370,26 @@ describe('API Client', () => {
         expect.objectContaining({
           code: 1001,
           message: '参数错误',
-        })
+        }),
       )
     })
   })
 
-  // --- 401 Token 刷新 ---
+  /**
+   * 401 token refresh.
+   */
 
   describe('401 Token 刷新', () => {
+    /**
+     * An expired access token has no refresh token available. The unauthorized
+     * response clears the stored access token before the test restores its
+     * location stub.
+     */
     it('无 refresh_token 时 401 清除 localStorage', async () => {
       localStorage.setItem('auth_token', 'expired-token')
-      // 不设置 refresh_token
+      /**
+       * Leave the refresh token absent.
+       */
 
       // Mock window.location
       const originalLocation = window.location
@@ -309,13 +415,20 @@ describe('API Client', () => {
 
       expect(localStorage.getItem('auth_token')).toBeNull()
 
-      // 恢复 location
+      /**
+       * Restore the location stub.
+       */
       Object.defineProperty(window, 'location', {
         value: originalLocation,
         writable: true,
       })
     })
 
+    /**
+     * Google One Tap rejects its credential while stale session data exists. The
+     * client returns the credential reason without calling refresh or leaving
+     * the current page.
+     */
     it('One Tap 401 不刷新旧会话且不离开当前页面', async () => {
       localStorage.setItem('refresh_token', 'stale-refresh-token')
       localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
@@ -344,7 +457,7 @@ describe('API Client', () => {
 
       try {
         await expect(
-          apiClient.post('/auth/oauth/google/one-tap', { credential: 'invalid' })
+          apiClient.post('/auth/oauth/google/one-tap', { credential: 'invalid' }),
         ).rejects.toMatchObject({ reason: 'GOOGLE_ONE_TAP_INVALID_CREDENTIAL' })
         expect(refreshSpy).not.toHaveBeenCalled()
         expect(window.location.href).toBe('/home')
@@ -356,13 +469,19 @@ describe('API Client', () => {
       }
     })
 
+    /**
+     * An unauthorized request has a refresh token and a successful rotation
+     * response. The client retries once, stores the replacement pair and sends
+     * the replacement access token.
+     */
     it('有 refresh_token 时刷新并重试原请求', async () => {
       localStorage.setItem('auth_token', 'expired-token')
       localStorage.setItem('refresh_token', 'refresh-token')
       localStorage.setItem('token_expires_at', String(Date.now() - 1))
       localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
 
-      const adapter = vi.fn()
+      const adapter = vi
+        .fn()
         .mockRejectedValueOnce({
           response: {
             status: 401,
@@ -403,6 +522,11 @@ describe('API Client', () => {
       expect(adapter.mock.calls[1][0].headers.get('Authorization')).toBe('Bearer new-token')
     })
 
+    /**
+     * Another user signs in while the first user's refresh is pending. The old
+     * request rejects with session-changed status and leaves the later user's
+     * stored session intact.
+     */
     it('刷新期间换号时旧请求不会清除新会话', async () => {
       localStorage.setItem('auth_token', 'user-a-access')
       localStorage.setItem('refresh_token', 'user-a-refresh')
@@ -421,11 +545,16 @@ describe('API Client', () => {
         code: 'ERR_BAD_REQUEST',
       })
 
+      /**
+       * Hold the refresh rejection until its request has started and another
+       * identity replaces storage, so failure handling observes the later user.
+       */
       let rejectRefresh!: (reason: Error) => void
       vi.spyOn(axios, 'post').mockImplementationOnce(
-        () => new Promise((_resolve, reject) => {
-          rejectRefresh = reject
-        })
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectRefresh = reject
+          }),
       )
 
       const staleRequest = apiClient.get('/test')
@@ -445,15 +574,22 @@ describe('API Client', () => {
     })
   })
 
-  // --- 网络错误 ---
+  /**
+   * Network failures.
+   */
 
   describe('网络错误', () => {
+    /**
+     * A failed request has no HTTP response object. Rejection carries status
+     * zero and the localized network message so consumers can distinguish
+     * transport failure.
+     */
     it('网络错误返回 status 0 的错误', async () => {
       const adapter = vi.fn().mockRejectedValue({
         code: 'ERR_NETWORK',
         message: 'Network Error',
         config: { url: '/test' },
-        // 没有 response
+        // The transport failed before any HTTP response arrived.
       })
       apiClient.defaults.adapter = adapter
 
@@ -461,25 +597,28 @@ describe('API Client', () => {
         expect.objectContaining({
           status: 0,
           message: '网络连接失败，请检查网络后重试。',
-        })
+        }),
       )
     })
   })
 
-  // --- 请求取消 ---
+  /**
+   * Request cancellation.
+   */
 
   describe('请求取消', () => {
+    /**
+     * The adapter rejects with an Axios cancellation error. The request remains
+     * rejected through the interceptor; this assertion exercises cancellation
+     * handling without inspecting the error identity.
+     */
     it('取消的请求保持原始取消错误', async () => {
       const source = axios.CancelToken.source()
 
-      const adapter = vi.fn().mockRejectedValue(
-        new axios.Cancel('Operation canceled')
-      )
+      const adapter = vi.fn().mockRejectedValue(new axios.Cancel('Operation canceled'))
       apiClient.defaults.adapter = adapter
 
-      await expect(
-        apiClient.get('/test', { cancelToken: source.token })
-      ).rejects.toBeDefined()
+      await expect(apiClient.get('/test', { cancelToken: source.token })).rejects.toBeDefined()
     })
   })
 })

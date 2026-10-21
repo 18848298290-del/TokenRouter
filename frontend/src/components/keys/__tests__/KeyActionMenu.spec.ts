@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import KeyActionMenu from '../KeyActionMenu.vue'
-import type { ApiKey } from '@/types'
+import type { ApiKey } from '@/api/keys.types'
 import { finishMotion, mockMotionEnvironment } from '@/__tests__/helpers/motion'
+
+// KeyActionMenu.spec.ts mounts the key overflow menu with a fixed team-owned key and real
+// event handling. The suite checks action payloads, conditional import visibility, and the
+// overlay behavior while a closing panel completes its motion.
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
 })
 
+// The fixed team key supplies identity, secret, status, and zero usage fields shared by
+// every menu action assertion.
 const apiKey: ApiKey = {
   id: 7,
   user_id: 3,
@@ -49,6 +55,9 @@ describe('KeyActionMenu', () => {
     vi.restoreAllMocks()
   })
 
+  // The parent clears the selected key as the menu closes during its exit animation. The
+  // test protects immediate overlay removal and retention of inert leaving content until
+  // motion completes.
   it('关闭时立即移除捕获层，清空选中 Key 后仍能完成面板退出', async () => {
     mockMotionEnvironment()
     const wrapper = mount(KeyActionMenu, {
@@ -70,6 +79,9 @@ describe('KeyActionMenu', () => {
     }
   })
 
+  // A selected key exposes setup, imports, rotation, and deletion in its overflow menu. The
+  // test checks action payload identity, the accumulated close-event count after each selected
+  // action, and distinct import icon colors.
   it('将使用、tf/CCS 导入、轮换和删除收纳到更多菜单', async () => {
     const wrapper = mount(KeyActionMenu, {
       props: {
@@ -90,12 +102,15 @@ describe('KeyActionMenu', () => {
     expect(document.body.textContent).toContain('common.delete')
     expect(document.body.textContent).toContain('keys.rotateKey')
 
-    const tfButton = Array.from(document.body.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('keys.importToTf'))
-    const ccsButton = Array.from(document.body.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('keys.importToCcSwitch'))
-    expect(tfButton?.querySelector('path')?.getAttribute('d'))
-      .toBe(ccsButton?.querySelector('path')?.getAttribute('d'))
+    const tfButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('keys.importToTf'),
+    )
+    const ccsButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('keys.importToCcSwitch'),
+    )
+    expect(tfButton?.querySelector('path')?.getAttribute('d')).toBe(
+      ccsButton?.querySelector('path')?.getAttribute('d'),
+    )
     expect(tfButton?.querySelector('svg')?.classList.contains('text-blue-500')).toBe(true)
     expect(ccsButton?.querySelector('svg')?.classList.contains('text-violet-500')).toBe(true)
     tfButton?.click()
@@ -105,16 +120,18 @@ describe('KeyActionMenu', () => {
     expect(wrapper.emitted('close')).toHaveLength(1)
 
     await wrapper.setProps({ show: true })
-    const deleteButton = Array.from(document.body.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('common.delete'))
+    const deleteButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('common.delete'),
+    )
     deleteButton?.click()
     await wrapper.vm.$nextTick()
 
     expect(wrapper.emitted('delete')?.[0]).toEqual([apiKey])
     expect(wrapper.emitted('close')).toHaveLength(2)
 
-    const rotateButton = Array.from(document.body.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('keys.rotateKey'))
+    const rotateButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('keys.rotateKey'),
+    )
     rotateButton?.click()
     await wrapper.vm.$nextTick()
     expect(wrapper.emitted('rotate')?.[0]).toEqual([apiKey])
@@ -122,6 +139,8 @@ describe('KeyActionMenu', () => {
     wrapper.unmount()
   })
 
+  // The optional client-import setting is disabled for an open menu. The test checks that
+  // CCS import disappears while TokenFlux CLI import remains available to the user.
   it('按设置隐藏 CCS 导入入口', () => {
     const wrapper = mount(KeyActionMenu, {
       props: {

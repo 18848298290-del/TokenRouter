@@ -3,7 +3,6 @@
     <TablePageLayout>
       <template #filters>
         <div class="flex flex-wrap items-center gap-2">
-          <!-- Left: Search + Filters -->
           <div class="min-w-0 flex-1 sm:max-w-64">
             <input
               v-model="searchQuery"
@@ -13,10 +12,16 @@
               @input="handleSearch"
             />
           </div>
-          <Select v-model="filters.status" :options="filterStatusOptions" class="w-36 shrink-0" @change="loadCodes" />
+          <Select
+            v-model="filters.status"
+            :options="filterStatusOptions"
+            class="w-36 shrink-0"
+            @change="loadCodes"
+          />
 
-          <!-- Right: Action buttons -->
-          <div class="flex w-full flex-wrap items-center justify-end gap-2 sm:ml-auto sm:w-auto sm:shrink-0">
+          <div
+            class="flex w-full flex-wrap items-center justify-end gap-2 sm:ml-auto sm:w-auto sm:shrink-0"
+          >
             <button
               @click="loadCodes"
               :disabled="loading"
@@ -25,7 +30,10 @@
             >
               <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
             </button>
-            <button @click="showCreateDialog = true" class="btn btn-primary whitespace-nowrap px-3 sm:px-4">
+            <button
+              @click="showCreateDialog = true"
+              class="btn btn-primary whitespace-nowrap px-3 sm:px-4"
+            >
               <Icon name="plus" size="sm" class="mr-1" />
               {{ t('admin.promo.createCode') }}
             </button>
@@ -53,7 +61,7 @@
                   'flex items-center transition-colors',
                   copiedCode === value
                     ? 'text-green-500'
-                    : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+                    : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300',
                 ]"
                 :title="copiedCode === value ? t('admin.promo.copied') : t('keys.copyToClipboard')"
               >
@@ -76,12 +84,7 @@
           </template>
 
           <template #cell-status="{ value, row }">
-            <span
-              :class="[
-                'badge',
-                getStatusClass(value, row)
-              ]"
-            >
+            <span :class="['badge', getStatusClass(value, row)]">
               {{ getStatusLabel(value, row) }}
             </span>
           </template>
@@ -145,7 +148,6 @@
       </template>
     </TablePageLayout>
 
-    <!-- Create Dialog -->
     <BaseDialog
       :show="showCreateDialog"
       :title="t('admin.promo.createCode')"
@@ -156,7 +158,9 @@
         <div>
           <label class="input-label">
             {{ t('admin.promo.code') }}
-            <span class="ml-1 text-xs font-normal text-gray-400">({{ t('admin.promo.autoGenerate') }})</span>
+            <span class="ml-1 text-xs font-normal text-gray-400"
+              >({{ t('admin.promo.autoGenerate') }})</span
+            >
           </label>
           <input
             v-model="createForm.code"
@@ -179,25 +183,18 @@
         <div>
           <label class="input-label">
             {{ t('admin.promo.maxUses') }}
-            <span class="ml-1 text-xs font-normal text-gray-400">({{ t('admin.promo.zeroUnlimited') }})</span>
+            <span class="ml-1 text-xs font-normal text-gray-400"
+              >({{ t('admin.promo.zeroUnlimited') }})</span
+            >
           </label>
-          <input
-            v-model.number="createForm.max_uses"
-            type="number"
-            min="0"
-            class="input"
-          />
+          <input v-model.number="createForm.max_uses" type="number" min="0" class="input" />
         </div>
         <div>
           <label class="input-label">
             {{ t('admin.promo.expiresAt') }}
             <span class="ml-1 text-xs font-normal text-gray-400">({{ t('common.optional') }})</span>
           </label>
-          <input
-            v-model="createForm.expires_at_str"
-            type="datetime-local"
-            class="input"
-          />
+          <input v-model="createForm.expires_at_str" type="datetime-local" class="input" />
         </div>
         <div>
           <label class="input-label">
@@ -217,14 +214,18 @@
           <button type="button" @click="showCreateDialog = false" class="btn btn-secondary">
             {{ t('common.cancel') }}
           </button>
-          <button type="submit" form="create-promo-form" :disabled="creating" class="btn btn-primary">
+          <button
+            type="submit"
+            form="create-promo-form"
+            :disabled="creating"
+            class="btn btn-primary"
+          >
             {{ creating ? t('common.creating') : t('common.create') }}
           </button>
         </div>
       </template>
     </BaseDialog>
 
-    <!-- Edit Dialog -->
     <BaseDialog
       :show="showEditDialog"
       :title="t('admin.promo.editCode')"
@@ -234,11 +235,7 @@
       <form id="edit-promo-form" @submit.prevent="handleUpdate" class="space-y-4">
         <div>
           <label class="input-label">{{ t('admin.promo.code') }}</label>
-          <input
-            v-model="editForm.code"
-            type="text"
-            class="input font-mono uppercase"
-          />
+          <input v-model="editForm.code" type="text" class="input font-mono uppercase" />
         </div>
         <div>
           <label class="input-label">{{ t('admin.promo.bonusAmount') }}</label>
@@ -254,14 +251,11 @@
         <div>
           <label class="input-label">
             {{ t('admin.promo.maxUses') }}
-            <span class="ml-1 text-xs font-normal text-gray-400">({{ t('admin.promo.zeroUnlimited') }})</span>
+            <span class="ml-1 text-xs font-normal text-gray-400"
+              >({{ t('admin.promo.zeroUnlimited') }})</span
+            >
           </label>
-          <input
-            v-model.number="editForm.max_uses"
-            type="number"
-            min="0"
-            class="input"
-          />
+          <input v-model.number="editForm.max_uses" type="number" min="0" class="input" />
         </div>
         <div>
           <label class="input-label">{{ t('admin.promo.status') }}</label>
@@ -272,22 +266,14 @@
             {{ t('admin.promo.expiresAt') }}
             <span class="ml-1 text-xs font-normal text-gray-400">({{ t('common.optional') }})</span>
           </label>
-          <input
-            v-model="editForm.expires_at_str"
-            type="datetime-local"
-            class="input"
-          />
+          <input v-model="editForm.expires_at_str" type="datetime-local" class="input" />
         </div>
         <div>
           <label class="input-label">
             {{ t('admin.promo.notes') }}
             <span class="ml-1 text-xs font-normal text-gray-400">({{ t('common.optional') }})</span>
           </label>
-          <textarea
-            v-model="editForm.notes"
-            rows="2"
-            class="input"
-          ></textarea>
+          <textarea v-model="editForm.notes" rows="2" class="input"></textarea>
         </div>
       </form>
       <template #footer>
@@ -302,7 +288,6 @@
       </template>
     </BaseDialog>
 
-    <!-- Usages Dialog -->
     <BaseDialog
       :show="showUsagesDialog"
       :title="t('admin.promo.usageRecords')"
@@ -310,7 +295,10 @@
       @close="showUsagesDialog = false"
     >
       <ContentSkeleton v-if="usagesLoading" :rows="4" class="py-4" />
-      <div v-else-if="usages.length === 0" class="py-8 text-center text-gray-500 dark:text-gray-400">
+      <div
+        v-else-if="usages.length === 0"
+        class="py-8 text-center text-gray-500 dark:text-gray-400"
+      >
         {{ t('admin.promo.noUsages') }}
       </div>
       <div v-else class="space-y-3">
@@ -320,7 +308,9 @@
           class="flex items-center justify-between rounded-control border border-gray-200 p-3 dark:border-dark-600"
         >
           <div class="flex items-center gap-3">
-            <div class="flex h-8 w-8 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
+            <div
+              class="flex h-8 w-8 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
+            >
               <Icon name="user" size="sm" class="text-green-600 dark:text-green-400" />
             </div>
             <div>
@@ -338,14 +328,20 @@
             </span>
           </div>
         </div>
-        <!-- Usages Pagination -->
+
         <div v-if="usagesTotal > usagesPageSize" class="mt-4">
           <Pagination
             :page="usagesPage"
             :total="usagesTotal"
             :page-size="usagesPageSize"
             @update:page="handleUsagesPageChange"
-            @update:page-size="(size: number) => { usagesPageSize = size; usagesPage = 1; loadUsages() }"
+            @update:page-size="
+              (size: number) => {
+                usagesPageSize = size
+                usagesPage = 1
+                loadUsages()
+              }
+            "
           />
         </div>
       </div>
@@ -358,7 +354,6 @@
       </template>
     </BaseDialog>
 
-    <!-- Delete Confirmation Dialog -->
     <ConfirmDialog
       :show="showDeleteDialog"
       :title="t('admin.promo.deleteCode')"
@@ -383,23 +378,37 @@ import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { adminAPI } from '@/api/admin'
 import { formatDateTime, formatDateTimeLocalInput } from '@/utils/format'
-import type { PromoCode, PromoCodeUsage } from '@/types'
-import type { Column } from '@/components/common/types'
+import type { PromoCode, PromoCodeUsage } from '@/api/admin/promo.types'
+import type { Column } from '@/components/common/table/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
-import DataTable from '@/components/common/DataTable.vue'
+import DataTable from '@/components/common/table/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 
+// PromoCodesView.vue manages registration promotion codes, their editable limits, and
+// paginated usage history. The main list has cancellable reloads that publish results
+// only while their controller remains current. Usage history has its own dialog and
+// pagination, allowing it to load independently of the main list.
+//
+// Displayed status combines configured status, expiry, and usage limits, with expiry
+// taking precedence over exhaustion. Create requests omit empty optional values, while
+// updates use zero to clear expiry. Clipboard feedback identifies the copied code
+// temporarily, and registration links encode the code into a query parameter before
+// copying through browser APIs.
+
+// Translation, toast notifications, clipboard access, and balance formatting supply
+// shared services for promotion-code actions.
 const { t } = useI18n()
 const appStore = useAppStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 const { formatBalanceAmount } = useBalanceDisplay()
 
-// State
+// List rows, operation flags, search text, and copied-code feedback represent the main
+// promotion-code table state.
 const codes = ref<PromoCode[]>([])
 const loading = ref(false)
 const creating = ref(false)
@@ -407,21 +416,24 @@ const updating = ref(false)
 const searchQuery = ref('')
 const copiedCode = ref<string | null>(null)
 
+// The optional status condition and pagination/sort drafts determine the promotion-code
+// list request sent by loadCodes.
 const filters = reactive({
-  status: ''
+  status: '', // configured lifecycle status
 })
 
 const pagination = reactive({
-  page: 1,
-  page_size: getPersistedPageSize(),
-  total: 0
+  page: 1, // requested page number
+  page_size: getPersistedPageSize(), // requested row count
+  total: 0, // matching row count
 })
 const sortState = reactive({
-  sort_by: 'created_at',
-  sort_order: 'desc' as 'asc' | 'desc'
+  sort_by: 'created_at', // server sorting field
+  sort_order: 'desc' as 'asc' | 'desc', // server sorting direction
 })
 
-// Dialogs
+// Dialog visibility and selected edit/delete records separate creation, editing, usage
+// inspection, and deletion confirmation flows.
 const showCreateDialog = ref(false)
 const showEditDialog = ref(false)
 const showDeleteDialog = ref(false)
@@ -430,7 +442,8 @@ const showUsagesDialog = ref(false)
 const editingCode = ref<PromoCode | null>(null)
 const deletingCode = ref<PromoCode | null>(null)
 
-// Usages
+// Usage rows, loading state, selected code, and pagination belong to the independently
+// loaded usage-history dialog.
 const usages = ref<PromoCodeUsage[]>([])
 const usagesLoading = ref(false)
 const currentViewingCode = ref<PromoCode | null>(null)
@@ -438,34 +451,44 @@ const usagesPage = ref(1)
 const usagesPageSize = ref(20)
 const usagesTotal = ref(0)
 
-// Forms
+// Creation values use empty optional strings and zero maximum uses, while the edit
+// draft holds the selected code settings.
 const createForm = reactive({
-  code: '',
-  bonus_amount: 1,
-  max_uses: 0,
-  expires_at_str: '',
-  notes: ''
+  code: '', // custom code text
+  bonus_amount: 1, // registration balance bonus
+  // A zero maximum leaves this promotion unlimited; the status display compares
+  // used_count only when a positive maximum is configured.
+  max_uses: 0, // maximum redemption count
+  // Empty expiry remains absent during creation and becomes zero when updating,
+  // allowing an existing deadline to be cleared.
+  expires_at_str: '', // local expiry input
+  notes: '', // administrator note text
 })
 
 const editForm = reactive({
-  code: '',
-  bonus_amount: 0,
-  max_uses: 0,
-  status: 'active' as 'active' | 'disabled',
-  expires_at_str: '',
-  notes: ''
+  code: '', // custom code text
+  bonus_amount: 0, // registration balance bonus
+  // A zero maximum leaves this promotion unlimited; the status display compares
+  // used_count only when a positive maximum is configured.
+  max_uses: 0, // maximum redemption count
+  status: 'active' as 'active' | 'disabled', // configured lifecycle status
+  // Empty expiry remains absent during creation and becomes zero when updating,
+  // allowing an existing deadline to be cleared.
+  expires_at_str: '', // local expiry input
+  notes: '', // administrator note text
 })
 
-// Options
+// Translated status choices and table columns update with the locale and expose the
+// supported server sorting keys.
 const filterStatusOptions = computed(() => [
   { value: '', label: t('admin.promo.allStatus') },
   { value: 'active', label: t('admin.promo.statusActive') },
-  { value: 'disabled', label: t('admin.promo.statusDisabled') }
+  { value: 'disabled', label: t('admin.promo.statusDisabled') },
 ])
 
 const statusOptions = computed(() => [
   { value: 'active', label: t('admin.promo.statusActive') },
-  { value: 'disabled', label: t('admin.promo.statusDisabled') }
+  { value: 'disabled', label: t('admin.promo.statusDisabled') },
 ])
 
 const columns = computed<Column[]>(() => [
@@ -475,11 +498,17 @@ const columns = computed<Column[]>(() => [
   { key: 'status', label: t('admin.promo.columns.status'), sortable: true },
   { key: 'expires_at', label: t('admin.promo.columns.expiresAt'), sortable: true },
   { key: 'created_at', label: t('admin.promo.columns.createdAt'), sortable: true },
-  { key: 'actions', label: t('admin.promo.columns.actions') }
+  { key: 'actions', label: t('admin.promo.columns.actions') },
 ])
 
-// Helpers
+// getStatusClass selects the badge from expiry, exhausted usage, and configured status.
+// Expiry takes precedence when multiple conditions apply. A positive maximum can mark a
+// code exhausted, while zero leaves usage unlimited for this display decision. Codes
+// that remain eligible use their active or disabled status, keeping the badge
+// consistent with the textual status selected by getStatusLabel for the same row.
 const getStatusClass = (status: string, row: PromoCode) => {
+  // Expiry overrides configured status and usage exhaustion because an elapsed
+  // timestamp makes this code unavailable regardless of those other fields.
   if (row.expires_at && new Date(row.expires_at) < new Date()) {
     return 'badge-danger'
   }
@@ -489,7 +518,15 @@ const getStatusClass = (status: string, row: PromoCode) => {
   return status === 'active' ? 'badge-success' : 'badge-gray'
 }
 
+// getStatusLabel selects the displayed status from expiry, usage limits, and configured
+// status. An expired timestamp wins over exhaustion and disabled status. Exhaustion
+// applies only to positive maximum-use values, so zero remains unlimited in this
+// display. Otherwise the configured active flag chooses the active or disabled
+// translation, matching getStatusClass so the label and badge describe the same
+// effective promotion-code state in each rendered table row.
 const getStatusLabel = (status: string, row: PromoCode) => {
+  // Expiry overrides configured status and usage exhaustion because an elapsed
+  // timestamp makes this code unavailable regardless of those other fields.
   if (row.expires_at && new Date(row.expires_at) < new Date()) {
     return t('admin.promo.statusExpired')
   }
@@ -499,10 +536,19 @@ const getStatusLabel = (status: string, row: PromoCode) => {
   return status === 'active' ? t('admin.promo.statusActive') : t('admin.promo.statusDisabled')
 }
 
-// API calls
+// abortController identifies the active main-list request so replacements and unmount
+// can abort its pending work.
 let abortController: AbortController | null = null
 
+// loadCodes requests the selected promotion-code page after aborting the previous load.
+// Each completion checks its controller and signal before publishing rows or reporting
+// errors, so overlapping searches cannot replace newer data. The current successful
+// request updates rows and total together. Finally, only the current controller
+// releases the loading flag and clears itself, leaving a newer request's loading state
+// intact while it remains pending.
 const loadCodes = async () => {
+  // Cancel the previous main-list request before replacement so rapid filter changes
+  // cannot leave obsolete results owning the table.
   if (abortController) {
     abortController.abort()
   }
@@ -518,15 +564,19 @@ const loadCodes = async () => {
         status: filters.status || undefined,
         search: searchQuery.value || undefined,
         sort_by: sortState.sort_by,
-        sort_order: sortState.sort_order
+        sort_order: sortState.sort_order,
       },
-      { signal: currentController.signal }
+      { signal: currentController.signal },
     )
+    // Apply this page only while its controller remains active; aborted or replaced
+    // requests no longer describe the latest table selection.
     if (currentController.signal.aborted || abortController !== currentController) return
 
     codes.value = response.items
     pagination.total = response.total
   } catch (error: any) {
+    // Suppress cancellation and superseded failures because replacing a list request
+    // is an expected consequence of changing search or pagination.
     if (
       currentController.signal.aborted ||
       abortController !== currentController ||
@@ -538,6 +588,8 @@ const loadCodes = async () => {
     appStore.showError(t('admin.promo.failedToLoad'))
     console.error('Error loading promo codes:', error)
   } finally {
+    // Only the currently installed controller may clear loading, because another
+    // request can start before this finalizer runs.
     if (abortController === currentController) {
       loading.value = false
       abortController = null
@@ -545,7 +597,12 @@ const loadCodes = async () => {
   }
 }
 
+// searchTimeout owns the delayed text search and is cancelled by a replacement search
+// or component unmount.
 let searchTimeout: ReturnType<typeof setTimeout>
+// handleSearch replaces the pending timer with a delayed first-page search. The
+// component clears this timer on unmount, so an unexecuted search cannot start a new
+// list request afterward.
 const handleSearch = () => {
   clearTimeout(searchTimeout)
   searchTimeout = setTimeout(() => {
@@ -554,17 +611,24 @@ const handleSearch = () => {
   }, 300)
 }
 
+// handlePageChange selects a promotion-code page and starts its server reload.
 const handlePageChange = (page: number) => {
   pagination.page = page
   loadCodes()
 }
 
+// handlePageSizeChange stores the selected page size and reloads from page one.
+// Resetting the current page before requesting rows presents the beginning of the
+// newly sized result set.
 const handlePageSizeChange = (pageSize: number) => {
   pagination.page_size = pageSize
   pagination.page = 1
   loadCodes()
 }
 
+// handleSort records the selected server field and direction, then reloads from the
+// first page. The page reset presents the beginning of the reordered records under
+// the current filters.
 const handleSort = (key: string, order: 'asc' | 'desc') => {
   sortState.sort_by = key
   sortState.sort_order = order
@@ -572,17 +636,24 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
   loadCodes()
 }
 
+// copyToClipboard copies a promotion code and briefly marks that text as copied. The
+// feedback timer resets copiedCode after the shared duration; unsuccessful clipboard
+// copies leave the current feedback unchanged.
 const copyToClipboard = async (text: string) => {
   const success = await clipboardCopy(text, t('admin.promo.copied'))
   if (success) {
     copiedCode.value = text
+    // Reset copied-code feedback after the shared display interval so a successful
+    // copy does not leave a permanent copied marker.
     setTimeout(() => {
       copiedCode.value = null
     }, COPY_FEEDBACK_MS)
   }
 }
 
-// Create
+// handleCreate submits the draft and closes the dialog after persistence succeeds.
+// Empty optional fields are omitted, and expiry is converted to epoch seconds; failure
+// retains the draft for correction or retry.
 const handleCreate = async () => {
   creating.value = true
   try {
@@ -590,8 +661,12 @@ const handleCreate = async () => {
       code: createForm.code || undefined,
       bonus_amount: createForm.bonus_amount,
       max_uses: createForm.max_uses,
-      expires_at: createForm.expires_at_str ? Math.floor(new Date(createForm.expires_at_str).getTime() / 1000) : undefined,
-      notes: createForm.notes || undefined
+      // Creation omits blank expiry, while populated local inputs become epoch
+      // seconds for the promotion endpoint to store the deadline.
+      expires_at: createForm.expires_at_str
+        ? Math.floor(new Date(createForm.expires_at_str).getTime() / 1000)
+        : undefined,
+      notes: createForm.notes || undefined,
     })
     appStore.showSuccess(t('admin.promo.codeCreated'))
     showCreateDialog.value = false
@@ -604,6 +679,9 @@ const handleCreate = async () => {
   }
 }
 
+// resetCreateForm restores the default registration bonus and clears the optional
+// code, expiry, and notes. Maximum uses returns to zero, which the promotion status
+// display treats as an unlimited code.
 const resetCreateForm = () => {
   createForm.code = ''
   createForm.bonus_amount = 1
@@ -612,13 +690,17 @@ const resetCreateForm = () => {
   createForm.notes = ''
 }
 
-// Edit
+// handleEdit copies a promotion code into the editable form and opens it. A missing
+// expiry becomes an empty local input, while a stored timestamp is converted through
+// epoch seconds for display.
 const handleEdit = (code: PromoCode) => {
   editingCode.value = code
   editForm.code = code.code
   editForm.bonus_amount = code.bonus_amount
   editForm.max_uses = code.max_uses
   editForm.status = code.status
+  // Convert the server timestamp through epoch seconds before formatting the local
+  // editor input; absent expiry keeps the input empty.
   editForm.expires_at_str = code.expires_at
     ? formatDateTimeLocalInput(Math.floor(new Date(code.expires_at).getTime() / 1000))
     : ''
@@ -626,11 +708,15 @@ const handleEdit = (code: PromoCode) => {
   showEditDialog.value = true
 }
 
+// closeEditDialog hides the promotion editor and releases its selected record.
 const closeEditDialog = () => {
   showEditDialog.value = false
   editingCode.value = null
 }
 
+// handleUpdate persists the selected promotion code and reloads after success. An empty
+// expiry sends zero to clear it, while failed requests keep the editor and its entered
+// values available.
 const handleUpdate = async () => {
   if (!editingCode.value) return
 
@@ -641,8 +727,12 @@ const handleUpdate = async () => {
       bonus_amount: editForm.bonus_amount,
       max_uses: editForm.max_uses,
       status: editForm.status,
-      expires_at: editForm.expires_at_str ? Math.floor(new Date(editForm.expires_at_str).getTime() / 1000) : 0,
-      notes: editForm.notes
+      // Updates send zero for blank expiry so administrators can clear a stored
+      // deadline instead of leaving the previous expiry untouched.
+      expires_at: editForm.expires_at_str
+        ? Math.floor(new Date(editForm.expires_at_str).getTime() / 1000)
+        : 0,
+      notes: editForm.notes,
     })
     appStore.showSuccess(t('admin.promo.codeUpdated'))
     closeEditDialog()
@@ -654,7 +744,9 @@ const handleUpdate = async () => {
   }
 }
 
-// Copy Register Link
+// copyRegisterLink copies a registration URL containing the encoded promotion code. If
+// navigator.clipboard rejects, a temporary textarea supplies the legacy copy operation
+// and is removed after that operation completes.
 const copyRegisterLink = async (code: PromoCode) => {
   const baseUrl = window.location.origin
   const registerLink = `${baseUrl}/register?promo=${encodeURIComponent(code.code)}`
@@ -663,7 +755,8 @@ const copyRegisterLink = async (code: PromoCode) => {
     await navigator.clipboard.writeText(registerLink)
     appStore.showSuccess(t('admin.promo.registerLinkCopied'))
   } catch {
-    // Fallback for older browsers
+    // If the clipboard API fails, select a temporary textarea for the legacy copy
+    // command and remove it after dispatching that command.
     const textArea = document.createElement('textarea')
     textArea.value = registerLink
     document.body.appendChild(textArea)
@@ -674,12 +767,15 @@ const copyRegisterLink = async (code: PromoCode) => {
   }
 }
 
-// Delete
+// handleDelete selects a promotion code and opens its confirmation dialog.
 const handleDelete = (code: PromoCode) => {
   deletingCode.value = code
   showDeleteDialog.value = true
 }
 
+// confirmDelete removes the selected promotion code and refreshes after success.
+// Missing selection returns immediately, and request failure retains the dialog state
+// while displaying the server detail or translated error.
 const confirmDelete = async () => {
   if (!deletingCode.value) return
 
@@ -694,7 +790,9 @@ const confirmDelete = async () => {
   }
 }
 
-// View Usages
+// handleViewUsages selects a promotion code and loads its first usage page. Opening
+// another code resets usage pagination so its history begins at the start rather than
+// the previous code's offset.
 const handleViewUsages = async (code: PromoCode) => {
   currentViewingCode.value = code
   showUsagesDialog.value = true
@@ -702,6 +800,9 @@ const handleViewUsages = async (code: PromoCode) => {
   await loadUsages()
 }
 
+// loadUsages clears displayed usage rows before requesting the selected code's page.
+// With no selected code it returns; failures report an error and leave the cleared list
+// visible after loading finishes.
 const loadUsages = async () => {
   if (!currentViewingCode.value) return
   usagesLoading.value = true
@@ -711,7 +812,7 @@ const loadUsages = async () => {
     const response = await adminAPI.promo.getUsages(
       currentViewingCode.value.id,
       usagesPage.value,
-      usagesPageSize.value
+      usagesPageSize.value,
     )
     usages.value = response.items
     usagesTotal.value = response.total
@@ -722,6 +823,7 @@ const loadUsages = async () => {
   }
 }
 
+// handleUsagesPageChange selects a usage-history page and loads its records.
 const handleUsagesPageChange = (page: number) => {
   usagesPage.value = page
   loadUsages()
@@ -731,6 +833,8 @@ onMounted(() => {
   loadCodes()
 })
 
+// Cancel queued searches and abort the owned list request during teardown so it
+// cannot publish rows after the page closes.
 onUnmounted(() => {
   clearTimeout(searchTimeout)
   abortController?.abort()

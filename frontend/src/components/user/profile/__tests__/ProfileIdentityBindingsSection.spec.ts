@@ -3,18 +3,32 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ProfileIdentityBindingsSection from '@/components/user/profile/ProfileIdentityBindingsSection.vue'
 import { useAppStore, useAuthStore } from '@/stores'
-import type { User } from '@/types'
+import type { User } from '@/api/identity.types'
 
+// ProfileIdentityBindingsSection.spec.ts exercises account identity binding through the
+// production profile section with Pinia stores and controlled server mutations. The suite
+// covers direct and nested binding representations, WeChat capability selection, email
+// binding and replacement, and provider unbinding while preserving OAuth return-route
+// behavior.
+
+// routeState and locationState supply the current return path and capture authorization
+// navigation without leaving the test document.
 const routeState = vi.hoisted(() => ({
   fullPath: '/profile',
 }))
 
 const locationState = vi.hoisted(() => ({
-  current: { href: 'http://localhost/profile' } as { href: string },
+  current: { href: 'http://localhost/profile' } as {
+    href: string /* Captured OAuth navigation URL. */
+  },
 }))
 
+// pinia holds a fresh store container for each case so returned binding profiles and cached
+// public settings remain isolated between scenarios.
 let pinia: ReturnType<typeof createPinia>
 
+// Mutation mocks control email verification, binding, and provider removal while the actual
+// OAuth-start helper constructs redirect URLs against the mocked location.
 const userApiMocks = vi.hoisted(() => ({
   sendEmailBindingCode: vi.fn(),
   bindEmailIdentity: vi.fn(),
@@ -49,7 +63,8 @@ vi.mock('vue-i18n', async (importOriginal) => {
         if (key === 'profile.authBindings.providers.linuxdo') return 'LinuxDo'
         if (key === 'profile.authBindings.providers.wechat') return 'WeChat'
         if (key === 'profile.authBindings.providers.oidc') return params?.providerName || 'OIDC'
-        if (key === 'profile.authBindings.bindAction') return `Bind ${params?.providerName || ''}`.trim()
+        if (key === 'profile.authBindings.bindAction')
+          return `Bind ${params?.providerName || ''}`.trim()
         if (key === 'profile.authBindings.emailPlaceholder') return 'Email address'
         if (key === 'profile.authBindings.codePlaceholder') return 'Verification code'
         if (key === 'profile.authBindings.passwordPlaceholder') return 'Set password'
@@ -61,7 +76,8 @@ vi.mock('vue-i18n', async (importOriginal) => {
         if (key === 'profile.authBindings.hideEmailFormAction') return 'Hide email form'
         if (key === 'profile.authBindings.confirmEmailBindAction') return 'Bind email'
         if (key === 'profile.authBindings.confirmEmailReplaceAction') return 'Replace primary email'
-        if (key === 'profile.authBindings.codeSentTo') return `Code sent to ${params?.email || ''}`.trim()
+        if (key === 'profile.authBindings.codeSentTo')
+          return `Code sent to ${params?.email || ''}`.trim()
         if (key === 'profile.authBindings.bindSuccess') return 'Bind success'
         if (key === 'profile.authBindings.replaceSuccess') return 'Primary email updated'
         if (key === 'profile.authBindings.notes.canUnbind')
@@ -74,6 +90,9 @@ vi.mock('vue-i18n', async (importOriginal) => {
   }
 })
 
+// createUser supplies a complete account record with optional binding and source overrides.
+// Each case selects its direct or nested representation while retaining profile fields
+// required by the real component.
 function createUser(overrides: Partial<User> = {}): User {
   return {
     id: 7,
@@ -119,6 +138,9 @@ describe('ProfileIdentityBindingsSection', () => {
     vi.unstubAllGlobals()
   })
 
+  // An account mixes bound and unbound provider records with enabled external services. The
+  // test protects each displayed state and the provider-specific action label offered for
+  // binding.
   it('renders provider binding states and provider-specific bind actions', () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -145,12 +167,12 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.get('[data-testid="profile-binding-email-status"]').text()).toBe('Bound')
     expect(wrapper.get('[data-testid="profile-binding-linuxdo-status"]').text()).toBe('Bound')
     expect(wrapper.get('[data-testid="profile-binding-oidc-status"]').text()).toBe('Not bound')
-    expect(wrapper.get('[data-testid="profile-binding-oidc-action"]').text()).toBe(
-      'Bind ExampleID'
-    )
+    expect(wrapper.get('[data-testid="profile-binding-oidc-action"]').text()).toBe('Bind ExampleID')
     expect(wrapper.get('[data-testid="profile-binding-wechat-action"]').text()).toBe('Bind WeChat')
   })
 
+  // WeChat Open Platform binding is available from the profile page. The test protects the
+  // authorization start path, chosen mode, binding intent, and encoded return route.
   it('starts the WeChat bind flow for the current profile page', async () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -174,6 +196,8 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(locationState.current.href).toContain('redirect=%2Fprofile')
   })
 
+  // Only the WeChat public-account flow is enabled in a non-WeChat browser. The test
+  // protects omission of a binding action that has no available web authorization mode.
   it('hides the WeChat bind action outside the WeChat browser when only mp mode is configured', () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -192,6 +216,9 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.find('[data-testid="profile-binding-wechat-action"]').exists()).toBe(false)
   })
 
+  // Only the legacy combined WeChat switch is present and enabled. The test protects
+  // continued visibility of the binding action through capability normalization for older
+  // settings.
   it('keeps the WeChat bind action visible when only the legacy aggregate setting is present', () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -208,6 +235,9 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.find('[data-testid="profile-binding-wechat-action"]').exists()).toBe(true)
   })
 
+  // The user launches WeChat binding with only legacy combined availability. The test
+  // protects Open Platform mode and the same current-user binding intent and profile return
+  // route.
   it('starts the WeChat bind flow when only the legacy aggregate setting is present', async () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -229,6 +259,9 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(locationState.current.href).toContain('redirect=%2Fprofile')
   })
 
+  // Cached public settings provide explicit WeChat capability flags alongside legacy props.
+  // The test protects use of those loaded capabilities when deciding whether the binding
+  // action is available.
   it('uses explicit cached WeChat capabilities and ignores legacy prop fallbacks', () => {
     const appStore = useAppStore()
     appStore.cachedPublicSettings = {
@@ -283,6 +316,9 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.find('[data-testid="profile-binding-wechat-action"]').exists()).toBe(true)
   })
 
+  // An OAuth-only account verifies and binds a real email address through the form. The test
+  // protects request fields, success feedback, updated bound status, and publication to the
+  // auth store.
   it('sends email verification code and binds email from the profile card', async () => {
     userApiMocks.sendEmailBindingCode.mockResolvedValue(undefined)
     userApiMocks.bindEmailIdentity.mockResolvedValue(
@@ -292,7 +328,7 @@ describe('ProfileIdentityBindingsSection', () => {
         auth_bindings: {
           email: { bound: true },
         },
-      })
+      }),
     )
 
     const appStore = useAppStore()
@@ -325,7 +361,9 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(showSuccessSpy).toHaveBeenCalledWith('Code sent to bound@example.com')
 
     await wrapper.get('[data-testid="profile-binding-email-code-input"]').setValue('123456')
-    await wrapper.get('[data-testid="profile-binding-email-password-input"]').setValue('new-password')
+    await wrapper
+      .get('[data-testid="profile-binding-email-password-input"]')
+      .setValue('new-password')
     await wrapper.get('[data-testid="profile-binding-email-submit"]').trigger('click')
 
     expect(userApiMocks.bindEmailIdentity).toHaveBeenCalledWith({
@@ -337,6 +375,9 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(authStore.user?.email).toBe('bound@example.com')
   })
 
+  // The profile contains an email string but its binding state remains false. The test
+  // protects continued access to the binding form rather than treating the string as
+  // verified identity.
   it('keeps the email binding form visible when the user still lacks an email identity', () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -360,6 +401,8 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.get('[data-testid="profile-binding-email-input"]').exists()).toBe(true)
   })
 
+  // An account has a synthetic OAuth email and explicit unbound status. The test protects
+  // its omission from the contact summary while displaying the unbound state.
   it('does not show a synthetic oauth-only email as the bound email summary', () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -383,6 +426,8 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.get('[data-testid="profile-binding-email-status"]').text()).toBe('Not bound')
   })
 
+  // A synthetic email is unbound only in the compatible nested auth record. The test
+  // protects suppression of the placeholder when the direct email flag is absent.
   it('does not show a synthetic oauth-only email when only fallback auth bindings mark email as unbound', () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -405,6 +450,9 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.get('[data-testid="profile-binding-email-status"]').text()).toBe('Not bound')
   })
 
+  // A bound email record also contains external-style identity details and a management
+  // note. The test protects one email display and excludes redundant subject and note
+  // content.
   it('shows the bound email only once without the email management note', () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -435,6 +483,9 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.text()).not.toContain('Primary email is managed through verified email binding')
   })
 
+  // Email replacement is enabled for an already-bound account. The test protects current-
+  // password wording, replacement request fields, updated auth email, and the replacement-
+  // specific success notification.
   it('keeps the email form available for replacing a bound primary email', async () => {
     userApiMocks.sendEmailBindingCode.mockResolvedValue(undefined)
     userApiMocks.bindEmailIdentity.mockResolvedValue(
@@ -444,7 +495,7 @@ describe('ProfileIdentityBindingsSection', () => {
         auth_bindings: {
           email: { bound: true },
         },
-      })
+      }),
     )
 
     const appStore = useAppStore()
@@ -474,11 +525,13 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.get('[data-testid="profile-binding-email-status"]').text()).toBe('Bound')
     expect(wrapper.get('[data-testid="profile-binding-email-input"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="profile-binding-email-submit"]').text()).toBe(
-      'Replace primary email'
+      'Replace primary email',
     )
     expect(
-      (wrapper.get('[data-testid="profile-binding-email-password-input"]').element as HTMLInputElement)
-        .placeholder
+      (
+        wrapper.get('[data-testid="profile-binding-email-password-input"]')
+          .element as HTMLInputElement
+      ).placeholder,
     ).toBe('Current password')
 
     await wrapper.get('[data-testid="profile-binding-email-input"]').setValue('new@example.com')
@@ -486,9 +539,9 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(userApiMocks.sendEmailBindingCode).toHaveBeenCalledWith('new@example.com')
 
     await wrapper.get('[data-testid="profile-binding-email-code-input"]').setValue('123456')
-    await wrapper.get('[data-testid="profile-binding-email-password-input"]').setValue(
-      'current-password'
-    )
+    await wrapper
+      .get('[data-testid="profile-binding-email-password-input"]')
+      .setValue('current-password')
     await wrapper.get('[data-testid="profile-binding-email-submit"]').trigger('click')
 
     expect(userApiMocks.bindEmailIdentity).toHaveBeenCalledWith({
@@ -500,6 +553,8 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(showSuccessSpy).toHaveBeenCalledWith('Primary email updated')
   })
 
+  // Email replacement is disabled for a bound account in compact presentation. The test
+  // protects omission of both the replacement editor and its expansion action.
   it('hides bound email replacement when the setting is disabled', () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -524,6 +579,8 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.find('[data-testid="profile-binding-email-toggle"]').exists()).toBe(false)
   })
 
+  // An unbound account opens the compact profile binding section. The test protects the
+  // initially collapsed form and its expansion when the user chooses email management.
   it('collapses the email binding form in compact mode until the user expands it', async () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -552,6 +609,9 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.get('[data-testid="profile-binding-email-input"]').exists()).toBe(true)
   })
 
+  // A connected external identity exposes display details and server permission to unbind.
+  // The test protects those details and publication of the returned unbound state after
+  // removal.
   it('shows third-party binding details and unbinds a connected provider', async () => {
     userApiMocks.unbindAuthIdentity.mockResolvedValue(
       createUser({
@@ -561,7 +621,7 @@ describe('ProfileIdentityBindingsSection', () => {
           email: { bound: true },
           linuxdo: { bound: false, can_unbind: false },
         },
-      })
+      }),
     )
 
     const wrapper = mount(ProfileIdentityBindingsSection, {
@@ -600,6 +660,8 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.get('[data-testid="profile-binding-linuxdo-status"]').text()).toBe('Not bound')
   })
 
+  // A provider supplies a translation key and compatible legacy English unbind guidance. The
+  // test protects use of the translated note instead of displaying the raw legacy wording.
   it('localizes third-party unbind guidance from note_key', () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {
@@ -630,6 +692,8 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.text()).not.toContain('You can unbind this sign-in method.')
   })
 
+  // Provider details allow binding but public provider availability is disabled. The test
+  // protects omission of actions that cannot start an enabled authorization flow.
   it('hides bind actions when provider details say bindable but the provider is disabled', () => {
     const wrapper = mount(ProfileIdentityBindingsSection, {
       global: {

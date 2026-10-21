@@ -1,6 +1,8 @@
 <template>
   <div class="card">
-    <div class="flex items-end justify-between border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+    <div
+      class="flex items-end justify-between border-b border-gray-100 px-6 py-4 dark:border-dark-700"
+    >
       <div>
         <h2 class="text-lg font-medium text-gray-900 dark:text-white">
           {{ t('profile.passkey.title') }}
@@ -31,7 +33,6 @@
       <div v-else>
         <Collapse :open="showAddForm" unmount-on-hide>
           <form
-
             class="mb-5 flex flex-col gap-3 rounded-control border border-gray-200 p-4 dark:border-dark-700 sm:flex-row sm:items-end"
             @submit.prevent="addPasskey"
           >
@@ -88,7 +89,8 @@
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 {{ t('profile.passkey.createdAt', { date: formatDate(credential.created_at) }) }}
                 <template v-if="credential.last_used_at">
-                  · {{ t('profile.passkey.lastUsed', { date: formatDate(credential.last_used_at) }) }}
+                  ·
+                  {{ t('profile.passkey.lastUsed', { date: formatDate(credential.last_used_at) }) }}
                 </template>
               </p>
             </div>
@@ -131,8 +133,17 @@ import { passkeyAPI, type PasskeyCredentialSummary } from '@/api'
 import { Icon } from '@/components/icons'
 import { useAppStore } from '@/stores/app'
 
-const props = defineProps<{ enabled: boolean }>()
+// ProfilePasskeyCard.vue manages the current account's stored passkeys and their display
+// names. Server availability and browser WebAuthn support control loading, while
+// registration delegates the browser ceremony to passkeyAPI and refreshes the credential
+// list after success.
 
+// enabled reflects server passkey availability; browser support is checked separately before
+// the component requests stored credentials or offers registration.
+const props = defineProps<{ enabled: boolean /* Server passkey feature enabled. */ }>()
+
+// Translations and app notifications describe passkey operations; local flags coordinate
+// credential loading, action feedback, and the optional registration-name form.
 const { t } = useI18n()
 const appStore = useAppStore()
 const supported = passkeyAPI.isSupported()
@@ -142,7 +153,9 @@ const showAddForm = ref(false)
 const newName = ref('')
 const credentials = ref<PasskeyCredentialSummary[]>([])
 
-// 后端启用 Passkey 且浏览器支持 WebAuthn 时读取凭据。
+// loadCredentials requests passkeys when the server feature is enabled and WebAuthn is
+// supported. Disabled settings clear the list, unsupported browsers skip loading, and other
+// failures retain the existing list while reporting an error.
 async function loadCredentials(): Promise<void> {
   if (!props.enabled) {
     credentials.value = []
@@ -153,9 +166,9 @@ async function loadCredentials(): Promise<void> {
   try {
     credentials.value = await passkeyAPI.list()
   } catch (error) {
-    // API 客户端把字符串错误码放在 reason，code 是数字业务状态码。
-    // 设置变更竞态下后端仍可能返回 PASSKEY_DISABLED，此时保持静默。
-    const reason = (error as { reason?: string }).reason
+    // API reason carries the string error category. Settings may change after the
+    // enabled prop was read, so PASSKEY_DISABLED suppresses an obsolete load error.
+    const reason = (error as { reason?: string /* String API failure category. */ }).reason
     if (reason !== 'PASSKEY_DISABLED') {
       appStore.showError(t('profile.passkey.loadFailed'))
     }
@@ -164,6 +177,9 @@ async function loadCredentials(): Promise<void> {
   }
 }
 
+// addPasskey registers a credential using the trimmed optional name and then reloads the
+// list. Browser NotAllowedError dismissals remain silent, while other failures show an error
+// and the busy flag resets on completion.
 async function addPasskey(): Promise<void> {
   busy.value = true
   try {
@@ -172,6 +188,9 @@ async function addPasskey(): Promise<void> {
     cancelAdd()
     await loadCredentials()
   } catch (error) {
+    // Browser credential prompts reject with NotAllowedError when registration is not
+    // allowed to complete; keep that dismissal quiet while reporting other registration
+    // failures.
     if (!(error instanceof DOMException && error.name === 'NotAllowedError')) {
       appStore.showError(t('profile.passkey.addFailed'))
     }
@@ -180,11 +199,15 @@ async function addPasskey(): Promise<void> {
   }
 }
 
+// cancelAdd closes the registration-name form and clears its draft label.
 function cancelAdd(): void {
   showAddForm.value = false
   newName.value = ''
 }
 
+// renamePasskey prompts for a different nonempty label and saves it through the API. It
+// updates the supplied credential object after success, leaving the existing label available
+// if persistence fails.
 async function renamePasskey(credential: PasskeyCredentialSummary): Promise<void> {
   const name = window.prompt(t('profile.passkey.renamePrompt'), credential.name)?.trim()
   if (!name || name === credential.name) return
@@ -200,6 +223,9 @@ async function renamePasskey(credential: PasskeyCredentialSummary): Promise<void
   }
 }
 
+// deletePasskey asks for confirmation before removing a credential by ID. Successful
+// deletion removes its local list entry; request failure retains the entry and reports an
+// error through the app store.
 async function deletePasskey(credential: PasskeyCredentialSummary): Promise<void> {
   if (!window.confirm(t('profile.passkey.deleteConfirm', { name: credential.name }))) return
   busy.value = true
@@ -214,11 +240,12 @@ async function deletePasskey(credential: PasskeyCredentialSummary): Promise<void
   }
 }
 
+// formatDate displays a credential timestamp with the browser's calendar date locale.
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
     year: 'numeric',
     month: 'short',
-    day: 'numeric'
+    day: 'numeric',
   }).format(new Date(value))
 }
 
@@ -227,6 +254,6 @@ watch(
   () => {
     void loadCredentials()
   },
-  { immediate: true }
+  { immediate: true },
 )
 </script>

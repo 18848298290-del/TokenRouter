@@ -1,3 +1,8 @@
+// batchImage.ts supplies English labels for batch image jobs and their result
+// downloads. Task states distinguish generation, result processing, settlement,
+// partial success, and deleted outputs so the workspace can present the current
+// job and local download state.
+
 export default {
   batchImage: {
     columns: {
@@ -84,7 +89,8 @@ export default {
       noImage: 'No image',
       loadingItems: 'Loading items...',
       noItems: 'No items yet',
-      noItemsHint: 'Queued or generating jobs show submitted prompts first; image statuses update once results are processed.',
+      noItemsHint:
+        'Queued or generating jobs show submitted prompts first; image statuses update once results are processed.',
       mainTask: 'Main job: {name}',
       childTask: 'Subtask: {name}',
       holdCost: 'Hold {amount}',
@@ -96,12 +102,14 @@ export default {
       noUsableImage: 'No usable image was generated.',
       cancelled: 'Job cancelled.',
       waiting: 'Waiting for results.',
-      emptyImageOutput: 'The upstream returned a result, but this item has no image content. This usually means a single Gemini/Vertex generation failed or was blocked by safety policies.',
+      emptyImageOutput:
+        'The upstream returned a result, but this item has no image content. This usually means a single Gemini/Vertex generation failed or was blocked by safety policies.',
       providerItemFailed: 'The upstream result for this item has no usable image.',
     },
     imagePreview: {
       title: 'Image preview',
-      notice: 'This is a compressed thumbnail cached locally in your browser, so quality is reduced. Download the ZIP to view the original image.',
+      notice:
+        'This is a compressed thumbnail cached locally in your browser, so quality is reduced. Download the ZIP to view the original image.',
     },
     create: {
       title: 'Create batch job',
@@ -109,7 +117,8 @@ export default {
       taskNamePlaceholder: 'Defaults to the current time if left empty',
       loadingKeys: 'Loading API keys...',
       selectKeyPlaceholder: 'Select a Gemini API key',
-      noKeysHint: 'No Gemini API key is available for batch image generation. Create one and bind it to a Gemini group with batch image generation enabled first.',
+      noKeysHint:
+        'No Gemini API key is available for batch image generation. Create one and bind it to a Gemini group with batch image generation enabled first.',
       model: 'Model',
       imageSize: 'Image size',
       imageSizeHint: 'Batch jobs are currently submitted at a fixed 1K image size.',
@@ -123,26 +132,35 @@ export default {
       outputCountOption: '{n} image | {n} images',
       referenceImage: 'Reference images',
       removeReferenceImage: 'Remove reference image',
-      limitsHint: 'Up to {maxPerItem} images per prompt and {maxPerJob} per job. The current model allows up to {refLimit} reference images per prompt; reference images consume input tokens once per generated image.',
+      limitsHint:
+        'Up to {maxPerItem} images per prompt and {maxPerJob} per job. The current model allows up to {refLimit} reference images per prompt; reference images consume input tokens once per generated image.',
       referenceCount: '{n} reference image | {n} reference images',
       noPrompts: 'No prompts added yet.',
-      cancelNotice: 'Cancelling requests an upstream cancellation. Images already indexed as successful will still be billed, and the remaining hold will be released.',
-      submittingNotice: 'Creating the upstream batch job. This usually takes a few seconds; please do not submit again.',
+      cancelNotice:
+        'Cancelling requests an upstream cancellation. Images already indexed as successful will still be billed, and the remaining hold will be released.',
+      submittingNotice:
+        'Creating the upstream batch job. This usually takes a few seconds; please do not submit again.',
       modelNoReferenceImages: 'The current model does not support reference images.',
       refLimitReached: 'The current model allows up to {limit} reference images per prompt.',
-      refLimitExceededIgnored: 'The current model allows up to {limit} reference images per prompt. Extra files were ignored.',
+      refLimitExceededIgnored:
+        'The current model allows up to {limit} reference images per prompt. Extra files were ignored.',
       refFormatUnsupported: 'Reference images must be PNG, JPEG, or WebP.',
       refFileTooLarge: '{name} exceeds 10MB and was ignored.',
     },
     guide: {
       title: 'Batch Image Generation Guide',
       uiTitle: 'How to use this page',
-      step1: '1. Select a Gemini API key with batch image generation enabled. The model list shows the models available to that key’s group.',
-      step2: '2. The task name can be left empty; the current time is used automatically on submit. Prompts are added to the list one by one, and each prompt can carry reference images and a repeat count.',
-      step3: '3. After submitting, the job is queued first and the item list shows the submitted prompts. Image previews are not loaded by default; click the preview button on an item to load a single image.',
-      step4: '4. Once completed you can download the ZIP. If some items failed, the More menu lets you retry only the failed items. Billing is still based on the number of successfully generated images; reference images are not billed separately.',
+      step1:
+        '1. Select a Gemini API key with batch image generation enabled. The model list shows the models available to that key’s group.',
+      step2:
+        '2. The task name can be left empty; the current time is used automatically on submit. Prompts are added to the list one by one, and each prompt can carry reference images and a repeat count.',
+      step3:
+        '3. After submitting, the job is queued first and the item list shows the submitted prompts. Image previews are not loaded by default; click the preview button on an item to load a single image.',
+      step4:
+        '4. Once completed you can download the ZIP. If some items failed, the More menu lets you retry only the failed items. Billing is still based on the number of successfully generated images; reference images are not billed separately.',
       skillTitle: 'Skill instructions for Codex',
-      skillDesc: 'Tells Codex how to organize prompts, submit jobs, and download results on behalf of the user.',
+      skillDesc:
+        'Tells Codex how to organize prompts, submit jobs, and download results on behalf of the user.',
     },
     messages: {
       loadKeysFailed: 'Failed to load API keys.',
@@ -155,17 +173,20 @@ export default {
       submitted: 'Batch job submitted.',
       submitFailed: 'Failed to submit the batch job.',
       refreshFailed: 'Failed to refresh the job.',
-      cancelConfirm: 'Cancellation will be sent upstream. Images already indexed as successful will still be billed, and the remaining hold will be released. Continue?',
+      cancelConfirm:
+        'Cancellation will be sent upstream. Images already indexed as successful will still be billed, and the remaining hold will be released. Continue?',
       cancelled: 'Cancellation requested.',
       cancelFailed: 'Failed to cancel the job.',
       batchDownloadStarted: 'Downloads for the selected jobs have started.',
       downloadFailed: 'Failed to download the result.',
       retrySubmitted: 'Retry job submitted for failed items.',
       retryFailed: 'Failed to retry failed items.',
-      retryMissingPrompts: 'This job does not have saved prompts for failed items, so it cannot be retried automatically. Recreate it with the original prompt.',
+      retryMissingPrompts:
+        'This job does not have saved prompts for failed items, so it cannot be retried automatically. Recreate it with the original prompt.',
       retryTaskNameSuffix: 'Retry failed items',
       deleteConfirm: 'This hides the job from your list while keeping billing records. Delete it?',
-      deleteSelectedConfirm: 'This hides the selected jobs from your list while keeping billing records. Delete them?',
+      deleteSelectedConfirm:
+        'This hides the selected jobs from your list while keeping billing records. Delete them?',
       deleted: 'Job record deleted.',
       deleteFailed: 'Failed to delete the job record.',
       loadItemsFailed: 'Failed to load item details.',
@@ -174,31 +195,46 @@ export default {
       loadingModels: 'Loading available models...',
       noModels: 'No available models',
       noModelsHint: 'This key’s group has no models configured for batch image generation.',
-      noCompatibleProvider: 'No usable upstream batch image provider is available for this key’s group. Contact an administrator to check the group’s schedulable Gemini API key or Vertex service account and model support.',
-      unsupportedProvider: 'The batch image provider for this job is not available. Contact an administrator to check the batch image provider configuration.',
-      providerSubmitFailed: 'The upstream batch image job failed to submit. Contact an administrator to check the upstream provider, model permission, or provider status.',
-      vertexGcsBucketMissing: 'Vertex batch image generation is missing the managed GCS bucket configuration. Contact an administrator to configure BATCH_IMAGE_VERTEX_MANAGED_GCS_BUCKET before submitting again.',
-      queueFailed: 'The task queue is temporarily unavailable, so the batch job was not queued. Contact an administrator to check the queue service.',
-      billingHoldFailed: 'The cost hold failed, so the batch job was not submitted. Contact an administrator to check billing or balance hold service.',
-      groupDisabled: 'Batch image generation is not enabled for this key’s group. Choose another enabled key or contact an administrator.',
-      pricingMissing: 'The selected model does not have batch image pricing configured. Contact an administrator to add pricing first.',
+      noCompatibleProvider:
+        'No usable upstream batch image provider is available for this key’s group. Contact an administrator to check the group’s schedulable Gemini API key or Vertex service account and model support.',
+      unsupportedProvider:
+        'The batch image provider for this job is not available. Contact an administrator to check the batch image provider configuration.',
+      providerSubmitFailed:
+        'The upstream batch image job failed to submit. Contact an administrator to check the upstream provider, model permission, or provider status.',
+      vertexGcsBucketMissing:
+        'Vertex batch image generation is missing the managed GCS bucket configuration. Contact an administrator to configure BATCH_IMAGE_VERTEX_MANAGED_GCS_BUCKET before submitting again.',
+      queueFailed:
+        'The task queue is temporarily unavailable, so the batch job was not queued. Contact an administrator to check the queue service.',
+      billingHoldFailed:
+        'The cost hold failed, so the batch job was not submitted. Contact an administrator to check billing or balance hold service.',
+      groupDisabled:
+        'Batch image generation is not enabled for this key’s group. Choose another enabled key or contact an administrator.',
+      pricingMissing:
+        'The selected model does not have batch image pricing configured. Contact an administrator to add pricing first.',
       insufficientBalance: 'Insufficient balance to hold the estimated batch image cost.',
       invalidModel: 'Select a batch image model available for the current key.',
-      invalidItems: 'The prompt list is invalid. Check that it is not empty, within the item limit, and still using 1K image size.',
+      invalidItems:
+        'The prompt list is invalid. Check that it is not empty, within the item limit, and still using 1K image size.',
       duplicateCustomId: 'Custom IDs in the prompt list must be unique.',
       promptTooLong: 'One prompt is too long. Shorten it and try again.',
       invalidReferenceImage: 'A reference image is invalid. Use PNG, JPEG, or WebP under 10 MB.',
-      tooManyReferenceImages: 'Too many reference images. Flash Image allows up to 3 per item, Pro Image allows up to 14, and each job allows up to 1000 total.',
-      referenceImagesTooLarge: 'Reference images are too large. Inline reference images are limited to 128 MB per job; use gs:// file_uri or split the job for large batches.',
-      tooManyOutputImages: 'Too many expected output images. Each prompt can request up to 4 images, and each job can generate up to 200 images.',
-      idempotencyConflict: 'This submission conflicts with a previous request ID. Refresh the page and submit again.',
+      tooManyReferenceImages:
+        'Too many reference images. Flash Image allows up to 3 per item, Pro Image allows up to 14, and each job allows up to 1000 total.',
+      referenceImagesTooLarge:
+        'Reference images are too large. Inline reference images are limited to 128 MB per job; use gs:// file_uri or split the job for large batches.',
+      tooManyOutputImages:
+        'Too many expected output images. Each prompt can request up to 4 images, and each job can generate up to 200 images.',
+      idempotencyConflict:
+        'This submission conflicts with a previous request ID. Refresh the page and submit again.',
       notReady: 'The job is not complete yet. Download will be available after completion.',
       outputDeleted: 'The result files for this job have already been cleaned up.',
-      resultMissing: 'The result file is unavailable. It may have been cleaned up, storage permissions may be broken, or storage settings may have changed. Contact an administrator to check the result file.',
+      resultMissing:
+        'The result file is unavailable. It may have been cleaned up, storage permissions may be broken, or storage settings may have changed. Contact an administrator to check the result file.',
       itemFailed: 'This item has no successful image to preview.',
       itemImageIndexOutOfRange: 'This item has no previewable image.',
       downloadLimited: 'Too many download requests are active. Please try again later.',
-      downloadTooLarge: 'This ZIP is too large for a single download. Download fewer items at once or ask an administrator to raise the batch download limit.',
+      downloadTooLarge:
+        'This ZIP is too large for a single download. Download fewer items at once or ask an administrator to raise the batch download limit.',
       deleteNotReady: 'Job records can only be deleted after the job finishes.',
       disabled: 'Batch image generation is currently disabled.',
       authRequired: 'The current API key is unavailable or expired. Select the key again.',

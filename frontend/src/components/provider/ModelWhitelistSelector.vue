@@ -2,11 +2,18 @@
   <div>
     <!-- Multi-select Dropdown -->
     <div class="relative mb-3">
-      <div data-icon-trigger
+      <div
+        data-icon-trigger
         @click="toggleDropdown"
         class="cursor-pointer rounded-control border border-gray-300 bg-white px-3 py-2 dark:border-dark-500 dark:bg-dark-700"
       >
-        <TransitionGroup name="motion-list" tag="div" class="relative grid grid-cols-2 gap-1.5" @before-leave="prepareListLeave" @before-enter="restoreEnteringElement">
+        <TransitionGroup
+          name="motion-list"
+          tag="div"
+          class="relative grid grid-cols-2 gap-1.5"
+          @before-leave="prepareListLeave"
+          @before-enter="restoreEnteringElement"
+        >
           <span
             v-for="model in modelValue"
             :key="model"
@@ -25,18 +32,30 @@
             </button>
           </span>
         </TransitionGroup>
-        <div class="mt-2 flex items-center justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
-          <span class="text-xs text-gray-400">{{ t('admin.providers.modelCount', { count: modelValue.length }) }}</span>
-          <Icon name="chevronDown" size="md" :animate-on-hover="false" class="h-5 w-5 text-gray-400" />
+        <div
+          class="mt-2 flex items-center justify-between border-t border-gray-200 pt-2 dark:border-dark-600"
+        >
+          <span class="text-xs text-gray-400">{{
+            t('admin.providers.modelCount', { count: modelValue.length })
+          }}</span>
+          <Icon
+            name="chevronDown"
+            size="md"
+            :animate-on-hover="false"
+            class="h-5 w-5 text-gray-400"
+          />
         </div>
       </div>
       <!-- Dropdown List -->
       <MotionTransition name="dropdown-fade">
         <div
-          v-if="showDropdown" :inert="!(showDropdown) || undefined"
+          v-if="showDropdown"
+          :inert="!showDropdown || undefined"
           class="dropdown left-0 right-0 top-full z-50 mt-1 py-0"
         >
-          <div class="sticky top-0 border-b border-gray-200 bg-white p-2 dark:border-dark-600 dark:bg-dark-900">
+          <div
+            class="sticky top-0 border-b border-gray-200 bg-white p-2 dark:border-dark-600 dark:bg-dark-900"
+          >
             <input
               v-model="searchQuery"
               type="text"
@@ -63,7 +82,7 @@
                     'flex h-4 w-4 shrink-0 items-center justify-center rounded-compact border',
                     modelValue.includes(model.value)
                       ? 'border-primary-700 bg-primary-700 text-white dark:border-primary-600 dark:bg-primary-600'
-                      : 'border-gray-300 dark:border-dark-500'
+                      : 'border-gray-300 dark:border-dark-500',
                   ]"
                 >
                   <Icon
@@ -88,10 +107,34 @@
                 <Icon name="copy" size="sm" />
               </button>
             </div>
-            <div v-if="loadingCatalog" class="px-3 py-2 text-sm text-gray-500">{{ t('common.loading') }}</div>
-            <button v-if="catalogFailed" type="button" class="btn btn-secondary m-2" @click.stop="loadCatalog()">{{ t('common.retry') }}</button>
-            <button v-if="!loadingCatalog && !catalogFailed && props.models === undefined && catalogModels.length < catalogTotal" type="button" class="btn btn-secondary m-2" @click.stop="loadCatalog(true)">{{ t('admin.providers.loadMoreModels') }}</button>
-            <div v-if="!loadingCatalog && !catalogFailed && filteredModels.length === 0" class="px-3 py-4 text-center text-sm text-gray-500">
+            <div v-if="loadingCatalog" class="px-3 py-2 text-sm text-gray-500">
+              {{ t('common.loading') }}
+            </div>
+            <button
+              v-if="catalogFailed"
+              type="button"
+              class="btn btn-secondary m-2"
+              @click.stop="loadCatalog()"
+            >
+              {{ t('common.retry') }}
+            </button>
+            <button
+              v-if="
+                !loadingCatalog &&
+                !catalogFailed &&
+                props.models === undefined &&
+                catalogModels.length < catalogTotal
+              "
+              type="button"
+              class="btn btn-secondary m-2"
+              @click.stop="loadCatalog(true)"
+            >
+              {{ t('admin.providers.loadMoreModels') }}
+            </button>
+            <div
+              v-if="!loadingCatalog && !catalogFailed && filteredModels.length === 0"
+              class="px-3 py-4 text-center text-sm text-gray-500"
+            >
               {{ t('admin.providers.noMatchingModels') }}
             </div>
           </div>
@@ -108,7 +151,11 @@
         :disabled="isSyncingUpstream"
         class="rounded-control border border-emerald-200 px-3 py-1.5 text-sm text-emerald-600 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
       >
-        {{ isSyncingUpstream ? t('admin.providers.syncUpstreamModelsLoading') : t('admin.providers.syncUpstreamModels') }}
+        {{
+          isSyncingUpstream
+            ? t('admin.providers.syncUpstreamModelsLoading')
+            : t('admin.providers.syncUpstreamModels')
+        }}
       </button>
       <button
         type="button"
@@ -121,7 +168,9 @@
 
     <!-- Custom Model Input -->
     <div class="mb-3">
-      <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.providers.customModelName') }}</label>
+      <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">{{
+        t('admin.providers.customModelName')
+      }}</label>
       <div class="flex gap-2">
         <input
           v-model="customModel"
@@ -159,34 +208,76 @@ import Icon from '@/components/icons/Icon.vue'
 import { modelAttributesAPI } from '@/api/admin/modelAttributes'
 import { SEARCH_DEBOUNCE_MS } from '@/constants/ui'
 
+// ModelWhitelistSelector.vue edits selected model IDs alongside catalog or
+// caller-supplied suggestions. An omitted models prop enables paginated catalog lookup;
+// an explicit empty array supplies no suggestions. Selected IDs remain owned by the form
+// and can include values absent from either source. Catalog lookup never removes those
+// selections.
+//
+// Search changes and dropdown visibility advance a generation before scheduling the next
+// query. Only the current generation may publish its results or loading state, and
+// unmount invalidates pending catalog work. Upstream synchronization follows a separate
+// request path and merges returned IDs into the selection at completion.
+
+// t resolves interface labels from the active component locale while reactive consumers
+// update their displayed text.
 const { t } = useI18n()
 
+// props exposes caller-owned inputs used by the template and derived state in this
+// component.
 const props = defineProps<{
+  // Selected model IDs remain parent-owned and are independent from explicit or catalog
+  // candidate suggestions.
   modelValue: string[]
-  platform?: string
+  platform?: string // Provider platform identifier.
+  // A nonempty list takes precedence over platform when determining upstream
+  // synchronization availability for this selector.
   platforms?: string[]
+  // Explicit candidates override catalog lookup, including an empty array that
+  // intentionally supplies no suggestions.
   models?: string[]
+  // Saved provider identifier; when present, upstream synchronization uses it before any
+  // preview credentials.
   providerId?: number
+  // Unsaved credentials used for preview synchronization when a saved provider identifier
+  // is unavailable.
   syncCredentials?: {
-    platform: string
-    type: string
-    base_url?: string
-    api_key: string
+    platform: string // Provider platform identifier.
+    type: string // Provider authentication type.
+    base_url?: string // Optional preview upstream address.
+    api_key: string // Preview API credential value.
   }
 }>()
 
+// emit publishes typed draft changes and actions to the parent that owns this component.
 const emit = defineEmits<{
-  'update:modelValue': [value: string[]]
+  'update:modelValue': [value: string[]] // Replacement model value draft value.
 }>()
 
+// appStore displays operation feedback through the shared notification area used by the
+// provider administration screens.
 const appStore = useAppStore()
+// copyToClipboard owns browser clipboard access and reports its outcome through the
+// shared notification behavior.
 const { copyToClipboard } = useClipboard()
 
+// showDropdown controls candidate visibility and participates in invalidating pending
+// catalog queries when the menu closes.
 const showDropdown = ref(false)
+// searchQuery filters explicit candidates locally or supplies the trimmed query for a
+// debounced catalog request.
 const searchQuery = ref('')
+// customModel stores the administrator-entered ID until a successful addition clears the
+// draft field for another entry.
 const customModel = ref('')
+// isComposing tracks IME composition so Enter can finish text entry before a custom model
+// is added.
 const isComposing = ref(false)
+// isSyncingUpstream prevents overlapping sync actions while the saved-provider or preview
+// request is waiting for upstream model IDs.
 const isSyncingUpstream = ref(false)
+// normalizedPlatforms trims and deduplicates the preferred platform list for determining
+// whether the upstream synchronization action is available.
 const normalizedPlatforms = computed(() => {
   const rawPlatforms =
     props.platforms && props.platforms.length > 0
@@ -198,12 +289,14 @@ const normalizedPlatforms = computed(() => {
   return Array.from(
     new Set(
       rawPlatforms
-        .map(platform => platform?.trim())
-        .filter((platform): platform is string => Boolean(platform))
-    )
+        .map((platform) => platform?.trim())
+        .filter((platform): platform is string => Boolean(platform)),
+    ),
   )
 })
 
+// upstreamSyncPlatforms lists the platforms accepted by this UI for upstream
+// synchronization; the endpoint still validates the request.
 const upstreamSyncPlatforms = new Set([
   'anthropic',
   'openai',
@@ -213,12 +306,16 @@ const upstreamSyncPlatforms = new Set([
   'kimi',
   'zhipu',
   'deepseek',
-  'jev'
+  'jev',
 ])
+// canSyncUpstream selects saved-provider or preview-credential eligibility from the
+// normalized platforms before the template shows its synchronization action.
 const canSyncUpstream = computed(() => {
   if (props.providerId) {
     if (normalizedPlatforms.value.length === 0) return true
-    return normalizedPlatforms.value.some(platform => upstreamSyncPlatforms.has(platform.toLowerCase()))
+    return normalizedPlatforms.value.some((platform) =>
+      upstreamSyncPlatforms.has(platform.toLowerCase()),
+    )
   }
   if (props.syncCredentials) {
     return upstreamSyncPlatforms.has(props.syncCredentials.platform.toLowerCase())
@@ -226,15 +323,35 @@ const canSyncUpstream = computed(() => {
   return false
 })
 
-// 目录查询只更新候选，已选 ID 由表单持有。
+// catalogModels stores fetched suggestions independently from the selected IDs owned by
+// the parent provider form.
 const catalogModels = ref<string[]>([])
+// catalogPage records the most recently accepted catalog page so load-more requests
+// advance from the published result.
 const catalogPage = ref(0)
+// catalogTotal retains the server result count used to decide whether additional catalog
+// pages can be requested.
 const catalogTotal = ref(0)
+// loadingCatalog belongs to the current query generation and cannot be cleared by an
+// older request completion.
 const loadingCatalog = ref(false)
+// catalogFailed records failure for the current query generation so the dropdown can
+// display its retry action.
 const catalogFailed = ref(false)
+// queryVersion invalidates older catalog responses on searches, visibility changes, and
+// unmount before they can publish candidate state.
 let queryVersion = 0
+// searchTimer owns the pending debounce callback and is cleared when query inputs change
+// or the component unmounts.
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
+// loadCatalog loads one page of catalog suggestions for the current search. Supplying
+// models disables catalog fetching, including when that array is empty. Each request
+// advances queryVersion and captures its page before awaiting the API.
+//
+// Only the current generation may replace or append IDs, record an error, or clear
+// loading. Successful pages deduplicate IDs and leave the selected model array untouched;
+// failures retain any already displayed suggestions for retry.
 const loadCatalog = async (append = false) => {
   if (props.models !== undefined) return
   const version = ++queryVersion
@@ -242,18 +359,35 @@ const loadCatalog = async (append = false) => {
   loadingCatalog.value = true
   catalogFailed.value = false
   try {
-    const result = await modelAttributesAPI.defaults({ search: searchQuery.value.trim(), page, page_size: 50 })
+    // The catalog page size is fifty suggestions per request, limiting dropdown payloads
+    // while load-more retains access to later matches.
+    const result = await modelAttributesAPI.defaults({
+      search: searchQuery.value.trim(),
+      page,
+      page_size: 50,
+    })
+    // A newer search or lifecycle change advances the generation, so this response cannot
+    // replace suggestions belonging to the current query.
     if (version !== queryVersion) return
-    catalogModels.value = [...new Set([...(append ? catalogModels.value : []), ...result.items.map(item => item.model)])]
+    catalogModels.value = [
+      ...new Set([
+        ...(append ? catalogModels.value : []),
+        ...result.items.map((item) => item.model),
+      ]),
+    ]
     catalogPage.value = page
     catalogTotal.value = result.total
   } catch {
+    // Only the active query may show a failure; an older rejected request belongs to
+    // suggestions that have already been invalidated.
     if (version === queryVersion) catalogFailed.value = true
   } finally {
     if (version === queryVersion) loadingCatalog.value = false
   }
 }
 
+// Invalidate outstanding responses before clearing suggestions and scheduling another
+// debounce, so earlier completion cannot refill a closed or changed dropdown.
 watch([showDropdown, searchQuery, () => props.models], () => {
   queryVersion++
   clearTimeout(searchTimer)
@@ -262,29 +396,50 @@ watch([showDropdown, searchQuery, () => props.models], () => {
   catalogModels.value = []
   catalogTotal.value = 0
   if (showDropdown.value && props.models === undefined) {
-    searchTimer = setTimeout(() => { void loadCatalog() }, SEARCH_DEBOUNCE_MS)
+    searchTimer = setTimeout(() => {
+      void loadCatalog()
+    }, SEARCH_DEBOUNCE_MS)
   }
 })
+// Unmount invalidates pending responses and clears the scheduled callback, preventing
+// either source from publishing another catalog update into this component.
 onBeforeUnmount(() => {
   queryVersion++
   clearTimeout(searchTimer)
 })
 
+// filteredModels filters explicit candidates locally or displays fetched candidates, then
+// deduplicates IDs without rewriting the selected model array.
 const filteredModels = computed(() => {
   const query = searchQuery.value.toLowerCase().trim()
-  const ids = props.models === undefined ? catalogModels.value : props.models.filter(id => id.toLowerCase().includes(query))
-  return [...new Set(ids)].map(id => ({ value: id, label: id }))
+  const ids =
+    props.models === undefined
+      ? catalogModels.value
+      : props.models.filter((id) => id.toLowerCase().includes(query))
+  return [...new Set(ids)].map((id) => ({ value: id, label: id }))
 })
 
+// toggleDropdown toggles suggestion visibility and clears the query when closing the
+// menu. The visibility watcher invalidates pending catalog work and schedules a fresh
+// lookup when the menu opens again.
 const toggleDropdown = () => {
   showDropdown.value = !showDropdown.value
   if (!showDropdown.value) searchQuery.value = ''
 }
 
+// removeModel emits a selection with every occurrence of the requested model removed. The
+// parent receives a new array and decides when that selection enters its provider
+// payload.
 const removeModel = (model: string) => {
-  emit('update:modelValue', props.modelValue.filter(m => m !== model))
+  emit(
+    'update:modelValue',
+    props.modelValue.filter((m) => m !== model),
+  )
 }
 
+// toggleModel adds an unselected model or removes a selected model from the draft. It
+// emits a replacement array, leaving the parent responsible for applying and persisting
+// the update.
 const toggleModel = (model: string) => {
   if (props.modelValue.includes(model)) {
     removeModel(model)
@@ -293,10 +448,16 @@ const toggleModel = (model: string) => {
   }
 }
 
+// copyModelId copies the model identifier through the shared clipboard notification
+// helper. Its copy button is a sibling of the selection button, so activating
+// the copy control does not invoke the selection button's toggle handler.
 const copyModelId = async (model: string) => {
   await copyToClipboard(model)
 }
 
+// addCustom adds a trimmed custom identifier to the current selection. Blank input is
+// ignored, duplicates show informational feedback, and a successful addition clears the
+// custom text field.
 const addCustom = () => {
   const model = customModel.value.trim()
   if (!model) return
@@ -308,10 +469,21 @@ const addCustom = () => {
   customModel.value = ''
 }
 
+// handleEnter adds the custom identifier when the input is outside an IME composition.
+// Composition events own the guard so Enter used to finish text entry does not submit it
+// early.
 const handleEnter = () => {
   if (!isComposing.value) addCustom()
 }
 
+// syncUpstreamModels merges fetched upstream identifiers into the selected model draft. A
+// saved provider ID takes precedence over preview credentials, and an in-progress
+// synchronization suppresses another invocation. Empty upstream results produce
+// informational feedback and leave the selection untouched.
+//
+// The merge reads the current selected array after the request resolves, trims fetched
+// IDs, and appends only missing values. This path has no catalog generation check, so a
+// completed request can publish after the provider props change.
 const syncUpstreamModels = async () => {
   if (isSyncingUpstream.value) return
   if (!props.providerId && !props.syncCredentials) return
@@ -319,15 +491,19 @@ const syncUpstreamModels = async () => {
   isSyncingUpstream.value = true
   try {
     let result
+    // A saved provider ID selects server-held credentials before preview input, so edit
+    // forms synchronize using the persisted provider identity.
     if (props.providerId) {
       result = await providersAPI.syncUpstreamModels(props.providerId)
     } else if (props.syncCredentials) {
-      result = await providersAPI.syncUpstreamModelsPreview(props.syncCredentials as SyncUpstreamPreviewParams)
+      result = await providersAPI.syncUpstreamModelsPreview(
+        props.syncCredentials as SyncUpstreamPreviewParams,
+      )
     } else {
       return
     }
 
-    const upstreamModels = result.models.map(model => model.trim()).filter(Boolean)
+    const upstreamModels = result.models.map((model) => model.trim()).filter(Boolean)
     if (upstreamModels.length === 0) {
       appStore.showInfo(t('admin.providers.syncUpstreamModelsEmpty'))
       return
@@ -344,20 +520,28 @@ const syncUpstreamModels = async () => {
 
     emit('update:modelValue', newModels)
     if (addedCount > 0) {
-      appStore.showSuccess(t('admin.providers.syncUpstreamModelsSuccess', { count: addedCount, total: upstreamModels.length }))
+      appStore.showSuccess(
+        t('admin.providers.syncUpstreamModelsSuccess', {
+          count: addedCount,
+          total: upstreamModels.length,
+        }),
+      )
     } else {
-      appStore.showInfo(t('admin.providers.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
+      appStore.showInfo(
+        t('admin.providers.syncUpstreamModelsNoChanges', { count: upstreamModels.length }),
+      )
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : t('admin.providers.syncUpstreamModelsFailed')
+    const message =
+      error instanceof Error ? error.message : t('admin.providers.syncUpstreamModelsFailed')
     appStore.showError(t('admin.providers.syncUpstreamModelsError', { message }))
   } finally {
     isSyncingUpstream.value = false
   }
 }
 
+// clearAll emits an empty selected-model array to the owning provider form.
 const clearAll = () => {
   emit('update:modelValue', [])
 }
-
 </script>

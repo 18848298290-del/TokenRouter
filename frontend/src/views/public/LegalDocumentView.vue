@@ -4,7 +4,9 @@
       <div class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <RouterLink to="/home" class="flex min-w-0 items-center gap-3">
           <template v-if="settings">
-            <span class="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-surface bg-white shadow-sm ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700">
+            <span
+              class="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-surface bg-white shadow-sm ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700"
+            >
               <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
             </span>
             <span class="truncate text-base font-semibold text-gray-950 dark:text-white">
@@ -12,14 +14,17 @@
             </span>
           </template>
           <template v-else>
-            <span class="h-10 w-10 flex-shrink-0 animate-pulse rounded-surface bg-gray-200 dark:bg-dark-700" aria-hidden="true"></span>
-            <span class="h-5 w-28 animate-pulse rounded-compact bg-gray-200 dark:bg-dark-700" aria-hidden="true"></span>
+            <span
+              class="h-10 w-10 flex-shrink-0 animate-pulse rounded-surface bg-gray-200 dark:bg-dark-700"
+              aria-hidden="true"
+            ></span>
+            <span
+              class="h-5 w-28 animate-pulse rounded-compact bg-gray-200 dark:bg-dark-700"
+              aria-hidden="true"
+            ></span>
           </template>
         </RouterLink>
-        <RouterLink
-          to="/login"
-          class="btn btn-primary shrink-0"
-        >
+        <RouterLink to="/login" class="btn btn-primary shrink-0">
           {{ t('legal.login') }}
         </RouterLink>
       </div>
@@ -41,11 +46,15 @@
         class="rounded-surface border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-900"
       >
         <div class="flex items-start gap-3">
-          <span class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-control bg-gray-100 text-gray-600 dark:bg-dark-800 dark:text-dark-300">
+          <span
+            class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-control bg-gray-100 text-gray-600 dark:bg-dark-800 dark:text-dark-300"
+          >
             <Icon name="document" size="sm" />
           </span>
           <div>
-            <h1 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('legal.notFound') }}</h1>
+            <h1 class="text-lg font-semibold text-gray-900 dark:text-white">{{
+              t('legal.notFound')
+            }}</h1>
             <p class="mt-2 text-sm leading-6 text-gray-600 dark:text-dark-300">
               {{ t('legal.notFoundDescription') }}
             </p>
@@ -56,12 +65,18 @@
       <article v-else>
         <div class="mb-8 border-b border-gray-200 pb-6 dark:border-dark-700">
           <div class="flex items-start gap-4">
-            <span class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-control bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">
+            <span
+              class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-control bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300"
+            >
               <Icon :name="documentIcon" size="md" />
             </span>
             <div class="min-w-0">
-              <p class="text-sm font-medium text-primary-700 dark:text-primary-300">{{ t('legal.title') }}</p>
-              <h1 class="mt-2 break-words text-2xl font-bold tracking-normal text-gray-950 dark:text-white sm:text-3xl">
+              <p class="text-sm font-medium text-primary-700 dark:text-primary-300">{{
+                t('legal.title')
+              }}</p>
+              <h1
+                class="mt-2 break-words text-2xl font-bold tracking-normal text-gray-950 dark:text-white sm:text-3xl"
+              >
                 {{ currentDocument.title }}
               </h1>
               <p v-if="updatedAt" class="mt-3 text-sm text-gray-500 dark:text-dark-400">
@@ -71,11 +86,7 @@
           </div>
         </div>
 
-        <div
-          v-if="hasContent"
-          class="legal-document-content"
-          v-html="renderedHtml"
-        ></div>
+        <div v-if="hasContent" class="legal-document-content" v-html="renderedHtml"></div>
         <div
           v-else
           class="rounded-control border border-dashed border-gray-300 bg-white px-6 py-14 text-center text-sm text-gray-500 dark:border-dark-700 dark:bg-dark-900 dark:text-dark-400"
@@ -100,10 +111,26 @@ import { sanitizeUrl } from '@/utils/url'
 import { useAppStore } from '@/stores/app'
 import { useI18n } from 'vue-i18n'
 import { apiClient } from '@/api/client'
-import type { LoginAgreementDocument } from '@/types'
+import type { LoginAgreementDocument } from '@/api/settings.types'
 
+// LegalDocumentView.vue loads the selected public legal document and renders its
+// Markdown with the site's current branding. Route identifiers and language
+// changes start a new request generation. Public settings are refreshed before
+// requesting document content, and only the newest generation can publish the
+// document, error state, or loading completion.
+//
+// Missing documents use the not-found presentation while other failures use the
+// load-error presentation. Markdown is sanitized before HTML injection, and
+// document-specific icons remain independent of content rendering. Generation
+// ownership suppresses older responses during navigation; it does not cancel
+// their HTTP requests or explicitly invalidate pending work when the component
+// unmounts. The page preserves the shared Markdown parser's configured options.
+
+// LegalDocumentIcon restricts the document heading to the supported semantic icons.
 type LegalDocumentIcon = 'document' | 'shield' | 'globe' | 'cog'
 
+// Route and locale services select content, while cached public settings supply
+// branding and initialize loading until the first document refresh begins.
 const { t, locale } = useI18n()
 const route = useRoute()
 const appStore = useAppStore()
@@ -111,38 +138,62 @@ const settings = computed(() => appStore.cachedPublicSettings)
 const loading = ref(!settings.value)
 const loadError = ref(false)
 
+// Keep line breaks and GitHub-style Markdown enabled for legal content; this
+// updates the imported parser's shared options before computed rendering uses it.
 marked.setOptions({
   breaks: true,
   gfm: true,
 })
 
+// Document identity and branding derive from the current route and refreshed
+// settings; the logo source is filtered before falling back to the built-in asset.
 const documentId = computed(() => String(route.params.documentId || ''))
 const siteName = computed(() => settings.value?.site_name || 'TokenRouter')
-const siteLogo = computed(() => sanitizeUrl(settings.value?.site_logo || '', {
-  allowRelative: true,
-  allowDataUrl: true,
-}))
+const siteLogo = computed(() =>
+  sanitizeUrl(settings.value?.site_logo || '', {
+    allowRelative: true,
+    allowDataUrl: true,
+  }),
+)
 const updatedAt = computed(() => settings.value?.login_agreement_updated_at || '')
 
+// The document reference belongs to the newest route-and-language generation;
+// older reads may finish but cannot replace its content or completion flags.
 const currentDocument = ref<LoginAgreementDocument | null>(null)
 let documentGeneration = 0
-watch([documentId, locale], async ([id]) => {
-  const generation = ++documentGeneration
-  loading.value = true
-  loadError.value = false
-  try {
-    await appStore.fetchPublicSettings()
-    const { data } = await apiClient.get<LoginAgreementDocument>(`/settings/legal/${encodeURIComponent(id)}`)
-    if (generation === documentGeneration) currentDocument.value = data
-  } catch (error) {
-    if (generation !== documentGeneration) return
-    currentDocument.value = null
-    loadError.value = (error as { status?: number }).status !== 404
-  } finally {
-    if (generation === documentGeneration) loading.value = false
-  }
-}, { immediate: true })
+// Refresh branding before document content, then gate every visible completion
+// by generation so overlapping locale or route changes retain their newest state.
+watch(
+  [documentId, locale],
+  async ([id]) => {
+    const generation = ++documentGeneration
+    loading.value = true
+    loadError.value = false
+    try {
+      await appStore.fetchPublicSettings()
+      const { data } = await apiClient.get<LoginAgreementDocument>(
+        `/settings/legal/${encodeURIComponent(id)}`,
+      )
+      if (generation === documentGeneration) currentDocument.value = data
+    } catch (error) {
+      if (generation !== documentGeneration) return
+      currentDocument.value = null
+      loadError.value =
+        (
+          error as {
+            // Optional HTTP status; only an explicit 404 selects the missing-document presentation.
+            status?: number
+          }
+        ).status !== 404
+    } finally {
+      if (generation === documentGeneration) loading.value = false
+    }
+  },
+  { immediate: true },
+)
 
+// Content display distinguishes an empty document from a missing document and
+// sanitizes generated HTML before the template inserts it into the article body.
 const hasContent = computed(() => Boolean(currentDocument.value?.content_md?.trim()))
 
 const renderedHtml = computed(() => {
@@ -154,6 +205,8 @@ const renderedHtml = computed(() => {
   return DOMPurify.sanitize(html)
 })
 
+// Known document identifiers choose a semantic heading icon; other configured
+// legal documents retain the general document symbol without requiring a new mapping.
 const documentIcon = computed<LegalDocumentIcon>(() => {
   const id = currentDocument.value?.id || ''
   if (id === 'usage-policy' || id === 'privacy') return 'shield'
@@ -161,11 +214,11 @@ const documentIcon = computed<LegalDocumentIcon>(() => {
   if (id === 'service-specific-terms') return 'cog'
   return 'document'
 })
-
-
 </script>
 
 <style scoped>
+/* Generated Markdown descendants need deep selectors to receive article styling
+   without changing typography in the surrounding page header and status regions. */
 .legal-document-content {
   line-height: 1.75;
   overflow-wrap: anywhere;

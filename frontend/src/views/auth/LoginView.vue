@@ -7,7 +7,6 @@
 
   <AuthLayout>
     <div class="space-y-6">
-      <!-- Title -->
       <div class="text-center">
         <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
           {{ t('auth.welcomeBack') }}
@@ -17,9 +16,7 @@
         </p>
       </div>
 
-      <!-- Login Form -->
       <form @submit.prevent="handleLogin" :novalidate="agreementGateActive" class="space-y-5">
-        <!-- Email Input -->
         <div>
           <label for="email" class="input-label">
             {{ t('auth.emailLabel') }}
@@ -43,7 +40,6 @@
           </div>
         </div>
 
-        <!-- Password Input -->
         <div>
           <label for="password" class="input-label">
             {{ t('auth.passwordLabel') }}
@@ -85,7 +81,6 @@
           </div>
         </div>
 
-        <!-- Turnstile Widget -->
         <div v-if="captchaEnabled">
           <TurnstileWidget
             ref="turnstileRef"
@@ -117,10 +112,11 @@
           @open="showAgreementModal = true"
         />
 
-        <!-- 提交按钮 -->
         <button
           type="submit"
-          :disabled="authActionDisabled || (!agreementGateActive && turnstileEnabled && !turnstileToken)"
+          :disabled="
+            authActionDisabled || (!agreementGateActive && turnstileEnabled && !turnstileToken)
+          "
           class="btn btn-primary w-full"
         >
           <Icon
@@ -189,7 +185,6 @@
       </div>
     </div>
 
-    <!-- Footer -->
     <template v-if="!backendModeEnabled" #footer>
       <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.dontHaveAccount') }}
@@ -203,7 +198,6 @@
     </template>
   </AuthLayout>
 
-  <!-- 2FA Modal -->
   <TotpLoginModal
     v-if="totpPresent"
     :show="show2FAModal"
@@ -231,7 +225,7 @@ import WechatOAuthSection from '@/components/auth/WechatOAuthSection.vue'
 import LoginAgreementPrompt from '@/components/auth/LoginAgreementPrompt.vue'
 import TotpLoginModal from '@/components/auth/TotpLoginModal.vue'
 import Icon from '@/components/icons/Icon.vue'
-import TurnstileWidget from '@/components/CaptchaChallenge.vue'
+import TurnstileWidget from '@/components/auth/CaptchaChallenge.vue'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
   buildOAuthLoginStartURL,
@@ -239,125 +233,187 @@ import {
   isTotp2FARequired,
   isWeChatWebOAuthEnabled,
   startOAuthLogin,
-  type OAuthLoginStart
+  type OAuthLoginStart,
 } from '@/api/auth'
-import type {
-  ActionCaptchaRequestProof,
-  LoginAgreementDocument,
-  TotpLoginResponse
-} from '@/types'
+import type { ActionCaptchaRequestProof } from '@/api/auth.types'
+import type { LoginAgreementDocument } from '@/api/settings.types'
+import type { TotpLoginResponse } from '@/api/totp.types'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { clearAllAffiliateCodes } from '@/utils/oauthAffiliate'
 import {
   hasAcceptedLoginAgreement,
   LOGIN_AGREEMENT_STORAGE_KEY,
-  revokeLoginAgreement
+  revokeLoginAgreement,
 } from '@/utils/loginAgreement'
 import { isGoogleOneTapEligible, isGoogleOneTapOriginSupported } from '@/utils/googleIdentity'
 
-const { t } = useI18n()
-// ==================== Router & Stores ====================
+// LoginView.vue coordinates password, passkey, and provider sign-in from the login
+// page. Public settings control visible methods, captcha, and the current
+// legal-agreement revision. Checkbox consent permits editing before acceptance but
+// blocks authentication actions; modal consent disables those actions until
+// accepted.
+//
+// Password entry and explicit actions cancel the Google prompt, while One Tap
+// eligibility also accounts for authentication and consent. Password login can
+// stop at a TOTP challenge whose temporary token stays in page state. Action
+// captcha proof is acquired before the corresponding authentication request and
+// reset afterward, and accepted agreement revisions are persisted before the local
+// gate opens.
 
-const router = useRouter()
-const authStore = useAuthStore()
-const appStore = useAppStore()
+// t resolves the authentication messages displayed by this component. Nearby store
+// and navigation services deliver those messages and handle the requested
+// authentication transition.
+const { t } = useI18n() // translated authentication message resolver
 
-// ==================== State ====================
+const router = useRouter() // application navigation service
+const authStore = useAuthStore() // shared authentication state owner
+const appStore = useAppStore() // public settings and toast owner
 
-const isLoading = ref<boolean>(false)
-const passkeyLoading = ref<boolean>(false)
-const errorMessage = ref<string>('')
-const showPassword = ref<boolean>(false)
-const publicSettingsLoaded = ref<boolean>(false)
+// The request and display state controls authentication progress, failure
+// feedback, and input visibility. Handlers publish successful completion
+// separately from merely starting or settling a request.
+const isLoading = ref<boolean>(false) // current form request busy flag
+const passkeyLoading = ref<boolean>(false) // passkey authentication busy flag
+const errorMessage = ref<string>('') // current action failure message
+const showPassword = ref<boolean>(false) // password input visibility toggle
+// publicSettingsLoaded records completion of the login settings request, including
+// failure. Its true value allows the page readiness gate to evaluate the retained
+// settings.
+const publicSettingsLoaded = ref<boolean>(false) // login settings request completion flag
 
-// Public settings
-const turnstileEnabled = ref<boolean>(false)
-const turnstileSiteKey = ref<string>('')
-const tencentCaptchaEnabled = ref<boolean>(false)
-const tencentCaptchaAppId = ref<string>('')
-const tencentCaptchaRegion = ref<string>('cn')
-const aliyunCaptchaEnabled = ref<boolean>(false)
-const aliyunCaptchaSceneId = ref<string>('')
-const aliyunCaptchaPrefix = ref<string>('')
-const aliyunCaptchaRegion = ref<string>('cn')
-const linuxdoOAuthEnabled = ref<boolean>(false)
-const dingtalkOAuthEnabled = ref<boolean>(false)
-const wechatOAuthEnabled = ref<boolean>(false)
-const backendModeEnabled = ref<boolean>(false)
-const oidcOAuthEnabled = ref<boolean>(false)
-const oidcOAuthProviderName = ref<string>('OIDC')
-const githubOAuthEnabled = ref<boolean>(false)
-const googleOAuthEnabled = ref<boolean>(false)
-const googleOneTapEnabled = ref<boolean>(false)
-const googleOneTapClientID = ref<string>('')
-const passwordResetEnabled = ref<boolean>(false)
-const passkeyEnabled = ref<boolean>(false)
-const loginAgreementEnabled = ref<boolean>(false)
-const loginAgreementMode = ref<'modal' | 'checkbox' | string>('modal')
-const loginAgreementUpdatedAt = ref<string>('')
-const loginAgreementRevision = ref<string>('')
-const loginAgreementDocuments = ref<LoginAgreementDocument[]>([])
-const agreementAccepted = ref<boolean>(false)
-const showAgreementModal = ref<boolean>(false)
-const showAgreementHint = ref(false)
+// These values carry public challenge configuration and local verification state
+// into the widget and request handlers. Provider-specific token and random-string
+// fields travel together when Tencent is enabled.
+const turnstileEnabled = ref<boolean>(false) // public Turnstile enable flag
+const turnstileSiteKey = ref<string>('') // public Turnstile widget identifier
+const tencentCaptchaEnabled = ref<boolean>(false) // public Tencent captcha enable flag
+const tencentCaptchaAppId = ref<string>('') // public Tencent application identifier
+const tencentCaptchaRegion = ref<string>('cn') // Tencent SDK region selector
+const aliyunCaptchaEnabled = ref<boolean>(false) // public Aliyun captcha enable flag
+const aliyunCaptchaSceneId = ref<string>('') // public Aliyun scene identifier
+const aliyunCaptchaPrefix = ref<string>('') // public Aliyun SDK prefix
+const aliyunCaptchaRegion = ref<string>('cn') // Aliyun SDK region selector
+// Provider enable flags determine which sign-in entries the page displays.
+// Backend-only mode on the login page can hide the provider section even when
+// individual methods are configured.
+const linuxdoOAuthEnabled = ref<boolean>(false) // public LinuxDo login enable flag
+const dingtalkOAuthEnabled = ref<boolean>(false) // public DingTalk login enable flag
+const wechatOAuthEnabled = ref<boolean>(false) // public WeChat web-login availability
+const backendModeEnabled = ref<boolean>(false) // backend-only provider visibility policy
+const oidcOAuthEnabled = ref<boolean>(false) // public OIDC login enable flag
+// oidcOAuthProviderName supplies the configured display label for the OIDC entry.
+// The provider identifier sent to authentication remains oidc independently of
+// that label.
+const oidcOAuthProviderName = ref<string>('OIDC') // configured OIDC button label
+// GitHub and Google flags control the email-provider buttons. Google prompt
+// eligibility additionally uses its separate One Tap enable flag and client
+// identifier.
+const githubOAuthEnabled = ref<boolean>(false) // public GitHub login enable flag
+const googleOAuthEnabled = ref<boolean>(false) // public Google login enable flag
+const googleOneTapEnabled = ref<boolean>(false) // public Google prompt enable flag
+// googleOneTapClientID holds the configured browser OAuth client identifier.
+// Prompt eligibility rejects an empty value before asking the Google identity SDK
+// to display sign-in.
+const googleOneTapClientID = ref<string>('') // public Google prompt client identifier
+// Password-reset and passkey flags control optional login actions. Passkey
+// visibility also requires the browser credential API before that action is
+// offered to the user.
+const passwordResetEnabled = ref<boolean>(false) // password-recovery link availability
+const passkeyEnabled = ref<boolean>(false) // public passkey login availability
+// Agreement settings connect the current document revision to saved acceptance.
+// Prompt visibility remains separate from acceptance so checkbox mode can allow
+// editing while authentication stays gated.
+const loginAgreementEnabled = ref<boolean>(false) // active legal consent requirement
+const loginAgreementMode = ref<'modal' | 'checkbox' | string>('modal') // configured legal consent presentation
+const loginAgreementUpdatedAt = ref<string>('') // agreement update display date
+// loginAgreementRevision uses the server revision when present, otherwise an
+// update-date and document fingerprint. Stored consent is checked against that
+// exact selected value.
+const loginAgreementRevision = ref<string>('') // current consent revision identifier
+const loginAgreementDocuments = ref<LoginAgreementDocument[]>([]) // current legal document collection
+const agreementAccepted = ref<boolean>(false) // current revision consent decision
+const showAgreementModal = ref<boolean>(false) // agreement dialog display flag
+const showAgreementHint = ref(false) // checkbox agreement reminder flag
 
-// Turnstile
-const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
-const turnstileToken = ref<string>('')
-const tencentCaptchaRandstr = ref<string>('')
+// These values carry public challenge configuration and local verification state
+// into the widget and request handlers. Provider-specific token and random-string
+// fields travel together when Tencent is enabled.
+const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null) // captcha widget action handle
+const turnstileToken = ref<string>('') // prepared challenge proof value
+const tencentCaptchaRandstr = ref<string>('') // paired Tencent proof random string
 const aliyunCaptchaReady = computed(
   () =>
     aliyunCaptchaEnabled.value &&
     Boolean(aliyunCaptchaSceneId.value) &&
-    Boolean(aliyunCaptchaPrefix.value)
-)
-// 动作触发式验证码（腾讯/阿里云）：提交、OAuth 启动、passkey 时弹窗验证
+    Boolean(aliyunCaptchaPrefix.value),
+) // complete Aliyun configuration flag
+
 const actionCaptchaEnabled = computed(
   () =>
-    (tencentCaptchaEnabled.value && Boolean(tencentCaptchaAppId.value)) ||
-    aliyunCaptchaReady.value
-)
+    (tencentCaptchaEnabled.value && Boolean(tencentCaptchaAppId.value)) || aliyunCaptchaReady.value,
+) // Tencent or Aliyun action gate
 const captchaEnabled = computed(
-  () =>
-    (turnstileEnabled.value && Boolean(turnstileSiteKey.value)) || actionCaptchaEnabled.value
-)
+  () => (turnstileEnabled.value && Boolean(turnstileSiteKey.value)) || actionCaptchaEnabled.value,
+) // available challenge provider flag
 
-// 2FA state
-const show2FAModal = ref<boolean>(false)
-const { present: totpPresent, afterLeave: totpAfterLeave } = useLeavingPresence(() => show2FAModal.value)
-const totpTempToken = ref<string>('')
-const totpUserEmailMasked = ref<string>('')
-const totpModalRef = ref<InstanceType<typeof TotpLoginModal> | null>(null)
-const googleOneTapRef = ref<InstanceType<typeof GoogleOneTap> | null>(null)
+// show2FAModal requests the login challenge dialog. The leaving-presence
+// composable retains its rendered component until the exit transition finishes and
+// invokes its cleanup callback.
+const show2FAModal = ref<boolean>(false) // login second-factor dialog visibility
+// totpPresent and totpAfterLeave keep the challenge component available through
+// its leave transition. They separate visual presence from the show2FAModal
+// request to close it.
+const { present: totpPresent, afterLeave: totpAfterLeave } = useLeavingPresence(
+  () => show2FAModal.value,
+) // TOTP leave-transition presence controls
+// These values track the pending one-time-code challenge and its input or dialog
+// state. Verification handlers consume the current draft and clear it on the
+// documented reset paths.
+const totpTempToken = ref<string>('') // pending second-factor challenge token
+const totpUserEmailMasked = ref<string>('') // masked second-factor account address
+const totpModalRef = ref<InstanceType<typeof TotpLoginModal> | null>(null) // parent-driven OTP modal controls
+// googleOneTapRef exposes prompt cancellation to password entry and explicit login
+// actions. Cancelling the prompt does not itself cancel an exchange already
+// started by the child.
+const googleOneTapRef = ref<InstanceType<typeof GoogleOneTap> | null>(null) // parent-driven Google prompt cancellation
 
 const formData = reactive({
-  email: '',
-  password: ''
-})
+  email: '', // entered account email
+  password: '', // entered account password
+}) // editable authentication form draft
 
 const errors = reactive({
-  email: '',
-  password: '',
-  turnstile: ''
-})
+  email: '', // email field validation message
+  password: '', // password field validation message
+  turnstile: '', // turnstile field validation message
+}) // field validation message collection
 
+// validationToastMessage selects the first currently active validation error for
+// the toast watcher. Empty values clear the selection without emitting a
+// notification.
 const validationToastMessage = computed(
-  () => errors.email || errors.password || errors.turnstile || ''
-)
+  () => errors.email || errors.password || errors.turnstile || '',
+) // first active validation toast message
 
-const agreementGateActive = computed(
-  () => loginAgreementEnabled.value && !agreementAccepted.value
-)
+// agreementGateActive combines the configured requirement with current acceptance.
+// The action readiness computation uses that result differently for modal and
+// checkbox consent presentation.
+const agreementGateActive = computed(() => loginAgreementEnabled.value && !agreementAccepted.value) // unaccepted current agreement gate
 
+// The action readiness flags combine request progress, settings completion, and
+// consent presentation. Provider and One Tap visibility use their own capability
+// rules before exposing optional login entry points.
 const authActionDisabled = computed(
-  // 弹窗模式在同意条款后开放认证操作。复选框模式允许先填写，在触发认证动作时校验同意状态。
-  () => isLoading.value || passkeyLoading.value || !publicSettingsLoaded.value ||
-    (agreementGateActive.value && loginAgreementMode.value !== 'checkbox')
-)
+  () =>
+    isLoading.value ||
+    passkeyLoading.value ||
+    !publicSettingsLoaded.value ||
+    (agreementGateActive.value && loginAgreementMode.value !== 'checkbox'),
+) // login action readiness gate
 
 const showPasskeyLogin = computed(
-  () => passkeyEnabled.value && typeof window.PublicKeyCredential !== 'undefined'
-)
+  () => passkeyEnabled.value && typeof window.PublicKeyCredential !== 'undefined',
+) // browser-supported passkey action visibility
 
 const showOAuthLogin = computed(
   () =>
@@ -367,11 +423,11 @@ const showOAuthLogin = computed(
       wechatOAuthEnabled.value ||
       oidcOAuthEnabled.value ||
       githubOAuthEnabled.value ||
-      googleOAuthEnabled.value)
-)
+      googleOAuthEnabled.value),
+) // configured provider section visibility
 
-const googleOneTapEligible = computed(
-  () => isGoogleOneTapEligible({
+const googleOneTapEligible = computed(() =>
+  isGoogleOneTapEligible({
     publicSettingsLoaded: publicSettingsLoaded.value,
     isAuthenticated: authStore.isAuthenticated,
     oneTapEnabled: googleOAuthEnabled.value && googleOneTapEnabled.value,
@@ -381,27 +437,34 @@ const googleOneTapEligible = computed(
     aliyunCaptchaEnabled: aliyunCaptchaEnabled.value,
     loginAgreementEnabled: loginAgreementEnabled.value,
     loginAgreementAccepted: !agreementGateActive.value,
-    originSupported: isGoogleOneTapOriginSupported()
-  })
-)
+    originSupported: isGoogleOneTapOriginSupported(),
+  }),
+) // combined Google prompt policy eligibility
 
+// Only changed nonempty validation messages reach the app toast, preventing an
+// unchanged reactive error from producing repeated notifications during field
+// updates.
 watch(validationToastMessage, (value, previousValue) => {
   if (value && value !== previousValue) {
     appStore.showError(value)
   }
 })
 
+// Once the user starts entering password-login credentials, cancel the optional
+// Google prompt so the explicit form action can proceed without another visible
+// sign-in prompt.
 watch(
   () => [formData.email, formData.password],
   ([email, password]) => {
     if (email.trim() || password.trim()) {
       googleOneTapRef.value?.cancelPrompt()
     }
-  }
+  },
 )
 
-// ==================== Lifecycle ====================
-
+// Initialize this page from public settings before user actions depend on its
+// configured authentication requirements, retaining the documented defaults when
+// that request fails.
 onMounted(async () => {
   const expiredFlag = sessionStorage.getItem('auth_expired')
   if (expiredFlag) {
@@ -437,7 +500,12 @@ onMounted(async () => {
     passkeyEnabled.value = settings.passkey_enabled === true
     applyLoginAgreementSettings(settings)
   } catch (error) {
+    // A settings fetch failure leaves the current page defaults available. The
+    // catch path reports the diagnostic rather than rejecting component
+    // initialization.
     console.error('Failed to load public settings:', error)
+    // When public-settings loading fails, this page disables the consent gate and
+    // marks acceptance locally. Subsequent readiness uses these fallback values.
     loginAgreementEnabled.value = false
     agreementAccepted.value = true
   } finally {
@@ -445,14 +513,23 @@ onMounted(async () => {
   }
 })
 
-// ==================== 登录条款 ====================
-
+// applyLoginAgreementSettings derives the active consent gate from public
+// documents and revision metadata. Empty document titles are removed before the
+// enabled state is evaluated, and a missing explicit revision is reconstructed
+// from the update date and document identities. Saved consent applies only to the
+// selected revision. Modal mode opens immediately for missing consent, while
+// checkbox mode leaves the form available and prompts at the authentication
+// action.
 function applyLoginAgreementSettings(settings: {
-  login_agreement_enabled?: boolean
-  login_agreement_mode?: string
-  login_agreement_updated_at?: string
-  login_agreement_revision?: string
-  login_agreement_documents?: LoginAgreementDocument[]
+  login_agreement_enabled?: boolean // agreement feature enabled flag
+
+  login_agreement_mode?: string // agreement presentation mode
+
+  login_agreement_updated_at?: string // agreement update display date
+
+  login_agreement_revision?: string // persisted agreement revision identifier
+
+  login_agreement_documents?: LoginAgreementDocument[] // configured agreement document list
 }): void {
   const documents = Array.isArray(settings.login_agreement_documents)
     ? settings.login_agreement_documents.filter((doc) => doc.title?.trim())
@@ -465,19 +542,27 @@ function applyLoginAgreementSettings(settings: {
     settings.login_agreement_revision ||
     `${loginAgreementUpdatedAt.value}:${documents.map((doc) => `${doc.id}:${doc.title}`).join('|')}`
 
-  agreementAccepted.value = !loginAgreementEnabled.value || hasAcceptedLoginAgreement(loginAgreementRevision.value)
+  agreementAccepted.value =
+    !loginAgreementEnabled.value || hasAcceptedLoginAgreement(loginAgreementRevision.value)
   showAgreementModal.value =
-    loginAgreementEnabled.value && !agreementAccepted.value && loginAgreementMode.value !== 'checkbox'
+    loginAgreementEnabled.value &&
+    !agreementAccepted.value &&
+    loginAgreementMode.value !== 'checkbox'
 }
 
+// acceptLoginAgreement saves the current revision before marking consent accepted
+// in memory. It then hides both prompt variants; storage failures interrupt
+// acceptance because the persistent write occurs before those state changes.
 function acceptLoginAgreement(): void {
   if (loginAgreementRevision.value) {
+    // Persist the accepted revision before opening the in-memory consent gate, so
+    // a storage failure does not mark this page as accepted.
     localStorage.setItem(
       LOGIN_AGREEMENT_STORAGE_KEY,
       JSON.stringify({
         revision: loginAgreementRevision.value,
-        accepted_at: new Date().toISOString()
-      })
+        accepted_at: new Date().toISOString(),
+      }),
     )
   }
   agreementAccepted.value = true
@@ -485,6 +570,9 @@ function acceptLoginAgreement(): void {
   showAgreementModal.value = false
 }
 
+// rejectLoginAgreement revokes saved consent and clears the local accepted state.
+// It closes both prompts and shows a warning only in modal mode, leaving checkbox
+// users free to continue editing.
 function rejectLoginAgreement(): void {
   revokeLoginAgreement()
   agreementAccepted.value = false
@@ -493,26 +581,36 @@ function rejectLoginAgreement(): void {
   if (loginAgreementMode.value !== 'checkbox') appStore.showWarning(t('auth.agreementRequired'))
 }
 
-// ==================== Turnstile Handlers ====================
-
+// onTurnstileVerify stores the challenge token and optional Tencent random string.
+// It clears the captcha error so the current proof can enable the next guarded
+// form action.
 function onTurnstileVerify(token: string, randstr = ''): void {
   turnstileToken.value = token
   tencentCaptchaRandstr.value = randstr
   errors.turnstile = ''
 }
 
+// onTurnstileExpire clears both challenge proof fields after widget expiration. It
+// publishes the translated expiry error, requiring a later verification callback
+// or action challenge before guarded submission can proceed.
 function onTurnstileExpire(): void {
   turnstileToken.value = ''
   tencentCaptchaRandstr.value = ''
   errors.turnstile = t('auth.turnstileExpired')
 }
 
+// onTurnstileError clears both challenge proof fields after widget failure. It
+// publishes the translated verification error so a failed proof cannot remain
+// available for a later form submission.
 function onTurnstileError(): void {
   turnstileToken.value = ''
   tencentCaptchaRandstr.value = ''
   errors.turnstile = t('auth.turnstileFailed')
 }
 
+// resetCaptchaProof resets the challenge widget and clears both local proof
+// fields. It also clears the captcha validation message, preparing subsequent user
+// actions to obtain a fresh challenge result.
 function resetCaptchaProof(): void {
   turnstileRef.value?.reset()
   turnstileToken.value = ''
@@ -520,6 +618,9 @@ function resetCaptchaProof(): void {
   errors.turnstile = ''
 }
 
+// acquireActionProof obtains a fresh proof only for enabled action-based captcha
+// providers. It returns true immediately otherwise; cancellation or an unavailable
+// widget returns false, and successful proof fields replace the local values.
 async function acquireActionProof(): Promise<boolean> {
   if (!actionCaptchaEnabled.value) return true
 
@@ -531,7 +632,9 @@ async function acquireActionProof(): Promise<boolean> {
   return true
 }
 
-// 所有认证入口共享同一门禁，未同意时不能触发验证码、网络请求或第三方跳转。
+// ensureAgreementAccepted allows authentication only when the current consent gate
+// is satisfied. Otherwise it opens the checkbox hint or modal and returns false,
+// letting callers stop before captcha, requests, or navigation.
 function ensureAgreementAccepted(): boolean {
   if (!agreementGateActive.value) return true
   if (loginAgreementMode.value === 'checkbox') {
@@ -542,10 +645,10 @@ function ensureAgreementAccepted(): boolean {
   return false
 }
 
-// ==================== Validation ====================
-
+// validateForm checks the current inputs and updates their validation messages. It
+// returns whether all required fields and prepared Turnstile proof pass, allowing
+// submission handlers to stop before action captcha or network work.
 function validateForm(): boolean {
-  // Reset errors
   errors.email = ''
   errors.password = ''
   errors.turnstile = ''
@@ -554,7 +657,6 @@ function validateForm(): boolean {
 
   if (!ensureAgreementAccepted()) return false
 
-  // Email validation
   if (!formData.email.trim()) {
     errors.email = t('auth.emailRequired')
     isValid = false
@@ -563,7 +665,6 @@ function validateForm(): boolean {
     isValid = false
   }
 
-  // Password validation
   if (!formData.password) {
     errors.password = t('auth.passwordRequired')
     isValid = false
@@ -572,7 +673,6 @@ function validateForm(): boolean {
     isValid = false
   }
 
-  // Turnstile validation
   if (turnstileEnabled.value && !turnstileToken.value) {
     errors.turnstile = t('auth.completeVerification')
     isValid = false
@@ -581,15 +681,16 @@ function validateForm(): boolean {
   return isValid
 }
 
-// ==================== Form Handlers ====================
-
+// handleLogin validates consent and password inputs before requesting action
+// captcha and authentication. It cancels One Tap, opens the TOTP modal for a
+// challenge response, and navigates only after ordinary login succeeds; settled
+// requests consume their proof.
 async function handleLogin(): Promise<void> {
   if (authActionDisabled.value) return
   googleOneTapRef.value?.cancelPrompt()
-  // Clear previous error
+
   errorMessage.value = ''
 
-  // Validate form
   if (!validateForm()) {
     return
   }
@@ -601,7 +702,9 @@ async function handleLogin(): Promise<void> {
   isLoading.value = true
 
   try {
-    // 调用认证状态仓库登录，阿里云 captchaVerifyParam 复用 turnstile_token 字段。
+    // The login API receives Aliyun verification parameters through
+    // turnstile_token, while Tencent uses its ticket and random-string fields for
+    // the same guarded action.
     const response = await authStore.login({
       email: formData.email,
       password: formData.password,
@@ -610,10 +713,9 @@ async function handleLogin(): Promise<void> {
       tencent_captcha_ticket: tencentCaptchaEnabled.value ? turnstileToken.value : undefined,
       tencent_captcha_randstr: tencentCaptchaEnabled.value
         ? tencentCaptchaRandstr.value
-        : undefined
+        : undefined,
     })
 
-    // Check if 2FA is required
     if (isTotp2FARequired(response)) {
       const totpResponse = response as TotpLoginResponse
       totpTempToken.value = totpResponse.temp_token || ''
@@ -623,18 +725,17 @@ async function handleLogin(): Promise<void> {
       return
     }
 
-    // Show success toast
     appStore.showSuccess(t('auth.loginSuccess'))
 
-    // Redirect to dashboard or intended route
     const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
     await router.push(redirectTo)
   } catch (error: unknown) {
     errorMessage.value = extractI18nErrorMessage(error, t, 'auth.errors', t('auth.loginFailed'))
 
-    // Also show error toast
     appStore.showError(errorMessage.value)
   } finally {
+    // A submitted request or reported server error can consume this proof. Reset
+    // the widget and local values before the user retries the action.
     if (captchaEnabled.value) {
       resetCaptchaProof()
     }
@@ -642,6 +743,9 @@ async function handleLogin(): Promise<void> {
   }
 }
 
+// handlePasskeyLogin starts passkey authentication after the consent gate and
+// optional action captcha. It cancels One Tap first, distinguishes browser
+// cancellation in fallback copy, and clears action proof after success or failure.
 async function handlePasskeyLogin(): Promise<void> {
   googleOneTapRef.value?.cancelPrompt()
   if (authActionDisabled.value || !ensureAgreementAccepted()) return
@@ -655,23 +759,29 @@ async function handlePasskeyLogin(): Promise<void> {
       proof = tencentCaptchaEnabled.value
         ? {
             tencent_captcha_ticket: result.token,
-            tencent_captcha_randstr: result.randstr
+            tencent_captcha_randstr: result.randstr,
           }
         : { turnstile_token: result.token }
     }
 
     await authStore.loginWithPasskey(proof)
+    // This path has completed authentication or account binding. Clear referral
+    // attribution before navigation so a later signup does not reuse the finished
+    // flow context.
     clearAllAffiliateCodes()
     appStore.showSuccess(t('auth.loginSuccess'))
     const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
     await router.push(redirectTo)
   } catch (error: unknown) {
-    const fallback = error instanceof DOMException && error.name === 'NotAllowedError'
-      ? t('auth.passkeyCancelled')
-      : t('auth.passkeyFailed')
+    const fallback =
+      error instanceof DOMException && error.name === 'NotAllowedError'
+        ? t('auth.passkeyCancelled')
+        : t('auth.passkeyFailed')
     errorMessage.value = extractI18nErrorMessage(error, t, 'auth.errors', fallback)
     appStore.showError(errorMessage.value)
   } finally {
+    // The passkey attempt has settled after acquiring action proof. Clear that
+    // proof so a subsequent authentication attempt opens its own challenge.
     if (actionCaptchaEnabled.value) {
       resetCaptchaProof()
     }
@@ -679,6 +789,10 @@ async function handlePasskeyLogin(): Promise<void> {
   }
 }
 
+// handleOAuthStart applies consent and loading gates before provider navigation.
+// Without action captcha it opens the built start URL directly; otherwise it
+// obtains proof, calls the start endpoint, and consumes proof after the request
+// settles.
 async function handleOAuthStart(request: OAuthLoginStart): Promise<void> {
   googleOneTapRef.value?.cancelPrompt()
   if (authActionDisabled.value || !ensureAgreementAccepted()) return
@@ -698,18 +812,13 @@ async function handleOAuthStart(request: OAuthLoginStart): Promise<void> {
       tencentCaptchaEnabled.value
         ? {
             tencent_captcha_ticket: proof.token,
-            tencent_captcha_randstr: proof.randstr
+            tencent_captcha_randstr: proof.randstr,
           }
-        : { turnstile_token: proof.token }
+        : { turnstile_token: proof.token },
     )
     window.location.href = result.authorize_url
   } catch (error: unknown) {
-    errorMessage.value = extractI18nErrorMessage(
-      error,
-      t,
-      'auth.errors',
-      t('auth.turnstileFailed')
-    )
+    errorMessage.value = extractI18nErrorMessage(error, t, 'auth.errors', t('auth.turnstileFailed'))
     appStore.showError(errorMessage.value)
   } finally {
     resetCaptchaProof()
@@ -717,8 +826,9 @@ async function handleOAuthStart(request: OAuthLoginStart): Promise<void> {
   }
 }
 
-// ==================== 2FA Handlers ====================
-
+// handle2FAVerify authenticates the temporary login challenge with the supplied
+// code. It marks the modal busy, closes it after success, and resets its input and
+// busy state when verification fails.
 async function handle2FAVerify(code: string): Promise<void> {
   if (totpModalRef.value) {
     totpModalRef.value.setVerifying(true)
@@ -727,15 +837,20 @@ async function handle2FAVerify(code: string): Promise<void> {
   try {
     await authStore.login2FA(totpTempToken.value, code)
 
-    // Close modal and show success
     show2FAModal.value = false
     appStore.showSuccess(t('auth.loginSuccess'))
 
-    // Redirect to dashboard or intended route
     const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
     await router.push(redirectTo)
   } catch (error: unknown) {
-    const err = error as { message?: string; response?: { data?: { message?: string } } }
+    const err = error as {
+      message?: string // reported failure message
+      response?: {
+        data?: {
+          message?: string // reported failure message
+        } // HTTP response payload
+      } // optional HTTP error response
+    }
     const message = err.response?.data?.message || err.message || t('profile.totp.loginFailed')
 
     if (totpModalRef.value) {
@@ -745,6 +860,9 @@ async function handle2FAVerify(code: string): Promise<void> {
   }
 }
 
+// handle2FACancel hides the second-factor modal and discards its challenge token.
+// The masked email is cleared with the token so a later password login starts with
+// its own challenge context.
 function handle2FACancel(): void {
   show2FAModal.value = false
   totpTempToken.value = ''
@@ -752,5 +870,4 @@ function handle2FACancel(): void {
 }
 </script>
 
-<style scoped>
-</style>
+<style scoped></style>

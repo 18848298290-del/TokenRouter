@@ -39,12 +39,8 @@
               :value="rule.pattern"
               type="text"
               class="input"
-              :placeholder="
-                t('admin.groups.modelRouting.modelPatternPlaceholder')
-              "
-              @input="
-                emit('pattern', rule, ($event.target as HTMLInputElement).value)
-              "
+              :placeholder="t('admin.groups.modelRouting.modelPatternPlaceholder')"
+              @input="emit('pattern', rule, ($event.target as HTMLInputElement).value)"
             />
           </div>
           <div>
@@ -61,9 +57,7 @@
                 <button
                   type="button"
                   class="shrink-0 rounded-compact focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-                  :aria-label="
-                    t('admin.groups.settings.removeItem', { name: provider.name })
-                  "
+                  :aria-label="t('admin.groups.settings.removeItem', { name: provider.name })"
                   @click="emit('removeProvider', rule, provider.id)"
                 >
                   <Icon name="x" size="sm" />
@@ -76,20 +70,13 @@
                 :value="search.keywords[getKey(rule)] || ''"
                 type="text"
                 class="input"
-                :placeholder="
-                  t('admin.groups.modelRouting.searchProviderPlaceholder')
-                "
-                @input="
-                  emit('search', rule, ($event.target as HTMLInputElement).value)
-                "
+                :placeholder="t('admin.groups.modelRouting.searchProviderPlaceholder')"
+                @input="emit('search', rule, ($event.target as HTMLInputElement).value)"
                 @focus="emit('focus', rule)"
               />
               <MotionTransition name="dropdown-fade">
                 <div
-                  v-if="
-                    search.open[getKey(rule)] &&
-                    search.results[getKey(rule)]?.length
-                  "
+                  v-if="search.open[getKey(rule)] && search.results[getKey(rule)]?.length"
                   class="dropdown absolute left-0 right-0 z-50 mt-1 max-h-menu-sm overflow-auto"
                 >
                   <button
@@ -97,20 +84,14 @@
                     :key="provider.id"
                     type="button"
                     class="dropdown-item-sm"
-                    :disabled="
-                      rule.providers.some((selected) => selected.id === provider.id)
-                    "
+                    :disabled="rule.providers.some((selected) => selected.id === provider.id)"
                     :class="{
-                      'opacity-50': rule.providers.some(
-                        (selected) => selected.id === provider.id,
-                      ),
+                      'opacity-50': rule.providers.some((selected) => selected.id === provider.id),
                     }"
                     @click="emit('selectProvider', rule, provider)"
                   >
                     <span class="min-w-0 break-all">{{ provider.name }}</span>
-                    <span class="shrink-0 text-xs text-gray-400"
-                      >#{{ provider.id }}</span
-                    >
+                    <span class="shrink-0 text-xs text-gray-400">#{{ provider.id }}</span>
                   </button>
                 </div>
               </MotionTransition>
@@ -139,23 +120,51 @@ import type {
   GroupRoutingProvider,
 } from './groupSettingsTypes'
 
-// 复用规则对象，页面的搜索键和取消请求逻辑通过对象身份定位同一条规则。
+// GroupModelRoutingFields.vue renders model-pattern routing rules and their provider searches.
+// Rule objects belong to the page, which assigns stable keys and manages asynchronous searches;
+// emitted actions carry those same objects so removal and selection reach the correct rule.
+
+// props supplies parent-owned editor values and display controls consumed by the fields below.
 const props = defineProps<{
-  idPrefix: string
-  enabled: boolean
+  idPrefix: string // field identifier prefix
+  enabled: boolean // configured enablement flag
+  // rules contains the page-owned routing objects. Events return those objects so keyed
+  // searches and removal can identify the same rule.
   rules: GroupModelRoutingRule[]
-  search: GroupProviderSearchState
+  search: GroupProviderSearchState // page-owned provider search
+  // getKey returns the stable page-owned identity for a rule. Reuse that identity across
+  // search, selection, and removal events.
   getKey: (rule: GroupModelRoutingRule) => string
 }>()
+// emit forwards typed edits and actions to the parent that owns the displayed draft.
 const emit = defineEmits<{
-  enabled: [value: boolean]
-  add: []
-  remove: [rule: GroupModelRoutingRule]
-  pattern: [rule: GroupModelRoutingRule, value: string]
-  search: [rule: GroupModelRoutingRule, keyword: string]
-  focus: [rule: GroupModelRoutingRule]
-  selectProvider: [rule: GroupModelRoutingRule, provider: GroupRoutingProvider]
-  removeProvider: [rule: GroupModelRoutingRule, providerId: number]
+  enabled: [
+    value: boolean, // replacement field value
+  ] // enablement change notification
+  add: [] // append rule request
+  remove: [
+    rule: GroupModelRoutingRule, // owning routing rule
+  ] // remove selected row
+  pattern: [
+    rule: GroupModelRoutingRule, // owning routing rule
+    value: string, // replacement field value
+  ] // model matching pattern
+  search: [
+    rule: GroupModelRoutingRule, // owning routing rule
+    keyword: string, // provider search text
+  ] // rule and search keyword
+  focus: [
+    rule: GroupModelRoutingRule, // owning routing rule
+  ] // focused routing rule
+  selectProvider: [
+    rule: GroupModelRoutingRule, // owning routing rule
+    provider: GroupRoutingProvider, // selected provider record
+  ] // rule and selected provider
+  removeProvider: [
+    rule: GroupModelRoutingRule, // owning routing rule
+    providerId: number, // removed provider identifier
+  ] // rule and removed provider
 }>()
+// t resolves the current locale messages used by labels, validation, and action notifications.
 const { t } = useI18n()
 </script>

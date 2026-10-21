@@ -128,7 +128,8 @@ import type { IconDefinition } from './types'
 // Pages and components render Icon.vue with one of these names, so changing the
 // artwork behind a name updates every caller that uses it.
 
-/** icons maps each semantic IconName to the artwork rendered by Icon.vue. */
+// icons maps application names to imported artwork definitions; multiple
+// semantic names can intentionally share one renderer.
 export const icons = {
   play: PlayIcon,
   refresh: RefreshCwIcon,
@@ -256,7 +257,7 @@ export const icons = {
   toolCall: WrenchIcon,
   structuredOutput: BracesIcon,
   temperature: ThermometerIcon,
-  attachment: PaperclipIcon
+  attachment: PaperclipIcon,
 } as const satisfies Record<string, IconDefinition>
 
 /** IconName lists the semantic names accepted by Icon.vue. */

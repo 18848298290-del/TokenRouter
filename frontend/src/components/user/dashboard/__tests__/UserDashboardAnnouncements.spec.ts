@@ -1,13 +1,15 @@
-/**
- * 用户仪表盘公告时间线测试
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
-import type { UserAnnouncement } from '@/types'
+import type { UserAnnouncement } from '@/api/announcements.types'
 import { useAnnouncementStore } from '@/stores/announcements'
 import UserDashboardAnnouncements from '../UserDashboardAnnouncements.vue'
+
+// UserDashboardAnnouncements.spec.ts exercises the actual dashboard announcement timeline
+// with shared-store data. It checks publication ordering, sanitized prose summaries, read
+// indicators, and detail opening while keeping full announcement content available to the
+// popup.
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
@@ -31,6 +33,9 @@ vi.mock('@/utils/format', () => ({
   formatRelativeTime: () => '2 hours ago',
 }))
 
+// createAnnouncement creates a silent publication with an ID-based timestamp and optional
+// overrides. Callers choose read status and rich content while retaining the fields consumed
+// by the timeline and popup.
 function createAnnouncement(
   id: number,
   overrides: Partial<UserAnnouncement> = {},
@@ -57,16 +62,18 @@ describe('UserDashboardAnnouncements', () => {
     vi.restoreAllMocks()
   })
 
-  // The server list mixes read state and publication order with formatted content.
-  // The timeline shows the latest five announcements and extracts sanitized opening prose.
+  // The store mixes read state, publication order, and unsafe formatted content. The test
+  // protects chronological selection of five entries, sanitized opening prose, and accurate
+  // unread indicators.
   it('按发布时间倒序展示最近五条并生成安全纯文本摘要', () => {
     const store = useAnnouncementStore()
     store.announcements = [2, 6, 1, 5, 3, 4].map((id) =>
       createAnnouncement(id, {
         read_at: id % 2 === 0 ? undefined : '2026-08-01T13:00:00Z',
-        content: id === 6
-          ? '# Release **ready**\n\n<script>unsafe()</script><p>More details</p>'
-          : `Content ${id}`,
+        content:
+          id === 6
+            ? '# Release **ready**\n\n<script>unsafe()</script><p>More details</p>'
+            : `Content ${id}`,
       }),
     )
 
@@ -104,13 +111,17 @@ describe('UserDashboardAnnouncements', () => {
     wrapper.unmount()
   })
 
-  // Markdown and HTML tables depend on row structure to explain their values.
-  // Summaries show the opening paragraph and keep subsequent details in the dialog.
+  // An announcement combines opening prose with tables, code, and later paragraphs. The test
+  // protects the concise prose preview while structured values and unsafe content remain
+  // absent from it.
   it('uses opening prose instead of tables and code in announcement previews', () => {
     const store = useAnnouncementStore()
-    store.announcements = [createAnnouncement(1, {
-      content: 'Prices have changed.\n\n| Size | Price |\n| --- | --- |\n| 1K | 2 credits |\n\n```sh\nsecret-example-command\n```\n\nSee the announcement for details.\n\n<table><tr><td>hidden-table-value</td></tr></table><script>unsafe()</script>',
-    })]
+    store.announcements = [
+      createAnnouncement(1, {
+        content:
+          'Prices have changed.\n\n| Size | Price |\n| --- | --- |\n| 1K | 2 credits |\n\n```sh\nsecret-example-command\n```\n\nSee the announcement for details.\n\n<table><tr><td>hidden-table-value</td></tr></table><script>unsafe()</script>',
+      }),
+    ]
     const wrapper = mount(UserDashboardAnnouncements)
     const item = wrapper.find('[data-testid="announcement-timeline-item"]')
 
@@ -123,19 +134,26 @@ describe('UserDashboardAnnouncements', () => {
     wrapper.unmount()
   })
 
-  // An announcement may consist entirely of structured content without introductory prose.
-  // Its preview uses the existing detail prompt and keeps the announcement available.
+  // An announcement contains a table without introductory prose. The test protects the no-
+  // summary prompt while retaining a clickable timeline entry for its complete content.
   it('uses the detail prompt when an announcement contains only a table', () => {
     const store = useAnnouncementStore()
-    store.announcements = [createAnnouncement(1, {
-      content: '| Size | Price |\n| --- | --- |\n| 1K | 2 credits |',
-    })]
+    store.announcements = [
+      createAnnouncement(1, {
+        content: '| Size | Price |\n| --- | --- |\n| 1K | 2 credits |',
+      }),
+    ]
     const wrapper = mount(UserDashboardAnnouncements)
 
-    expect(wrapper.find('[data-testid="announcement-timeline-item"]').text()).toContain('dashboard.announcementNoSummary')
+    expect(wrapper.find('[data-testid="announcement-timeline-item"]').text()).toContain(
+      'dashboard.announcementNoSummary',
+    )
     wrapper.unmount()
   })
 
+  // Publications occur in the current and preceding calendar years. The test protects
+  // omission of the redundant current year while retaining the year needed to distinguish
+  // older dates.
   it('同年日期省略年份，跨年日期显示年份', () => {
     const store = useAnnouncementStore()
     const currentYear = new Date().getFullYear()
@@ -152,6 +170,8 @@ describe('UserDashboardAnnouncements', () => {
     wrapper.unmount()
   })
 
+  // The shared store transitions from initial loading to an empty completed result. The test
+  // protects separate skeleton and empty presentations with an accurate zero unread count.
   it('分别展示加载状态和空状态', async () => {
     const store = useAnnouncementStore()
     store.loading = true
@@ -170,6 +190,9 @@ describe('UserDashboardAnnouncements', () => {
     wrapper.unmount()
   })
 
+  // The user opens an unread announcement and then an already read announcement. The test
+  // protects detail opening for both and exactly one read-marking request for the unread
+  // record.
   it('点击未读公告打开详情并标记已读，已读公告不重复标记', async () => {
     const store = useAnnouncementStore()
     store.announcements = [

@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, reactive } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 
+// OpsDashboard.spec.ts checks dashboard filter propagation and independent
+// histogram refreshes through mounted child controls. API and router doubles
+// expose requests and URL updates, while browser storage verifies that accepted
+// histogram preferences survive another page instance.
+
+// API and navigation doubles expose panel request counts, URL replacements, and
+// settings initialization during dashboard filter scenarios.
 const mocks = vi.hoisted(() => ({
   getDashboardSnapshotV2: vi.fn(),
   getThroughputTrend: vi.fn(),
@@ -14,7 +21,11 @@ const mocks = vi.hoisted(() => ({
   settingsFetch: vi.fn(),
 }))
 
-const route = reactive<{ query: Record<string, string> }>({ query: {} })
+// route supplies a reactive query object so each scenario controls the dashboard
+// initial deep-link and histogram state.
+const route = reactive<{
+  query: Record<string, string> // reactive dashboard query parameters
+}>({ query: {} })
 
 vi.mock('vue-router', () => ({
   useRoute: () => route,
@@ -64,6 +75,8 @@ import OpsDashboardHeader from '../components/OpsDashboardHeader.vue'
 import OpsRequestDetailsModal from '../components/OpsRequestDetailsModal.vue'
 import { LATENCY_BUCKET_STORAGE_KEY } from '../latencyBuckets'
 
+// Dialog and layout doubles render slots, while inactive panel doubles keep the
+// fixture focused on dashboard request coordination.
 const SlotStub = defineComponent({
   template: '<div><slot /></div>',
 })
@@ -72,6 +85,8 @@ const EmptyStub = defineComponent({
   template: '<div />',
 })
 
+// LatencyChartStub emits a valid five-boundary edit through the same public
+// event used by the real histogram editor.
 const LatencyChartStub = defineComponent({
   name: 'OpsLatencyChart',
   emits: ['update:bucketBoundaries'],
@@ -83,6 +98,9 @@ const LatencyChartStub = defineComponent({
   `,
 })
 
+// mountDashboard mounts the dashboard with request doubles and lightweight panel
+// stubs. The returned wrapper owns lifecycle cleanup, so each test unmounts it
+// after observing requests and query updates.
 function mountDashboard() {
   return mount(OpsDashboard, {
     global: {
@@ -131,17 +149,24 @@ describe('OpsDashboard latency bucket refresh', () => {
     })
     mocks.getThroughputTrend.mockResolvedValue({ points: [] })
     mocks.getErrorDistribution.mockResolvedValue({ total: 0, items: [] })
-    mocks.getLatencyHistogram.mockImplementation(async (params: { bucket_boundaries_ms?: number[] }) => ({
-      start_time: '',
-      end_time: '',
-      platform: '',
-      bucket_boundaries_ms: params.bucket_boundaries_ms ?? [100, 200, 500, 1000, 2000],
-      total_requests: 0,
-      buckets: [],
-    }))
+    mocks.getLatencyHistogram.mockImplementation(
+      async (params: {
+        bucket_boundaries_ms?: number[] // requested millisecond histogram cutoffs
+      }) => ({
+        start_time: '',
+        end_time: '',
+        platform: '',
+        bucket_boundaries_ms: params.bucket_boundaries_ms ?? [100, 200, 500, 1000, 2000],
+        total_requests: 0,
+        buckets: [],
+      }),
+    )
     mocks.routerReplace.mockResolvedValue(undefined)
   })
 
+  // A bucket edit arrives from the histogram control after the dashboard has
+  // loaded. It refreshes histogram data and stores the URL preference while
+  // other panel request counts stay unchanged.
   it('应用新边界时只刷新时长图并同步 URL', async () => {
     const wrapper = mountDashboard()
     await flushPromises()
@@ -171,6 +196,9 @@ describe('OpsDashboard latency bucket refresh', () => {
     wrapper.unmount()
   })
 
+  // The URL omits histogram boundaries while browser storage contains a valid
+  // preference. The first histogram request must use that stored sequence of
+  // millisecond cutoffs.
   it('没有 URL 参数时恢复本地保存的分桶偏好', async () => {
     localStorage.setItem(LATENCY_BUCKET_STORAGE_KEY, '1000,2000,5000,10000,20000')
 
@@ -186,6 +214,9 @@ describe('OpsDashboard latency bucket refresh', () => {
     wrapper.unmount()
   })
 
+  // The header selects a custom window and then changes its bounds again. Both
+  // request-detail props and overview queries must follow each timestamp
+  // selection while the mode remains custom.
   it('自定义时间边界传给请求明细，重复修改范围时概览同步刷新', async () => {
     const wrapper = mountDashboard()
     await flushPromises()
@@ -197,8 +228,11 @@ describe('OpsDashboard latency bucket refresh', () => {
     expect(details.attributes('custom-start-time')).toBe('2026-08-25T00:00:00Z')
     expect(details.attributes('custom-end-time')).toBe('2026-08-28T00:00:00Z')
     expect(mocks.getDashboardSnapshotV2).toHaveBeenLastCalledWith(
-      expect.objectContaining({ start_time: '2026-08-25T00:00:00Z', end_time: '2026-08-28T00:00:00Z' }),
-      expect.any(Object)
+      expect.objectContaining({
+        start_time: '2026-08-25T00:00:00Z',
+        end_time: '2026-08-28T00:00:00Z',
+      }),
+      expect.any(Object),
     )
     const calls = mocks.getDashboardSnapshotV2.mock.calls.length
     header.vm.$emit('update:customTimeRange', '2026-08-26T00:00:00Z', '2026-08-27T00:00:00Z')
@@ -206,13 +240,19 @@ describe('OpsDashboard latency bucket refresh', () => {
     await flushPromises()
     expect(mocks.getDashboardSnapshotV2).toHaveBeenCalledTimes(calls + 1)
     expect(mocks.getDashboardSnapshotV2).toHaveBeenLastCalledWith(
-      expect.objectContaining({ start_time: '2026-08-26T00:00:00Z', end_time: '2026-08-27T00:00:00Z' }),
-      expect.any(Object)
+      expect.objectContaining({
+        start_time: '2026-08-26T00:00:00Z',
+        end_time: '2026-08-27T00:00:00Z',
+      }),
+      expect.any(Object),
     )
     expect(details.attributes('custom-start-time')).toBe('2026-08-26T00:00:00Z')
     wrapper.unmount()
   })
 
+  // The URL contains too few histogram boundaries and storage has no preference.
+  // The dashboard must request standard boundaries and replace the invalid query
+  // parameter with a cleaned route.
   it('非法 URL 边界回退默认值并清理参数', async () => {
     route.query = { latency_bounds: '100,200' }
     const wrapper = mountDashboard()
@@ -228,6 +268,9 @@ describe('OpsDashboard latency bucket refresh', () => {
     wrapper.unmount()
   })
 
+  // A histogram edit occurs while fullscreen is enabled by the route. The
+  // rewritten query must include both the custom boundaries and the active
+  // fullscreen flag.
   it('全屏模式应用新边界时保留全屏参数', async () => {
     route.query = { fullscreen: '1' }
     const wrapper = mountDashboard()

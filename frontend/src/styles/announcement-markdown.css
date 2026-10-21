@@ -1,4 +1,9 @@
-/* 公告弹窗和铃铛详情共用富文本样式。 */
+/*
+ * announcement-markdown.css styles rendered announcement content in modal and bell-
+ * detail views. Shared markdown rules provide readable headings, lists, code, and
+ * tables; the later popup rules reduce spacing and decoration for the compact
+ * announcement panel.
+ */
 .markdown-body {
   @apply text-[15px] leading-[1.75];
   @apply text-gray-700 dark:text-gray-300;
@@ -66,6 +71,11 @@
   @apply my-5 overflow-x-auto rounded-surface border border-gray-200 bg-gray-50 p-5 dark:border-dark-600 dark:bg-dark-900/50;
 }
 
+/*
+ * Code inside a fenced block inherits the surrounding pre surface and spacing,
+ * preventing the inline-code treatment from drawing repeated backgrounds around
+ * lines.
+ */
 .markdown-body pre code {
   @apply bg-transparent p-0 text-[13px] text-gray-800 dark:text-gray-200;
 }
@@ -112,11 +122,18 @@
   @apply italic text-gray-600 dark:text-gray-400;
 }
 
-/* 公告浮层正文采用紧凑排版。 */
+/*
+ * Popup rules follow the shared markdown rules so a compact announcement can
+ * override heading spacing, code blocks, tables, and images within the same body.
+ */
 .announcement-popup-content {
   @apply text-sm leading-7 text-gray-700 dark:text-dark-200;
 }
 
+/*
+ * Trim the first and last child margins because the popup container already provides
+ * outer spacing around its compact markdown body.
+ */
 .announcement-popup-content > :first-child {
   @apply mt-0;
 }

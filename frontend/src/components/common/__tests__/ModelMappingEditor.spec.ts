@@ -5,6 +5,11 @@ import { mount, type VueWrapper } from '@vue/test-utils'
 import ModelMappingEditor from '../ModelMappingEditor.vue'
 import type { ModelMappingRow } from '@/utils/modelMappingRules'
 
+// ModelMappingEditor.spec.ts tests mapping edits and row collection events through the
+// shared editor. Assertions inspect actual input attributes and emitted objects,
+// distinguishing replacement arrays from retained row identities and verifying indexed
+// error feedback.
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
@@ -13,12 +18,19 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
+// wrapper owns the currently mounted test component so teardown can release its
+// resources after each case.
 let wrapper: VueWrapper | undefined
+// Release the resources retained by this case before the next one, keeping browser
+// state and component lifecycle observations isolated across assertions.
 afterEach(() => {
   wrapper?.unmount()
   wrapper = undefined
 })
 
+// mountEditor mounts mapping rows with standard labels and supplied prop overrides. It
+// retains the wrapper for teardown and stubs icons and row transitions so cases can
+// inspect input and event behavior.
 const mountEditor = (rows: ModelMappingRow[], props: Record<string, unknown> = {}) => {
   wrapper = mount(ModelMappingEditor, {
     props: {
@@ -40,12 +52,18 @@ const mountEditor = (rows: ModelMappingRow[], props: Record<string, unknown> = {
   return wrapper
 }
 
+// lastEmittedRows reads the latest model payload from the current mapping wrapper.
+// Call it after mounting and causing an update; missing emitted data produces
+// undefined through the asserted return type.
 const lastEmittedRows = () => {
   const emitted = wrapper!.emitted('update:modelValue') ?? []
   return emitted[emitted.length - 1]?.[0] as ModelMappingRow[]
 }
 
 describe('ModelMappingEditor', () => {
+  // A mapping row receives caller labels, placeholders, and a test identifier prefix.
+  // The rendered inputs expose those values, retain the source text, and use the
+  // default monospace styling.
   it('透传占位、无障碍标签和测试钩子', () => {
     mountEditor([{ from: 'a', to: 'b' }])
 
@@ -58,6 +76,9 @@ describe('ModelMappingEditor', () => {
     expect(source.classes()).toContain('font-mono')
   })
 
+  // The user adds a mapping to an existing collection through the editor button. The
+  // emitted collection is new, retains the existing row object, and shares its
+  // appended row with add.
   it('添加时发出新数组和 add 事件', async () => {
     const rows = [{ from: 'a', to: 'b' }]
     mountEditor(rows)
@@ -72,6 +93,9 @@ describe('ModelMappingEditor', () => {
     expect(wrapper!.emitted('add')?.[0]?.[0]).toBe(next[1])
   })
 
+  // The user removes the first of two mapping rows through its action button. The
+  // surviving row retains object identity, and remove reports the deleted row with its
+  // former index.
   it('删除时保留其余行对象并发出 remove 事件', async () => {
     const rows = [
       { from: 'a', to: 'b' },
@@ -89,6 +113,9 @@ describe('ModelMappingEditor', () => {
     expect(removed?.[1]).toBe(0)
   })
 
+  // The user edits a target field on an existing mapping row. The row changes in place
+  // and model publication retains its identity while publishing neither add nor
+  // remove.
   it('输入时原地修改行并发出新数组，不触发增删事件', async () => {
     const rows = [{ from: 'a', to: 'b' }]
     mountEditor(rows)
@@ -101,6 +128,9 @@ describe('ModelMappingEditor', () => {
     expect(wrapper!.emitted('remove')).toBeUndefined()
   })
 
+  // The caller supplies a source error for the second mapping and no error for the
+  // first. The matching input receives error styling, accessible invalid state, and
+  // the supplied alert text.
   it('按下标显示逐字段错误', () => {
     mountEditor(
       [
@@ -117,11 +147,17 @@ describe('ModelMappingEditor', () => {
     expect(wrapper!.get('[role="alert"]').text()).toBe('通配符无效')
   })
 
+  // A mapping collection already contains the configured maximum number of rows. The
+  // add button must be disabled so the list shell prevents another user-triggered row
+  // request.
   it('达到上限时禁用添加', () => {
     mountEditor([{ from: 'a', to: 'b' }], { max: 1 })
     expect(wrapper!.get('[data-testid="mapping-add"]').attributes('disabled')).toBeDefined()
   })
 
+  // The parent supplies footer content while the mapping collection is empty. The
+  // editor must forward that slot through RuleListEditor and keep the supplied test
+  // element rendered.
   it('渲染 footer 插槽', () => {
     wrapper = mount(ModelMappingEditor, {
       props: { modelValue: [], sourceLabel: 's', targetLabel: 't' },

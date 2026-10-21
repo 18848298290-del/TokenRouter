@@ -1,56 +1,161 @@
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { shallowMount, enableAutoUnmount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { applyTokens, cssRules, parseVue } from '@/__tests__/helpers/sourceSyntax'
+import AppHeader from '../AppHeader.vue'
 
-import { describe, expect, it } from 'vitest'
+// AppHeader.spec.ts exercises account navigation and theme controls through
+// rendered header elements. Store and navigation collaborators use local mocks,
+// allowing feature combinations and click handlers to be checked without account
+// requests, onboarding work, or changes to the browser's persisted theme.
 
-const componentPath = resolve(dirname(fileURLToPath(import.meta.url)), '../AppHeader.vue')
-const componentSource = readFileSync(componentPath, 'utf8')
+// state supplies account and feature settings before each mount and records theme actions locally.
+const state = vi.hoisted(() => ({
+  user: null as null | { id: number; email: string; role: string }, // Current account fixture.
+  settings: {} as Record<string, boolean>, // Public feature switch values.
+  setThemeMode: vi.fn(), // Theme selection action recorder.
+  toggleTheme: vi.fn(), // Guest theme action recorder.
+}))
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
+  useI18n: () => ({ t: (key: string) => key }),
+}))
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ path: '/' }),
+  useRouter: () => ({ push: vi.fn() }),
+}))
+vi.mock('@/stores', () => ({
+  useAppStore: () => ({
+    cachedPublicSettings: state.settings,
+    siteName: 'Test',
+    siteLogo: '',
+    siteVersion: '1',
+    docUrl: 'https://docs.example.com',
+    publicSettingsLoaded: true,
+  }),
+  useAuthStore: () => ({ user: state.user, isAdmin: false, logout: vi.fn() }),
+  useOnboardingStore: () => ({ replay: vi.fn() }),
+}))
+vi.mock('@/composables/useBalanceDisplay', () => ({
+  useBalanceDisplay: () => ({ formatBalanceAmount: () => '0', balanceUnitSymbol: '$' }),
+}))
+vi.mock('@/composables/useTheme', () => ({
+  useTheme: () => ({
+    isDark: false,
+    themeMode: 'system',
+    setThemeMode: state.setThemeMode,
+    toggleTheme: state.toggleTheme,
+  }),
+}))
+vi.mock('@/directives/segmented', () => ({ vSegmented: {} }))
 
-describe('AppHeader theme toggle', () => {
-  it('keeps the header theme button only for guests', () => {
-    const themeIndex = componentSource.indexOf('data-testid="theme-toggle"')
-    const themeStart = componentSource.lastIndexOf('<button', themeIndex)
-    const themeEnd = componentSource.indexOf('</button>', themeIndex)
-    const themeButton = componentSource.slice(themeStart, themeEnd)
-
-    expect(themeIndex).toBeGreaterThanOrEqual(0)
-    expect(themeButton).toContain('v-if="!user"')
-    expect(themeButton).toContain('class="header-status-icon-button"')
-  })
-
-  it('offers light, dark and system modes at the bottom of the user menu', () => {
-    const logoutIndex = componentSource.indexOf("{{ t('nav.logout') }}")
-    const modeIndex = componentSource.indexOf(':data-testid="`theme-mode-${option.mode}`"')
-
-    expect(modeIndex).toBeGreaterThan(logoutIndex)
-    expect(componentSource).toContain('@click="setThemeMode(option.mode)"')
-    expect(componentSource).toContain("{ mode: 'system', icon: 'monitor', label: t('nav.systemTheme') }")
-  })
-
-  it('hides lower-priority header actions on mobile', () => {
-    expect(componentSource).toContain('<div v-if="user" class="hidden sm:block">')
-    expect(componentSource).toContain('class="header-status-icon-button hidden sm:flex"')
-    expect(componentSource).toContain('@apply flex items-center gap-1 sm:gap-2;')
-  })
+enableAutoUnmount(afterEach)
+beforeEach(() => {
+  state.user = null
+  state.settings = {}
+  vi.clearAllMocks()
 })
 
-describe('AppHeader positioning', () => {
+// mountHeader renders child slots so menu contents remain observable through DOM selectors.
+function mountHeader() {
+  return shallowMount(AppHeader, {
+    props: { publicPage: true },
+    global: { renderStubDefaultSlot: true, stubs: { RouterLink: true } },
+  })
+}
+
+// openUserMenu selects the local user fixture and opens the mounted account menu.
+// The suite automatically unmounts the returned wrapper after each test, removing its
+// document listeners before the next fixture runs.
+async function openUserMenu() {
+  state.user = { id: 1, email: 'reader@example.test', role: 'user' }
+  const wrapper = mountHeader()
+  await wrapper.get('.header-status-user-button').trigger('click')
+  return wrapper
+}
+
+describe('AppHeader controls', () => {
+  // Guests need a direct theme action because they have no account menu. A
+  // signed-in header moves that action into the account menu's theme controls.
+  it('keeps the header theme button only for guests', async () => {
+    const guest = mountHeader()
+    expect(guest.get('[data-testid="theme-toggle"]').classes()).toContain(
+      'header-status-icon-button',
+    )
+    await guest.get('[data-testid="theme-toggle"]').trigger('click')
+    expect(state.toggleTheme).toHaveBeenCalledOnce()
+    const user = await openUserMenu()
+    expect(user.find('[data-testid="theme-toggle"]').exists()).toBe(false)
+  })
+
+  // Signed-in users select light, dark, or system appearance after the logout
+  // section. Clicking each rendered option dispatches the corresponding theme value.
+  it('offers all theme modes below logout and dispatches selections', async () => {
+    const wrapper = await openUserMenu()
+    const logout = wrapper.get('.menu-item-danger').element
+    for (const mode of ['light', 'dark', 'system']) {
+      const button = wrapper.get(`[data-testid="theme-mode-${mode}"]`)
+      if (mode === 'system') expect(button.get('icon-stub').attributes('name')).toBe('monitor')
+      expect(
+        logout.compareDocumentPosition(button.element) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+      await button.trigger('click')
+      expect(state.setThemeMode).toHaveBeenLastCalledWith(mode)
+    }
+  })
+
+  // Small screens keep account controls while deferring announcement and docs
+  // shortcuts. The shared icon group keeps its compact mobile and desktop gaps.
+  it('hides lower-priority actions on mobile', async () => {
+    const wrapper = await openUserMenu()
+    expect(wrapper.get('announcement-bell-stub').element.parentElement?.classList).toContain(
+      'hidden',
+    )
+    expect(wrapper.get('announcement-bell-stub').element.parentElement?.classList).toContain(
+      'sm:block',
+    )
+    expect(wrapper.get('a[href="https://docs.example.com/"]').classes()).toEqual(
+      expect.arrayContaining(['hidden', 'sm:flex']),
+    )
+    const rules = cssRules(
+      parseVue('components/layout/AppHeader.vue').styles,
+      '.header-status-icon-group',
+    )
+    expect(rules.flatMap(applyTokens)).toEqual(
+      expect.arrayContaining(['flex', 'items-center', 'gap-1', 'sm:gap-2']),
+    )
+  })
+
+  // The global header must stay above page scrolling at every viewport size.
+  // Its rendered root retains fixed positioning and the shared header layer token.
   it('keeps the global header outside document scrolling', () => {
-    expect(componentSource).toContain('class="site-header fixed inset-x-0 top-0 z-header')
-  })
-})
-
-describe('AppHeader user menu', () => {
-  it('filters optional entries with the same feature flags as the sidebar', () => {
-    expect(componentSource).toContain("settings?.team_enabled !== false && { path: '/team'")
-    expect(componentSource).toContain("paymentEnabled && { path: '/purchase'")
-    expect(componentSource).toContain("paymentEnabled && { path: '/orders'")
-    expect(componentSource).toContain("settings?.affiliate_enabled === true && { path: '/affiliate'")
+    expect(mountHeader().get('header').classes()).toEqual(
+      expect.arrayContaining(['site-header', 'fixed', 'inset-x-0', 'top-0', 'z-header']),
+    )
   })
 
-  it('moves contact support into its own header icon', () => {
-    expect(componentSource).toContain('<HeaderContactSupport />')
-    expect(componentSource).not.toContain('contactEntries')
+  // Optional account links follow public feature settings, including default team
+  // visibility. Both disabled and enabled fixtures protect each menu entry's gate.
+  it.each([
+    [{}, ['/team']],
+    [{ team_enabled: false, payment_enabled: false, affiliate_enabled: false }, []],
+    [
+      { team_enabled: true, payment_enabled: true, affiliate_enabled: true },
+      ['/team', '/purchase', '/orders', '/affiliate'],
+    ],
+  ])('filters optional account links for %j', async (settings, expected) => {
+    state.settings = settings
+    const wrapper = await openUserMenu()
+    const paths = wrapper.findAll('router-link-stub').map((link) => link.attributes('to'))
+    for (const path of ['/team', '/purchase', '/orders', '/affiliate']) {
+      expect(paths.includes(path), path).toBe(expected.includes(path))
+    }
+  })
+
+  // Support belongs to a separate header control that remains available while
+  // the account menu is closed. It must not be duplicated inside that menu.
+  it('places contact support in its own header control', async () => {
+    const wrapper = await openUserMenu()
+    expect(wrapper.findAll('header-contact-support-stub')).toHaveLength(1)
+    expect(wrapper.get('.user-menu-panel').find('header-contact-support-stub').exists()).toBe(false)
   })
 })

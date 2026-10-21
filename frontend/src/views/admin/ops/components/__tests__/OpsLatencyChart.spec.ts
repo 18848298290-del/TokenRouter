@@ -3,6 +3,11 @@ import { defineComponent, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import OpsLatencyChart from '../OpsLatencyChart.vue'
 
+// OpsLatencyChart.spec.ts checks histogram boundary editing through the mounted
+// settings controls. Chart rendering and dialog chrome are stubbed, while real
+// validation decides whether five edited millisecond boundaries can be emitted
+// or reset to defaults.
+
 vi.mock('chart.js', () => ({
   Chart: { register: vi.fn() },
   BarElement: {},
@@ -33,16 +38,21 @@ vi.mock('vue-i18n', async (importOriginal) => {
   }
 })
 
+// BaseDialogStub exposes editor content and footer while honoring visibility,
+// allowing tests to inspect validation and emitted boundaries.
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
   props: {
-    show: { type: Boolean, default: false },
-    title: { type: String, default: '' },
+    show: { type: Boolean, default: false }, // dialog fixture visibility flag
+    title: { type: String, default: '' }, // displayed stub heading text
   },
   emits: ['close'],
   template: '<div v-if="show" class="dialog-stub"><slot /><slot name="footer" /></div>',
 })
 
+// mountChart provides standard boundaries and no histogram data for editor
+// tests. Chart and dialog chrome are stubbed, while the returned wrapper exposes
+// real draft validation and apply actions.
 function mountChart() {
   return mount(OpsLatencyChart, {
     props: {
@@ -62,6 +72,9 @@ function mountChart() {
 }
 
 describe('OpsLatencyChart', () => {
+  // The user enters five ascending custom duration boundaries in the settings
+  // dialog. Applying the draft must emit the numeric sequence and close the
+  // editor afterward.
   it('校验并应用五个自定义时长边界', async () => {
     const wrapper = mountChart()
     await wrapper.get('[data-test="latency-bucket-settings"]').trigger('click')
@@ -76,6 +89,9 @@ describe('OpsLatencyChart', () => {
     expect(wrapper.find('.dialog-stub').exists()).toBe(false)
   })
 
+  // The editor contains a repeated boundary that violates strict ordering. Apply
+  // must be disabled until reset restores standard values, which can then be
+  // emitted successfully.
   it('阻止非法边界并支持恢复默认值', async () => {
     const wrapper = mountChart()
     await wrapper.get('[data-test="latency-bucket-settings"]').trigger('click')
@@ -87,7 +103,9 @@ describe('OpsLatencyChart', () => {
 
     await wrapper.get('[data-test="latency-boundary-reset"]').trigger('click')
     await nextTick()
-    const inputValues = wrapper.findAll<HTMLInputElement>('input').map((input) => input.element.value)
+    const inputValues = wrapper
+      .findAll<HTMLInputElement>('input')
+      .map((input) => input.element.value)
     expect(inputValues).toEqual(['100', '200', '500', '1000', '2000'])
 
     await wrapper.get('[data-test="latency-boundary-apply"]').trigger('click')

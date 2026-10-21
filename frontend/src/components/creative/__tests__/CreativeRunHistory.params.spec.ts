@@ -5,6 +5,14 @@ import CreativeRunHistory from '@/components/creative/CreativeRunHistory.vue'
 import type { CreativeRun } from '@/api/creative'
 import type { LocalRunParams } from '@/utils/creativeLocalStore'
 
+/**
+ * CreativeRunHistory.params.spec.ts checks submitted parameter presentation and
+ * reuse through the mounted history panel. One fixture combines server task
+ * fields with a browser-local prompt snapshot; another omits local parameters.
+ * The assertions cover summary-to-detail transition, ordered parameter tags,
+ * clipboard delegation, and reuse availability when local input is missing.
+ */
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
@@ -21,11 +29,19 @@ vi.mock('@/composables/useBalanceDisplay', () => ({
   }),
 }))
 
+/**
+ * copyToClipboard records prompt-copy requests so the test can verify exact
+ * text and success-message delegation from the panel.
+ */
 const copyToClipboard = vi.fn()
 vi.mock('@/composables/useClipboard', () => ({
   useClipboard: () => ({ copyToClipboard }),
 }))
 
+/**
+ * run supplies server-side edit metadata used when local submission parameters
+ * are either available or missing.
+ */
 const run: CreativeRun = {
   id: 'crun_params',
   status: 'failed',
@@ -39,6 +55,10 @@ const run: CreativeRun = {
   outputs: [],
 }
 
+/**
+ * params supplies a complete local prompt snapshot whose optional values
+ * determine the expanded parameter tags and reuse action.
+ */
 const params: LocalRunParams = {
   runId: run.id,
   optionKey: '1::gpt-image-2',
@@ -54,6 +74,11 @@ const params: LocalRunParams = {
   createdAt: 1,
 }
 
+/**
+ * createStudio builds reactive history state using the caller's local parameter
+ * map. Mocked actions allow assertions on reuse and refresh delegation without
+ * submitting requests or accessing browser persistence.
+ */
 function createStudio(runParams: Map<string, LocalRunParams>) {
   return {
     runHistory: ref([run]),
@@ -67,7 +92,11 @@ function createStudio(runParams: Map<string, LocalRunParams>) {
   }
 }
 
-// 打开侧栏并展开唯一的任务行
+/**
+ * mountExpanded opens the mounted history sidebar and returns its failed-run
+ * row button. The caller expands that row and owns unmounting after assertions,
+ * keeping panel lifecycle cleanup in the scenario.
+ */
 async function mountExpanded(studio: ReturnType<typeof createStudio>) {
   const wrapper = mount(CreativeRunHistory, {
     props: { studio },
@@ -82,6 +111,11 @@ async function mountExpanded(studio: ReturnType<typeof createStudio>) {
 }
 
 describe('CreativeRunHistory 提交参数', () => {
+  /**
+   * A failed edit run has a complete local submission snapshot. Expanding it must
+   * replace the summary with full prompt details and delegate copy and reuse
+   * using that saved identity.
+   */
   it('折叠行显示提示词摘要，展开后显示完整提示词和参数标签', async () => {
     const studio = createStudio(new Map([[run.id, params]]))
     const { wrapper, rowButton } = await mountExpanded(studio)
@@ -89,7 +123,6 @@ describe('CreativeRunHistory 提交参数', () => {
     expect(rowButton.text()).toContain(params.prompt)
     await rowButton.trigger('click')
 
-    // 展开后摘要隐藏，完整提示词出现在详情区
     expect(rowButton.text()).not.toContain(params.prompt)
     const tags = wrapper.findAll('.history-param-tag').map((tag) => tag.text())
     expect(tags).toEqual([
@@ -109,6 +142,11 @@ describe('CreativeRunHistory 提交参数', () => {
     wrapper.unmount()
   })
 
+  /**
+   * A history run has server metadata but no browser-local parameter snapshot.
+   * Its details must show prompt-unavailable guidance, omit reuse, and retain
+   * tags supported by server fields.
+   */
   it('本机没有参数记录时显示说明，参数标签使用服务端返回的字段', async () => {
     const studio = createStudio(new Map())
     const { wrapper, rowButton } = await mountExpanded(studio)

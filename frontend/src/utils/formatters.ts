@@ -1,32 +1,62 @@
 import { getLocale } from '@/i18n'
+
 /**
- * 格式化缓存 token 数量（1K/1M 缩写）
+ * formatters.ts formats cache counts, billing multipliers, and token-range labels.
+ * Cache totals use the application locale, while compact ranges use the browser's
+ * numeric locale and lowercase units. Multiplier formatting retains small fractional
+ * rates that fixed two-decimal output would obscure.
+ */
+
+/**
+ * formatCacheTokens renders cache token counts with uppercase K or M and one fractional
+ * digit. Counts below one thousand use the application locale, including its numeric
+ * grouping and decimal conventions.
  */
 export function formatCacheTokens(tokens: number): string {
+  /**
+   * Use decimal token multiples before rounding cache counts for display.
+   */
   if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
   return tokens.toLocaleString(getLocale())
 }
 
 /**
- * 自适应精度格式化倍率：保留至多 4 位小数并去掉末尾多余的 0，
- * 但至少保留 2 位小数（0.035 -> "0.035"，0.3 -> "0.30"，1 -> "1.00"）
+ * formatMultiplier renders a multiplier with up to four fractional digits and at least
+ * two for values at or above 0.0001. Smaller values use two significant digits through
+ * toPrecision, including negative inputs.
  */
 export function formatMultiplier(val: number): string {
+  /**
+   * Small multipliers retain significant figures that four fixed decimals could round
+   * away.
+   */
   if (val < 0.0001) return val.toPrecision(2)
+  /**
+   * Trim trailing zeros after retaining two decimal places for ordinary multipliers.
+   */
   return val.toFixed(4).replace(/(\.\d{2}\d*?)0+$/, '$1')
 }
 
 /**
- * 格式化紧凑 token 计数（小写 k/m 后缀，如 "272k"、"1.5m"）
- * 模型广场上下文区间切换器与网关默认价格弹窗共用；与 formatTokensK（大写后缀、固定 1 位小数）语义不同，不要混用。
- * @param value token 数量
- * @returns 格式化后的字符串，如 "950", "272k", "1.5m"
+ * formatCompactTokenCount formats token counts using lowercase k and m suffixes in the
+ * browser locale. Scaled values below one hundred keep at most one decimal; larger
+ * scaled values and unscaled counts round to integers.
  */
 export function formatCompactTokenCount(value: number): string {
-  const compact = (divided: number): string => new Intl.NumberFormat(undefined, {
-    maximumFractionDigits: divided >= 100 ? 0 : 1,
-  }).format(divided)
+  /**
+   * compact renders a scaled token count with browser-locale number formatting. Counts
+   * of at least one hundred round to integers; smaller counts retain at most one
+   * fractional digit.
+   */
+  const compact = (divided: number): string =>
+    new Intl.NumberFormat(undefined, {
+      // Larger scaled labels omit fractions to keep range endpoints compact.
+      maximumFractionDigits: divided >= 100 ? 0 : 1,
+    }).format(divided)
+  /**
+   * Scale counts before choosing fractional precision for compact range labels.
+   */
   if (value >= 1_000_000) {
     return `${compact(value / 1_000_000)}m`
   }
@@ -37,9 +67,9 @@ export function formatCompactTokenCount(value: number): string {
 }
 
 /**
- * 格式化紧凑 token 区间（如 "0-272k"、"272k+"）；maxTokens 为空表示无上限。
- * @param minTokens 区间下限
- * @param maxTokens 区间上限，null/undefined 表示无上限
+ * formatCompactTokenRange renders token bounds with lowercase compact units. Nullish
+ * upper bounds produce a plus suffix; numeric bounds, including zero, produce a
+ * hyphen-separated lower-to-upper interval using the supplied order.
  */
 export function formatCompactTokenRange(minTokens: number, maxTokens?: number | null): string {
   if (typeof maxTokens !== 'number') {

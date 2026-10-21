@@ -3,7 +3,15 @@ import { describe, expect, it } from 'vitest'
 import en from '../locales/en'
 import zh from '../locales/zh'
 
+// ipGeoLocales.spec.ts checks the English and Chinese IP geolocation labels used
+// by usage screens. Fetch actions, pending counts, failure states, and private-
+// address descriptions retain their expected runtime paths and interpolation
+// text in each catalog.
+
 describe('usage ipGeo locale keys', () => {
+  // The Chinese usage catalog provides text for IP geolocation actions and
+  // outcomes. Its values retain pending-count interpolation alongside fetch,
+  // failure, and private-address labels used by the interface.
   it('contains zh labels for IP geolocation UI', () => {
     expect(zh.usage.ipGeo.fetch).toBe('获取地区')
     expect(zh.usage.ipGeo.fetching).toBe('获取中...')
@@ -13,6 +21,9 @@ describe('usage ipGeo locale keys', () => {
     expect(zh.usage.ipGeo.pending).toBe('{count} 个 IP 待获取地区')
   })
 
+  // The English usage catalog provides text for IP geolocation actions and
+  // outcomes. Its values retain pending-count interpolation alongside fetch,
+  // failure, and private-address labels used by the interface.
   it('contains en labels for IP geolocation UI', () => {
     expect(en.usage.ipGeo.fetch).toBe('Fetch region')
     expect(en.usage.ipGeo.fetching).toBe('Fetching...')

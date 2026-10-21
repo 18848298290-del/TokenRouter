@@ -1,7 +1,10 @@
 <template>
   <AppLayout>
-    <!-- 页签与标题同行放在页头右侧；支付中和订阅确认时隐藏。 -->
-    <template v-if="!loading && tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" #page-heading-actions>
+    <!-- Tabs share the title row and hide while payment or subscription confirmation owns the page. -->
+    <template
+      v-if="!loading && tabs.length > 1 && paymentPhase === 'select' && !selectedPlan"
+      #page-heading-actions
+    >
       <div v-segmented role="tablist" class="segmented gap-1">
         <button
           v-for="tab in tabs"
@@ -17,14 +20,14 @@
         </button>
       </div>
     </template>
-    <!-- 不加 mx-auto：app-main 是 flex 列容器，auto 边距会让内容收缩到内容宽度并与页头错位。 -->
+    <!-- The app-main flex column supplies alignment; automatic side margins would shrink checkout and misalign it with the page heading. -->
     <div
       class="purchase-viewport relative w-full"
       :style="{ '--purchase-direction': activeTab === 'subscription' ? 1 : -1 }"
     >
       <MotionTransition name="purchase-slide" :css="!loading">
         <div :key="activeTab" class="w-full space-y-4">
-          <!-- 首次取数：按结算双栏的位置显示骨架。 -->
+          <!-- Initial loading reserves the same two-column space used by checkout selection and its summary. -->
           <div
             v-if="loading"
             role="status"
@@ -58,7 +61,7 @@
             </div>
           </div>
           <template v-else>
-            <!-- 支付中（充值与订阅共用） -->
+            <!-- Balance and subscription orders share the waiting panel. -->
             <PaymentStatusPanel
               v-if="paymentPhase === 'paying'"
               :order-id="paymentState.orderId"
@@ -77,16 +80,18 @@
               @settled="onPaymentSettled"
             />
 
-            <!-- 订阅套餐列表 -->
+            <!-- Subscription plans available for selection. -->
             <template v-else-if="activeTab === 'subscription' && !selectedPlan">
               <div v-if="checkout.plans.length === 0" class="card empty-state">
-                <div class="mb-4 flex h-12 w-12 items-center justify-center rounded-surface bg-gray-100 dark:bg-dark-800">
+                <div
+                  class="mb-4 flex h-12 w-12 items-center justify-center rounded-surface bg-gray-100 dark:bg-dark-800"
+                >
                   <Icon name="gift" size="lg" class="text-gray-400 dark:text-dark-500" />
                 </div>
                 <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('payment.noPlans') }}</p>
               </div>
               <section v-else :aria-label="t('payment.selectPlan')">
-                <!-- 主区在 lg 仍需让出侧栏宽度，三列放到 xl 才不拥挤。 -->
+                <!-- The sidebar still occupies width at lg, so three plan columns begin at xl to retain readable cards. -->
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   <SubscriptionPlanCard
                     v-for="plan in checkout.plans"
@@ -98,14 +103,16 @@
                 </div>
               </section>
 
-              <!-- 当前订阅：沿用兑换页的用量列表，直接展示各周期用量与剩余时间。 -->
+              <!-- Active subscriptions use the shared usage list to show each quota period and remaining subscription time. -->
               <section
                 v-if="activeSubscriptions.length > 0"
                 data-testid="purchase-active-subscriptions"
                 class="space-y-4"
               >
                 <div class="flex items-center justify-between gap-4">
-                  <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('payment.activeSubscription') }}</h2>
+                  <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{
+                    t('payment.activeSubscription')
+                  }}</h2>
                   <router-link
                     to="/subscriptions"
                     class="shrink-0 text-sm text-primary-600 hover:underline dark:text-primary-400"
@@ -128,57 +135,106 @@
               />
             </template>
 
-            <!-- 充值未开放 -->
-            <div v-else-if="activeTab === 'recharge' && enabledMethods.length === 0" class="card empty-state">
-              <div class="mb-4 flex h-12 w-12 items-center justify-center rounded-surface bg-gray-100 dark:bg-dark-800">
+            <!-- Recharge unavailable state. -->
+            <div
+              v-else-if="activeTab === 'recharge' && enabledMethods.length === 0"
+              class="card empty-state"
+            >
+              <div
+                class="mb-4 flex h-12 w-12 items-center justify-center rounded-surface bg-gray-100 dark:bg-dark-800"
+              >
                 <Icon name="creditCard" size="lg" class="text-gray-400 dark:text-dark-500" />
               </div>
-              <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('payment.notAvailable') }}</p>
+              <p class="text-sm text-gray-500 dark:text-dark-400">{{
+                t('payment.notAvailable')
+              }}</p>
             </div>
 
-            <!-- 结算：充值与订阅确认共用。xl 以下按选择、摘要顺序堆叠（lg 主区还要让出侧栏，双栏会挤压支付方式），xl 起右栏摘要吸顶。 -->
+            <!-- Recharge and subscription confirmation share checkout. Selection and summary stack below xl because the sidebar reduces available width; the summary becomes sticky at xl. -->
             <div v-else class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22.5rem] xl:items-start">
-              <!-- 金额（或套餐）、支付方式、账单信息各占一张卡片，分组更清楚。 -->
+              <!-- Amount or plan, payment methods, and billing details form separate checkout cards. -->
               <div class="min-w-0 space-y-4">
-                <!-- 订阅确认：套餐摘要 -->
+                <!-- Selected subscription summary. -->
                 <section v-if="isSubscriptionCheckout && selectedPlan" class="card p-4 sm:p-6">
-                  <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ t('payment.confirmSubscription') }}</p>
-                  <h2 class="mt-1 break-words text-lg font-semibold text-gray-900 dark:text-white">{{ selectedPlan.name }}</h2>
+                  <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{
+                    t('payment.confirmSubscription')
+                  }}</p>
+                  <h2
+                    class="mt-1 break-words text-lg font-semibold text-gray-900 dark:text-white"
+                    >{{ selectedPlan.name }}</h2
+                  >
                   <div class="mt-3 flex flex-wrap items-baseline gap-x-2">
-                    <span class="text-3xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-white">
+                    <span
+                      class="text-3xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-white"
+                    >
                       {{ formatSelectedSubscriptionPaymentAmount(selectedPlan.price) }}
                     </span>
-                    <span class="text-sm text-gray-500 dark:text-dark-400">/ {{ planValiditySuffix }}</span>
-                    <span v-if="selectedPlan.original_price" class="text-sm text-gray-400 line-through dark:text-dark-500">
+                    <span class="text-sm text-gray-500 dark:text-dark-400"
+                      >/ {{ planValiditySuffix }}</span
+                    >
+                    <span
+                      v-if="selectedPlan.original_price"
+                      class="text-sm text-gray-400 line-through dark:text-dark-500"
+                    >
                       {{ formatSelectedSubscriptionPaymentAmount(selectedPlan.original_price) }}
                     </span>
                   </div>
-                  <p v-if="selectedPlan.description" class="mt-2 text-sm leading-relaxed text-gray-500 dark:text-dark-400">
+                  <p
+                    v-if="selectedPlan.description"
+                    class="mt-2 text-sm leading-relaxed text-gray-500 dark:text-dark-400"
+                  >
                     {{ selectedPlan.description }}
                   </p>
                   <dl class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
                     <div v-if="hasPlanQuota(selectedPlan.daily_limit_usd)">
-                      <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('payment.planCard.dailyLimit') }}</dt>
-                      <dd class="mt-1 text-base font-semibold tabular-nums text-gray-900 dark:text-dark-100">{{ formatPlanQuota(selectedPlan.daily_limit_usd) }}</dd>
+                      <dt class="text-xs text-gray-500 dark:text-dark-400">{{
+                        t('payment.planCard.dailyLimit')
+                      }}</dt>
+                      <dd
+                        class="mt-1 text-base font-semibold tabular-nums text-gray-900 dark:text-dark-100"
+                        >{{ formatPlanQuota(selectedPlan.daily_limit_usd) }}</dd
+                      >
                     </div>
                     <div v-if="hasPlanQuota(selectedPlan.weekly_limit_usd)">
-                      <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('payment.planCard.weeklyLimit') }}</dt>
-                      <dd class="mt-1 text-base font-semibold tabular-nums text-gray-900 dark:text-dark-100">{{ formatPlanQuota(selectedPlan.weekly_limit_usd) }}</dd>
+                      <dt class="text-xs text-gray-500 dark:text-dark-400">{{
+                        t('payment.planCard.weeklyLimit')
+                      }}</dt>
+                      <dd
+                        class="mt-1 text-base font-semibold tabular-nums text-gray-900 dark:text-dark-100"
+                        >{{ formatPlanQuota(selectedPlan.weekly_limit_usd) }}</dd
+                      >
                     </div>
                     <div v-if="hasPlanQuota(selectedPlan.monthly_limit_usd)">
-                      <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('payment.planCard.monthlyLimit') }}</dt>
-                      <dd class="mt-1 text-base font-semibold tabular-nums text-gray-900 dark:text-dark-100">{{ formatPlanQuota(selectedPlan.monthly_limit_usd) }}</dd>
+                      <dt class="text-xs text-gray-500 dark:text-dark-400">{{
+                        t('payment.planCard.monthlyLimit')
+                      }}</dt>
+                      <dd
+                        class="mt-1 text-base font-semibold tabular-nums text-gray-900 dark:text-dark-100"
+                        >{{ formatPlanQuota(selectedPlan.monthly_limit_usd) }}</dd
+                      >
                     </div>
-                    <div v-if="!hasPlanQuota(selectedPlan.daily_limit_usd) && !hasPlanQuota(selectedPlan.weekly_limit_usd) && !hasPlanQuota(selectedPlan.monthly_limit_usd)">
-                      <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('payment.planCard.quota') }}</dt>
-                      <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-dark-100">{{ t('payment.planCard.unlimited') }}</dd>
+                    <div
+                      v-if="
+                        !hasPlanQuota(selectedPlan.daily_limit_usd) &&
+                        !hasPlanQuota(selectedPlan.weekly_limit_usd) &&
+                        !hasPlanQuota(selectedPlan.monthly_limit_usd)
+                      "
+                    >
+                      <dt class="text-xs text-gray-500 dark:text-dark-400">{{
+                        t('payment.planCard.quota')
+                      }}</dt>
+                      <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-dark-100">{{
+                        t('payment.planCard.unlimited')
+                      }}</dd>
                     </div>
                   </dl>
                 </section>
 
-                <!-- 充值：金额 -->
+                <!-- Recharge amount selection. -->
                 <section v-else class="card p-4 sm:p-6">
-                  <h2 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{ t('payment.amountLabel') }}</h2>
+                  <h2 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{
+                    t('payment.amountLabel')
+                  }}</h2>
                   <AmountInput
                     v-model="amount"
                     :amounts="[10, 20, 50, 100, 200, 500, 1000, 2000, 5000]"
@@ -186,11 +242,15 @@
                     :max="globalMaxAmount"
                     :currency="selectedCurrency"
                   />
-                  <p v-if="amountError" class="mt-2 text-xs text-amber-600 dark:text-amber-300">{{ amountError }}</p>
+                  <p v-if="amountError" class="mt-2 text-xs text-amber-600 dark:text-amber-300">{{
+                    amountError
+                  }}</p>
                 </section>
 
                 <section v-if="enabledMethods.length >= 1" class="card p-4 sm:p-6">
-                  <h2 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{ t('payment.paymentMethod') }}</h2>
+                  <h2 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{
+                    t('payment.paymentMethod')
+                  }}</h2>
                   <PaymentMethodSelector
                     :methods="checkoutMethodOptions"
                     :selected="selectedMethod"
@@ -198,48 +258,87 @@
                   />
                 </section>
 
-                <!-- Stripe 账单信息 -->
+                <!-- Stripe billing details. -->
                 <section v-if="isStripeSelected" class="card p-4 sm:p-6">
-                  <h2 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{ t('payment.billing.title') }}</h2>
+                  <h2 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{
+                    t('payment.billing.title')
+                  }}</h2>
                   <div class="grid gap-4 sm:grid-cols-2">
                     <div>
                       <label class="input-label">{{ t('payment.billing.name') }}</label>
-                      <input v-model="billingInfo.name" class="input mt-1 w-full" autocomplete="name" />
+                      <input
+                        v-model="billingInfo.name"
+                        class="input mt-1 w-full"
+                        autocomplete="name"
+                      />
                     </div>
                     <div>
                       <label class="input-label">{{ t('payment.billing.email') }}</label>
-                      <input v-model="billingInfo.email" class="input mt-1 w-full" autocomplete="email" type="email" />
+                      <input
+                        v-model="billingInfo.email"
+                        class="input mt-1 w-full"
+                        autocomplete="email"
+                        type="email"
+                      />
                     </div>
                     <div>
                       <label class="input-label">{{ optionalBillingLabel('country') }}</label>
-                      <input v-model="billingInfo.country" class="input mt-1 w-full" autocomplete="country" maxlength="2" />
+                      <input
+                        v-model="billingInfo.country"
+                        class="input mt-1 w-full"
+                        autocomplete="country"
+                        maxlength="2"
+                      />
                     </div>
                     <div>
                       <label class="input-label">{{ optionalBillingLabel('postalCode') }}</label>
-                      <input v-model="billingInfo.postal_code" class="input mt-1 w-full" autocomplete="postal-code" />
+                      <input
+                        v-model="billingInfo.postal_code"
+                        class="input mt-1 w-full"
+                        autocomplete="postal-code"
+                      />
                     </div>
                     <div class="sm:col-span-2">
                       <label class="input-label">{{ optionalBillingLabel('line1') }}</label>
-                      <input v-model="billingInfo.line1" class="input mt-1 w-full" autocomplete="address-line1" />
+                      <input
+                        v-model="billingInfo.line1"
+                        class="input mt-1 w-full"
+                        autocomplete="address-line1"
+                      />
                     </div>
                     <div>
                       <label class="input-label">{{ optionalBillingLabel('city') }}</label>
-                      <input v-model="billingInfo.city" class="input mt-1 w-full" autocomplete="address-level2" />
+                      <input
+                        v-model="billingInfo.city"
+                        class="input mt-1 w-full"
+                        autocomplete="address-level2"
+                      />
                     </div>
                     <div>
                       <label class="input-label">{{ optionalBillingLabel('state') }}</label>
-                      <input v-model="billingInfo.state" class="input mt-1 w-full" autocomplete="address-level1" />
+                      <input
+                        v-model="billingInfo.state"
+                        class="input mt-1 w-full"
+                        autocomplete="address-level1"
+                      />
                     </div>
                   </div>
                 </section>
               </div>
 
-              <!-- 吸顶偏移 = 顶栏高度 + 1.5rem 页面内边距。 -->
+              <!-- The sticky offset includes the header height and page padding so the checkout summary stays below the navigation. -->
               <aside class="min-w-0 space-y-4 xl:sticky xl:top-[calc(var(--header-h)+1.5rem)]">
                 <section data-testid="checkout-summary" class="card p-4 sm:p-6">
-                  <dl v-if="!isSubscriptionCheckout" class="mb-5 border-b border-gray-100 pb-5 dark:border-dark-700">
-                    <dt class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ t('payment.currentBalance') }}</dt>
-                    <dd class="mt-1 text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
+                  <dl
+                    v-if="!isSubscriptionCheckout"
+                    class="mb-5 border-b border-gray-100 pb-5 dark:border-dark-700"
+                  >
+                    <dt class="text-xs font-medium text-gray-500 dark:text-dark-400">{{
+                      t('payment.currentBalance')
+                    }}</dt>
+                    <dd
+                      class="mt-1 text-2xl font-semibold tabular-nums text-gray-900 dark:text-white"
+                    >
                       {{ formatBalanceAmount(user?.balance, { fractionDigits: 2 }) }}
                     </dd>
                     <dd class="mt-1 truncate text-xs text-gray-500 dark:text-dark-400">
@@ -247,35 +346,76 @@
                     </dd>
                   </dl>
 
-                  <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('payment.orderSummary') }}</h2>
+                  <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{
+                    t('payment.orderSummary')
+                  }}</h2>
                   <dl class="mt-3 space-y-2 text-sm">
                     <div class="flex justify-between gap-4">
                       <dt class="text-gray-500 dark:text-dark-400">{{ checkoutBaseLabel }}</dt>
-                      <dd class="tabular-nums text-gray-900 dark:text-dark-100">{{ checkoutBaseText }}</dd>
+                      <dd class="tabular-nums text-gray-900 dark:text-dark-100">{{
+                        checkoutBaseText
+                      }}</dd>
                     </div>
-                    <div v-if="checkoutFeeBreakdown.fixedFee > 0" class="flex justify-between gap-4">
+                    <div
+                      v-if="checkoutFeeBreakdown.fixedFee > 0"
+                      class="flex justify-between gap-4"
+                    >
                       <dt class="text-gray-500 dark:text-dark-400">{{ t('payment.fixedFee') }}</dt>
-                      <dd class="tabular-nums text-gray-900 dark:text-dark-100">{{ formatSelectedPaymentAmount(checkoutFeeBreakdown.fixedFee) }}</dd>
+                      <dd class="tabular-nums text-gray-900 dark:text-dark-100">{{
+                        formatSelectedPaymentAmount(checkoutFeeBreakdown.fixedFee)
+                      }}</dd>
                     </div>
                     <div v-if="checkoutFeeBreakdown.rateFee > 0" class="flex justify-between gap-4">
-                      <dt class="text-gray-500 dark:text-dark-400">{{ t('payment.rateFee') }} ({{ checkoutFeeBreakdown.feeRate }}%)</dt>
-                      <dd class="tabular-nums text-gray-900 dark:text-dark-100">{{ formatSelectedPaymentAmount(checkoutFeeBreakdown.rateFee) }}</dd>
+                      <dt class="text-gray-500 dark:text-dark-400"
+                        >{{ t('payment.rateFee') }} ({{ checkoutFeeBreakdown.feeRate }}%)</dt
+                      >
+                      <dd class="tabular-nums text-gray-900 dark:text-dark-100">{{
+                        formatSelectedPaymentAmount(checkoutFeeBreakdown.rateFee)
+                      }}</dd>
                     </div>
-                    <div v-if="checkoutFeeBreakdown.totalFee > 0" class="flex justify-between gap-4">
+                    <div
+                      v-if="checkoutFeeBreakdown.totalFee > 0"
+                      class="flex justify-between gap-4"
+                    >
                       <dt class="text-gray-500 dark:text-dark-400">{{ t('payment.feeTotal') }}</dt>
-                      <dd class="tabular-nums text-gray-900 dark:text-dark-100">{{ formatSelectedPaymentAmount(checkoutFeeBreakdown.totalFee) }}</dd>
+                      <dd class="tabular-nums text-gray-900 dark:text-dark-100">{{
+                        formatSelectedPaymentAmount(checkoutFeeBreakdown.totalFee)
+                      }}</dd>
                     </div>
-                    <div class="flex items-baseline justify-between gap-4 border-t border-gray-100 pt-3 dark:border-dark-700">
-                      <dt class="font-medium text-gray-900 dark:text-white">{{ t('payment.actualPay') }}</dt>
-                      <dd class="text-xl font-semibold tabular-nums text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(checkoutTotalAmount) }}</dd>
+                    <div
+                      class="flex items-baseline justify-between gap-4 border-t border-gray-100 pt-3 dark:border-dark-700"
+                    >
+                      <dt class="font-medium text-gray-900 dark:text-white">{{
+                        t('payment.actualPay')
+                      }}</dt>
+                      <dd
+                        class="text-xl font-semibold tabular-nums text-gray-900 dark:text-white"
+                        >{{ formatSelectedPaymentAmount(checkoutTotalAmount) }}</dd
+                      >
                     </div>
-                    <div v-if="!isSubscriptionCheckout && balanceRechargeMultiplier !== 1" class="flex justify-between gap-4">
-                      <dt class="text-gray-500 dark:text-dark-400">{{ t('payment.creditedBalance') }}</dt>
-                      <dd class="font-medium tabular-nums text-primary-600 dark:text-primary-400">{{ formatBalanceAmount(creditedAmount, { fractionDigits: 2 }) }}</dd>
+                    <div
+                      v-if="!isSubscriptionCheckout && balanceRechargeMultiplier !== 1"
+                      class="flex justify-between gap-4"
+                    >
+                      <dt class="text-gray-500 dark:text-dark-400">{{
+                        t('payment.creditedBalance')
+                      }}</dt>
+                      <dd class="font-medium tabular-nums text-primary-600 dark:text-primary-400">{{
+                        formatBalanceAmount(creditedAmount, { fractionDigits: 2 })
+                      }}</dd>
                     </div>
                   </dl>
-                  <p v-if="!isSubscriptionCheckout && balanceRechargeMultiplier !== 1" class="mt-3 text-xs text-gray-500 dark:text-dark-400">
-                    {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, amount: balanceRechargeMultiplier.toFixed(2), unitName: balanceUnitName }) }}
+                  <p
+                    v-if="!isSubscriptionCheckout && balanceRechargeMultiplier !== 1"
+                    class="mt-3 text-xs text-gray-500 dark:text-dark-400"
+                  >
+                    {{
+                      t('payment.rechargeRatePreview', {
+                        currency: selectedCurrency,
+                        amount: balanceRechargeMultiplier.toFixed(2),
+                        unitName: balanceUnitName,
+                      })
+                    }}
                   </p>
 
                   <div class="mt-6 space-y-2">
@@ -286,10 +426,18 @@
                       @click="handleCheckoutSubmit"
                     >
                       <template v-if="submitting">
-                        <Icon name="loader" size="sm" :animate-on-hover="false" class="animate-spin" />
+                        <Icon
+                          name="loader"
+                          size="sm"
+                          :animate-on-hover="false"
+                          class="animate-spin"
+                        />
                         {{ t('common.processing') }}
                       </template>
-                      <template v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(checkoutTotalAmount) }}</template>
+                      <template v-else
+                        >{{ t('payment.createOrder') }}
+                        {{ formatSelectedPaymentAmount(checkoutTotalAmount) }}</template
+                      >
                     </button>
                     <button
                       v-if="isSubscriptionCheckout"
@@ -314,7 +462,7 @@
         </div>
       </MotionTransition>
     </div>
-    <!-- 续费套餐选择弹窗 -->
+    <!-- Renewal plan selection dialog. -->
     <BaseDialog
       :show="showRenewalModal"
       :title="t('payment.selectPlan')"
@@ -323,7 +471,13 @@
       @close="closeRenewalModal"
     >
       <div class="space-y-4">
-        <SubscriptionPlanCard v-for="plan in renewalPlans" :key="plan.id" :plan="plan" :active-subscriptions="activeSubscriptions" @select="selectPlanFromModal" />
+        <SubscriptionPlanCard
+          v-for="plan in renewalPlans"
+          :key="plan.id"
+          :plan="plan"
+          :active-subscriptions="activeSubscriptions"
+          @select="selectPlanFromModal"
+        />
       </div>
     </BaseDialog>
     <ConfirmDialog
@@ -335,11 +489,19 @@
       @confirm="confirmDuplicatePlanPurchase"
       @cancel="closeDuplicatePlanDialog"
     />
-    <!-- 帮助图片预览 -->
+    <!-- Payment help image preview. -->
     <Teleport to="body">
       <MotionTransition name="modal">
-        <div v-if="previewImage" class="fixed inset-0 z-modal-nested flex items-center justify-center bg-[var(--overlay-bg-strong)] backdrop-blur-sm" @click="previewImage = ''">
-          <img :src="previewImage" alt="" class="max-h-[85vh] max-w-[90vw] rounded-surface object-contain shadow-2xl" />
+        <div
+          v-if="previewImage"
+          class="fixed inset-0 z-modal-nested flex items-center justify-center bg-[var(--overlay-bg-strong)] backdrop-blur-sm"
+          @click="previewImage = ''"
+        >
+          <img
+            :src="previewImage"
+            alt=""
+            class="max-h-[85vh] max-w-[90vw] rounded-surface object-contain shadow-2xl"
+          />
         </div>
       </MotionTransition>
     </Teleport>
@@ -352,33 +514,24 @@ import { vSegmented } from '@/directives/segmented'
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { useAuthStore } from '@/stores/auth'
-import { usePaymentStore } from '@/stores/payment'
 import { useSubscriptionStore } from '@/stores/subscriptions'
 import { useAppStore } from '@/stores'
 import { paymentAPI } from '@/api/payment'
-import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
-import { isMobileDevice } from '@/utils/device'
-import type { BillingInfo, SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderType } from '@/types/payment'
-import type { UserSubscription } from '@/types'
+import { extractI18nErrorMessage } from '@/utils/apiError'
+import type { BillingInfo, SubscriptionPlan, CheckoutInfoResponse } from '@/api/payment.types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AmountInput from '@/components/payment/AmountInput.vue'
 import PaymentMethodSelector from '@/components/payment/PaymentMethodSelector.vue'
-import { METHOD_ORDER, getPaymentPopupFeatures, isBuiltInAlipayMethod, isBuiltInWxpayMethod } from '@/components/payment/providerConfig'
 import {
-  PAYMENT_RECOVERY_STORAGE_KEY,
-  buildCreateOrderPayload,
-  clearPaymentRecoverySnapshot,
-  decidePaymentLaunch,
-  getVisibleMethods,
-  normalizeVisibleMethod,
-  readPaymentRecoverySnapshot,
-  type PaymentRecoverySnapshot,
-  writePaymentRecoverySnapshot,
-} from '@/components/payment/paymentFlow'
+  METHOD_ORDER,
+  isBuiltInAlipayMethod,
+  isBuiltInWxpayMethod,
+} from '@/utils/payment/paymentMethods'
+import { getVisibleMethods, normalizeVisibleMethod } from '@/utils/payment/paymentFlow'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import PaymentHelpNote from '@/components/payment/PaymentHelpNote.vue'
 import SubscriptionUsageList from '@/components/common/SubscriptionUsageList.vue'
@@ -388,18 +541,37 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import Skeleton from '@/components/common/Skeleton.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-import { DEFAULT_PAYMENT_CURRENCY, formatPaymentAmount, normalizePaymentCurrency, paymentCurrencyFractionDigits } from '@/components/payment/currency'
-import { planValiditySuffix as validitySuffixOf } from '@/components/payment/validity'
+import {
+  DEFAULT_PAYMENT_CURRENCY,
+  formatPaymentAmount,
+  normalizePaymentCurrency,
+  paymentCurrencyFractionDigits,
+} from '@/utils/payment/currency'
+import { planValiditySuffix as validitySuffixOf } from '@/utils/payment/validity'
 import type { PaymentMethodOption } from '@/components/payment/PaymentMethodSelector.vue'
-import { buildPaymentErrorToastMessage, describePaymentScenarioError } from './paymentUx'
-import { hasWechatResumeQuery, parseWechatResumeRoute, stripWechatResumeQuery } from './paymentWechatResume'
+import { usePaymentCheckout } from './payment/usePaymentCheckout'
+import { usePaymentSelection } from './payment/usePaymentSelection'
 
+/**
+ * PaymentView.vue renders recharge and subscription checkout from the current payment
+ * configuration. It owns editable amount and billing fields, computes currency-specific
+ * fee previews and method availability, and delegates subscription acknowledgement and
+ * order launch to page-private controllers.
+ *
+ * The purchase page loads checkout configuration before restoring an order or consuming
+ * WeChat return parameters. Recovery takes precedence over the ordinary selection display,
+ * while subscription route queries can select a plan or open renewal choices after
+ * authorization handling. Subscription fee previews apply the configured USD-to-CNY rate
+ * only when enabled. Form validation and display remain on this page so launch operations
+ * receive the same billing values the user reviewed.
+ */
+
+// Page dependencies supply account state, localization, route intent, and checkout feedback
+// for this component instance.
 const i18n = useI18n()
 const { t } = i18n
 const route = useRoute()
-const router = useRouter()
 const authStore = useAuthStore()
-const paymentStore = usePaymentStore()
 const subscriptionStore = useSubscriptionStore()
 const appStore = useAppStore()
 const { balanceUnitName, formatBalanceAmount } = useBalanceDisplay()
@@ -412,18 +584,16 @@ marked.setOptions({
 const user = computed(() => authStore.user)
 const activeSubscriptions = computed(() => subscriptionStore.activeSubscriptions)
 
+// Editable purchase fields stay on the page; the checkout controller owns submission errors,
+// waiting state, and browser launch operations.
 const loading = ref(true)
-const submitting = ref(false)
-const errorMessage = ref('')
-const errorHintMessage = ref('')
 const activeTab = ref<'recharge' | 'subscription'>('recharge')
 const amount = ref<number | null>(null)
 const selectedMethod = ref('')
 const selectedPlan = ref<SubscriptionPlan | null>(null)
 const previewImage = ref('')
-const duplicatePlanDialogPlan = ref<SubscriptionPlan | null>(null)
-const duplicatePlanDialogConfirm = ref<(() => void) | null>(null)
-const duplicatePlanAcknowledgedId = ref<number | null>(null)
+// The last generated name lets account refresh update untouched billing data while retaining a
+// name the user entered separately.
 const lastAutoBillingName = ref('')
 const billingInfo = reactive({
   name: '',
@@ -435,186 +605,70 @@ const billingInfo = reactive({
   postal_code: '',
 })
 
-const paymentPhase = ref<'select' | 'paying'>('select')
-
-interface CreateOrderOptions {
-  openid?: string
-  wechatResumeToken?: string
-  paymentType?: string
-  isResume?: boolean
-  mobileQrFallbackAttempted?: boolean
-}
-
-interface WeixinJSBridgeLike {
-  invoke(
-    action: string,
-    payload: Record<string, unknown>,
-    callback: (result: Record<string, unknown>) => void,
-  ): void
-}
-
-function emptyPaymentState(): PaymentRecoverySnapshot {
-  return {
-    orderId: 0,
-    amount: 0,
-    qrCode: '',
-    expiresAt: '',
-    paymentType: '',
-    payUrl: '',
-    outTradeNo: '',
-    clientSecret: '',
-    intentId: '',
-    currency: '',
-    countryCode: '',
-    paymentEnv: '',
-    payAmount: 0,
-    orderType: '',
-    paymentMode: '',
-    resumeToken: '',
-    alipayMobilePrecreateDeepLink: false,
-    createdAt: 0,
-  }
-}
-
-function getWeixinJSBridge(): WeixinJSBridgeLike | undefined {
-  return (window as Window & { WeixinJSBridge?: WeixinJSBridgeLike }).WeixinJSBridge
-}
-
-function waitForWeixinJSBridge(timeoutMs = 4000): Promise<WeixinJSBridgeLike | null> {
-  const existing = getWeixinJSBridge()
-  if (existing) return Promise.resolve(existing)
-
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (bridge: WeixinJSBridgeLike | null) => {
-      if (settled) return
-      settled = true
-      document.removeEventListener('WeixinJSBridgeReady', handleReady)
-      document.removeEventListener('onWeixinJSBridgeReady', handleReady)
-      window.clearTimeout(timer)
-      resolve(bridge)
-    }
-    const handleReady = () => finish(getWeixinJSBridge() ?? null)
-    const timer = window.setTimeout(() => finish(getWeixinJSBridge() ?? null), timeoutMs)
-    document.addEventListener('WeixinJSBridgeReady', handleReady, false)
-    document.addEventListener('onWeixinJSBridgeReady', handleReady, false)
-  })
-}
-
-async function invokeWechatJsapiPayment(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const bridge = await waitForWeixinJSBridge()
-  if (!bridge) {
-    throw new Error('WECHAT_JSAPI_UNAVAILABLE')
-  }
-  return new Promise((resolve) => {
-    bridge.invoke('getBrandWCPayRequest', payload, (result) => resolve(result || {}))
-  })
-}
-
-const paymentState = ref<PaymentRecoverySnapshot>(emptyPaymentState())
-
-function persistRecoverySnapshot(snapshot: PaymentRecoverySnapshot) {
-  if (typeof window === 'undefined' || !snapshot.orderId) return
-  writePaymentRecoverySnapshot(window.localStorage, snapshot, PAYMENT_RECOVERY_STORAGE_KEY)
-}
-
-function removeRecoverySnapshot() {
-  if (typeof window === 'undefined') return
-  clearPaymentRecoverySnapshot(window.localStorage, PAYMENT_RECOVERY_STORAGE_KEY)
-}
-
-function resetPayment() {
-  paymentPhase.value = 'select'
-  paymentState.value = emptyPaymentState()
-  removeRecoverySnapshot()
-}
-
-async function redirectToPaymentResult(state: PaymentRecoverySnapshot): Promise<void> {
-  const query: Record<string, string | undefined> = {}
-  if (state.orderId > 0) {
-    query.order_id = String(state.orderId)
-  }
-  if (state.outTradeNo) {
-    query.out_trade_no = state.outTradeNo
-  }
-  if (state.resumeToken) {
-    query.resume_token = state.resumeToken
-  }
-  await router.push({
-    path: '/payment/result',
-    query,
-  })
-}
-
-function buildWechatOAuthAuthorizeUrl(
-  authorizeUrl: string,
-  context: { paymentType: string; orderType: OrderType; planId?: number; orderAmount: number },
-): string {
-  const normalizedUrl = authorizeUrl.trim()
-  if (!normalizedUrl || typeof window === 'undefined') {
-    return normalizedUrl
-  }
-
-  try {
-    const targetUrl = new URL(normalizedUrl, window.location.origin)
-    const redirectPath = targetUrl.searchParams.get('redirect') || '/purchase'
-    const redirectUrl = new URL(redirectPath, window.location.origin)
-    const paymentType = normalizeVisibleMethod(context.paymentType) || context.paymentType.trim() || 'wxpay'
-
-    redirectUrl.searchParams.set('payment_type', paymentType)
-    redirectUrl.searchParams.set('order_type', context.orderType)
-
-    if (context.planId) {
-      redirectUrl.searchParams.set('plan_id', String(context.planId))
-    } else {
-      redirectUrl.searchParams.delete('plan_id')
-    }
-
-    if (context.orderAmount > 0) {
-      redirectUrl.searchParams.set('amount', String(context.orderAmount))
-    } else {
-      redirectUrl.searchParams.delete('amount')
-    }
-
-    targetUrl.searchParams.set('redirect', `${redirectUrl.pathname}${redirectUrl.search}`)
-    return targetUrl.toString()
-  } catch {
-    return normalizedUrl
-  }
-}
-
-function onPaymentDone() {
-  const wasSubscription = paymentState.value.orderType === 'subscription'
-  resetPayment()
-  selectedPlan.value = null
-  if (wasSubscription) {
-    subscriptionStore.fetchActiveSubscriptions(true).catch(() => {})
-  }
-}
-
-async function onPaymentSuccess() {
-  const completedPayment = { ...paymentState.value }
-  removeRecoverySnapshot()
-  authStore.refreshUser()
-  if (paymentState.value.orderType === 'subscription') {
-    subscriptionStore.fetchActiveSubscriptions(true).catch(() => {})
-  }
-  await redirectToPaymentResult(completedPayment)
-}
-
-function onPaymentSettled() {
-  removeRecoverySnapshot()
-}
-
-// All checkout data from single API call
+// Checkout configuration initializes method eligibility and plans before recovery or route-
+// based selection can consume those values.
 const checkout = ref<CheckoutInfoResponse>({
-  methods: {}, global_min: 0, global_max: 0,
-  plans: [], balance_disabled: false, balance_recharge_multiplier: 1, subscription_usd_to_cny_rate: 0, recharge_fee_rate: 0, method_fees: {}, help_text: '', help_image_url: '', stripe_publishable_key: '',
+  methods: {},
+  global_min: 0,
+  global_max: 0,
+  plans: [],
+  balance_disabled: false,
+  balance_recharge_multiplier: 1,
+  subscription_usd_to_cny_rate: 0,
+  recharge_fee_rate: 0,
+  method_fees: {},
+  help_text: '',
+  help_image_url: '',
+  stripe_publishable_key: '',
 })
 
+const {
+  submitting,
+  errorMessage,
+  errorHintMessage,
+  paymentPhase,
+  paymentState,
+  onPaymentDone,
+  onPaymentSuccess,
+  onPaymentSettled,
+  createOrder,
+  restorePayment,
+  resumeWechatPaymentFromQuery,
+} = usePaymentCheckout({
+  checkout,
+  selectedMethod,
+  selectedPlan,
+  amount,
+  buildStripeBillingInfo,
+})
+
+const {
+  duplicatePlanDialogPlan,
+  duplicatePlanAcknowledgedId,
+  duplicatePlanDialogMessage,
+  showRenewalModal,
+  renewGroupId,
+  renewalPlans,
+  isPlanAvailableForGroup,
+  hasActivePlan,
+  openDuplicatePlanDialog,
+  closeDuplicatePlanDialog,
+  confirmDuplicatePlanPurchase,
+  selectPlan,
+  selectPlanFromModal,
+  closeRenewalModal,
+} = usePaymentSelection({ checkout, selectedPlan, errorMessage })
+
+// Reactive checkout presentation combines the selected plan, amount, currency, and configured
+// fees for the page's existing controls and summary.
 const tabs = computed(() => {
-  const result: { key: 'recharge' | 'subscription'; label: string }[] = []
-  if (!checkout.value.balance_disabled) result.push({ key: 'recharge', label: t('payment.tabTopUp') })
+  const result: {
+    key: 'recharge' | 'subscription' // localized tab or status key
+
+    label: string // localized checkout tab label
+  }[] = []
+  if (!checkout.value.balance_disabled)
+    result.push({ key: 'recharge', label: t('payment.tabTopUp') })
   result.push({ key: 'subscription', label: t('payment.tabSubscribe') })
   return result
 })
@@ -626,13 +680,18 @@ const balanceRechargeMultiplier = computed(() => {
   const multiplier = checkout.value.balance_recharge_multiplier
   return multiplier > 0 ? multiplier : 1
 })
-// 订阅 CNY 换算汇率（1 USD = X CNY）。0 = 未配置，订阅保持 price 直付（与后端 opt-in 条件严格镜像）。
+// The subscription rate is CNY per USD. Zero disables conversion and charges the stored plan
+// price, matching the backend opt-in condition.
 const subscriptionUsdToCnyRate = computed(() => {
   const rate = checkout.value.subscription_usd_to_cny_rate
   return Number.isFinite(rate) && rate > 0 ? rate : 0
 })
-const creditedAmount = computed(() => Math.round((validAmount.value * balanceRechargeMultiplier.value) * 100) / 100)
-const hasHelpContent = computed(() => Boolean(checkout.value.help_text || checkout.value.help_image_url))
+const creditedAmount = computed(
+  () => Math.round(validAmount.value * balanceRechargeMultiplier.value * 100) / 100,
+)
+const hasHelpContent = computed(() =>
+  Boolean(checkout.value.help_text || checkout.value.help_image_url),
+)
 const renderedHelpText = computed(() => {
   const content = checkout.value.help_text.trim()
   if (!content) return ''
@@ -640,12 +699,20 @@ const renderedHelpText = computed(() => {
   return DOMPurify.sanitize(html)
 })
 
+/**
+ * formatPlanQuota formats subscription quotas in the account unit with appropriate decimal
+ * precision.
+ */
 function formatPlanQuota(value: number | null | undefined): string {
   const amount = Number(value)
   return formatBalanceAmount(value, { fractionDigits: Number.isInteger(amount) ? 0 : 2 })
 }
 
-// Check if an amount fits a method's [min, max]. 0 = no limit.
+/**
+ * amountFitsMethod checks a positive amount against the visible method's limits.
+ * Nonpositive amounts are accepted for selection purposes, missing methods reject positive
+ * amounts, and zero limits leave their corresponding side unbounded.
+ */
 function amountFitsMethod(amt: number, methodType: string): boolean {
   if (amt <= 0) return true
   const ml = visibleMethods.value[methodType]
@@ -659,27 +726,38 @@ function amountFitsMethod(amt: number, methodType: string): boolean {
 const globalMinAmount = computed(() => {
   const limits = Object.values(visibleMethods.value)
   if (limits.length === 0) return 0
-  if (limits.some(limit => limit.single_min <= 0)) return 0
-  return Math.min(...limits.map(limit => limit.single_min))
+  if (limits.some((limit) => limit.single_min <= 0)) return 0
+  return Math.min(...limits.map((limit) => limit.single_min))
 })
 const globalMaxAmount = computed(() => {
   const limits = Object.values(visibleMethods.value)
   if (limits.length === 0) return 0
-  if (limits.some(limit => limit.single_max <= 0)) return 0
-  return Math.max(...limits.map(limit => limit.single_max))
+  if (limits.some((limit) => limit.single_max <= 0)) return 0
+  return Math.max(...limits.map((limit) => limit.single_max))
 })
 
 // Selected method's limits (for validation and error messages)
 const selectedLimit = computed(() => visibleMethods.value[selectedMethod.value])
-const isStripeSelected = computed(() => (normalizeVisibleMethod(selectedMethod.value) || selectedMethod.value) === 'stripe')
+const isStripeSelected = computed(
+  () => (normalizeVisibleMethod(selectedMethod.value) || selectedMethod.value) === 'stripe',
+)
 const registeredEmail = computed(() => (user.value?.email || '').trim())
-const defaultBillingName = computed(() => (user.value?.username || '').trim() || registeredEmail.value)
+const defaultBillingName = computed(
+  () => (user.value?.username || '').trim() || registeredEmail.value,
+)
 
+/**
+ * optionalBillingLabel appends the localized optional marker to a billing field label.
+ */
 function optionalBillingLabel(key: 'country' | 'postalCode' | 'line1' | 'city' | 'state'): string {
   return `${t(`payment.billing.${key}`)}${t('payment.billing.optionalMark')}`
 }
 
-// 账单抬头默认使用用户名，未设置用户名时使用邮箱。
+/**
+ * fillBillingNameFromUser applies the current username or registered email to untouched
+ * billing names. An empty name or the previously auto-filled value can change with user
+ * data; a separately entered name remains unchanged.
+ */
 function fillBillingNameFromUser() {
   const nextName = defaultBillingName.value
   if (!nextName) return
@@ -688,12 +766,21 @@ function fillBillingNameFromUser() {
   lastAutoBillingName.value = nextName
 }
 
-// 默认使用注册邮箱，但不覆盖用户已经填写过的账单邮箱。
+/**
+ * fillBillingEmailFromUser fills an empty billing email with the registered address. Any
+ * nonempty form value remains unchanged, allowing the user to choose a different billing
+ * address before submission.
+ */
 function fillBillingEmailFromUser() {
   if (billingInfo.email.trim() !== '') return
   billingInfo.email = registeredEmail.value
 }
 
+/**
+ * buildStripeBillingInfo normalizes billing fields for a Stripe checkout request. It fills
+ * untouched account defaults, trims values, uppercases the country, and omits the address
+ * when all address fields are empty. Other payment methods return undefined.
+ */
 function buildStripeBillingInfo(): BillingInfo | undefined {
   if (!isStripeSelected.value) return undefined
   fillBillingNameFromUser()
@@ -713,6 +800,11 @@ function buildStripeBillingInfo(): BillingInfo | undefined {
   }
 }
 
+/**
+ * validateStripeBillingInfo checks required name and email fields for Stripe only. Missing
+ * values or an invalid email update the page error and toast before order creation; other
+ * selected methods bypass these checks.
+ */
 function validateStripeBillingInfo(): boolean {
   if (!isStripeSelected.value) return true
   const name = billingInfo.name.trim()
@@ -737,22 +829,44 @@ const localeCode = computed(() => {
   const raw = i18n.locale as unknown
   if (typeof raw === 'string') return raw
   if (raw && typeof raw === 'object' && 'value' in raw) {
-    return String((raw as { value?: string }).value || '')
+    return String(
+      (
+        raw as {
+          value?: string // reactive locale string value
+        }
+      ).value || '',
+    )
   }
   return undefined
 })
 
+/**
+ * subscriptionPaymentAmountForCurrency converts plan prices using the enabled CNY
+ * subscription rate. Other currencies and disabled rates round the supplied price
+ * directly, keeping fee computation in the gateway currency precision.
+ */
 function subscriptionPaymentAmountForCurrency(value: number, currency: string): number {
   const rate = subscriptionUsdToCnyRate.value
-  if (rate <= 0 || currency !== DEFAULT_PAYMENT_CURRENCY) return roundMoneyForCurrency(value, currency)
+  if (rate <= 0 || currency !== DEFAULT_PAYMENT_CURRENCY)
+    return roundMoneyForCurrency(value, currency)
   return roundMoneyForCurrency(value * rate, currency)
 }
+/**
+ * formatSelectedPaymentAmount formats a charge in the selected method's currency and
+ * locale.
+ */
 function formatSelectedPaymentAmount(value: number): string {
   return formatPaymentAmount(value, selectedCurrency.value, localeCode.value)
 }
 
+/**
+ * formatSelectedSubscriptionPaymentAmount converts the plan price before formatting its
+ * selected currency amount.
+ */
 function formatSelectedSubscriptionPaymentAmount(value: number): string {
-  return formatSelectedPaymentAmount(subscriptionPaymentAmountForCurrency(value, selectedCurrency.value))
+  return formatSelectedPaymentAmount(
+    subscriptionPaymentAmountForCurrency(value, selectedCurrency.value),
+  )
 }
 const methodOptions = computed<PaymentMethodOption[]>(() =>
   enabledMethods.value.map((type) => {
@@ -764,33 +878,60 @@ const methodOptions = computed<PaymentMethodOption[]>(() =>
       fee_rate: ml?.fee_rate ?? 0,
       available: ml?.available !== false && amountFitsMethod(validAmount.value, type),
     }
-  })
+  }),
 )
 
+/**
+ * FeeBreakdown exposes rounded charge components for the checkout summary.
+ */
 interface FeeBreakdown {
-  fixedFee: number
-  feeRate: number
-  rateFee: number
-  totalFee: number
-  payAmount: number
+  fixedFee: number // fixed fee in payment currency
+  feeRate: number // percentage fee rate
+  rateFee: number // percentage fee in payment currency
+  totalFee: number // combined rounded payment fees
+  payAmount: number // final gateway charge amount
 }
 
+/**
+ * currencyScale returns the decimal scaling factor for the payment currency.
+ */
 function currencyScale(currency: string): number {
-  // 金额计算按支付币种的小数位缩放，支持 JPY 这类零小数币种和 KWD 这类三位小数币种。
+  // Scale by the payment currency precision so rounding also handles zero-decimal JPY and
+  // three-decimal KWD amounts.
   return 10 ** paymentCurrencyFractionDigits(currency)
 }
 
+/**
+ * roundMoneyForCurrency rounds an amount to the currency's supported decimal precision.
+ */
 function roundMoneyForCurrency(value: number, currency: string): number {
   const scale = currencyScale(currency)
+  // The small epsilon keeps decimal values near a representable unit boundary from rounding
+  // down due to binary representation.
   return Math.round((value + Number.EPSILON) * scale) / scale
 }
 
+/**
+ * ceilMoneyForCurrency rounds a fee upward to the smallest currency unit. Its small
+ * tolerance removes floating-point residue at an existing unit boundary before applying
+ * the upward rounding rule.
+ */
 function ceilMoneyForCurrency(value: number, currency: string): number {
   const scale = currencyScale(currency)
-  // 比例手续费向上取到最小货币单位，预览采用实际应付金额的精度。
+  // Round proportional fees upward to the smallest currency unit so the preview uses the
+  // precision of the charged amount.
   return Math.ceil(value * scale - 1e-9) / scale
 }
 
+/**
+ * calculateFeeBreakdown combines a base amount with the selected method's fixed and
+ * percentage fees. It normalizes the currency, converts fee values to numbers, and clamps
+ * negative or NaN results to zero; positive Infinity remains unchanged. The base and fixed
+ * fee are rounded before computing the percentage charge. Positive percentage fees round
+ * upward to the smallest currency unit. The total fee and final
+ * payable amount are rounded again so checkout labels and method eligibility use the same
+ * displayed charge precision.
+ */
 function calculateFeeBreakdown(baseAmount: number, methodType: string): FeeBreakdown {
   const methodLimit = visibleMethods.value[methodType]
   const currency = normalizePaymentCurrency(methodLimit?.currency)
@@ -798,7 +939,10 @@ function calculateFeeBreakdown(baseAmount: number, methodType: string): FeeBreak
   const feeRate = Math.max(0, Number(methodLimit?.fee_rate) || 0)
   const normalizedAmount = roundMoneyForCurrency(baseAmount, currency)
   const normalizedFixedFee = roundMoneyForCurrency(fixedFee, currency)
-  const rateFee = normalizedAmount > 0 && feeRate > 0 ? ceilMoneyForCurrency((normalizedAmount * feeRate) / 100, currency) : 0
+  const rateFee =
+    normalizedAmount > 0 && feeRate > 0
+      ? ceilMoneyForCurrency((normalizedAmount * feeRate) / 100, currency)
+      : 0
   const totalFee = roundMoneyForCurrency(normalizedFixedFee + rateFee, currency)
   return {
     fixedFee: normalizedFixedFee,
@@ -809,7 +953,9 @@ function calculateFeeBreakdown(baseAmount: number, methodType: string): FeeBreak
   }
 }
 
-const rechargeFeeBreakdown = computed(() => calculateFeeBreakdown(validAmount.value, selectedMethod.value))
+const rechargeFeeBreakdown = computed(() =>
+  calculateFeeBreakdown(validAmount.value, selectedMethod.value),
+)
 const totalAmount = computed(() => rechargeFeeBreakdown.value.payAmount)
 
 const amountError = computed(() => {
@@ -821,20 +967,25 @@ const amountError = computed(() => {
   // Selected method can't handle this amount (but others can)
   const ml = selectedLimit.value
   if (ml) {
-    if (ml.single_min > 0 && validAmount.value < ml.single_min) return t('payment.amountTooLow', { min: formatSelectedPaymentAmount(ml.single_min) })
-    if (ml.single_max > 0 && validAmount.value > ml.single_max) return t('payment.amountTooHigh', { max: formatSelectedPaymentAmount(ml.single_max) })
+    if (ml.single_min > 0 && validAmount.value < ml.single_min)
+      return t('payment.amountTooLow', { min: formatSelectedPaymentAmount(ml.single_min) })
+    if (ml.single_max > 0 && validAmount.value > ml.single_max)
+      return t('payment.amountTooHigh', { max: formatSelectedPaymentAmount(ml.single_max) })
   }
   return ''
 })
 
-const canSubmit = computed(() =>
-  validAmount.value > 0
-    && amountFitsMethod(validAmount.value, selectedMethod.value)
-    && selectedLimit.value?.available !== false
-    && (!isStripeSelected.value || (billingInfo.name.trim() !== '' && billingInfo.email.trim() !== ''))
+const canSubmit = computed(
+  () =>
+    validAmount.value > 0 &&
+    amountFitsMethod(validAmount.value, selectedMethod.value) &&
+    selectedLimit.value?.available !== false &&
+    (!isStripeSelected.value ||
+      (billingInfo.name.trim() !== '' && billingInfo.email.trim() !== '')),
 )
 
-// 订阅方式限额按换算后的网关实扣金额（含手续费）判断。
+// Subscription method availability uses the converted gateway charge including fees, since
+// limits apply to the amount paid to that gateway.
 const subMethodOptions = computed<PaymentMethodOption[]>(() => {
   const planPrice = selectedPlan.value?.price ?? 0
   return enabledMethods.value.map((type) => {
@@ -846,31 +997,51 @@ const subMethodOptions = computed<PaymentMethodOption[]>(() => {
       fee_fixed: ml?.fee_fixed ?? 0,
       display_name: ml?.display_name,
       fee_rate: ml?.fee_rate ?? 0,
-      available: ml?.available !== false && amountFitsMethod(calculateFeeBreakdown(baseAmount, type).payAmount, type),
+      available:
+        ml?.available !== false &&
+        amountFitsMethod(calculateFeeBreakdown(baseAmount, type).payAmount, type),
     }
   })
 })
 
 const subscriptionFeeBreakdown = computed(() => {
-  const baseAmount = subscriptionPaymentAmountForCurrency(selectedPlan.value?.price ?? 0, selectedCurrency.value)
+  const baseAmount = subscriptionPaymentAmountForCurrency(
+    selectedPlan.value?.price ?? 0,
+    selectedCurrency.value,
+  )
   return calculateFeeBreakdown(baseAmount, selectedMethod.value)
 })
 const subTotalAmount = computed(() => subscriptionFeeBreakdown.value.payAmount)
 
-const canSubmitSubscription = computed(() =>
-  selectedPlan.value !== null
-    && amountFitsMethod(selectedPlan.value.price, selectedMethod.value)
-    && selectedLimit.value?.available !== false
-    && (!isStripeSelected.value || (billingInfo.name.trim() !== '' && billingInfo.email.trim() !== ''))
+const canSubmitSubscription = computed(
+  () =>
+    selectedPlan.value !== null &&
+    amountFitsMethod(selectedPlan.value.price, selectedMethod.value) &&
+    selectedLimit.value?.available !== false &&
+    (!isStripeSelected.value ||
+      (billingInfo.name.trim() !== '' && billingInfo.email.trim() !== '')),
 )
 
-// 结算区由充值和订阅确认共用，以下计算属性按当前场景切换数据来源。
-const isSubscriptionCheckout = computed(() => activeTab.value === 'subscription' && selectedPlan.value !== null)
-const checkoutMethodOptions = computed(() => (isSubscriptionCheckout.value ? subMethodOptions.value : methodOptions.value))
-const checkoutFeeBreakdown = computed(() => (isSubscriptionCheckout.value ? subscriptionFeeBreakdown.value : rechargeFeeBreakdown.value))
-const checkoutTotalAmount = computed(() => (isSubscriptionCheckout.value ? subTotalAmount.value : totalAmount.value))
-const checkoutCanSubmit = computed(() => (isSubscriptionCheckout.value ? canSubmitSubscription.value : canSubmit.value))
-const checkoutBaseLabel = computed(() => (isSubscriptionCheckout.value ? t('payment.orders.amount') : t('payment.paymentAmount')))
+// Checkout display selects the recharge or subscription totals using the current tab and
+// selected plan, keeping the summary consistent.
+const isSubscriptionCheckout = computed(
+  () => activeTab.value === 'subscription' && selectedPlan.value !== null,
+)
+const checkoutMethodOptions = computed(() =>
+  isSubscriptionCheckout.value ? subMethodOptions.value : methodOptions.value,
+)
+const checkoutFeeBreakdown = computed(() =>
+  isSubscriptionCheckout.value ? subscriptionFeeBreakdown.value : rechargeFeeBreakdown.value,
+)
+const checkoutTotalAmount = computed(() =>
+  isSubscriptionCheckout.value ? subTotalAmount.value : totalAmount.value,
+)
+const checkoutCanSubmit = computed(() =>
+  isSubscriptionCheckout.value ? canSubmitSubscription.value : canSubmit.value,
+)
+const checkoutBaseLabel = computed(() =>
+  isSubscriptionCheckout.value ? t('payment.orders.amount') : t('payment.paymentAmount'),
+)
 const checkoutBaseText = computed(() => {
   if (isSubscriptionCheckout.value && selectedPlan.value) {
     return formatSelectedSubscriptionPaymentAmount(selectedPlan.value.price)
@@ -878,6 +1049,10 @@ const checkoutBaseText = computed(() => {
   return formatSelectedPaymentAmount(validAmount.value)
 })
 
+/**
+ * handleCheckoutSubmit dispatches the shared checkout action to recharge or subscription
+ * submission.
+ */
 function handleCheckoutSubmit() {
   if (isSubscriptionCheckout.value) {
     void confirmSubscribe()
@@ -887,11 +1062,14 @@ function handleCheckoutSubmit() {
 }
 
 // Auto-switch to first available method when current selection can't handle the amount
-watch(() => [validAmount.value, selectedMethod.value] as const, ([amt, method]) => {
-  if (amt <= 0 || amountFitsMethod(amt, method)) return
-  const available = enabledMethods.value.find((m) => amountFitsMethod(amt, m))
-  if (available) selectedMethod.value = available
-})
+watch(
+  () => [validAmount.value, selectedMethod.value] as const,
+  ([amt, method]) => {
+    if (amt <= 0 || amountFitsMethod(amt, method)) return
+    const available = enabledMethods.value.find((m) => amountFitsMethod(amt, m))
+    if (available) selectedMethod.value = available
+  },
+)
 
 watch(defaultBillingName, fillBillingNameFromUser, { immediate: true })
 watch(registeredEmail, fillBillingEmailFromUser, { immediate: true })
@@ -907,116 +1085,44 @@ const paymentButtonClass = computed(() => {
   return 'btn-primary'
 })
 
-// Renewal modal state
-const showRenewalModal = ref(false)
-const renewGroupId = ref<number | null>(null)
-
-// 空分组列表表示套餐可用于任意分组；同时兼容尚未升级的旧接口返回值。
-function isPlanAvailableForGroup(plan: SubscriptionPlan, groupId: number): boolean {
-  if (!Number.isSafeInteger(groupId) || groupId <= 0) return false
-  if (Array.isArray(plan.group_ids)) {
-    return plan.group_ids.length === 0 || plan.group_ids.includes(groupId)
-  }
-  if (typeof plan.group_id === 'number' && plan.group_id > 0) {
-    return plan.group_id === groupId
-  }
-  return true
-}
-
-const renewalPlans = computed(() => {
-  const groupId = renewGroupId.value
-  if (groupId == null) return []
-  return checkout.value.plans.filter(plan => isPlanAvailableForGroup(plan, groupId))
-})
-
 const planValiditySuffix = computed(() => {
   if (!selectedPlan.value) return ''
   return validitySuffixOf(selectedPlan.value, t)
 })
 
-const duplicatePlanDialogMessage = computed(() => t('payment.duplicatePlan.message', {
-  plan: duplicatePlanDialogPlan.value?.name || t('payment.confirmSubscription'),
-}))
-
-async function loadActiveSubscriptionsForSelection(): Promise<UserSubscription[]> {
-  try {
-    const subscriptions = await subscriptionStore.fetchActiveSubscriptions(true)
-    return Array.isArray(subscriptions) ? subscriptions : activeSubscriptions.value
-  } catch {
-    return activeSubscriptions.value
-  }
-}
-
-async function hasActivePlan(planId: number): Promise<boolean> {
-  const subscriptions = await loadActiveSubscriptionsForSelection()
-  return subscriptions.some(sub => sub.plan_id === planId && sub.status === 'active')
-}
-
-function applySelectedPlan(plan: SubscriptionPlan, acknowledgedDuplicate = false) {
-  selectedPlan.value = plan
-  duplicatePlanAcknowledgedId.value = acknowledgedDuplicate ? plan.id : null
-  errorMessage.value = ''
-}
-
-function openDuplicatePlanDialog(plan: SubscriptionPlan, onConfirm: () => void) {
-  duplicatePlanDialogPlan.value = plan
-  duplicatePlanDialogConfirm.value = onConfirm
-}
-
-function closeDuplicatePlanDialog() {
-  duplicatePlanDialogPlan.value = null
-  duplicatePlanDialogConfirm.value = null
-}
-
-function confirmDuplicatePlanPurchase() {
-  const onConfirm = duplicatePlanDialogConfirm.value
-  closeDuplicatePlanDialog()
-  onConfirm?.()
-}
-
-async function selectPlan(plan: SubscriptionPlan) {
-  // 购买同一个已生效套餐只会顺延有效期，进入确认页前先提示用户。
-  if (await hasActivePlan(plan.id)) {
-    openDuplicatePlanDialog(plan, () => applySelectedPlan(plan, true))
-    return
-  }
-  applySelectedPlan(plan)
-}
-
+/**
+ * hasPlanQuota reports whether the selected plan has a positive quota limit.
+ */
 function hasPlanQuota(value: number | null | undefined): boolean {
   return value != null && value > 0
 }
 
-async function selectPlanFromModal(plan: SubscriptionPlan) {
-  // 续费弹窗中选中同一套餐时，也需要展示有效期顺延提醒。
-  if (await hasActivePlan(plan.id)) {
-    openDuplicatePlanDialog(plan, () => {
-      closeRenewalModal()
-      applySelectedPlan(plan, true)
-    })
-    return
-  }
-  closeRenewalModal()
-  applySelectedPlan(plan)
-}
-
-function closeRenewalModal() {
-  showRenewalModal.value = false
-  renewGroupId.value = null
-}
-
+/**
+ * handleSubmitRecharge starts recharge after amount eligibility and billing validation
+ * pass. An existing submission leaves state unchanged; the checkout controller receives
+ * the current positive amount and balance order type.
+ */
 async function handleSubmitRecharge() {
   if (!canSubmit.value || submitting.value) return
   if (!validateStripeBillingInfo()) return
   await createOrder(validAmount.value, 'balance')
 }
 
+/**
+ * confirmSubscribe validates billing and rechecks duplicate-plan acknowledgement before
+ * creating an order. A plan can become active after selection, so an unacknowledged
+ * duplicate opens the confirmation dialog again. Its callback records the acknowledged
+ * plan ID before requesting the subscription order. If no duplicate prompt is needed,
+ * creation proceeds with the selected plan's price and ID; an absent selection or active
+ * submission leaves checkout unchanged.
+ */
 async function confirmSubscribe() {
   if (!selectedPlan.value || submitting.value) return
   if (!validateStripeBillingInfo()) return
   const plan = selectedPlan.value
-  // 若订阅状态在选中套餐后才刷新出来，提交订单前再兜底提醒一次。
-  if (duplicatePlanAcknowledgedId.value !== plan.id && await hasActivePlan(plan.id)) {
+  // A plan can become active after selection, so check again before creating the order unless
+  // this plan was already acknowledged.
+  if (duplicatePlanAcknowledgedId.value !== plan.id && (await hasActivePlan(plan.id))) {
     openDuplicatePlanDialog(plan, () => {
       duplicatePlanAcknowledgedId.value = plan.id
       void createOrder(plan.price, 'subscription', plan.id)
@@ -1024,341 +1130,6 @@ async function confirmSubscribe() {
     return
   }
   await createOrder(plan.price, 'subscription', plan.id)
-}
-
-async function createOrder(orderAmount: number, orderType: OrderType, planId?: number, options: CreateOrderOptions = {}) {
-  submitting.value = true
-  errorMessage.value = ''
-  errorHintMessage.value = ''
-  const requestType = normalizeVisibleMethod(options.paymentType || selectedMethod.value) || options.paymentType || selectedMethod.value
-  try {
-    const payload = buildCreateOrderPayload({
-      amount: orderAmount,
-      paymentType: requestType,
-      orderType,
-      planId,
-      origin: typeof window !== 'undefined' ? window.location.origin : '',
-      isMobile: isMobileDevice(),
-      isWechatBrowser: typeof window !== 'undefined' && /MicroMessenger/i.test(window.navigator.userAgent),
-      billingInfo: buildStripeBillingInfo(),
-      forceQRCode: !!(checkout.value.alipay_force_qrcode && normalizeVisibleMethod(requestType) === 'alipay'),
-      mobilePrecreateDeepLink: checkout.value.alipay_mobile_precreate_deep_link === true,
-    })
-    if (options.openid) {
-      payload.openid = options.openid
-    }
-    if (options.wechatResumeToken) {
-      payload.wechat_resume_token = options.wechatResumeToken
-    }
-
-    const result = await paymentStore.createOrder(payload) as CreateOrderResult & { resume_token?: string }
-    const openWindow = (url: string) => {
-      const win = window.open(url, 'paymentPopup', getPaymentPopupFeatures())
-      if (!win || win.closed) {
-        window.location.href = url
-      }
-    }
-    const visibleMethod = normalizeVisibleMethod(requestType) || requestType
-    // 用户点击独立 Stripe 按钮时不指定子方式，让落地页展示完整 Payment Element。
-    const stripeMethod = visibleMethod === 'stripe'
-      ? ''
-      : visibleMethod === 'wxpay' ? 'wechat_pay' : 'alipay'
-    // Stripe Checkout 使用 pay_url 直接跳转；这里仅为旧 Payment Element 响应生成站内路由。
-    const stripeRouteUrl = result.client_secret && visibleMethod !== 'airwallex'
-      ? router.resolve({
-        path: '/payment/stripe',
-        query: {
-          order_id: String(result.order_id),
-          client_secret: result.client_secret,
-          method: stripeMethod || undefined,
-          resume_token: result.resume_token || undefined,
-        },
-      }).href
-      : ''
-    const airwallexRouteUrl = result.client_secret && result.intent_id
-      ? router.resolve({
-        path: '/payment/airwallex',
-        query: {
-          order_id: String(result.order_id),
-          out_trade_no: result.out_trade_no || undefined,
-          resume_token: result.resume_token || undefined,
-        },
-      }).href
-      : ''
-    const decision = decidePaymentLaunch(result, {
-      visibleMethod,
-      orderType,
-      isMobile: isMobileDevice(),
-      isWechatBrowser: typeof window !== 'undefined' && /MicroMessenger/i.test(window.navigator.userAgent),
-      forceQRCode: !!(checkout.value.alipay_force_qrcode && visibleMethod === 'alipay'),
-      mobilePrecreateDeepLink: checkout.value.alipay_mobile_precreate_deep_link === true,
-      stripePopupUrl: stripeRouteUrl,
-      stripeRouteUrl,
-      airwallexRouteUrl,
-    })
-
-    if (decision.kind === 'wechat_oauth' && decision.oauth?.authorize_url) {
-      window.location.href = buildWechatOAuthAuthorizeUrl(decision.oauth.authorize_url, {
-        paymentType: visibleMethod,
-        orderType,
-        planId,
-        orderAmount,
-      })
-      return
-    }
-
-    if (decision.kind === 'unhandled') {
-      applyScenarioError({ reason: 'UNHANDLED_PAYMENT_SCENARIO' }, visibleMethod)
-      return
-    }
-
-    paymentState.value = decision.paymentState
-    paymentPhase.value = 'paying'
-    persistRecoverySnapshot(decision.recovery)
-
-    if (decision.kind === 'stripe_popup') {
-      openWindow(decision.paymentState.payUrl)
-      return
-    }
-    if (decision.kind === 'stripe_route') {
-      window.location.href = decision.paymentState.payUrl
-      return
-    }
-    if (decision.kind === 'airwallex_route') {
-      window.location.href = decision.paymentState.payUrl
-      return
-    }
-    if (decision.kind === 'wechat_jsapi' && decision.jsapi) {
-      try {
-        const jsapiResult = await invokeWechatJsapiPayment(decision.jsapi as Record<string, unknown>)
-        const errMsg = String(jsapiResult.err_msg || '').toLowerCase()
-        if (errMsg.includes('cancel')) {
-          appStore.showInfo(t('payment.qr.cancelled'))
-          resetPayment()
-        } else if (errMsg && !errMsg.includes('ok')) {
-          resetPayment()
-          const fallbackApplied = await attemptMobileQrFallback(
-            { reason: 'WECHAT_JSAPI_FAILED', message: errMsg },
-            {
-              orderAmount,
-              orderType,
-              planId,
-              paymentType: visibleMethod,
-              attempted: options.mobileQrFallbackAttempted === true,
-            },
-          )
-          if (!fallbackApplied) {
-            applyScenarioError({ reason: 'WECHAT_JSAPI_FAILED', message: errMsg }, visibleMethod)
-          }
-        } else {
-          const resultState = { ...decision.paymentState }
-          resetPayment()
-          await redirectToPaymentResult(resultState)
-        }
-      } catch (err: unknown) {
-        resetPayment()
-        const fallbackApplied = await attemptMobileQrFallback(err, {
-          orderAmount,
-          orderType,
-          planId,
-          paymentType: visibleMethod,
-          attempted: options.mobileQrFallbackAttempted === true,
-        })
-        if (!fallbackApplied) {
-          throw err
-        }
-      }
-      return
-    }
-    if (decision.kind === 'redirect_waiting' && decision.paymentState.payUrl) {
-      if (isMobileDevice()) {
-        window.location.href = decision.paymentState.payUrl
-        return
-      }
-      openWindow(decision.paymentState.payUrl)
-    }
-  } catch (err: unknown) {
-    const apiErr = err as Record<string, unknown>
-    if (apiErr.reason === 'TOO_MANY_PENDING') {
-      const metadata = apiErr.metadata as Record<string, unknown> | undefined
-      errorMessage.value = t('payment.errors.tooManyPending', { max: metadata?.max || '' })
-      errorHintMessage.value = ''
-    } else if (apiErr.reason === 'CANCEL_RATE_LIMITED') {
-      errorMessage.value = t('payment.errors.cancelRateLimited')
-      errorHintMessage.value = ''
-    } else if (await attemptMobileQrFallback(err, {
-      orderAmount,
-      orderType,
-      planId,
-      paymentType: requestType,
-      attempted: options.mobileQrFallbackAttempted === true,
-    })) {
-      return
-    } else {
-      const handled = applyScenarioError(
-        err,
-        normalizeVisibleMethod(options.paymentType || selectedMethod.value) || selectedMethod.value,
-      )
-      if (!handled) {
-        errorMessage.value = extractI18nErrorMessage(err, t, 'payment.errors', extractApiErrorMessage(err, t('payment.result.failed')))
-        errorHintMessage.value = ''
-      }
-      if (handled) {
-        return
-      }
-    }
-    appStore.showError(buildPaymentErrorToastMessage(errorMessage.value, errorHintMessage.value))
-  } finally {
-    submitting.value = false
-  }
-}
-
-interface MobileQrFallbackContext {
-  orderAmount: number
-  orderType: OrderType
-  planId?: number
-  paymentType: string
-  attempted: boolean
-}
-
-function shouldFallbackToDesktopQr(err: unknown, paymentMethod: string, attempted: boolean): boolean {
-  if (attempted || !isMobileDevice()) {
-    return false
-  }
-
-  const normalizedMethod = normalizeVisibleMethod(paymentMethod) || paymentMethod
-  const reason = typeof err === 'object' && err && 'reason' in err && typeof err.reason === 'string'
-    ? err.reason
-    : ''
-  const message = err instanceof Error
-    ? err.message
-    : (typeof err === 'object' && err && 'message' in err && typeof err.message === 'string'
-      ? err.message
-      : '')
-  const normalizedMessage = message.toLowerCase()
-
-  if (normalizedMethod === 'wxpay') {
-    return reason === 'WECHAT_H5_NOT_AUTHORIZED'
-      || reason === 'WECHAT_PAYMENT_MP_NOT_CONFIGURED'
-      || reason === 'WECHAT_JSAPI_FAILED'
-      || reason === 'PAYMENT_GATEWAY_ERROR'
-      || reason === 'UNHANDLED_PAYMENT_SCENARIO'
-      || normalizedMessage.includes('weixinjsbridge is unavailable')
-      || normalizedMessage.includes('wechat_jsapi_unavailable')
-  }
-
-  if (normalizedMethod === 'alipay') {
-    return reason === 'PAYMENT_GATEWAY_ERROR' || reason === 'UNHANDLED_PAYMENT_SCENARIO'
-  }
-
-  return false
-}
-
-async function attemptMobileQrFallback(err: unknown, context: MobileQrFallbackContext): Promise<boolean> {
-  if (!shouldFallbackToDesktopQr(err, context.paymentType, context.attempted)) {
-    return false
-  }
-
-  try {
-    const visibleMethod = normalizeVisibleMethod(context.paymentType) || context.paymentType
-    const payload = buildCreateOrderPayload({
-      amount: context.orderAmount,
-      paymentType: visibleMethod,
-      orderType: context.orderType,
-      planId: context.planId,
-      origin: typeof window !== 'undefined' ? window.location.origin : '',
-      isMobile: false,
-      isWechatBrowser: false,
-      billingInfo: buildStripeBillingInfo(),
-    })
-    const result = await paymentStore.createOrder(payload) as CreateOrderResult & { resume_token?: string }
-    const stripeMethod = visibleMethod === 'wxpay' ? 'wechat_pay' : 'alipay'
-    // 移动端失败后的桌面兜底仍只需要 Payment Element 路由，Checkout pay_url 由决策函数处理。
-    const stripeRouteUrl = result.client_secret
-      ? router.resolve({
-        path: '/payment/stripe',
-        query: {
-          order_id: String(result.order_id),
-          client_secret: result.client_secret,
-          method: stripeMethod,
-          resume_token: result.resume_token || undefined,
-        },
-      }).href
-      : ''
-    const decision = decidePaymentLaunch(result, {
-      visibleMethod,
-      orderType: context.orderType,
-      isMobile: false,
-      isWechatBrowser: false,
-      stripePopupUrl: stripeRouteUrl,
-      stripeRouteUrl,
-    })
-
-    if (decision.kind !== 'qr_waiting' || !decision.paymentState.qrCode) {
-      return false
-    }
-
-    errorMessage.value = ''
-    errorHintMessage.value = ''
-    paymentState.value = decision.paymentState
-    paymentPhase.value = 'paying'
-    persistRecoverySnapshot(decision.recovery)
-    appStore.showWarning(t('payment.errors.mobilePaymentFallbackToQr'))
-    return true
-  } catch {
-    return false
-  }
-}
-
-function applyScenarioError(err: unknown, paymentMethod: string): boolean {
-  const descriptor = describePaymentScenarioError(err, {
-    paymentMethod,
-    isMobile: isMobileDevice(),
-    isWechatBrowser: typeof window !== 'undefined' && /MicroMessenger/i.test(window.navigator.userAgent),
-  })
-  if (!descriptor) {
-    errorMessage.value = ''
-    errorHintMessage.value = ''
-    return false
-  }
-  errorMessage.value = t(descriptor.messageKey)
-  errorHintMessage.value = descriptor.hintKey ? t(descriptor.hintKey) : ''
-  appStore.showError(buildPaymentErrorToastMessage(errorMessage.value, errorHintMessage.value))
-  return true
-}
-
-async function resumeWechatPaymentFromQuery() {
-  const resume = parseWechatResumeRoute(route.query, checkout.value.plans, validAmount.value)
-  if (!resume) {
-    return
-  }
-
-  selectedMethod.value = resume.paymentType
-  if (resume.orderType === 'balance' && resume.orderAmount > 0) {
-    amount.value = resume.orderAmount
-  }
-  if (resume.orderType === 'subscription' && resume.planId) {
-    selectedPlan.value = checkout.value.plans.find(plan => plan.id === resume.planId) ?? null
-  }
-
-  await router.replace({ path: route.path, query: stripWechatResumeQuery(route.query) })
-
-  if (resume.wechatResumeToken) {
-    await createOrder(0, resume.orderType, resume.planId, {
-      wechatResumeToken: resume.wechatResumeToken,
-      paymentType: resume.paymentType,
-      isResume: true,
-    })
-    return
-  }
-
-  if (resume.orderAmount > 0 && resume.openid) {
-    await createOrder(resume.orderAmount, resume.orderType, resume.planId, {
-      openid: resume.openid,
-      paymentType: resume.paymentType,
-      isResume: true,
-    })
-  }
 }
 
 onMounted(async () => {
@@ -1374,31 +1145,7 @@ onMounted(async () => {
       })
       selectedMethod.value = sorted[0]
     }
-    if (typeof window !== 'undefined') {
-      if (hasWechatResumeQuery(route.query)) {
-        removeRecoverySnapshot()
-      }
-      const routeResumeToken = typeof route.query.resume_token === 'string'
-        ? route.query.resume_token
-        : typeof route.query.wechat_resume_token === 'string'
-          ? route.query.wechat_resume_token
-          : undefined
-      const restored = readPaymentRecoverySnapshot(
-        window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY),
-        { resumeToken: routeResumeToken },
-      )
-      if (restored) {
-        paymentState.value = restored
-        paymentPhase.value = 'paying'
-        const restoredMethod = normalizeVisibleMethod(restored.paymentType)
-          || (visibleMethods.value[restored.paymentType] ? restored.paymentType : '')
-        if (restoredMethod) {
-          selectedMethod.value = restoredMethod
-        }
-      } else {
-        removeRecoverySnapshot()
-      }
-    }
+    restorePayment()
     await resumeWechatPaymentFromQuery()
     if (checkout.value.balance_disabled) {
       activeTab.value = 'subscription'
@@ -1407,13 +1154,15 @@ onMounted(async () => {
       activeTab.value = 'subscription'
       const planId = Number(route.query.plan)
       if (planId > 0) {
-        const plan = checkout.value.plans.find(item => item.id === planId)
+        const plan = checkout.value.plans.find((item) => item.id === planId)
         if (plan) {
           await selectPlan(plan)
         }
       } else if (route.query.group) {
         const groupId = Number(route.query.group)
-        const groupPlans = checkout.value.plans.filter(plan => isPlanAvailableForGroup(plan, groupId))
+        const groupPlans = checkout.value.plans.filter((plan) =>
+          isPlanAvailableForGroup(plan, groupId),
+        )
         if (groupPlans.length === 1) {
           await selectPlan(groupPlans[0])
         } else if (groupPlans.length > 1) {
@@ -1422,20 +1171,25 @@ onMounted(async () => {
         }
       }
     }
-  } catch (err: unknown) { appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error'))) }
-  finally { loading.value = false }
-  // Fetch active subscriptions (uses cache, non-blocking)
+  } catch (err: unknown) {
+    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+  } finally {
+    loading.value = false
+  }
+  // A background subscription refresh can fail independently of checkout loading; the existing
+  // store list remains available to the plan cards.
   subscriptionStore.fetchActiveSubscriptions().catch(() => {})
 })
 useLocaleRefresh(async () => {
   const { data } = await paymentAPI.getCheckoutInfo()
   checkout.value = data
-  if (selectedPlan.value) selectedPlan.value = data.plans.find(plan => plan.id === selectedPlan.value?.id) || null
+  if (selectedPlan.value)
+    selectedPlan.value = data.plans.find((plan) => plan.id === selectedPlan.value?.id) || null
 })
 </script>
 
 <style scoped>
-/* 横向翻页期间裁剪内容，静止时恢复摘要吸顶和浮层布局。 */
+/* Clip during horizontal page transitions; restore overflow afterward so the sticky summary and overlays can extend normally. */
 .purchase-viewport:has(.purchase-slide-enter-active, .purchase-slide-leave-active) {
   overflow: clip;
 }
@@ -1445,7 +1199,7 @@ useLocaleRefresh(async () => {
   transition: transform var(--motion-layout) var(--motion-ease);
 }
 
-/* 退出面板绝对定位，与进入面板重叠在同一视窗。 */
+/* The leaving panel overlaps its replacement inside the same viewport, preventing transition height from doubling while both panels exist. */
 .purchase-slide-leave-active {
   position: absolute;
   inset: 0 0 auto;

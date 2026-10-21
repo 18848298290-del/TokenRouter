@@ -3,6 +3,11 @@ import { mount } from '@vue/test-utils'
 
 import OpsThroughputTrendChart from '../OpsThroughputTrendChart.vue'
 
+// OpsThroughputTrendChart.spec.ts checks responsive header structure in the
+// throughput chart with rendering stubbed. The test inspects classes and toolbar
+// controls on the real component so narrow layouts can wrap actions while each
+// action keeps its own width.
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
@@ -21,6 +26,9 @@ vi.mock('vue-chartjs', () => ({
 }))
 
 describe('OpsThroughputTrendChart', () => {
+  // The chart mounts with empty data and its header controls remain available.
+  // Responsive containers must permit wrapping and all three action buttons must
+  // resist shrinking.
   it('allows the header controls to wrap on narrow screens', () => {
     const wrapper = mount(OpsThroughputTrendChart, {
       props: {

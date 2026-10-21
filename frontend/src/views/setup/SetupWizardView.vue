@@ -3,7 +3,6 @@
     class="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 p-4 dark:from-dark-900 dark:to-dark-800"
   >
     <div v-content-reveal="motionRoute?.path" class="w-full max-w-2xl">
-      <!-- Logo & Title -->
       <div class="mb-8 text-center">
         <div
           class="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-surface bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg"
@@ -14,7 +13,7 @@
         <p class="mt-2 text-gray-500 dark:text-dark-400">{{ t('setup.description') }}</p>
       </div>
 
-      <!-- Progress Steps -->
+      <!-- Steps retain their fixed installation order while completed entries use check marks. -->
       <div class="mb-8">
         <div class="flex items-center justify-center">
           <template v-for="(step, index) in steps" :key="step.id">
@@ -26,7 +25,7 @@
                     ? 'bg-primary-500 text-white'
                     : currentStep === index
                       ? 'bg-primary-500 text-white ring-4 ring-primary-100 dark:ring-primary-900'
-                      : 'bg-gray-200 text-gray-500 dark:bg-dark-700 dark:text-dark-400'
+                      : 'bg-gray-200 text-gray-500 dark:bg-dark-700 dark:text-dark-400',
                 ]"
               >
                 <Icon
@@ -58,9 +57,8 @@
         </div>
       </div>
 
-      <!-- Step Content -->
       <div class="rounded-surface bg-white p-8 shadow-xl dark:bg-dark-900">
-        <!-- Step 1: Database -->
+        <!-- The database step requires a successful connection test before forward navigation is enabled. -->
         <div v-if="currentStep === 0" v-content-reveal class="space-y-6">
           <div class="mb-6 text-center">
             <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
@@ -92,13 +90,15 @@
             </div>
           </div>
 
-          <div class="flex items-center justify-between rounded-surface border border-gray-200 p-3 dark:border-dark-700">
+          <div
+            class="flex items-center justify-between rounded-surface border border-gray-200 p-3 dark:border-dark-700"
+          >
             <div>
               <p class="text-sm font-medium text-gray-900 dark:text-white">
-                {{ t("setup.redis.enableTls") }}
+                {{ t('setup.redis.enableTls') }}
               </p>
               <p class="text-xs text-gray-500 dark:text-dark-400">
-                {{ t("setup.redis.enableTlsHint") }}
+                {{ t('setup.redis.enableTlsHint') }}
               </p>
             </div>
             <Toggle v-model="formData.redis.enable_tls" />
@@ -143,7 +143,7 @@
                   { value: 'disable', label: t('setup.database.ssl.disable') },
                   { value: 'require', label: t('setup.database.ssl.require') },
                   { value: 'verify-ca', label: t('setup.database.ssl.verifyCa') },
-                  { value: 'verify-full', label: t('setup.database.ssl.verifyFull') }
+                  { value: 'verify-full', label: t('setup.database.ssl.verifyFull') },
                 ]"
               />
             </div>
@@ -179,7 +179,7 @@
           </button>
         </div>
 
-        <!-- Step 2: Redis -->
+        <!-- Redis uses its own connection result so database success cannot unlock this step. -->
         <div v-if="currentStep === 1" v-content-reveal class="space-y-6">
           <div class="mb-6 text-center">
             <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
@@ -241,13 +241,15 @@
             </div>
           </div>
 
-          <div class="flex items-center justify-between rounded-surface border border-gray-200 p-3 dark:border-dark-700">
+          <div
+            class="flex items-center justify-between rounded-surface border border-gray-200 p-3 dark:border-dark-700"
+          >
             <div>
               <p class="text-sm font-medium text-gray-900 dark:text-white">
-                {{ t("setup.redis.enableTls") }}
+                {{ t('setup.redis.enableTls') }}
               </p>
               <p class="text-xs text-gray-500 dark:text-dark-400">
-                {{ t("setup.redis.enableTlsHint") }}
+                {{ t('setup.redis.enableTlsHint') }}
               </p>
             </div>
             <Toggle v-model="formData.redis.enable_tls" />
@@ -283,7 +285,7 @@
           </button>
         </div>
 
-        <!-- Step 3: Admin -->
+        <!-- Administrator credentials are compared locally before moving to the final installation summary. -->
         <div v-if="currentStep === 2" v-content-reveal class="space-y-6">
           <div class="mb-6 text-center">
             <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
@@ -331,7 +333,7 @@
           </div>
         </div>
 
-        <!-- Step 4: Complete -->
+        <!-- The summary exposes connection identities while keeping the supplied passwords out of the preview. -->
         <div v-if="currentStep === 3" v-content-reveal class="space-y-6">
           <div class="mb-6 text-center">
             <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
@@ -372,7 +374,7 @@
           </div>
         </div>
 
-        <!-- Error Message -->
+        <!-- Connection, installation, and readiness failures share this message region across wizard steps. -->
         <div
           v-if="errorMessage"
           class="mt-6 rounded-surface border border-red-200 bg-red-50 p-4 dark:border-red-800/50 dark:bg-red-900/20"
@@ -383,7 +385,7 @@
           </div>
         </div>
 
-        <!-- Success Message -->
+        <!-- Installation acceptance and restarted-service readiness remain separate visible states. -->
         <div
           v-if="installSuccess"
           class="mt-6 rounded-surface border border-green-200 bg-green-50 p-4 dark:border-green-800/50 dark:bg-green-900/20"
@@ -408,24 +410,26 @@
                 {{ t('setup.status.completed') }}
               </p>
               <p class="mt-1 text-sm text-green-600 dark:text-green-500">
-                {{
-                  serviceReady
-                    ? t('setup.status.redirecting')
-                    : t('setup.status.restarting')
-                }}
+                {{ serviceReady ? t('setup.status.redirecting') : t('setup.status.restarting') }}
               </p>
             </div>
           </div>
         </div>
 
-        <!-- Navigation Buttons -->
+        <!-- Successful installation removes backward navigation while the readiness poll owns the login redirect. -->
         <div class="mt-8 flex justify-between">
           <button
             v-if="currentStep > 0 && !installSuccess"
             @click="currentStep--"
             class="btn btn-secondary"
           >
-            <Icon name="chevronLeft" size="sm" class="mr-2" :stroke-width="2" :animate-on-hover="false" />
+            <Icon
+              name="chevronLeft"
+              size="sm"
+              class="mr-2"
+              :stroke-width="2"
+              :animate-on-hover="false"
+            />
             {{ t('common.back') }}
           </button>
           <div v-else></div>
@@ -437,7 +441,13 @@
             class="btn btn-primary"
           >
             {{ t('common.next') }}
-            <Icon name="chevronRight" size="sm" class="ml-2" :stroke-width="2" :animate-on-hover="false" />
+            <Icon
+              name="chevronRight"
+              size="sm"
+              class="ml-2"
+              :stroke-width="2"
+              :animate-on-hover="false"
+            />
           </button>
 
           <button
@@ -464,8 +474,6 @@
 <script setup lang="ts">
 import { vContentReveal } from '@/directives/contentReveal'
 import { useRoute as useMotionRoute } from 'vue-router'
-const motionRoute = useMotionRoute()
-
 
 import { ref, reactive, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -475,29 +483,53 @@ import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 
+// SetupWizardView.vue collects database, Redis, administrator, and server settings
+// for an unconfigured installation. Connection-test flags gate the first two
+// steps, and matching administrator passwords gate the summary step. The final
+// action sends the current form to the setup API and marks installation accepted
+// before the service becomes ready in normal mode.
+//
+// Readiness polling runs independently after installation succeeds. It waits for
+// the setup-status endpoint to report normal mode, then schedules a full-page
+// login redirect. The attempt count bounds the number of probes rather than their
+// total duration because individual fetches have no timeout. Connection flags,
+// pending reads, and polling timers retain their existing page-lifetime behavior.
+
+// Route state drives the shared reveal animation; translation supplies the
+// wizard's step labels and user-facing completion or timeout descriptions.
+const motionRoute = useMotionRoute()
 const { t } = useI18n()
 
+// steps fixes database, Redis, administrator, and completion order while keeping
+// the labels reactive to the current interface language during setup.
 const steps = computed(() => [
   { id: 'database', title: t('setup.database.title') },
   { id: 'redis', title: t('setup.redis.title') },
   { id: 'admin', title: t('setup.admin.title') },
-  { id: 'complete', title: t('setup.ready.title') }
+  { id: 'complete', title: t('setup.ready.title') },
 ])
 
+// Navigation and result state distinguish the active step, a shared failure
+// message, and installation acceptance before restarted-service readiness is observed.
 const currentStep = ref(0)
 const errorMessage = ref('')
 const installSuccess = ref(false)
 
-// Connection test states
+// Connection-test flags gate forward navigation independently for each service;
+// testing again clears the prior result until the corresponding request succeeds.
 const testingDb = ref(false)
 const testingRedis = ref(false)
 const dbConnected = ref(false)
 const redisConnected = ref(false)
+// Installation and confirmation state cover the submit action, repeated password
+// input, and later readiness signal used by the completion message and redirect.
 const installing = ref(false)
 const confirmPassword = ref('')
 const serviceReady = ref(false)
 
-// Default server port
+// getCurrentPort derives the server default from the browser's visible address.
+// An explicit port is parsed directly; otherwise HTTPS selects 443 and other
+// protocols select 80. This does not discover an internal proxy listener.
 const getCurrentPort = (): number => {
   const port = window.location.port
   if (port) {
@@ -507,6 +539,8 @@ const getCurrentPort = (): number => {
   return window.location.protocol === 'https:' ? 443 : 80
 }
 
+// formData retains all installation fields across wizard steps using the setup
+// API's request shape; passwords stay in this draft until submission or page disposal.
 const formData = reactive<InstallRequest>({
   database: {
     host: 'localhost',
@@ -514,7 +548,7 @@ const formData = reactive<InstallRequest>({
     user: 'postgres',
     password: '',
     dbname: 'tokenrouter',
-    sslmode: 'disable'
+    sslmode: 'disable',
   },
   redis: {
     host: 'localhost',
@@ -522,19 +556,21 @@ const formData = reactive<InstallRequest>({
     username: '',
     password: '',
     db: 0,
-    enable_tls: false
+    enable_tls: false,
   },
   admin: {
     email: '',
-    password: ''
+    password: '',
   },
   server: {
     host: '0.0.0.0',
-    port: getCurrentPort(), // Use current port from browser
-    mode: 'release'
-  }
+    port: getCurrentPort(),
+    mode: 'release',
+  },
 })
 
+// Forward navigation uses remembered connection results, then basic account
+// checks; editing connection fields does not itself reset the recorded test flags.
 const canProceed = computed(() => {
   switch (currentStep.value) {
     case 0:
@@ -552,6 +588,9 @@ const canProceed = computed(() => {
   }
 })
 
+// testDatabaseConnection probes the current database draft and records its result.
+// A new probe clears the previous success and shared error. Failure selects the
+// most specific available response message, then releases the database testing flag.
 async function testDatabaseConnection() {
   testingDb.value = true
   errorMessage.value = ''
@@ -561,14 +600,32 @@ async function testDatabaseConnection() {
     await testDatabase(formData.database)
     dbConnected.value = true
   } catch (error: unknown) {
-    const err = error as { response?: { data?: { detail?: string; message?: string } }; message?: string }
+    // Error descriptions prefer backend detail, backend message, then client
+    // message. The first nonempty value wins before the fixed connection fallback.
+    const err = error as {
+      // Optional HTTP response envelope.
+      response?: {
+        // Optional backend error body.
+        data?: {
+          detail?: string // Preferred backend failure detail.
+          message?: string // Fallback backend error message.
+        }
+      }
+      message?: string // Fallback client error message.
+    }
     errorMessage.value =
-      err.response?.data?.detail || err.response?.data?.message || err.message || 'Connection failed'
+      err.response?.data?.detail ||
+      err.response?.data?.message ||
+      err.message ||
+      'Connection failed'
   } finally {
     testingDb.value = false
   }
 }
 
+// testRedisConnection probes the current Redis draft with its independent test flag.
+// Success enables forward navigation from the Redis step. Failure retains the
+// draft and publishes the preferred backend or client error message.
 async function testRedisConnection() {
   testingRedis.value = true
   errorMessage.value = ''
@@ -578,14 +635,30 @@ async function testRedisConnection() {
     await testRedis(formData.redis)
     redisConnected.value = true
   } catch (error: unknown) {
-    const err = error as { response?: { data?: { detail?: string; message?: string } }; message?: string }
+    // Error descriptions prefer backend detail, backend message, then client
+    // message. The first nonempty value wins before the fixed connection fallback.
+    const err = error as {
+      // Optional HTTP response envelope.
+      response?: {
+        // Optional backend error body.
+        data?: {
+          detail?: string // Preferred backend failure detail.
+          message?: string // Fallback backend error message.
+        }
+      }
+      message?: string // Fallback client error message.
+    }
     errorMessage.value =
-      err.response?.data?.detail || err.response?.data?.message || err.message || 'Connection failed'
+      err.response?.data?.detail ||
+      err.response?.data?.message ||
+      err.message ||
+      'Connection failed'
   } finally {
     testingRedis.value = false
   }
 }
 
+// nextStep advances once when the current step passes its existing readiness check.
 function nextStep() {
   if (canProceed.value) {
     errorMessage.value = ''
@@ -593,6 +666,9 @@ function nextStep() {
   }
 }
 
+// performInstall submits the complete draft and starts readiness polling on success.
+// Installation acceptance is published before the detached poll completes. The
+// installing flag covers only submission, while errors retain the form for retry.
 async function performInstall() {
   installing.value = true
   errorMessage.value = ''
@@ -600,40 +676,70 @@ async function performInstall() {
   try {
     await install(formData)
     installSuccess.value = true
-    // Start polling for service restart
+    // Start the readiness phase without keeping the installation action loading;
+    // its separate status flag controls the eventual full-page login redirect.
     waitForServiceRestart()
   } catch (error: unknown) {
-    const err = error as { response?: { data?: { detail?: string; message?: string } }; message?: string }
+    // Error descriptions prefer backend detail, backend message, then client
+    // message. The first nonempty value wins before the fixed installation fallback.
+    const err = error as {
+      // Optional HTTP response envelope.
+      response?: {
+        // Optional backend error body.
+        data?: {
+          detail?: string // Preferred backend failure detail.
+          message?: string // Fallback backend error message.
+        }
+      }
+      message?: string // Fallback client error message.
+    }
     errorMessage.value =
-      err.response?.data?.detail || err.response?.data?.message || err.message || 'Installation failed'
+      err.response?.data?.detail ||
+      err.response?.data?.message ||
+      err.message ||
+      'Installation failed'
   } finally {
     installing.value = false
   }
 }
 
-// Wait for service to restart and become available
+// waitForServiceRestart probes setup status until normal mode is reported.
+// After an initial delay, successful HTTP responses must contain a data object
+// whose needs_setup value is falsy before readiness is published. That transition schedules
+// the login redirect and ends the loop; network errors and other responses leave
+// the next attempt eligible after its delay.
+//
+// The fixed attempt count does not impose a wall-clock deadline because each
+// fetch can wait independently. Poll delays and the redirect timeout are not
+// retained for unmount cleanup. Exhausting all probes leaves the completion view
+// visible and publishes its translated timeout message for manual recovery.
 async function waitForServiceRestart() {
-  const maxAttempts = 60 // Increase to 60 attempts, ~60 seconds max
-  const interval = 1000 // 1 second between attempts
+  // Bound the number of probes and delay retries, while retaining the existing
+  // fetch behavior without a per-request timeout or external cancellation signal.
+  const maxAttempts = 60
+  const interval = 1000
 
-  // Wait a moment for the service to start restarting
+  // Allow the accepted installation to begin restarting before the first probe;
+  // a subsequent non-ready response uses the shorter delay between retry attempts.
   await new Promise((resolve) => setTimeout(resolve, 3000))
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      // Use setup status endpoint as it tells us the real mode
-      // Service might return 404 or connection refused while restarting
+      // Probe the setup endpoint because HTTP availability alone does not imply
+      // normal application mode; restart transitions can also fail at the transport level.
       const response = await fetch(buildGatewayUrl('/setup/status'), {
         method: 'GET',
-        cache: 'no-store'
+        cache: 'no-store',
       })
 
       if (response.ok) {
         const data = await response.json()
-        // If needs_setup is false, service has restarted in normal mode
+        // Accept response data that does not mark setup as required; this existing
+        // truthiness check also accepts an omitted flag rather than validating its presence.
         if (data.data && !data.data.needs_setup) {
           serviceReady.value = true
-          // Redirect to login page after a short delay
+          // Leave the readiness message visible briefly before navigating to login;
+          // the scheduled timeout retains the existing behavior after this function returns.
           setTimeout(() => {
             window.location.href = '/login'
           }, 1500)
@@ -641,14 +747,15 @@ async function waitForServiceRestart() {
         }
       }
     } catch {
-      // Service not ready or network error during restart, continue polling
+      // Restart-time transport or decoding failures leave another probe eligible;
+      // only exhausting the shared attempt budget publishes a final timeout message.
     }
 
     await new Promise((resolve) => setTimeout(resolve, interval))
   }
 
-  // If we reach here, service didn't restart in time
-  // Show a message to refresh manually
+  // All permitted probes completed without a normal-mode response. Keep the
+  // installation result visible while explaining that readiness was not observed.
   errorMessage.value = t('setup.status.timeout')
 }
 </script>

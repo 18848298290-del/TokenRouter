@@ -1,9 +1,15 @@
+// landing.ts supplies English text for the public homepage, key usage lookup,
+// and setup wizard. Public navigation and introductory sections share this
+// dictionary with setup progress and usage details so these entry pages resolve
+// messages through the root catalog.
+
 export default {
-batchImageGuide: {
+  batchImageGuide: {
     title: 'Batch Image Generation',
-    description: 'Submit multiple prompts in one job and download the generated images when complete'
+    description:
+      'Submit multiple prompts in one job and download the generated images when complete',
   },
-// Home Page
+  // Home Page
   home: {
     viewOnGithub: 'View on GitHub',
     viewDocs: 'View Documentation',
@@ -18,17 +24,18 @@ batchImageGuide: {
     viewAll: 'View all',
     nav: {
       searchModels: 'Search models, providers, and capabilities',
-      models: 'Models'
+      models: 'Models',
     },
     // User-focused value proposition
     heroBadge: 'Unified access, smart routing, usage-based billing',
     heroTitle: 'The unified interface for AI models',
     heroSubtitle: 'One Key, All AI Models',
-    heroDescription: 'No need to manage multiple subscriptions. Access Claude, GPT, Gemini and more with a single API key',
+    heroDescription:
+      'No need to manage multiple subscriptions. Access Claude, GPT, Gemini and more with a single API key',
     tags: {
       subscriptionToApi: 'Subscription to API',
       stickySession: 'Session Persistence',
-      realtimeBilling: 'Pay As You Go'
+      realtimeBilling: 'Pay As You Go',
     },
     // Pain points section
     painPoints: {
@@ -36,40 +43,44 @@ batchImageGuide: {
       items: {
         expensive: {
           title: 'High Subscription Costs',
-          desc: 'Paying for multiple AI subscriptions that add up every month'
+          desc: 'Paying for multiple AI subscriptions that add up every month',
         },
         complex: {
           title: 'Provider Chaos',
-          desc: 'Managing scattered providers and API keys across different platforms'
+          desc: 'Managing scattered providers and API keys across different platforms',
         },
         unstable: {
           title: 'Service Interruptions',
-          desc: 'Single providers hitting rate limits and disrupting your workflow'
+          desc: 'Single providers hitting rate limits and disrupting your workflow',
         },
         noControl: {
           title: 'No Usage Control',
-          desc: "Can't track where your money goes or limit team member usage"
-        }
-      }
+          desc: "Can't track where your money goes or limit team member usage",
+        },
+      },
     },
     // Solutions section
     solutions: {
       title: 'We Solve These Problems',
-      subtitle: 'Three simple steps to stress-free AI access'
+      subtitle: 'Three simple steps to stress-free AI access',
     },
     features: {
       unifiedGateway: 'One-Click Access',
-      unifiedGatewayDesc: 'Get a single API key to call all connected AI models. No separate applications needed.',
+      unifiedGatewayDesc:
+        'Get a single API key to call all connected AI models. No separate applications needed.',
       multiProvider: 'Always Reliable',
-      multiProviderDesc: 'Smart routing across multiple upstream providers with automatic failover. Say goodbye to errors.',
+      multiProviderDesc:
+        'Smart routing across multiple upstream providers with automatic failover. Say goodbye to errors.',
       balanceQuota: 'Pay What You Use',
-      balanceQuotaDesc: 'Usage-based billing with quota limits. Full visibility into team consumption.',
+      balanceQuotaDesc:
+        'Usage-based billing with quota limits. Full visibility into team consumption.',
       dataPolicies: 'Custom Data Policies',
-      dataPoliciesDesc: 'Manage models, quotas, and access scope in one place so team requests only use trusted services.',
+      dataPoliciesDesc:
+        'Manage models, quotas, and access scope in one place so team requests only use trusted services.',
       browseAll: 'Browse all',
       learnMore: 'Learn more',
       viewUsage: 'View usage',
-      usageChart: 'Usage trend'
+      usageChart: 'Usage trend',
     },
     // Comparison section
     comparison: {
@@ -77,35 +88,35 @@ batchImageGuide: {
       headers: {
         feature: 'Comparison',
         official: 'Official Subscriptions',
-        us: 'Our Platform'
+        us: 'Our Platform',
       },
       items: {
         pricing: {
           feature: 'Pricing',
           official: 'Fixed monthly fee, pay even if unused',
-          us: 'Pay only for what you use'
+          us: 'Pay only for what you use',
         },
         models: {
           feature: 'Model Selection',
           official: 'Single provider only',
-          us: 'Switch between models freely'
+          us: 'Switch between models freely',
         },
         management: {
           feature: 'Provider Management',
           official: 'Manage each service separately',
-          us: 'Unified key, one dashboard'
+          us: 'Unified key, one dashboard',
         },
         stability: {
           feature: 'Stability',
           official: 'Single provider rate limits',
-          us: 'Multi-provider pool, auto-failover'
+          us: 'Multi-provider pool, auto-failover',
         },
         control: {
           feature: 'Usage Control',
           official: 'Not available',
-          us: 'Quotas & detailed analytics'
-        }
-      }
+          us: 'Quotas & detailed analytics',
+        },
+      },
     },
     providers: {
       title: 'Supported AI Models',
@@ -120,11 +131,11 @@ batchImageGuide: {
       empty: 'No models to display yet',
       unavailable: 'Model data is temporarily unavailable',
       groups: 'service groups',
-      modelCount: 'Models'
+      modelCount: 'Models',
     },
     featured: {
       byProvider: 'by {provider}',
-      discountOff: 'Up to {percent}% off'
+      discountOff: 'Up to {percent}% off',
     },
     stats: {
       todayTokens: 'Today Total Tokens',
@@ -132,34 +143,37 @@ batchImageGuide: {
       totalUsers: 'Registered Users',
       supportedModels: 'Supported Models',
       providerTypes: 'model types',
-      unavailable: 'Stats are temporarily unavailable'
+      unavailable: 'Stats are temporarily unavailable',
     },
     steps: {
       signup: {
         title: 'Sign up',
-        description: 'Create an account and add API keys. Team space and quotas can be configured later.'
+        description:
+          'Create an account and add API keys. Team space and quotas can be configured later.',
       },
       browse: {
         title: 'Choose models',
-        description: 'Use the model marketplace to compare supported models, provider types, and relative pricing.'
+        description:
+          'Use the model marketplace to compare supported models, provider types, and relative pricing.',
       },
       apiKey: {
         title: 'Get your API key',
-        description: 'Send OpenAI-compatible, OpenAI Responses, or Anthropic-format requests and settle by actual token usage.'
-      }
+        description:
+          'Send OpenAI-compatible, OpenAI Responses, or Anthropic-format requests and settle by actual token usage.',
+      },
     },
     // CTA section
     cta: {
       title: 'Ready to Get Started?',
       description: 'Sign up now and get free trial credits to experience seamless AI access',
-      button: 'Sign Up Free'
+      button: 'Sign Up Free',
     },
     footer: {
       allRightsReserved: 'All rights reserved.',
-      quickLinks: 'Quick links'
-    }
+      quickLinks: 'Quick links',
+    },
   },
-// Key Usage Query Page
+  // Key Usage Query Page
   keyUsage: {
     title: 'API Key Usage',
     subtitle: 'Enter your API Key to view real-time spending and usage status',
@@ -200,11 +214,11 @@ batchImageGuide: {
     billingModes: {
       auto: 'Automatic',
       subscription: 'Selected subscription',
-      balance: 'Balance only'
+      balance: 'Balance only',
     },
     billingSources: {
       subscription: 'Subscription',
-      balance: 'Balance'
+      balance: 'Balance',
     },
     // Ring card titles
     totalQuota: 'Total Quota',
@@ -246,7 +260,7 @@ batchImageGuide: {
     queryFailedRetry: 'Query failed, please try again later',
     noDailyUsage: 'No daily usage data',
   },
-// Setup Wizard
+  // Setup Wizard
   setup: {
     title: 'TokenRouter Setup',
     description: 'Configure your TokenRouter instance',
@@ -264,8 +278,8 @@ batchImageGuide: {
         disable: 'Disable',
         require: 'Require',
         verifyCa: 'Verify CA',
-        verifyFull: 'Verify Full'
-      }
+        verifyFull: 'Verify Full',
+      },
     },
     redis: {
       title: 'Redis Configuration',
@@ -278,7 +292,7 @@ batchImageGuide: {
       usernamePlaceholder: 'Leave empty for default user',
       passwordPlaceholder: 'Password',
       enableTls: 'Enable TLS',
-      enableTlsHint: 'Use TLS when connecting to Redis (public CA certs)'
+      enableTlsHint: 'Use TLS when connecting to Redis (public CA certs)',
     },
     admin: {
       title: 'Admin Account',
@@ -288,14 +302,14 @@ batchImageGuide: {
       confirmPassword: 'Confirm Password',
       passwordPlaceholder: 'Min 8 characters',
       confirmPasswordPlaceholder: 'Confirm password',
-      passwordMismatch: 'Passwords do not match'
+      passwordMismatch: 'Passwords do not match',
     },
     ready: {
       title: 'Ready to Install',
       description: 'Review your configuration and complete setup',
       database: 'Database',
       redis: 'Redis',
-      adminEmail: 'Admin Email'
+      adminEmail: 'Admin Email',
     },
     status: {
       testing: 'Testing...',
@@ -306,7 +320,7 @@ batchImageGuide: {
       completed: 'Installation completed!',
       redirecting: 'Redirecting to login page...',
       restarting: 'Service is restarting, please wait...',
-      timeout: 'Service restart is taking longer than expected. Please refresh the page manually.'
-    }
+      timeout: 'Service restart is taking longer than expected. Please refresh the page manually.',
+    },
   },
 }

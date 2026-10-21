@@ -1,21 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
-import type { AdminUser } from '@/types'
+import type { AdminUser } from '@/api/admin/users.types'
 import UsersView from '../UsersView.vue'
 
+// UsersView.spec.ts checks administrator user-table columns, saved preferences,
+// ordering, and bulk selection across pages. Mocked list and secondary-data endpoints
+// exercise the production view, while slot-rendering table stubs expose selected
+// identifiers and row order for assertions after asynchronous refreshes.
+
+// Hoisted primary and secondary endpoint mocks let tests control user pages, groups,
+// custom attributes, and asynchronously loaded usage values.
 const {
   listUsers,
   getAllGroups,
   getBatchUsersUsage,
   listEnabledDefinitions,
-  getBatchUserAttributes
+  getBatchUserAttributes,
 } = vi.hoisted(() => ({
   listUsers: vi.fn(),
   getAllGroups: vi.fn(),
   getBatchUsersUsage: vi.fn(),
   listEnabledDefinitions: vi.fn(),
-  getBatchUserAttributes: vi.fn()
+  getBatchUserAttributes: vi.fn(),
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -23,26 +30,26 @@ vi.mock('@/api/admin', () => ({
     users: {
       list: listUsers,
       toggleStatus: vi.fn(),
-      delete: vi.fn()
+      delete: vi.fn(),
     },
     groups: {
-      getAll: getAllGroups
+      getAll: getAllGroups,
     },
     dashboard: {
-      getBatchUsersUsage
+      getBatchUsersUsage,
     },
     userAttributes: {
       listEnabledDefinitions,
-      getBatchUserAttributes
-    }
-  }
+      getBatchUserAttributes,
+    },
+  },
 }))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError: vi.fn(),
-    showSuccess: vi.fn()
-  })
+    showSuccess: vi.fn(),
+  }),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -50,11 +57,14 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
-    })
+      t: (key: string) => key,
+    }),
   }
 })
 
+// createAdminUser builds an active user fixture and applies supplied field overrides.
+// Each call creates its own default arrays, letting tests vary identifiers, activity
+// dates, and email without sharing those defaults.
 const createAdminUser = (overrides: Partial<AdminUser> = {}): AdminUser => ({
   id: 42,
   username: 'scoped-user',
@@ -73,43 +83,61 @@ const createAdminUser = (overrides: Partial<AdminUser> = {}): AdminUser => ({
   last_active_at: '2026-04-16T02:00:00Z',
   last_used_at: '2026-04-17T02:00:00Z',
   current_concurrency: 0,
-  ...overrides
+  ...overrides,
 })
 
-const mountUsersView = () => mount(UsersView, {
-  global: {
-    stubs: {
-      AppLayout: { template: '<div><slot /></div>' },
-      TablePageLayout: {
-        template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+// mountUsersView mounts the user page with observable table and bulk-dialog stubs.
+// Other account dialogs are stubbed so the tests focus on listing, column preferences,
+// usage sorting, and selected identifiers.
+const mountUsersView = () =>
+  mount(UsersView, {
+    global: {
+      stubs: {
+        AppLayout: { template: '<div><slot /></div>' },
+        TablePageLayout: {
+          template:
+            '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>',
+        },
+        DataTable: DataTableStub,
+        Pagination: true,
+        ConfirmDialog: true,
+        EmptyState: true,
+        GroupBadge: true,
+        Select: true,
+        UserAttributesConfigModal: true,
+        UserConcurrencyCell: true,
+        PlatformUsageBreakdown: {
+          props: ['today', 'total', 'byPlatform'],
+          template: '<div data-test="usage-cell">{{ total }}</div>',
+        },
+        PlatformCostCell: {
+          props: ['usage'],
+          template: '<div data-test="platform-cost">{{ usage?.total_actual_cost ?? "-" }}</div>',
+        },
+        UserCreateModal: true,
+        UserEditModal: true,
+        BulkEditUserModal: BulkEditUserModalStub,
+        UserPlatformQuotaModal: true,
+        UserApiKeysModal: true,
+        UserAllowedGroupsModal: true,
+        UserBalanceModal: true,
+        UserBalanceHistoryModal: true,
+        GroupReplaceModal: true,
+        Icon: true,
+        Teleport: true,
       },
-      DataTable: DataTableStub,
-      Pagination: true,
-      ConfirmDialog: true,
-      EmptyState: true,
-      GroupBadge: true,
-      Select: true,
-      UserAttributesConfigModal: true,
-      UserConcurrencyCell: true,
-      PlatformUsageBreakdown: { props: ['today', 'total', 'byPlatform'], template: '<div data-test="usage-cell">{{ total }}</div>' },
-      PlatformCostCell: { props: ['usage'], template: '<div data-test="platform-cost">{{ usage?.total_actual_cost ?? "-" }}</div>' },
-      UserCreateModal: true,
-      UserEditModal: true,
-      BulkEditUserModal: BulkEditUserModalStub,
-      UserPlatformQuotaModal: true,
-      UserApiKeysModal: true,
-      UserAllowedGroupsModal: true,
-      UserBalanceModal: true,
-      UserBalanceHistoryModal: true,
-      GroupReplaceModal: true,
-      Icon: true,
-      Teleport: true
-    }
-  }
-})
+    },
+  })
 
+// DataTableStub exposes visible columns, row order, and selected identifiers while
+// forwarding header, cell, sort, and selection interactions.
 const DataTableStub = {
+  // columns and data expose parent rendering, while selectedKeys supplies cross-page
+  // selection; emitted updates let tests observe the parent's retained identifier
+  // set.
   props: ['columns', 'data', 'selectedKeys'],
+  // sort carries column and direction, while update:selectedKeys replaces the
+  // selected identifiers held by the production page.
   emits: ['sort', 'update:selectedKeys'],
   template: `
     <div>
@@ -134,23 +162,33 @@ const DataTableStub = {
         <slot v-for="column in columns" :name="'cell-' + column.key" :value="row[column.key]" :row="row" />
       </div>
     </div>
-  `
+  `,
 }
 
+// PaginationStub emits a page-two request so bulk-selection tests can observe
+// identifiers surviving a change of visible rows.
 const PaginationStub = {
+  // update:page requests page two from the parent so the test can retain identifiers
+  // while the visible user changes.
   emits: ['update:page'],
-  template: '<button data-test="next-page" @click="$emit(\'update:page\', 2)">next</button>'
+  template: '<button data-test="next-page" @click="$emit(\'update:page\', 2)">next</button>',
 }
 
+// BulkEditUserModalStub exposes selected identifiers and emits success, allowing the
+// parent view refresh and selection cleanup to be asserted.
 const BulkEditUserModalStub = {
+  // show controls fixture visibility and selectedIds exposes the parent's retained
+  // selection so the bulk operation can be asserted across pages.
   props: ['show', 'selectedIds'],
+  // success reports the selected count to exercise the parent's refresh and selection
+  // clearing after a completed bulk operation.
   emits: ['close', 'success'],
   template: `
     <div v-if="show" data-test="bulk-modal">
       <span data-test="bulk-modal-ids">{{ selectedIds.join(',') }}</span>
       <button data-test="bulk-success" @click="$emit('success', selectedIds.length)">success</button>
     </div>
-  `
+  `,
 }
 
 describe('admin UsersView', () => {
@@ -169,7 +207,7 @@ describe('admin UsersView', () => {
       total: 1,
       page: 1,
       page_size: 20,
-      pages: 1
+      pages: 1,
     })
     getAllGroups.mockResolvedValue([])
     getBatchUsersUsage.mockResolvedValue({ stats: {} })
@@ -181,6 +219,9 @@ describe('admin UsersView', () => {
     vi.useRealTimers()
   })
 
+  // The user page loads a fixture with active and used timestamps. Activity columns
+  // must appear in the expected order, and selecting last-used sorting must reach the
+  // server query.
   it('shows active, used, and created activity columns in order and requests last_used_at sort', async () => {
     const wrapper = mountUsersView()
 
@@ -199,12 +240,15 @@ describe('admin UsersView', () => {
       20,
       expect.objectContaining({
         sort_by: 'last_used_at',
-        sort_order: 'desc'
+        sort_order: 'desc',
       }),
-      expect.any(Object)
+      expect.any(Object),
     )
   })
 
+  // Browser storage contains an older hidden-column schema and an existing preference.
+  // Mounting must add the new platform usage columns to hidden settings and persist
+  // those migration additions.
   it('hides new platform usage columns for existing column settings schema', async () => {
     localStorage.setItem('user-hidden-columns', JSON.stringify(['notes']))
     localStorage.setItem('user-column-settings-version', '1')
@@ -219,10 +263,19 @@ describe('admin UsersView', () => {
     expect(visibleColumns).not.toContain('usage_antigravity')
     expect(visibleColumns).not.toContain('usage_qoder')
     expect(JSON.parse(localStorage.getItem('user-hidden-columns') || '[]')).toEqual(
-      expect.arrayContaining(['usage_anthropic', 'usage_openai', 'usage_gemini', 'usage_antigravity', 'usage_qoder'])
+      expect.arrayContaining([
+        'usage_anthropic',
+        'usage_openai',
+        'usage_gemini',
+        'usage_antigravity',
+        'usage_qoder',
+      ]),
     )
   })
 
+  // A platform usage column is visible with saved descending cost sorting. After
+  // deferred usage arrives, the current page must reorder by platform cost while
+  // retaining both loaded user identities.
   it('sorts current page by platform usage after enabling a platform column', async () => {
     const highUsageUser = createAdminUser()
     highUsageUser.id = 42
@@ -233,19 +286,29 @@ describe('admin UsersView', () => {
 
     localStorage.setItem(
       'user-hidden-columns',
-      JSON.stringify(['notes', 'groups', 'subscriptions', 'usage', 'concurrency', 'usage_openai', 'usage_gemini', 'usage_antigravity', 'usage_qoder'])
+      JSON.stringify([
+        'notes',
+        'groups',
+        'subscriptions',
+        'usage',
+        'concurrency',
+        'usage_openai',
+        'usage_gemini',
+        'usage_antigravity',
+        'usage_qoder',
+      ]),
     )
     localStorage.setItem('user-column-settings-version', '2')
     localStorage.setItem(
       'admin-users-usage-sort',
-      JSON.stringify({ key: 'usage_anthropic', metric: 'total', order: 'desc' })
+      JSON.stringify({ key: 'usage_anthropic', metric: 'total', order: 'desc' }),
     )
     listUsers.mockResolvedValue({
       items: [lowUsageUser, highUsageUser],
       total: 2,
       page: 1,
       page_size: 20,
-      pages: 1
+      pages: 1,
     })
     getBatchUsersUsage.mockResolvedValue({
       stats: {
@@ -253,29 +316,34 @@ describe('admin UsersView', () => {
           user_id: 42,
           today_actual_cost: 1,
           total_actual_cost: 10,
-          by_platform: [{ platform: 'anthropic', today_actual_cost: 1, total_actual_cost: 10 }]
+          by_platform: [{ platform: 'anthropic', today_actual_cost: 1, total_actual_cost: 10 }],
         },
         7: {
           user_id: 7,
           today_actual_cost: 1,
           total_actual_cost: 1,
-          by_platform: [{ platform: 'anthropic', today_actual_cost: 1, total_actual_cost: 1 }]
-        }
-      }
+          by_platform: [{ platform: 'anthropic', today_actual_cost: 1, total_actual_cost: 1 }],
+        },
+      },
     })
 
     const wrapper = mountUsersView()
     await flushPromises()
-    await new Promise(resolve => window.setTimeout(resolve, 60))
+    // Wait beyond the production fifty-millisecond secondary-data delay so row-order
+    // assertions observe the usage response rather than the initial primary list.
+    await new Promise((resolve) => window.setTimeout(resolve, 60))
     await flushPromises()
 
     expect(getBatchUsersUsage).toHaveBeenCalledWith([7, 42])
-    expect(wrapper.findAll('[data-test="row-email"]').map(node => node.text())).toEqual([
+    expect(wrapper.findAll('[data-test="row-email"]').map((node) => node.text())).toEqual([
       'high@example.com',
-      'low@example.com'
+      'low@example.com',
     ])
   })
 
+  // Local usage sorting reorders a loaded page before a server sort is chosen.
+  // Selecting last-used sorting must clear the persisted usage preference and restore
+  // the returned server order.
   it('clears usage current-page sort when switching to last_used_at server sort', async () => {
     vi.useFakeTimers()
     localStorage.setItem('user-column-settings-version', '4')
@@ -291,25 +359,25 @@ describe('admin UsersView', () => {
         'usage_gemini',
         'usage_antigravity',
         'usage_qoder',
-        'balance_platform_quota'
-      ])
+        'balance_platform_quota',
+      ]),
     )
 
     listUsers.mockResolvedValue({
       items: [
         createAdminUser({ id: 1, email: 'last-used-first@example.com' }),
-        createAdminUser({ id: 2, email: 'usage-first@example.com' })
+        createAdminUser({ id: 2, email: 'usage-first@example.com' }),
       ],
       total: 2,
       page: 1,
       page_size: 20,
-      pages: 1
+      pages: 1,
     })
     getBatchUsersUsage.mockResolvedValue({
       stats: {
         1: { user_id: 1, today_actual_cost: 1, total_actual_cost: 1, by_platform: [] },
-        2: { user_id: 2, today_actual_cost: 9, total_actual_cost: 9, by_platform: [] }
-      }
+        2: { user_id: 2, today_actual_cost: 9, total_actual_cost: 9, by_platform: [] },
+      },
     })
 
     const wrapper = mountUsersView()
@@ -317,47 +385,57 @@ describe('admin UsersView', () => {
     await vi.advanceTimersByTimeAsync(50)
     await flushPromises()
 
-    expect(wrapper.get('[data-test="row-order"]').text()).toBe('last-used-first@example.com,usage-first@example.com')
+    expect(wrapper.get('[data-test="row-order"]').text()).toBe(
+      'last-used-first@example.com,usage-first@example.com',
+    )
 
     await wrapper.get('[data-test="usage-sort-trigger-usage"]').trigger('click')
     await flushPromises()
     await wrapper.get('[data-test="usage-sort-usage-today"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('[data-test="row-order"]').text()).toBe('usage-first@example.com,last-used-first@example.com')
+    expect(wrapper.get('[data-test="row-order"]').text()).toBe(
+      'usage-first@example.com,last-used-first@example.com',
+    )
     expect(localStorage.getItem('admin-users-usage-sort')).toContain('"key":"usage"')
 
     await wrapper.get('[data-test="sort-last-used"]').trigger('click')
     await flushPromises()
 
     expect(localStorage.getItem('admin-users-usage-sort')).toBeNull()
-    expect(wrapper.get('[data-test="row-order"]').text()).toBe('last-used-first@example.com,usage-first@example.com')
+    expect(wrapper.get('[data-test="row-order"]').text()).toBe(
+      'last-used-first@example.com,usage-first@example.com',
+    )
     expect(listUsers).toHaveBeenLastCalledWith(
       1,
       20,
       expect.objectContaining({
         sort_by: 'last_used_at',
-        sort_order: 'desc'
+        sort_order: 'desc',
       }),
-      expect.any(Object)
+      expect.any(Object),
     )
   })
 
+  // Two user pages contribute identifiers to one bulk selection. Successful bulk
+  // editing must reload the visible page, clear selected identifiers, and hide the
+  // bulk-action control.
   it('keeps selected user IDs across pages and clears them after a successful bulk update', async () => {
     let refreshed = false
     listUsers.mockImplementation(async (page: number) => {
-      const user = page === 2
-        ? createAdminUser({
-            id: 43,
-            email: refreshed ? 'refreshed-page-two@example.com' : 'page-two@example.com'
-          })
-        : createAdminUser({ id: 42, email: 'page-one@example.com' })
+      const user =
+        page === 2
+          ? createAdminUser({
+              id: 43,
+              email: refreshed ? 'refreshed-page-two@example.com' : 'page-two@example.com',
+            })
+          : createAdminUser({ id: 42, email: 'page-one@example.com' })
       return {
         items: [user],
         total: 2,
         page,
         page_size: 20,
-        pages: 2
+        pages: 2,
       }
     })
 
@@ -366,7 +444,8 @@ describe('admin UsersView', () => {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
           TablePageLayout: {
-            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+            template:
+              '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>',
           },
           DataTable: DataTableStub,
           Pagination: PaginationStub,
@@ -386,9 +465,9 @@ describe('admin UsersView', () => {
           UserBalanceHistoryModal: true,
           GroupReplaceModal: true,
           Icon: true,
-          Teleport: true
-        }
-      }
+          Teleport: true,
+        },
+      },
     })
 
     await flushPromises()

@@ -3,6 +3,12 @@ import { mount } from '@vue/test-utils'
 
 import UsageStatsCards from '../UsageStatsCards.vue'
 
+// UsageStatsCards.spec.ts tests cache totals and hidden-tooltip layout behavior on
+// summary cards. Fixed usage totals and translation substitutes keep assertions focused
+// on rendered counts and visibility classes rather than network retrieval.
+
+// messages supplies cache-total and cache-breakdown labels used to locate the actual
+// summary counts and tooltip content.
 const messages: Record<string, string> = {
   'usage.totalRequests': 'Total Requests',
   'usage.inSelectedRange': 'in selected range',
@@ -36,6 +42,8 @@ vi.mock('@/composables/useBalanceDisplay', () => ({
   }),
 }))
 
+// stats supplies representative usage measurements reused by rendering cases, with each
+// test overriding the fields relevant to its scenario.
 const stats = {
   total_requests: 1,
   total_input_tokens: 100,
@@ -51,6 +59,8 @@ const stats = {
 }
 
 describe('UsageStatsCards', () => {
+  // A summary contains separate cache creation and read counts. The test protects the
+  // combined cache total and the individual counts displayed in its details.
   it('shows cache token breakdown values', () => {
     const wrapper = mount(UsageStatsCards, {
       props: {
@@ -73,6 +83,8 @@ describe('UsageStatsCards', () => {
     expect(text).toContain('22')
   })
 
+  // The cache tooltip begins hidden before any hover interaction occurs. The test protects
+  // layout removal through the hidden class rather than an opacity-only presentation.
   it('keeps the cache tooltip out of the layout while it is hidden', () => {
     const wrapper = mount(UsageStatsCards, {
       props: {
@@ -89,7 +101,8 @@ describe('UsageStatsCards', () => {
     const tooltip = wrapper.findAll('span').find((el) => el.classes().includes('group-hover:block'))
 
     expect(tooltip).toBeDefined()
-    // `opacity-0` 仅隐藏视觉内容，固定宽度仍会撑开窄屏；`hidden` 会把提示框移出布局流。
+    // Opacity alone leaves the fixed-width tooltip in layout; hidden removes it so
+    // narrow cards do not inherit that width.
     expect(tooltip?.classes()).toContain('hidden')
     expect(tooltip?.classes()).not.toContain('opacity-0')
   })

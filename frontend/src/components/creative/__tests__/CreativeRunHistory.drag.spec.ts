@@ -5,6 +5,14 @@ import CreativeRunHistory from '@/components/creative/CreativeRunHistory.vue'
 import { CREATIVE_OUTPUT_DRAG_MIME } from '@/utils/creativeDrag'
 import { outputAssetKey, type LocalAsset } from '@/utils/creativeLocalStore'
 
+/**
+ * CreativeRunHistory.drag.spec.ts checks the mounted history panel's output
+ * drag payload, active-task badge, and elapsed-time display. Local Blob records
+ * and studio actions are controlled fixtures, while DOM events exercise the
+ * real panel handlers. A fake clock advances active duration labels and is
+ * restored after the timed scenario.
+ */
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
@@ -25,6 +33,10 @@ vi.mock('@/composables/useBalanceDisplay', () => ({
   }),
 }))
 
+/**
+ * run supplies a successful server record with one output so thumbnail actions
+ * can resolve its stable local asset identity.
+ */
 const run = {
   id: 'crun_0123456789abcdef',
   status: 'succeeded' as const,
@@ -33,6 +45,10 @@ const run = {
   outputs: [{ output_index: 0, status: 'succeeded' as const, mime_type: 'image/png' }],
 }
 
+/**
+ * createStudio builds reactive history state around one locally available
+ * output fixture.
+ */
 function createStudio(asset: LocalAsset) {
   return {
     runHistory: ref([run]),
@@ -58,6 +74,11 @@ describe('CreativeRunHistory 拖放', () => {
     })
   })
 
+  /**
+   * A locally stored output is expanded and dragged from its thumbnail. The
+   * transfer must advertise copying and carry the run identifier and output index
+   * under the private MIME type.
+   */
   it('为本地历史缩略图写入受校验的拖放载荷', async () => {
     const asset: LocalAsset = {
       key: outputAssetKey(run.id, 0),
@@ -92,6 +113,11 @@ describe('CreativeRunHistory 拖放', () => {
     wrapper.unmount()
   })
 
+  /**
+   * The parent supplies one active task to a collapsed history panel. The entry
+   * button must display that count so ongoing work remains visible before opening
+   * the sidebar.
+   */
   it('在历史入口显示活动任务数量', () => {
     const asset: LocalAsset = {
       key: outputAssetKey(run.id, 0),
@@ -113,6 +139,11 @@ describe('CreativeRunHistory 拖放', () => {
     wrapper.unmount()
   })
 
+  /**
+   * An active run starts sixty-five seconds before the controlled browser clock.
+   * Both its row and expanded details must advance their elapsed labels when the
+   * timer moves forward.
+   */
   it('在活动任务详情中显示并更新生成耗时', async () => {
     vi.useFakeTimers()
     const now = new Date('2026-08-31T00:01:05.000Z')

@@ -7,7 +7,7 @@
       <UserDashboardUsageToolbar :refreshing="refreshing" @refresh="refreshAll" />
     </template>
 
-    <!-- 首次进入时各区块按 --rise-i 依次上移淡入，最后一块播放完后移除入场类 -->
+    <!-- Stagger initial sections with --rise-i, then remove the entrance class after the final section finishes. -->
     <div
       class="space-y-4"
       :class="{ 'dash-rise': entering }"
@@ -19,7 +19,11 @@
       <div class="dash-rise-item" :style="{ '--rise-i': 2 }">
         <UserDashboardHeatmap ref="heatmapRef" @select-day="revealChart" />
       </div>
-      <div class="dash-rise-item grid grid-cols-1 gap-4 lg:grid-cols-3" :style="{ '--rise-i': 3 }" data-rise-last="true">
+      <div
+        class="dash-rise-item grid grid-cols-1 gap-4 lg:grid-cols-3"
+        :style="{ '--rise-i': 3 }"
+        data-rise-last="true"
+      >
         <div class="lg:order-2 lg:col-span-1"><UserDashboardQuickActions /></div>
         <div class="lg:order-1 lg:col-span-2"><UserDashboardAnnouncements /></div>
       </div>
@@ -54,32 +58,45 @@ import UserDashboardQuickActions from '@/components/user/dashboard/UserDashboard
 // announcements beside those actions, and initial section animations share the
 // timing variables supplied by the page root.
 
+// Account and announcement stores support the page-wide refresh while each dashboard visual
+// section owns its displayed result state.
 const authStore = useAuthStore()
 const announcementStore = useAnnouncementStore()
 
-// 用量状态由页面提供，标题行的工具栏和正文的图表共用同一份。
+// usageState is provided once by this page so the heading toolbar and body chart share
+// filter and interval selections.
 const usageState = provideUsageChartState()
+// Section refs expose refresh or scrolling operations; refreshing tracks the full refresh
+// batch rather than any one section request.
 const heatmapRef = ref<InstanceType<typeof UserDashboardHeatmap> | null>(null)
 const liveStatsRef = ref<InstanceType<typeof UserDashboardLiveStats> | null>(null)
 const usageChartRef = ref<InstanceType<typeof UserDashboardUsageChart> | null>(null)
 const refreshing = ref(false)
-// 入场动画只在首次挂载时播放
+// entering keeps the section entrance class active until the final section animation reports
+// completion after initial mount.
 const entering = ref(true)
 
-// refreshUser 刷新账户信息，顶栏余额随之更新。
+// refreshUser reloads account information so the shared heading balance updates. Errors are
+// logged here and resolve normally, allowing the remaining dashboard refresh operations to
+// finish independently.
 const refreshUser = async () => {
   try {
     await authStore.refreshUser()
   } catch (error) {
+    // Keep the dashboard refresh promise resolved after account refresh failure;
+    // other sections can still complete and retain their own error reporting.
     console.error('Failed to refresh user:', error)
   }
 }
 
-// App 负责首次预加载；用户主动刷新时同时绕过公告节流获取最新内容。
+// refreshAll starts account, usage, heatmap, live-statistics, and forced announcement
+// refreshes together. It waits for every operation to settle before clearing the page
+// refresh indicator, with each section retaining its own request-error behavior.
 const refreshAll = async () => {
   refreshing.value = true
   try {
-    // 各区块自行处理错误，这里只等全部结束再恢复刷新按钮。
+    // Each section owns its failure display. Wait for every request to settle so
+    // the toolbar does not stop indicating refresh while a slower section remains busy.
     await Promise.allSettled([
       refreshUser(),
       usageState.load(),
@@ -94,15 +111,21 @@ const refreshAll = async () => {
 
 useLocaleRefresh(() => Promise.all([usageState.loadFilterOptions(), usageState.load()]))
 
-// revealChart 在热力图选中某天后，把趋势图滚动到可见区域。
+// revealChart scrolls the trend card into view after a heatmap date selection. Missing chart
+// refs are ignored, and reduced-motion preference chooses immediate scrolling instead of a
+// smooth transition.
 const revealChart = () => {
   const card = usageChartRef.value?.chartCardRef
   if (!card) return
-  const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const reduced =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
   card.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
 }
 
-// 最后一块入场结束后移除入场类，之后的重新渲染不会再次播放。
+// onRiseEnd removes the entrance class after an element marked as the final section
+// completes animation. Subsequent rerenders then retain their settled layout without
+// replaying the page entrance.
 const onRiseEnd = (event: AnimationEvent) => {
   if ((event.target as HTMLElement).dataset?.riseLast) entering.value = false
 }
@@ -115,8 +138,9 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 区块入场：自下方 8px 上移并淡入，相邻区块错开一个步长。
-   只在延迟期间保持起始帧，结束后不保留 transform，避免影响内部 fixed 浮层的定位。 */
+/* Sections rise eight pixels with staggered starts. Backwards fill retains the
+   initial state during delay, then releases transform so fixed descendants use
+   their normal positioning after the entrance ends. */
 .dash-rise :deep(.dash-rise-item) {
   animation: dash-rise var(--dash-rise-ms) var(--motion-ease) backwards;
   animation-delay: calc(var(--rise-i, 0) * var(--dash-rise-step-ms));

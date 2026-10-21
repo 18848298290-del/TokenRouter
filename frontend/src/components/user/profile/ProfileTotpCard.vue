@@ -1,5 +1,5 @@
 <template>
-  <!-- 状态加载完成且管理员已开放双因素认证时才显示卡片 -->
+  <!-- Show the TOTP card after status loading confirms that the administrator has enabled the feature. -->
   <div v-if="status?.feature_enabled" class="card">
     <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
       <h2 class="text-lg font-medium text-gray-900 dark:text-white">
@@ -28,11 +28,7 @@
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          class="btn btn-outline-danger"
-          @click="showDisableDialog = true"
-        >
+        <button type="button" class="btn btn-outline-danger" @click="showDisableDialog = true">
           {{ t('profile.totp.disable') }}
         </button>
       </div>
@@ -52,11 +48,7 @@
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          class="btn btn-primary"
-          @click="showSetupModal = true"
-        >
+        <button type="button" class="btn btn-primary" @click="showSetupModal = true">
           {{ t('profile.totp.enable') }}
         </button>
       </div>
@@ -65,8 +57,8 @@
     <!-- Setup Modal -->
     <TotpSetupModal
       v-if="setupPresent"
-    :show="showSetupModal"
-    @after-leave="setupAfterLeave"
+      :show="showSetupModal"
+      @after-leave="setupAfterLeave"
       @close="showSetupModal = false"
       @success="handleSetupSuccess"
     />
@@ -74,8 +66,8 @@
     <!-- Disable Dialog -->
     <TotpDisableDialog
       v-if="disablePresent"
-    :show="showDisableDialog"
-    @after-leave="disableAfterLeave"
+      :show="showDisableDialog"
+      @after-leave="disableAfterLeave"
       @close="showDisableDialog = false"
       @success="handleDisableSuccess"
     />
@@ -89,19 +81,34 @@ import Icon from '@/components/icons/Icon.vue'
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { totpAPI } from '@/api'
-import type { TotpStatus } from '@/types'
+import type { TotpStatus } from '@/api/totp.types'
 import TotpSetupModal from './TotpSetupModal.vue'
 import TotpDisableDialog from './TotpDisableDialog.vue'
 
+// ProfileTotpCard.vue shows the account TOTP status and opens its setup or disable flow.
+// Successful dialogs trigger a status refresh, and leaving-presence state keeps each dialog
+// mounted until its shell completes the exit transition and cleanup.
+
+// Translations describe the current two-factor status and the setup or disable action
+// selected from the profile security section.
 const { t } = useI18n()
 
+// loading and status control the card summary; dialog visibility and leaving-presence state
+// retain each credential dialog until its exit transition completes.
 const loading = ref(true)
 const status = ref<TotpStatus | null>(null)
 const showSetupModal = ref(false)
-const { present: setupPresent, afterLeave: setupAfterLeave } = useLeavingPresence(() => showSetupModal.value)
+const { present: setupPresent, afterLeave: setupAfterLeave } = useLeavingPresence(
+  () => showSetupModal.value,
+)
 const showDisableDialog = ref(false)
-const { present: disablePresent, afterLeave: disableAfterLeave } = useLeavingPresence(() => showDisableDialog.value)
+const { present: disablePresent, afterLeave: disableAfterLeave } = useLeavingPresence(
+  () => showDisableDialog.value,
+)
 
+// loadStatus refreshes the account's TOTP state and clears the loading indicator after
+// completion. Request failure logs the cause while retaining any previously fetched status
+// for the card.
 const loadStatus = async () => {
   loading.value = true
   try {
@@ -113,16 +120,19 @@ const loadStatus = async () => {
   }
 }
 
+// handleSetupSuccess closes the setup modal and refreshes the card's TOTP status.
 const handleSetupSuccess = () => {
   showSetupModal.value = false
   loadStatus()
 }
 
+// handleDisableSuccess closes the disable dialog and refreshes the card's TOTP status.
 const handleDisableSuccess = () => {
   showDisableDialog.value = false
   loadStatus()
 }
 
+// formatDate converts the API Unix timestamp into the browser's displayed date and time.
 const formatDate = (timestamp: number) => {
   // Backend returns Unix timestamp in seconds, convert to milliseconds
   const date = new Date(timestamp * 1000)
@@ -131,7 +141,7 @@ const formatDate = (timestamp: number) => {
     month: 'long',
     day: 'numeric',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
   })
 }
 

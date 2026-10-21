@@ -1,8 +1,3 @@
-/**
- * Admin Payment API endpoints
- * Handles payment management operations for administrators
- */
-
 import { apiClient } from '../client'
 import type {
   DashboardStats,
@@ -10,217 +5,320 @@ import type {
   PaymentChannel,
   SubscriptionPlan,
   ProviderInstance,
-  PaymentDocument
-} from '@/types/payment'
-import type { BasePaginationResponse } from '@/types'
+  PaymentDocument,
+} from '@/api/payment.types'
+import type { BasePaginationResponse } from '@/api/common.types'
 
-/** Admin-facing payment config returned by GET /admin/payment/config */
+/**
+ * payment.ts exposes administrator payment settings, orders, plans and provider
+ * operations. Its methods return shared-client response objects so consumers
+ * read their data property, including refund outcomes and provider draft tests
+ * that have dedicated response shapes.
+ */
+
+/**
+ * AdminPaymentConfig contains current checkout limits, enabled methods and
+ * payment presentation settings for administrators.
+ */
 export interface AdminPaymentConfig {
-  enabled: boolean
-  min_amount: number
-  max_amount: number
-  daily_limit: number
-  order_timeout_minutes: number
-  max_pending_orders: number
-  enabled_payment_types: string[]
-  balance_disabled: boolean
-  balance_recharge_multiplier: number
-  subscription_usd_to_cny_rate: number
-  recharge_fee_rate: number
-  load_balance_strategy: string
-  product_name_prefix: string
-  product_name_suffix: string
-  help_image_url: string
-  help_text: string
+  enabled: boolean // Feature activation flag.
+  min_amount: number // Minimum payment amount.
+  max_amount: number // Maximum payment amount.
+  daily_limit: number // Configured daily limit.
+  order_timeout_minutes: number // Order timeout minutes.
+  max_pending_orders: number // Max pending orders.
+  enabled_payment_types: string[] // Enabled payment types.
+  balance_disabled: boolean // Configured balance disabled.
+  balance_recharge_multiplier: number // Balance recharge multiplier.
+  subscription_usd_to_cny_rate: number // Subscription USD to cny rate.
+  recharge_fee_rate: number // Recharge fee rate.
+  load_balance_strategy: string // Load balance strategy.
+  product_name_prefix: string // Product name prefix.
+  product_name_suffix: string // Product name suffix.
+  help_image_url: string // Help image URL.
+  help_text: string // Configured help text.
 }
 
-/** Fields accepted by PUT /admin/payment/config (all optional via pointer semantics) */
+/**
+ * UpdatePaymentConfigRequest contains selected payment-setting edits; omitted
+ * properties stay outside the submitted update payload.
+ */
 export interface UpdatePaymentConfigRequest {
-  enabled?: boolean
-  min_amount?: number
-  max_amount?: number
-  daily_limit?: number
-  order_timeout_minutes?: number
-  max_pending_orders?: number
-  enabled_payment_types?: string[]
-  balance_disabled?: boolean
-  balance_recharge_multiplier?: number
-  subscription_usd_to_cny_rate?: number
-  recharge_fee_rate?: number
-  load_balance_strategy?: string
-  product_name_prefix?: string
-  product_name_suffix?: string
-  help_image_url?: string
-  help_text?: string
+  enabled?: boolean // Feature activation flag.
+  min_amount?: number // Minimum payment amount.
+  max_amount?: number // Maximum payment amount.
+  daily_limit?: number // Requested daily limit.
+  order_timeout_minutes?: number // Order timeout minutes.
+  max_pending_orders?: number // Max pending orders.
+  enabled_payment_types?: string[] // Enabled payment types.
+  balance_disabled?: boolean // Requested balance disabled.
+  balance_recharge_multiplier?: number // Balance recharge multiplier.
+  subscription_usd_to_cny_rate?: number // Subscription USD to cny rate.
+  recharge_fee_rate?: number // Recharge fee rate.
+  load_balance_strategy?: string // Load balance strategy.
+  product_name_prefix?: string // Product name prefix.
+  product_name_suffix?: string // Product name suffix.
+  help_image_url?: string // Help image URL.
+  help_text?: string // Requested help text.
 }
 
+/**
+ * RefundResult reports refund success, warnings and any requested force
+ * confirmation or deducted entitlements.
+ */
 export interface RefundResult {
-  success: boolean
-  warning?: string
-  require_force?: boolean
-  balance_deducted?: number
-  subscription_days_deducted?: number
+  success: boolean // Operation success flag.
+  warning?: string // Server advisory message.
+  require_force?: boolean // Recorded require force.
+  balance_deducted?: number // Recorded balance deducted.
+  subscription_days_deducted?: number // Subscription days deducted.
 }
 
+/**
+ * ForceExpireOrderRequest supplies the administrator's reason for force-expiring
+ * a pending payment order.
+ */
 export interface ForceExpireOrderRequest {
-  reason: string
+  reason: string // Administrator operation reason.
 }
 
+/**
+ * ProviderDraftTestRequest submits an unsaved payment-provider configuration and
+ * optional existing instance identity for testing.
+ */
 export interface ProviderDraftTestRequest {
-  provider_key: string
-  instance_id?: number
-  config: Record<string, string>
+  provider_key: string // Payment provider implementation.
+  instance_id?: number // Requested instance id.
+  config: Record<string, string> // Submitted configuration values.
 }
 
+/**
+ * ProviderDraftTestResult reports whether the tested payment-provider draft was
+ * reachable through its connection test.
+ */
 export interface ProviderDraftTestResult {
-  reachable: boolean
+  reachable: boolean // Connection reachability flag.
 }
 
+/**
+ * adminPaymentAPI groups payment configuration, orders and provider operations
+ * for callers using the module's named or default API object.
+ */
 export const adminPaymentAPI = {
-  // ==================== Config ====================
-
-  /** Get payment configuration (admin view) */
+  /**
+   * getConfig retrieves administrator payment settings in the shared client
+   * response object.
+   */
   getConfig() {
     return apiClient.get<AdminPaymentConfig>('/admin/payment/config')
   },
 
-  /** Update payment configuration */
+  /**
+   * updateConfig updates payment configuration and returns the server result.
+   */
   updateConfig(data: UpdatePaymentConfigRequest) {
     return apiClient.put('/admin/payment/config', data)
   },
 
-  // ==================== Dashboard ====================
-
-  /** Get payment dashboard statistics */
-  getDashboard(params?: number | { start_date?: string; end_date?: string; days?: number }) {
+  /**
+   * getDashboard retrieves payment aggregates using a day count or a date-range
+   * query. Numeric input becomes the days parameter, while query objects pass
+   * through; callers read the Axios response data property.
+   */
+  getDashboard(
+    params?:
+      | number
+      | {
+          start_date?: string // Requested start date.
+          end_date?: string // Requested end date.
+          days?: number // Requested interval days.
+        },
+  ) {
     const queryParams = typeof params === 'number' ? { days: params } : params
     return apiClient.get<DashboardStats>('/admin/payment/dashboard', {
-      params: queryParams
+      params: queryParams,
     })
   },
 
-  // ==================== Orders ====================
-
-  /** Get all orders (paginated, with filters) */
+  /**
+   * getOrders retrieves filtered payment order pages in the shared client
+   * response object.
+   */
   getOrders(params?: {
-    page?: number
-    page_size?: number
-    status?: string
-    payment_type?: string
-    user_id?: number
-    keyword?: string
-    start_date?: string
-    end_date?: string
-    order_type?: string
+    page?: number // Requested page number.
+    page_size?: number // Requested page size.
+    status?: string // Current server-reported status.
+    payment_type?: string // Recorded payment type.
+    user_id?: number // Owning user identifier.
+    keyword?: string // Search input text.
+    start_date?: string // Requested start date.
+    end_date?: string // Requested end date.
+    order_type?: string // Recorded order type.
   }) {
     return apiClient.get<BasePaginationResponse<PaymentOrder>>('/admin/payment/orders', { params })
   },
 
-  /** Get a specific order by ID */
+  /**
+   * getOrder retrieves a specific order by ID and returns the server result.
+   */
   getOrder(id: number) {
     return apiClient.get<PaymentOrder>(`/admin/payment/orders/${id}`)
   },
 
-  /** 获取订单的 Stripe 账单或历史收据链接 */
+  /**
+   * getOrderInvoice retrieves an order's Stripe invoice or historical receipt
+   * link.
+   */
   getOrderInvoice(id: number) {
     return apiClient.get<PaymentDocument>(`/admin/payment/orders/${id}/invoice`)
   },
 
-  /** Cancel an order (admin) */
+  /**
+   * cancelOrder requests administrator cancellation of the selected payment
+   * order.
+   */
   cancelOrder(id: number) {
     return apiClient.post(`/admin/payment/orders/${id}/cancel`)
   },
 
-  /** 管理员显式确认后强制过期待支付订单。 */
+  /**
+   * forceExpireOrder submits the administrator's reason for expiring a pending
+   * order.
+   */
   forceExpireOrder(id: number, data: ForceExpireOrderRequest) {
     return apiClient.post(`/admin/payment/orders/${id}/force-expire`, data)
   },
 
-  /** Retry recharge for a failed order */
+  /**
+   * retryRecharge requests another fulfillment attempt for the selected failed
+   * payment order.
+   */
   retryRecharge(id: number) {
     return apiClient.post(`/admin/payment/orders/${id}/retry`)
   },
 
-  /** 执行管理员退款 */
-  refundOrder(id: number, data: { amount: number; reason: string; deduct_balance?: boolean; force?: boolean }) {
+  /**
+   * refundOrder submits the selected order's refund amount, reason and
+   * entitlement deduction options.
+   */
+  refundOrder(
+    id: number,
+    data: {
+      /**
+       * Nonpositive input selects the full local order amount; the server derives
+       * the payment provider's refund quantity separately from this local quantity.
+       */
+      amount: number // Local refund quantity.
+      reason: string // Administrator-submitted refund reason.
+      deduct_balance?: boolean // Recorded deduct balance.
+      force?: boolean // Force-refund confirmation flag.
+    },
+  ) {
     return apiClient.post<RefundResult>(`/admin/payment/orders/${id}/refund`, data)
   },
 
-  /** 查询待确认退款并更新退款状态。 */
+  /**
+   * queryRefund asks the server to reconcile the selected order's pending
+   * refund.
+   */
   queryRefund(id: number) {
     return apiClient.post<RefundResult>(`/admin/payment/orders/${id}/refund/query`)
   },
 
-  // ==================== Channels ====================
-
-  /** Get all payment channels */
+  /**
+   * getChannels retrieves payment channel records in the shared client response
+   * object.
+   */
   getChannels() {
     return apiClient.get<PaymentChannel[]>('/admin/payment/channels')
   },
 
-  /** Create a payment channel */
+  /**
+   * createChannel creates a payment channel and returns the server result.
+   */
   createChannel(data: Partial<PaymentChannel>) {
     return apiClient.post<PaymentChannel>('/admin/payment/channels', data)
   },
 
-  /** Update a payment channel */
+  /**
+   * updateChannel updates a payment channel and returns the server result.
+   */
   updateChannel(id: number, data: Partial<PaymentChannel>) {
     return apiClient.put<PaymentChannel>(`/admin/payment/channels/${id}`, data)
   },
 
-  /** Delete a payment channel */
+  /**
+   * deleteChannel deletes a payment channel and returns the server result.
+   */
   deleteChannel(id: number) {
     return apiClient.delete(`/admin/payment/channels/${id}`)
   },
 
-  // ==================== Subscription Plans ====================
-
-  /** Get all subscription plans */
+  /**
+   * getPlans retrieves administrator subscription plans in the shared client
+   * response object.
+   */
   getPlans() {
     return apiClient.get<SubscriptionPlan[]>('/admin/payment/plans')
   },
 
-  /** Create a subscription plan */
+  /**
+   * createPlan creates a subscription plan and returns the server result.
+   */
   createPlan(data: Record<string, unknown>) {
     return apiClient.post<SubscriptionPlan>('/admin/payment/plans', data)
   },
 
-  /** Update a subscription plan */
+  /**
+   * updatePlan updates a subscription plan and returns the server result.
+   */
   updatePlan(id: number, data: Record<string, unknown>) {
     return apiClient.put<SubscriptionPlan>(`/admin/payment/plans/${id}`, data)
   },
 
-  /** Delete a subscription plan */
+  /**
+   * deletePlan deletes a subscription plan and returns the server result.
+   */
   deletePlan(id: number) {
     return apiClient.delete(`/admin/payment/plans/${id}`)
   },
 
-  // ==================== Provider Instances ====================
-
-  /** Get all provider instances */
+  /**
+   * getProviders retrieves payment-provider instances in the shared client
+   * response object.
+   */
   getProviders() {
     return apiClient.get<ProviderInstance[]>('/admin/payment/providers')
   },
 
-  /** Create a provider instance */
+  /**
+   * createProvider creates a provider instance and returns the server result.
+   */
   createProvider(data: Partial<ProviderInstance>) {
     return apiClient.post<ProviderInstance>('/admin/payment/providers', data)
   },
 
-  /** Update a provider instance */
+  /**
+   * updateProvider updates a provider instance and returns the server result.
+   */
   updateProvider(id: number, data: Partial<ProviderInstance>) {
     return apiClient.put<ProviderInstance>(`/admin/payment/providers/${id}`, data)
   },
 
-  /** Delete a provider instance */
+  /**
+   * deleteProvider deletes a provider instance and returns the server result.
+   */
   deleteProvider(id: number) {
     return apiClient.delete(`/admin/payment/providers/${id}`)
   },
 
-  /** 测试未保存的 EasyPay 服务商草稿，不写入持久化配置。 */
+  /**
+   * testProviderDraft submits a payment provider draft and returns the shared
+   * client response object containing the test result.
+   */
   testProviderDraft(data: ProviderDraftTestRequest) {
     return apiClient.post<ProviderDraftTestResult>('/admin/payment/providers/test', data)
-  }
+  },
 }
 
 export default adminPaymentAPI

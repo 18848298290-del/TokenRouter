@@ -1,13 +1,33 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeLegacyOpenAIExtra, normalizeOpenAICompactMode } from '../openaiLegacyConfiguration'
+import {
+  normalizeLegacyOpenAIExtra,
+  normalizeOpenAICompactMode,
+} from '../openaiLegacyConfiguration'
+
+/**
+ * openaiLegacyConfiguration.spec.ts checks normalization at the OpenAI
+ * provider editing boundary. Fixtures combine retired probe fields with
+ * explicit and legacy compact settings, verifying that cleanup returns a
+ * separate outer object without adding switches that were never configured.
+ */
 
 describe('OpenAI 历史配置边界', () => {
+  /**
+   * Legacy automatic and missing compact-mode values accompany an explicitly
+   * disabled value. Normalization must default the former to on while preserving
+   * the normalized explicit off selection.
+   */
   it('将旧自动值转换为明确开关，保留显式关闭', () => {
     expect(normalizeOpenAICompactMode('auto')).toBe('force_on')
     expect(normalizeOpenAICompactMode(undefined)).toBe('force_on')
     expect(normalizeOpenAICompactMode(' FORCE_OFF ')).toBe('force_off')
   })
 
+  /**
+   * An extra object mixes retired probe state, compact settings, and unrelated
+   * nested data. Cleanup must remove obsolete fields without mutating the input
+   * or creating missing switches.
+   */
   it('丢弃任意类型的旧状态，不修改原对象或补写缺省开关', () => {
     const input = {
       openai_responses_supported: false,
@@ -15,9 +35,12 @@ describe('OpenAI 历史配置边界', () => {
       openai_compact_supported: [],
       openai_native_compaction_v2_last_error: 'old error',
       openai_compact_mode: 'auto',
-      keep: { enabled: false }
+      keep: { enabled: false },
     }
-    expect(normalizeLegacyOpenAIExtra(input)).toEqual({ openai_compact_mode: 'force_on', keep: { enabled: false } })
+    expect(normalizeLegacyOpenAIExtra(input)).toEqual({
+      openai_compact_mode: 'force_on',
+      keep: { enabled: false },
+    })
     expect(input.openai_compact_mode).toBe('auto')
     expect(normalizeLegacyOpenAIExtra({})).toEqual({})
   })

@@ -11,7 +11,12 @@ import { Line } from 'vue-chartjs'
 import { usageAPI } from '@/api/usage'
 import { formatDayKey } from '../usageChartData'
 
-// 图表替身接收数据和选项，供组件测试检查配置。
+// UserDashboardUsageChart.spec.ts mounts the production usage toolbar, chart, and model
+// ranking inside a shared dashboard-state provider. API responses and chart drawing are
+// controlled while selection, filtering, persistence, metric formatting, and emitted refresh
+// actions run through the actual components.
+
+// The chart stub accepts the produced data and options so assertions inspect configuration passed by the actual component.
 vi.mock('vue-chartjs', () => ({
   Line: {
     name: 'Line',
@@ -65,7 +70,16 @@ vi.mock('@/api/team', () => ({
   },
 }))
 
-const trendOf = (points: Array<{ date: string; requests: number; actual_cost?: number }>) => ({
+// trendOf expands abbreviated request observations into complete zero-default trend records
+// for chart scenarios. Callers override date, request count, and optional charged cost while
+// the remaining token categories stay deterministic.
+const trendOf = (
+  points: Array<{
+    date: string // Local bucket date label.
+    requests: number // Recorded bucket request count.
+    actual_cost?: number // Optional charged bucket amount.
+  }>,
+) => ({
   trend: points.map((item) => ({
     input_tokens: 0,
     output_tokens: 0,
@@ -81,23 +95,34 @@ const trendOf = (points: Array<{ date: string; requests: number; actual_cost?: n
   granularity: 'day',
 })
 
-// 模拟仪表盘页面：提供共享状态，同时渲染标题行工具栏和正文图表。
+// DashboardHarness shares one usage controller between the production toolbar and chart,
+// starts its initial loads, and forwards page-refresh events for assertions.
 const DashboardHarness = defineComponent({
   props: { refreshing: { type: Boolean, default: false } },
   emits: ['refresh'],
+  // setup provides dashboard state and renders the toolbar with the usage chart. Mount
+  // loading runs through the real controller while the test API mocks supply the resulting
+  // observations.
   setup(props, { emit }) {
     const state = provideUsageChartState()
     onMounted(() => {
       void state.load()
       void state.loadFilterOptions()
     })
-    return () => h('div', [
-      h(UserDashboardUsageToolbar, { refreshing: props.refreshing, onRefresh: () => emit('refresh') }),
-      h(UserDashboardUsageChart),
-    ])
+    return () =>
+      h('div', [
+        h(UserDashboardUsageToolbar, {
+          refreshing: props.refreshing,
+          onRefresh: () => emit('refresh'),
+        }),
+        h(UserDashboardUsageChart),
+      ])
   },
 })
 
+// mountChart renders the dashboard harness with inspectable chart and selection stubs. It
+// drains initial API promises before returning the wrapper for interactions; enableAutoUnmount
+// registers disposal after each case so the harness releases its component resources.
 const mountChart = async () => {
   const wrapper = mount(DashboardHarness, {
     global: {
@@ -105,7 +130,7 @@ const mountChart = async () => {
         Line: true,
         DateRangePicker: true,
         Select: true,
-        // 直接渲染筛选面板内容，便于断言各个筛选框
+        // Render filter-panel slot content directly so each dropdown remains inspectable in component assertions.
         FilterDropdown: { template: '<div><slot /></div>' },
         RouterLink: { template: '<a><slot /></a>' },
         ModelIcon: true,
@@ -132,6 +157,9 @@ describe('UserDashboardUsageChart', () => {
     localStorage.clear()
   })
 
+  // The default dashboard load returns current and prior request totals. The test protects
+  // daily queries, displayed aggregate change, undefined cost comparison, and the picker's
+  // inclusive seven-day dates.
   it('默认拉取近 7 天和上一周期，并在页签上显示合计与环比', async () => {
     const today = formatDayKey(new Date())
     vi.mocked(usageAPI.getDashboardTrend)
@@ -141,11 +169,15 @@ describe('UserDashboardUsageChart', () => {
     const wrapper = await mountChart()
 
     expect(usageAPI.getDashboardTrend).toHaveBeenCalledTimes(2)
-    expect(vi.mocked(usageAPI.getDashboardTrend).mock.calls[0][0]).toMatchObject({ granularity: 'day' })
+    expect(vi.mocked(usageAPI.getDashboardTrend).mock.calls[0][0]).toMatchObject({
+      granularity: 'day',
+    })
     expect(wrapper.get('[data-testid="usage-metric-requests"]').text()).toContain('30')
     expect(wrapper.get('[data-testid="usage-delta-requests"]').text()).toContain('+50%')
-    expect(wrapper.get('[data-testid="usage-delta-cost"]').text()).toContain('dashboard.usageChart.noPrevious')
-    // 范围只由日期选择器表达，默认 7 天覆盖今天在内的 7 个日历日
+    expect(wrapper.get('[data-testid="usage-delta-cost"]').text()).toContain(
+      'dashboard.usageChart.noPrevious',
+    )
+    // The picker expresses the entire date selection; its default interval includes today and the six preceding local calendar days.
     const picker = wrapper.findComponent(DateRangePicker)
     const start = new Date()
     start.setDate(start.getDate() - 6)
@@ -153,26 +185,39 @@ describe('UserDashboardUsageChart', () => {
     expect(picker.props('endDate')).toBe(today)
   })
 
+  // The selected interval returns no usage in either period. The test protects the chart
+  // empty state after loading completes rather than rendering meaningless lines.
   it('所选范围没有用量时显示空状态', async () => {
     vi.mocked(usageAPI.getDashboardTrend).mockResolvedValue(trendOf([]) as any)
     const wrapper = await mountChart()
     expect(wrapper.find('[data-testid="usage-chart-empty"]').exists()).toBe(true)
   })
 
+  // The user selects cost and the picker's last-twenty-four-hours shortcut. The test
+  // protects hourly queries and saved metric and preset preferences for the next visit.
   it('日期选择器选近 24 小时后按小时重新取数，并记住指标与范围', async () => {
     vi.mocked(usageAPI.getDashboardTrend).mockResolvedValue(trendOf([]) as any)
     const wrapper = await mountChart()
 
     await wrapper.get('[data-testid="usage-metric-cost"]').trigger('click')
-    wrapper.findComponent(DateRangePicker).vm.$emit('change', { startDate: '2000-01-01', endDate: '2000-01-02', preset: 'last24Hours' })
+    wrapper
+      .findComponent(DateRangePicker)
+      .vm.$emit('change', { startDate: '2000-01-01', endDate: '2000-01-02', preset: 'last24Hours' })
     await flushPromises()
 
     const lastCall = vi.mocked(usageAPI.getDashboardTrend).mock.calls.at(-2)?.[0]
     expect(lastCall).toMatchObject({ granularity: 'hour' })
-    expect(wrapper.get('[data-testid="usage-metric-cost"]').attributes('aria-selected')).toBe('true')
-    expect(JSON.parse(localStorage.getItem('dashboard-usage-chart') || '{}')).toEqual({ metric: 'cost', range: '24h' })
+    expect(wrapper.get('[data-testid="usage-metric-cost"]').attributes('aria-selected')).toBe(
+      'true',
+    )
+    expect(JSON.parse(localStorage.getItem('dashboard-usage-chart') || '{}')).toEqual({
+      metric: 'cost',
+      range: '24h',
+    })
   })
 
+  // The token metric begins with every category visible in its legend. The test checks that
+  // toggling cache-read updates the control's pressed state to hidden.
   it('Token 指标可以开关分项', async () => {
     vi.mocked(usageAPI.getDashboardTrend).mockResolvedValue(trendOf([]) as any)
     const wrapper = await mountChart()
@@ -182,6 +227,9 @@ describe('UserDashboardUsageChart', () => {
     expect(chip.attributes('aria-pressed')).toBe('false')
   })
 
+  // Usage filters expose personal keys, models, groups, and transport choices. The test
+  // protects their option sources and verifies filtered trend and ranking requests while
+  // model candidates remain range-wide.
   it('筛选条件与使用记录页一致，选择后按筛选重新取数', async () => {
     vi.mocked(usageAPI.getDashboardTrend).mockResolvedValue(trendOf([]) as any)
     const wrapper = await mountChart()
@@ -212,13 +260,15 @@ describe('UserDashboardUsageChart', () => {
     expect(calls).toHaveLength(2)
     expect(calls[0]).toMatchObject({ group_id: 3, request_type: 'sync', stream: false })
     expect(calls[0]).not.toHaveProperty('model')
-    // 模型排行按筛选重新取数，候选项沿用不带筛选的结果
+    // Ranking requests follow selected filters while model candidates retain the unfiltered range result.
     const modelCalls = vi.mocked(usageAPI.getDashboardModels).mock.calls
     expect(modelCalls).toHaveLength(2)
     expect(modelCalls[1][0]).toMatchObject({ group_id: 3, request_type: 'sync' })
     expect(modelSelect.props('options')).toHaveLength(2)
   })
 
+  // No usage filters are active during initial loading. The test protects reuse of one
+  // model-statistics request for both the ranking and available model choices.
   it('没有筛选条件时，模型排行与模型候选共用一次请求', async () => {
     vi.mocked(usageAPI.getDashboardTrend).mockResolvedValue(trendOf([]) as any)
     await mountChart()
@@ -226,6 +276,8 @@ describe('UserDashboardUsageChart', () => {
     expect(vi.mocked(usageAPI.getDashboardModels).mock.calls[0][0]).not.toHaveProperty('group_id')
   })
 
+  // The heading refresh action delegates work to the dashboard page. The test protects its
+  // emitted event and disabled state while the page reports a refresh in progress.
   it('工具栏刷新按钮通知页面刷新，刷新中禁用', async () => {
     vi.mocked(usageAPI.getDashboardTrend).mockResolvedValue(trendOf([]) as any)
     const wrapper = await mountChart()
@@ -236,6 +288,9 @@ describe('UserDashboardUsageChart', () => {
     expect(button.attributes('disabled')).toBeDefined()
   })
 
+  // Token mode receives a current-day observation within the default interval. The test
+  // protects four unstacked unfilled lines, the incomplete-bucket dashed segment, and both
+  // drawing plugins.
   it('Token 画成四条不堆叠的折线，未结束的末段画虚线，并挂上竖线和描线插件', async () => {
     const today = formatDayKey(new Date())
     vi.mocked(usageAPI.getDashboardTrend).mockResolvedValue(
@@ -244,29 +299,45 @@ describe('UserDashboardUsageChart', () => {
     const wrapper = await mountChart()
     const line = wrapper.findComponent(Line)
 
+    // datasets captures the token chart props so assertions can inspect its line styling,
+    // incomplete-bucket marker, and category order.
     const datasets = line.props('data').datasets
-    expect(datasets.map((item: { label: string }) => item.label)).toEqual([
+    expect(
+      datasets.map((item: { label: string /* Rendered token category label. */ }) => item.label),
+    ).toEqual([
       'dashboard.usageChart.series.input',
       'dashboard.usageChart.series.output',
       'dashboard.usageChart.series.cacheCreation',
       'dashboard.usageChart.series.cacheRead',
     ])
     expect(datasets[0].cubicInterpolationMode).toBe('monotone')
-    // 线下不填充，纵轴不堆叠
-    expect(datasets.every((item: { fill: boolean }) => item.fill === false)).toBe(true)
+    // Lines have no area fill and the vertical axis is not stacked.
+    expect(
+      datasets.every(
+        (item: { fill: boolean /* Dataset area-fill enabled flag. */ }) => item.fill === false,
+      ),
+    ).toBe(true)
     expect(line.props('options').scales.y.stacked).toBeUndefined()
 
-    // 默认 7 天范围包含今天，最后一段是虚线，之前的段是实线
+    // The seven-day interval includes today, so its final incoming segment is dashed while earlier segments remain solid.
     const lastIndex = line.props('data').labels.length - 1
     expect(datasets[0].segment.borderDash({ p1DataIndex: lastIndex })).toEqual([4, 4])
     expect(datasets[0].segment.borderDash({ p1DataIndex: lastIndex - 1 })).toBeUndefined()
 
-    expect(line.props('plugins').map((plugin: { id: string }) => plugin.id)).toEqual(['usageCrosshair', 'usageReveal'])
+    expect(
+      line
+        .props('plugins')
+        .map((plugin: { id: string /* Registered chart plugin identifier. */ }) => plugin.id),
+    ).toEqual(['usageCrosshair', 'usageReveal'])
   })
 
+  // The selected metric changes after the chart has loaded usage. The test protects creation
+  // of a new chart instance so its entrance reveal restarts.
   it('切换指标时重建图表，与首次打开播放同一套入场动画', async () => {
     const today = formatDayKey(new Date())
-    vi.mocked(usageAPI.getDashboardTrend).mockResolvedValue(trendOf([{ date: today, requests: 3 }]) as any)
+    vi.mocked(usageAPI.getDashboardTrend).mockResolvedValue(
+      trendOf([{ date: today, requests: 3 }]) as any,
+    )
     const wrapper = await mountChart()
     const before = wrapper.findComponent(Line).vm
 
@@ -274,6 +345,8 @@ describe('UserDashboardUsageChart', () => {
     expect(wrapper.findComponent(Line).vm).not.toBe(before)
   })
 
+  // A single-metric chart has a successful prior-period result. The test protects aligned
+  // dashed comparison data and removal of that dataset when its legend control is disabled.
   it('单指标叠加上一周期虚线，可以从图例关闭', async () => {
     const today = formatDayKey(new Date())
     vi.mocked(usageAPI.getDashboardTrend)
@@ -282,21 +355,44 @@ describe('UserDashboardUsageChart', () => {
     const wrapper = await mountChart()
     await wrapper.get('[data-testid="usage-metric-requests"]').trigger('click')
 
+    // datasets reads the chart's latest rendered dataset props after legend changes.
     const datasets = () => wrapper.findComponent(Line).props('data').datasets
     expect(datasets()).toHaveLength(2)
     expect(datasets()[1]).toMatchObject({ previous: true, borderDash: [4, 4], order: 1 })
-    // 上一周期只取本期已有的时段数
+    // Comparison points are limited to the number of available current-period buckets.
     expect(datasets()[1].data).toHaveLength(datasets()[0].data.length)
 
     await wrapper.get('[data-testid="usage-series-previous"]').trigger('click')
     expect(datasets()).toHaveLength(1)
   })
 
+  // Models have different token and request rankings in shared dashboard data. The test
+  // protects metric-dependent order and toggling a row's model filter on and off.
   it('模型排行跟随当前指标排序，点击后按模型筛选，再点一次取消', async () => {
     vi.mocked(usageAPI.getDashboardModels).mockResolvedValue({
       models: [
-        { model: 'gpt-4o', requests: 5, total_tokens: 900, actual_cost: 1, input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, cost: 1 },
-        { model: 'claude-opus', requests: 10, total_tokens: 100, actual_cost: 3, input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, cost: 3 },
+        {
+          model: 'gpt-4o',
+          requests: 5,
+          total_tokens: 900,
+          actual_cost: 1,
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_tokens: 0,
+          cache_read_tokens: 0,
+          cost: 1,
+        },
+        {
+          model: 'claude-opus',
+          requests: 10,
+          total_tokens: 100,
+          actual_cost: 3,
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_tokens: 0,
+          cache_read_tokens: 0,
+          cost: 3,
+        },
       ],
       start_date: '',
       end_date: '',
@@ -304,8 +400,10 @@ describe('UserDashboardUsageChart', () => {
     vi.mocked(usageAPI.getDashboardTrend).mockResolvedValue(trendOf([]) as any)
     const wrapper = await mountChart()
 
-    const order = () => wrapper.findAll('[data-testid^="top-model-"]').map((row) => row.attributes('data-testid'))
-    // 默认指标为 Token
+    // order reads the displayed model identifiers in their current ranking order.
+    const order = () =>
+      wrapper.findAll('[data-testid^="top-model-"]').map((row) => row.attributes('data-testid'))
+    // The default selected metric is token volume.
     expect(order()).toEqual(['top-model-gpt-4o', 'top-model-claude-opus'])
     await wrapper.get('[data-testid="usage-metric-requests"]').trigger('click')
     expect(order()).toEqual(['top-model-claude-opus', 'top-model-gpt-4o'])
@@ -313,8 +411,12 @@ describe('UserDashboardUsageChart', () => {
     vi.mocked(usageAPI.getDashboardTrend).mockClear()
     await wrapper.get('[data-testid="top-model-claude-opus"]').trigger('click')
     await flushPromises()
-    expect(vi.mocked(usageAPI.getDashboardTrend).mock.calls[0][0]).toMatchObject({ model: 'claude-opus' })
-    expect(wrapper.get('[data-testid="top-model-claude-opus"]').attributes('aria-pressed')).toBe('true')
+    expect(vi.mocked(usageAPI.getDashboardTrend).mock.calls[0][0]).toMatchObject({
+      model: 'claude-opus',
+    })
+    expect(wrapper.get('[data-testid="top-model-claude-opus"]').attributes('aria-pressed')).toBe(
+      'true',
+    )
 
     await wrapper.get('[data-testid="top-model-claude-opus"]').trigger('click')
     await flushPromises()

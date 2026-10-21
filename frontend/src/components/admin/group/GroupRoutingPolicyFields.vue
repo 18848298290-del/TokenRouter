@@ -1,8 +1,5 @@
 <template>
-  <div
-    class="settings-section space-y-6"
-    data-group-field="routing-policy"
-  >
+  <div class="settings-section space-y-6" data-group-field="routing-policy">
     <SettingsSection>
       <ModelMappingEditor
         :model-value="mappingRows"
@@ -67,7 +64,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { GroupRoutingPolicy } from '@/types'
+import type { GroupRoutingPolicy } from '@/api/groups.types'
 import Select from '@/components/common/Select.vue'
 import SettingToggleRow from '@/components/common/settings/SettingToggleRow.vue'
 import SettingsSection from '@/components/common/settings/SettingsSection.vue'
@@ -81,22 +78,54 @@ import {
   type ModelMappingRow,
 } from '@/utils/modelMappingRules'
 
+// GroupRoutingPolicyFields.vue edits group model mappings and model restrictions through a
+// local row list. Editable rows can contain blank sources or repeated patterns while the
+// published mapping record cannot represent those draft states. Validation therefore reads the
+// rows retained by the component.
+//
+// A serialized signature marks the mapping most recently emitted to the parent. When that
+// record returns through the prop, the watcher keeps the local rows so intermediate input is
+// retained. A different mapping rebuilds the rows from the external record. Other policy
+// changes merge into a cloned policy and keep its remaining settings.
+
+// props supplies parent-owned editor values and display controls consumed by the fields below.
 const props = withDefaults(
-  defineProps<{ modelValue?: GroupRoutingPolicy; idPrefix?: string }>(),
-  { idPrefix: 'group-model-policy' },
+  defineProps<{
+    // modelValue supplies the parent-owned value edited by these controls. Updates are emitted to
+    // the parent for publication back through this prop.
+    modelValue?: GroupRoutingPolicy
+    idPrefix?: string // field identifier prefix
+  }>(),
+  {
+    idPrefix: 'group-model-policy',
+  },
 )
-const emit = defineEmits<{ 'update:modelValue': [value: GroupRoutingPolicy] }>()
+// emit forwards typed edits and actions to the parent that owns the displayed draft.
+const emit = defineEmits<{
+  'update:modelValue': [
+    value: GroupRoutingPolicy, // replacement field value
+  ] // replacement parent-owned field value
+}>()
+// t resolves the current locale messages used by labels, validation, and action notifications.
 const { t } = useI18n()
+// value clones the supplied routing policy and fills defaults before the editor merges a field
+// update into it.
 const value = computed(() => cloneRoutingPolicy(props.modelValue))
+// sourceOptions translates the requested, group-mapped, and upstream model identities used when
+// evaluating model restrictions.
 const sourceOptions = computed(() =>
   ['requested', 'group_mapped', 'upstream'].map((key) => ({
     value: key,
     label: t(`admin.groups.routingPolicy.basis.${key}`),
   })),
 )
-// 本地行允许暂存空行和重复来源，发布后的映射对象不能表达这些中间状态。
+
+// mappingRows retains incomplete and duplicate input rows; lastPublished marks the serialized
+// mapping most recently emitted to the parent.
 const mappingRows = ref<ModelMappingRow[]>([])
 let lastPublished = ''
+// Ignore the mapping record just emitted by this editor so empty or duplicate rows survive
+// the parent prop round trip.
 watch(
   () => [props.modelValue?.model_mapping] as const,
   () => {
@@ -107,20 +136,26 @@ watch(
   },
   { immediate: true, deep: true },
 )
+// mappingError checks the local rows for blank endpoints and pattern conflicts that the
+// serialized record cannot fully represent.
 const mappingError = computed(() => {
   const sources = mappingRows.value.map((row) => row.from.trim())
-  if (
-    sources.some((source) => !source) ||
-    mappingRows.value.some((row) => !row.to.trim())
-  )
+  if (sources.some((source) => !source) || mappingRows.value.some((row) => !row.to.trim()))
     return t('admin.groups.routingPolicy.incompleteMapping')
-  return findModelConflict(sources)
-    ? t('admin.groups.routingPolicy.conflict')
-    : ''
+  return findModelConflict(sources) ? t('admin.groups.routingPolicy.conflict') : ''
 })
+// update emits a complete routing policy with the supplied partial field changes.
 function update(patch: Partial<GroupRoutingPolicy>) {
   emit('update:modelValue', { ...value.value, ...patch })
 }
+// onMappingRowsChange stores editable rows and publishes their record representation. It
+// records the serialized mapping before emission so the prop watcher can recognize the
+// returning value. Blank and duplicate rows remain in local state even when serialization
+// collapses them.
+//
+// An externally supplied mapping with a different signature is handled by the watcher, which
+// rebuilds the row draft. This function owns the outgoing half of that round trip and the
+// signature used to distinguish it.
 function onMappingRowsChange(rows: ModelMappingRow[]) {
   mappingRows.value = rows
   const mapping = mappingRowsToRecord(rows)

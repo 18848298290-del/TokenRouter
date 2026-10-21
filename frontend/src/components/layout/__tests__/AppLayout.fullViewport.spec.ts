@@ -1,6 +1,13 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import AppLayout from '../AppLayout.vue'
+
+// AppLayout.fullViewport.spec.ts verifies viewport classes and document scroll ownership
+// for the shared page shell. Stubbed stores and navigation isolate layout modes, while
+// saved document styles let each case assert scroll locking and restoration
+// independently.
+
 vi.mock('vue-router', () => ({
   useRoute: () => ({ meta: { hideSidebar: true } }),
 }))
@@ -20,7 +27,7 @@ vi.mock('@/stores/onboarding', () => ({
   }),
 }))
 
-vi.mock('@/composables/useOnboardingTour', () => ({
+vi.mock('@/composables/onboarding/useOnboardingTour', () => ({
   useOnboardingTour: () => ({
     replayTour: vi.fn(),
     startTeamTour: vi.fn(),
@@ -31,9 +38,9 @@ vi.mock('@/composables/usePageMeta', () => ({
   usePageMeta: () => ({ pageTitle: '', pageDescription: '' }),
 }))
 
-import AppLayout from '../AppLayout.vue'
-
 describe('AppLayout 全屏视口模式', () => {
+  // Saved document styles are restored after each case so scroll-lock assertions do not
+  // leak inline overflow changes into later tests.
   let originalHtmlOverflowY = ''
   let originalBodyOverflowY = ''
 
@@ -44,11 +51,17 @@ describe('AppLayout 全屏视口模式', () => {
     document.body.style.overflowY = ''
   })
 
+  // Restore both saved document styles after each case so a failed assertion cannot
+  // leave scrolling settings changed for subsequent tests.
   afterEach(() => {
     document.documentElement.style.overflowY = originalHtmlOverflowY
     document.body.style.overflowY = originalBodyOverflowY
   })
 
+  // mountLayout mounts the shell with stubbed navigation and a content marker.
+  //
+  // The caller selects full viewport mode and owns unmounting, which releases the
+  // document scroll lock before the next mount or assertion.
   function mountLayout(fullViewport: boolean) {
     return mount(AppLayout, {
       props: { fullViewport },
@@ -62,6 +75,9 @@ describe('AppLayout 全屏视口模式', () => {
     })
   }
 
+  // The layout mounts with full viewport mode enabled. The shell and content column must
+  // receive locked-height classes, and root overflow must be hidden until unmount
+  // restores it.
   it('全屏模式固定动态视口并锁定页面滚动', () => {
     const wrapper = mountLayout(true)
     const shell = wrapper.element
@@ -82,6 +98,9 @@ describe('AppLayout 全屏视口模式', () => {
     expect(document.body.style.overflowY).toBe('')
   })
 
+  // Document and body begin with different inline overflow values before full viewport
+  // mounting. Unmount must restore both saved values independently after the temporary
+  // scroll lock.
   it('卸载时恢复进入全屏模式前的 overflow 设置', () => {
     document.documentElement.style.overflowY = 'scroll'
     document.body.style.overflowY = 'auto'
@@ -96,6 +115,9 @@ describe('AppLayout 全屏视口模式', () => {
     expect(document.body.style.overflowY).toBe('auto')
   })
 
+  // The layout mounts in its ordinary document-flow mode. It must keep the
+  // minimum-height shell and leave document and body scrolling styles unchanged during
+  // its lifetime.
   it('普通模式保留文档流布局且不锁定页面滚动', () => {
     const wrapper = mountLayout(false)
     const shell = wrapper.element
@@ -108,6 +130,9 @@ describe('AppLayout 全屏视口模式', () => {
     wrapper.unmount()
   })
 
+  // Full and ordinary layouts render the same main-column flex chain. Full viewport mode
+  // must remove padding, while ordinary mode must retain the standard page padding
+  // classes.
   it('空间分配契约:主区始终 flex-1 flex-col,全屏模式无内边距,普通模式保留标准内边距链', () => {
     const full = mountLayout(true)
     const fullMain = full.element.querySelector('main.app-main')
@@ -126,6 +151,9 @@ describe('AppLayout 全屏视口模式', () => {
     normal.unmount()
   })
 
+  // Desktop fitting is enabled without full viewport mode. Responsive classes must lock
+  // height at lg, retain padding, and leave root scrolling styles unchanged for
+  // document- flow use.
   it('宽屏锁定模式只在 lg 及以上锁定高度，保留内边距且不改写文档滚动', () => {
     const wrapper = mount(AppLayout, {
       props: { fitViewport: true },
@@ -136,7 +164,8 @@ describe('AppLayout 全屏视口模式', () => {
     const contentWrapper = shell.querySelector(':scope > div.relative')
     const main = shell.querySelector('main.app-main')
 
-    // 窄屏仍按普通模式随内容增高，宽屏由 lg 变体锁定为视口高度。
+    // Responsive classes retain natural document height below lg and apply viewport
+    // locking only when the desktop breakpoint is active.
     expect(shell.classList).toContain('min-h-screen')
     expect(shell.classList).toContain('lg:h-[100dvh]')
     expect(shell.classList).toContain('lg:overflow-hidden')

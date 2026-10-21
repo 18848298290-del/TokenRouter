@@ -1,8 +1,10 @@
 <template>
   <div>
     <div class="mb-1.5 flex items-center justify-between gap-2">
-      <label :for="inputId" class="text-sm font-medium text-primary-900 dark:text-dark-50">{{ label }}</label>
-      <!-- 设置了覆盖值的字段显示恢复按钮，点击后这一项改用部署默认值。 -->
+      <label :for="inputId" class="text-sm font-medium text-primary-900 dark:text-dark-50">{{
+        label
+      }}</label>
+      <!-- Reset clears this field override so the server uses its deployment default. -->
       <button
         v-if="overridden"
         type="button"
@@ -35,9 +37,12 @@
       <span
         v-if="field.unit"
         class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-gray-400 dark:text-dark-400"
-      >{{ t(`admin.settings.responsesWS.units.${field.unit}`) }}</span>
+        >{{ t(`admin.settings.responsesWS.units.${field.unit}`) }}</span
+      >
     </div>
-    <p v-if="field.hint" :id="`${inputId}-hint`" class="input-hint">{{ t(`admin.settings.responsesWS.hints.${field.key}`) }}</p>
+    <p v-if="field.hint" :id="`${inputId}-hint`" class="input-hint">
+      {{ t(`admin.settings.responsesWS.hints.${field.key}`) }}
+    </p>
   </div>
 </template>
 
@@ -47,20 +52,32 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import type { ResponsesWSNumberField } from './responsesWsFields'
 
-// 参数网格里的一个数字字段：标题在上，输入框带单位，空输入框的占位文字是当前有效值。
+/**
+ * ResponsesWSNumberField.vue renders one numeric WebSocket override with a unit label
+ * and an optional reset action. The parent supplies values in display units and
+ * interprets the emitted raw string, including an empty value that removes the override.
+ */
+// field supplies display metadata, modelValue supplies the editable override, and placeholder
+// supplies its effective value. overridden enables removal, while disabled prevents edits
+// during the parent save; conversion and persistence remain with that parent.
 const props = defineProps<{
-  field: ResponsesWSNumberField
-  modelValue: number | ''
-  placeholder: string
-  overridden: boolean
-  disabled?: boolean
+  field: ResponsesWSNumberField // Numeric bounds and unit metadata.
+  modelValue: number | '' // Display-unit override or empty input.
+  placeholder: string // Current effective display value.
+  overridden: boolean // Shows the field reset action.
+  disabled?: boolean // Blocks edits during parent save.
 }>()
 
+// Events let the parent interpret raw input and null removals while this field stays
+// independent of persistence and the byte-to-MiB conversion owned by its caller.
 const emit = defineEmits<{
+  /** update:modelValue forwards the raw input, including empty strings that remove an override. */
   (event: 'update:modelValue', value: string): void
+  /** reset requests removal of this field's currently displayed override. */
   (event: 'reset'): void
 }>()
 
+// Reactive labels and stable field IDs connect input accessibility with the current translated parameter name.
 const { t } = useI18n()
 const inputId = computed(() => `responses-ws-input-${props.field.key}`)
 const label = computed(() => t(`admin.settings.responsesWS.fields.${props.field.key}`))

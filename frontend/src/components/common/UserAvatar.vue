@@ -1,47 +1,72 @@
 <template>
-  <!-- 已上传头像优先；否则用用户 ID（或兜底种子）生成 GitHub 风格 identicon -->
   <img
     v-if="normalizedAvatarUrl"
     :src="normalizedAvatarUrl"
     :alt="alt"
     :class="[sizeClass, 'rounded-full object-cover']"
   />
-  <img
-    v-else
-    :src="defaultAvatarUrl"
-    :alt="alt"
-    :class="[sizeClass, 'rounded-full']"
-  />
+  <img v-else :src="defaultAvatarUrl" :alt="alt" :class="[sizeClass, 'rounded-full']" />
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { identiconDataUri } from '@/utils/identicon'
 
+/**
+ * UserAvatar.vue displays a supplied avatar URL or a deterministic identicon for a
+ * user. Trimmed nonempty URLs take priority, user identifiers supply the preferred
+ * identicon seed, and callers can provide a stable seed when the user identifier is
+ * unavailable.
+ */
+
+/**
+ * Props describes the caller supplied values consumed by UserAvatar.
+ */
 interface Props {
-  /** 用户已上传/同步的头像地址，非空时优先展示 */
+  /**
+   * avatarUrl takes precedence when trimming leaves a nonempty URL; otherwise the
+   * deterministic identicon supplies the displayed image.
+   */
   avatarUrl?: string
-  /** 用户 ID，作为 identicon 的首选种子（与 GitHub 一致按用户 ID 生成，全站各处图案一致） */
+
+  /**
+   * userId becomes the preferred identicon seed when present, including zero; a
+   * missing identifier delegates seed choice to the caller.
+   */
   userId?: number
-  /** 用户 ID 不可用场景的兜底种子，需调用方保证稳定 */
+
+  /**
+   * seed supplies a stable identicon identity when userId is absent; callers reuse the
+   * seed to keep the same avatar.
+   */
   seed?: string
-  alt?: string
-  /** 尺寸相关 Tailwind class，如 'h-9 w-9'；各调用点尺寸不一，直接透传 */
-  sizeClass?: string
+  alt?: string /* image alternative text */
+  sizeClass?: string /* avatar dimension classes */
 }
 
+/**
+ * props supplies the uploaded image or deterministic seed inputs, alternative text,
+ * and dimensions used by both avatar branches.
+ */
 const props = withDefaults(defineProps<Props>(), {
   avatarUrl: '',
   userId: undefined,
   seed: '',
   alt: '',
-  sizeClass: 'h-9 w-9'
+  sizeClass: 'h-9 w-9',
 })
 
+/**
+ * normalizedAvatarUrl trims surrounding whitespace before deciding whether to render
+ * the caller supplied avatar image.
+ */
 const normalizedAvatarUrl = computed(() => props.avatarUrl.trim())
 
-// 用户 ID 优先，其次兜底种子；均为空时由 identiconDataUri 内部归一化兜底
+/**
+ * defaultAvatarUrl prefers a user identifier seed and otherwise passes the caller seed
+ * to the shared deterministic identicon generator.
+ */
 const defaultAvatarUrl = computed(() =>
-  identiconDataUri(props.userId != null ? `user-${props.userId}` : props.seed)
+  identiconDataUri(props.userId != null ? `user-${props.userId}` : props.seed),
 )
 </script>

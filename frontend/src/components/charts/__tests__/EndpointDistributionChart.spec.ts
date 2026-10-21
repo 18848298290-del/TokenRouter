@@ -3,6 +3,13 @@ import { mount } from '@vue/test-utils'
 
 import EndpointDistributionChart from '../EndpointDistributionChart.vue'
 
+// EndpointDistributionChart.spec.ts verifies metric sorting and chart-mode selection for
+// endpoint usage. Chart substitutes expose dataset values while mounted table rows and
+// tooltip callbacks establish that endpoint labels and proportions follow the selected
+// metric.
+
+// messages supplies stable English labels for rendered assertions, with unknown keys
+// passed through by the local translation substitute during each component test.
 const messages: Record<string, string> = {
   'usage.endpointDistribution': 'Endpoint Distribution',
   'usage.endpoint': 'Endpoint',
@@ -40,6 +47,8 @@ vi.mock('vue-chartjs', () => ({
 }))
 
 describe('EndpointDistributionChart', () => {
+  // Shared aggregate fixtures give token and spending metrics different sort orders so
+  // each test can observe which metric controls the chart and table.
   const endpointStats = [
     {
       endpoint: '/v1/responses',
@@ -57,6 +66,8 @@ describe('EndpointDistributionChart', () => {
     },
   ]
 
+  // Default chart props receive endpoints with opposing token and cost rankings. The
+  // doughnut data must follow descending token totals and retain the raw values.
   it('renders a doughnut chart ordered by tokens by default', () => {
     const wrapper = mount(EndpointDistributionChart, {
       props: {
@@ -75,6 +86,9 @@ describe('EndpointDistributionChart', () => {
     expect(chartData.datasets[0].data).toEqual([1200, 600])
   })
 
+  // Bar mode receives the same endpoint aggregates as the default chart. The rendered
+  // data, hidden axes, zero baseline, and external tooltip must match its vertical bar
+  // presentation.
   it('renders a bar chart instead of doughnut when chartType is bar', () => {
     const wrapper = mount(EndpointDistributionChart, {
       props: {
@@ -108,6 +122,8 @@ describe('EndpointDistributionChart', () => {
     expect(label).toBe('/v1/responses: 1.20K (66.7%)')
   })
 
+  // Actual-cost mode receives endpoints whose spending order differs from token order.
+  // Both chart data and table rows must place the higher spending endpoint first.
   it('reorders rows by actual cost in actual cost mode', () => {
     const wrapper = mount(EndpointDistributionChart, {
       props: {

@@ -1,6 +1,8 @@
 <template>
   <div class="card overflow-hidden">
-    <div class="flex min-h-[61px] items-center justify-between gap-3 border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+    <div
+      class="flex min-h-[61px] items-center justify-between gap-3 border-b border-gray-100 px-6 py-4 dark:border-dark-700"
+    >
       <div class="flex min-w-0 items-center gap-2.5">
         <Icon name="bell" size="md" class="shrink-0 text-primary-600 dark:text-primary-400" />
         <h2 class="truncate text-lg font-semibold text-gray-900 dark:text-white">
@@ -9,15 +11,17 @@
       </div>
       <span
         data-testid="announcement-unread-count"
-        :class="unreadCount > 0
-          ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-300'
-          : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-dark-300'"
+        :class="
+          unreadCount > 0
+            ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-300'
+            : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-dark-300'
+        "
         class="inline-flex shrink-0 items-center gap-1.5 rounded-compact px-2 py-1 text-xs font-medium"
       >
         <span
-          :class="unreadCount > 0
-            ? 'bg-primary-500 dark:bg-primary-400'
-            : 'bg-gray-400 dark:bg-dark-400'"
+          :class="
+            unreadCount > 0 ? 'bg-primary-500 dark:bg-primary-400' : 'bg-gray-400 dark:bg-dark-400'
+          "
           class="h-1.5 w-1.5 rounded-full"
         ></span>
         {{ t('dashboard.unreadAnnouncements', { count: unreadCount }) }}
@@ -72,9 +76,11 @@
             data-testid="announcement-timeline-node"
             :data-unread="!item.announcement.read_at"
             aria-hidden="true"
-            :class="item.announcement.read_at
-              ? 'border-gray-200 bg-gray-400 dark:border-dark-700 dark:bg-dark-500'
-              : 'border-primary-100 bg-primary-500 dark:border-dark-900 dark:bg-primary-400'"
+            :class="
+              item.announcement.read_at
+                ? 'border-gray-200 bg-gray-400 dark:border-dark-700 dark:bg-dark-500'
+                : 'border-primary-100 bg-primary-500 dark:border-dark-900 dark:bg-primary-400'
+            "
             class="absolute left-0 top-4 z-10 h-3 w-3 rounded-full border-[3px]"
           ></span>
 
@@ -132,32 +138,46 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { useAnnouncementStore } from '@/stores/announcements'
 import { formatDate, formatDateTime } from '@/utils/format'
-import type { UserAnnouncement } from '@/types'
-import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
+import type { UserAnnouncement } from '@/api/announcements.types'
+import AnnouncementPopup from '@/components/announcements/AnnouncementPopup.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import Skeleton from '@/components/common/Skeleton.vue'
 import Icon from '@/components/icons/Icon.vue'
 
-// UserDashboardAnnouncements.vue displays recent announcements in publication
-// order and opens their complete content in a detail dialog. List summaries
-// extract sanitized prose for quick scanning. Tables and code remain available
-// with their original structure in the dialog, where rows and formatting explain
-// how their individual values relate to each other.
+// UserDashboardAnnouncements.vue displays recent publications and opens full announcement
+// content in a detail popup. The shared store can prioritize unread entries, so the timeline
+// copies and sorts records by publication time, with IDs breaking ties, before selecting its
+// visible entries.
+//
+// Preview text is extracted from sanitized rendered content. Tables and code blocks are
+// omitted because flattened values lose the relationships carried by rows or formatting,
+// while the detail popup retains complete content. Read marking is requested when a
+// previously unread entry opens, and the store remains responsible for publishing that
+// status to other announcement consumers.
 
+// MAX_ANNOUNCEMENTS limits the dashboard timeline to the most recent publications after its
+// independent chronological sort.
 const MAX_ANNOUNCEMENTS = 5
 
+// The announcement store owns fetched entries and read status; this component retains the
+// selected detail record for its popup.
 const { t } = useI18n()
 const announcementStore = useAnnouncementStore()
 const { announcements, loading } = storeToRefs(announcementStore)
 const selectedAnnouncement = ref<UserAnnouncement | null>(null)
 const unreadCount = computed(() => announcementStore.unreadCount)
 
+// getCreatedTimestamp returns a publication timestamp, using zero when parsing fails. The
+// timeline therefore places invalid dates behind valid recent dates and breaks equal
+// timestamps by announcement ID.
 function getCreatedTimestamp(announcement: UserAnnouncement): number {
   const timestamp = Date.parse(announcement.created_at)
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
-// 同年省略年份，跨年补充年份，并沿用当前界面语言的日期格式。
+// formatAnnouncementDate formats a publication date using the current locale. Dates in
+// another calendar year include the year, while invalid timestamps return an empty label for
+// the timeline.
 function formatAnnouncementDate(createdAt: string): string {
   const date = new Date(createdAt)
   if (Number.isNaN(date.getTime())) return ''
@@ -172,22 +192,27 @@ function formatAnnouncementDate(createdAt: string): string {
   return formatDate(date, options)
 }
 
-// createSummary extracts the first prose paragraph from sanitized Markdown or HTML.
-// Tables and code blocks remain in the detail dialog because their meaning
-// depends on layout. Content without paragraphs uses the remaining plain text;
-// content containing only structured blocks returns an empty summary.
+// createSummary extracts the first nonempty prose paragraph from sanitized Markdown or HTML.
+// Table and code blocks are removed from the summary because their values need their layout
+// to remain understandable. If no paragraph remains, body text supplies the summary;
+// structured-only content returns an empty string so the card can use its no-summary label.
+// Whitespace is collapsed for the constrained timeline preview while the popup receives the
+// complete announcement content.
 function createSummary(content: string): string {
   if (!content) return ''
 
   const html = DOMPurify.sanitize(marked.parse(content, { breaks: true, gfm: true }) as string)
   const parsed = new DOMParser().parseFromString(html, 'text/html')
   parsed.body.querySelectorAll('table, pre').forEach((element) => element.replaceWith(' '))
-  const paragraph = [...parsed.body.querySelectorAll('p')].find((element) => element.textContent?.trim())
+  const paragraph = [...parsed.body.querySelectorAll('p')].find((element) =>
+    element.textContent?.trim(),
+  )
   return (paragraph?.textContent || parsed.body.textContent || '').replace(/\s+/g, ' ').trim()
 }
 
-// 服务端列表优先展示未读公告，时间线需要独立恢复为严格的发布时间倒序。
-const timelineItems = computed(() => (
+// timelineItems copies the store entries before chronological sorting because the store
+// ordering prioritizes unread announcements for other consumers.
+const timelineItems = computed(() =>
   [...announcements.value]
     .sort((left, right) => {
       const timestampDifference = getCreatedTimestamp(right) - getCreatedTimestamp(left)
@@ -197,9 +222,12 @@ const timelineItems = computed(() => (
     .map((announcement) => ({
       announcement,
       summary: createSummary(announcement.content),
-    }))
-))
+    })),
+)
 
+// openAnnouncement opens the selected record and requests read marking when needed. The
+// popup appears immediately; the shared store owns the asynchronous update and error
+// handling for read status.
 function openAnnouncement(announcement: UserAnnouncement) {
   selectedAnnouncement.value = announcement
   if (!announcement.read_at) {

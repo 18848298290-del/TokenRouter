@@ -1,9 +1,16 @@
-// 图形与逐元素动效移植自 Lucide Animated；许可与版本见 ../README.md。
+// Artwork and element animations adapted from Lucide Animated.
+// See ../README.md for the license and pinned version.
 // https://github.com/pqoqubbw/icons/blob/072c38b1b04ea738d90a084485ccaad4b890ddca/icons/check.tsx
 import { h } from 'vue'
 import { motion } from 'motion-v'
 import type { IconDefinition, IconVariants as Variants } from '../types'
 
+// check.ts renders a check mark that grows while its stroke draws into view.
+// Opacity, scale, and path length share the same target, with a shorter opacity
+// transition keeping the drawing visible during the rest of the effect.
+
+// PATH_VARIANTS grows the check while drawing its stroke, with independent
+// opacity timing making the visible mark appear before the drawing completes.
 const PATH_VARIANTS: Variants = {
   normal: {
     opacity: 1,
@@ -11,8 +18,8 @@ const PATH_VARIANTS: Variants = {
     scale: 1,
     transition: {
       duration: 0.3,
-      opacity: { duration: 0.1 }
-    }
+      opacity: { duration: 0.1 },
+    },
   },
   animate: {
     opacity: [0, 1],
@@ -20,11 +27,13 @@ const PATH_VARIANTS: Variants = {
     scale: [0.5, 1],
     transition: {
       duration: 0.4,
-      opacity: { duration: 0.1 }
-    }
-  }
+      opacity: { duration: 0.1 },
+    },
+  },
 }
 
+// icon binds the check SVG renderer to ['animate'] for playback by
+// useIconAnimation through the shared controls.
 const icon: IconDefinition = {
   name: 'check',
   normal: 'normal',
@@ -37,11 +46,11 @@ const icon: IconDefinition = {
           animate: controls,
           d: 'M4 12 9 17L20 6',
           initial: 'normal',
-          variants: PATH_VARIANTS
+          variants: PATH_VARIANTS,
         },
-        () => []
-      )
-    ])
+        () => [],
+      ),
+    ]),
 }
 
 export default icon

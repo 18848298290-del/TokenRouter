@@ -1,42 +1,86 @@
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
+import { nodes, parseVue, variableInitializer } from '@/__tests__/helpers/sourceSyntax'
 
-const dir = dirname(fileURLToPath(import.meta.url))
-const headerSource = readFileSync(resolve(dir, '../AppHeader.vue'), 'utf8')
-const homeViewSource = readFileSync(resolve(dir, '../../../views/HomeView.vue'), 'utf8')
-const keyUsageViewSource = readFileSync(resolve(dir, '../../../views/KeyUsageView.vue'), 'utf8')
-const marketplaceViewSource = readFileSync(resolve(dir, '../../../views/ModelMarketplaceView.vue'), 'utf8')
-const appSource = readFileSync(resolve(dir, '../../../App.vue'), 'utf8')
+// siteLogoSanitization.spec.ts checks sanitizer inputs and options for site
+// branding and favicon consumers. Syntax assertions attach the allowed relative
+// and data URL options to the actual logo sanitizer call, so unrelated options
+// elsewhere in a component cannot satisfy the policy check.
+
+// entries maps branding consumers to their explicit cached-settings fallback requirement for logo inputs.
+const entries = [
+  ['components/layout/AppHeader.vue', false],
+  ['views/HomeView.vue', true],
+  ['views/KeyUsageView.vue', true],
+  ['views/ModelMarketplaceView.vue', true],
+  ['App.vue', false],
+] as const
 
 describe('site_logo sanitization', () => {
-  it('AppHeader imports sanitizeUrl and applies it to siteLogo', () => {
-    expect(headerSource).toContain("import { sanitizeUrl } from '@/utils/url'")
-    expect(headerSource).toContain('sanitizeUrl(appStore.siteLogo')
-  })
-
-  it('HomeView applies sanitizeUrl to siteLogo', () => {
-    expect(homeViewSource).toContain('sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo')
-  })
-
-  it('KeyUsageView applies sanitizeUrl to siteLogo', () => {
-    expect(keyUsageViewSource).toContain('sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo')
-  })
-
-  it('ModelMarketplaceView applies sanitizeUrl to siteLogo', () => {
-    expect(marketplaceViewSource).toContain('sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo')
-  })
-
-  it('App sanitizes the favicon URL', () => {
-    expect(appSource).toContain('sanitizeUrl(appStore.siteLogo')
-  })
-
-  it('all entries pass allowRelative and allowDataUrl options', () => {
-    for (const src of [headerSource, homeViewSource, keyUsageViewSource, marketplaceViewSource, appSource]) {
-      expect(src).toContain('allowRelative: true')
-      expect(src).toContain('allowDataUrl: true')
+  // Branding accepts local assets and data images while sanitizing configured
+  // URLs. Each consumer must pass these permissions on its own sanitizer call.
+  it.each(entries)('%s sanitizes its logo with the required options', (path, cached) => {
+    const script = parseVue(path).script
+    const scope = path === 'App.vue' ? script : variableInitializer(script, 'siteLogo')
+    const calls = nodes(scope, ts.isCallExpression).filter(
+      (node) => ts.isIdentifier(node.expression) && node.expression.text === 'sanitizeUrl',
+    )
+    const call = calls.find(
+      (node) =>
+        node.arguments[0] &&
+        nodes(node.arguments[0], ts.isPropertyAccessExpression).some(
+          (property) => property.name.text === 'siteLogo',
+        ),
+    )
+    expect(call).toBeDefined()
+    if (!call) throw new Error('Missing logo sanitizer call')
+    const input = call.arguments[0]
+    expect(ts.isBinaryExpression(input)).toBe(true)
+    if (!ts.isBinaryExpression(input)) throw new Error('Missing empty logo fallback')
+    expect(input.operatorToken.kind).toBe(ts.SyntaxKind.BarBarToken)
+    expect(ts.isStringLiteral(input.right) && input.right.text).toBe('')
+    let storeLogo = input.left
+    if (cached) {
+      expect(ts.isBinaryExpression(storeLogo)).toBe(true)
+      if (!ts.isBinaryExpression(storeLogo)) throw new Error('Missing cached logo precedence')
+      expect(storeLogo.operatorToken.kind).toBe(ts.SyntaxKind.BarBarToken)
+      const cachedLogo = storeLogo.left
+      expect(ts.isPropertyAccessExpression(cachedLogo)).toBe(true)
+      if (!ts.isPropertyAccessExpression(cachedLogo))
+        throw new Error('Missing cached logo property')
+      expect(cachedLogo.name.text).toBe('site_logo')
+      expect(cachedLogo.questionDotToken).toBeDefined()
+      expect(
+        ts.isPropertyAccessExpression(cachedLogo.expression) && cachedLogo.expression.name.text,
+      ).toBe('cachedPublicSettings')
+      storeLogo = storeLogo.right
     }
+    expect(ts.isPropertyAccessExpression(storeLogo)).toBe(true)
+    if (!ts.isPropertyAccessExpression(storeLogo)) throw new Error('Missing store logo property')
+    expect(storeLogo.name.text).toBe('siteLogo')
+    expect(ts.isIdentifier(storeLogo.expression) && storeLogo.expression.text).toBe('appStore')
+    const options = call.arguments[1]
+    expect(ts.isObjectLiteralExpression(options)).toBe(true)
+    if (!ts.isObjectLiteralExpression(options)) throw new Error('Missing logo sanitizer options')
+    const values = Object.fromEntries(
+      options.properties
+        .filter(ts.isPropertyAssignment)
+        .map((node) => [
+          ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) ? node.name.text : '',
+          node.initializer.kind,
+        ]),
+    )
+    expect(values).toMatchObject({
+      allowRelative: ts.SyntaxKind.TrueKeyword,
+      allowDataUrl: ts.SyntaxKind.TrueKeyword,
+    })
+    expect(
+      nodes(script, ts.isImportDeclaration).some(
+        (node) =>
+          ts.isStringLiteral(node.moduleSpecifier) &&
+          node.moduleSpecifier.text === '@/utils/url' &&
+          nodes(node, ts.isImportSpecifier).some((binding) => binding.name.text === 'sanitizeUrl'),
+      ),
+    ).toBe(true)
   })
 })

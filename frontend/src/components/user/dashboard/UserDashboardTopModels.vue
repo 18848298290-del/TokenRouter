@@ -6,7 +6,11 @@
           <Icon name="chartBar" size="sm" class="text-primary-600 dark:text-primary-500" />
           {{ t('dashboard.topModels.title') }}
         </h3>
-        <span class="truncate text-xs text-gray-500 dark:text-dark-400" data-testid="top-models-subtitle">{{ subtitle }}</span>
+        <span
+          class="truncate text-xs text-gray-500 dark:text-dark-400"
+          data-testid="top-models-subtitle"
+          >{{ subtitle }}</span
+        >
       </div>
       <router-link
         to="/usage"
@@ -17,7 +21,7 @@
       </router-link>
     </div>
 
-    <!-- 首次取数时按排行行数占位 -->
+    <!-- Reserve the visible ranking rows while the first model request is pending. -->
     <div v-if="!modelsLoaded" class="space-y-4" aria-hidden="true">
       <div v-for="row in TOP_COUNT" :key="row" class="space-y-2 px-2">
         <div class="flex items-center gap-2">
@@ -43,38 +47,62 @@
         <button
           type="button"
           class="group w-full rounded-control px-2 py-2 text-left transition-colors duration-fast"
-          :class="row.active
-            ? 'bg-primary-500/8 ring-1 ring-primary-500/15'
-            : 'hover:bg-gray-50 dark:hover:bg-dark-800'"
+          :class="
+            row.active
+              ? 'bg-primary-500/8 ring-1 ring-primary-500/15'
+              : 'hover:bg-gray-50 dark:hover:bg-dark-800'
+          "
           :aria-pressed="row.active"
-          :title="row.active ? t('dashboard.topModels.clearFilter') : t('dashboard.topModels.filterHint')"
+          :title="
+            row.active ? t('dashboard.topModels.clearFilter') : t('dashboard.topModels.filterHint')
+          "
           :data-testid="`top-model-${row.model}`"
           @click="applyModelFilter(row.active ? null : row.model)"
         >
           <div class="flex min-w-0 items-center gap-2">
             <span
               class="w-4 shrink-0 text-center text-xs font-semibold tabular-nums"
-              :class="index === 0 ? 'text-primary-600 dark:text-primary-500' : 'text-gray-400 dark:text-dark-500'"
-            >{{ index + 1 }}</span>
+              :class="
+                index === 0
+                  ? 'text-primary-600 dark:text-primary-500'
+                  : 'text-gray-400 dark:text-dark-500'
+              "
+              >{{ index + 1 }}</span
+            >
             <ModelIcon :model="row.model" size="16px" class="shrink-0" />
             <span
               class="min-w-0 flex-1 truncate text-sm"
-              :class="row.active ? 'font-medium text-primary-700 dark:text-primary-400' : 'text-gray-800 dark:text-dark-100'"
-            >{{ row.model }}</span>
-            <span class="shrink-0 text-sm font-medium tabular-nums text-gray-900 dark:text-dark-50">{{ row.value }}</span>
+              :class="
+                row.active
+                  ? 'font-medium text-primary-700 dark:text-primary-400'
+                  : 'text-gray-800 dark:text-dark-100'
+              "
+              >{{ row.model }}</span
+            >
+            <span
+              class="shrink-0 text-sm font-medium tabular-nums text-gray-900 dark:text-dark-50"
+              >{{ row.value }}</span
+            >
           </div>
           <div class="mt-2 flex items-center gap-2 pl-6">
             <div class="h-1 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-800">
               <div
                 class="top-model-bar h-full rounded-full"
-                :style="{ '--bar-w': `${row.share}%`, '--bar-delay': `${index * TOP_MODEL_BAR_STEP_MS}ms`, opacity: barOpacity(index) }"
+                :style="{
+                  '--bar-w': `${row.share}%`,
+                  '--bar-delay': `${index * TOP_MODEL_BAR_STEP_MS}ms`,
+                  opacity: barOpacity(index),
+                }"
               ></div>
             </div>
-            <span class="w-12 shrink-0 text-right text-xs tabular-nums text-gray-500 dark:text-dark-400">{{ row.shareText }}</span>
+            <span
+              class="w-12 shrink-0 text-right text-xs tabular-nums text-gray-500 dark:text-dark-400"
+              >{{ row.shareText }}</span
+            >
           </div>
         </button>
       </li>
-      <!-- 排行之外的模型合并成一行，只展示占比 -->
+      <!-- Summarize the remaining models with their combined amount and usage share. -->
       <li
         v-if="others"
         class="mt-auto flex items-center justify-between gap-2 px-2 pt-2 text-xs text-gray-500 dark:text-dark-400"
@@ -95,7 +123,7 @@ import Skeleton from '@/components/common/Skeleton.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { formatNumberLocaleString as formatNumber, formatTokensK } from '@/utils/format'
-import type { ModelStat } from '@/types'
+import type { ModelStat } from '@/api/usage.types'
 import { cacheHitRateOf } from './usageChartData'
 import { TOP_MODEL_BAR_STEP_MS } from './dashboardMotion'
 import { injectUsageChartState } from './usageChartState'
@@ -106,67 +134,93 @@ import { rankModels } from './topModels'
 // selecting a row updates that filter, while refreshed data restarts the share
 // bar animation.
 
-// 排行展示的模型数量。
+// TOP_COUNT bounds both the visible ranking and its initial placeholder rows so their
+// occupied space corresponds.
 const TOP_COUNT = 5
 
+// Injected usage state supplies model totals, the selected metric, and model-filter actions
+// shared with the trend chart.
 const { t } = useI18n()
 const { formatBalanceAmount } = useBalanceDisplay()
 const { metric, models, modelsLoaded, filterState, applyModelFilter } = injectUsageChartState()
 
-// 每次取到新数据时递增，用作行的 key，让占比条重新伸展。
+// version changes when models or metric changes, remounting ranking rows so their share bars
+// replay the entrance animation.
 const version = ref(0)
 watch([models, metric], () => {
   version.value += 1
 })
 
-const subtitle = computed(() => t('dashboard.topModels.subtitle', {
-  metric: t(`dashboard.usageChart.metrics.${metric.value}`),
-}))
+// subtitle identifies the ranking metric using the same selected metric as the dashboard
+// trend and cards.
+const subtitle = computed(() =>
+  t('dashboard.topModels.subtitle', {
+    metric: t(`dashboard.usageChart.metrics.${metric.value}`),
+  }),
+)
 
-// formatModelValue 按当前指标格式化一个模型的数值；命中率指标显示该模型自己的命中率。
+// formatModelValue formats a model according to the selected dashboard metric. Cache-hit
+// mode displays that model's own rate even though ranking and bar shares use additive token
+// volume.
 const formatModelValue = (model: ModelStat): string => {
   if (metric.value === 'requests') return formatNumber(model.requests)
-  if (metric.value === 'cost') return formatBalanceAmount(model.actual_cost, { fractionDigits: model.actual_cost >= 1 ? 2 : 4 })
+  if (metric.value === 'cost')
+    return formatBalanceAmount(model.actual_cost, {
+      fractionDigits: model.actual_cost >= 1 ? 2 : 4,
+    })
   if (metric.value === 'cacheHitRate') {
-    const rate = cacheHitRateOf(model.input_tokens, model.cache_creation_tokens, model.cache_read_tokens)
+    const rate = cacheHitRateOf(
+      model.input_tokens,
+      model.cache_creation_tokens,
+      model.cache_read_tokens,
+    )
     return rate === null ? '—' : t('dashboard.topModels.hitRate', { rate: `${rate.toFixed(1)}%` })
   }
   return formatTokensK(model.total_tokens)
 }
 
-const formatShare = (share: number): string => `${share < 10 ? share.toFixed(1) : Math.round(share)}%`
+// formatShare shows tenths for shares below ten percent and whole percentages otherwise.
+const formatShare = (share: number): string =>
+  `${share < 10 ? share.toFixed(1) : Math.round(share)}%`
 
+// ranking, rows, and others adapt the shared model totals into visible leaders and a
+// remainder summary for the card.
 const ranking = computed(() => rankModels(models.value, metric.value, TOP_COUNT))
 
-const rows = computed(() => ranking.value.top.map(({ model, share }) => ({
-  model: model.model,
-  value: formatModelValue(model),
-  share,
-  shareText: formatShare(share),
-  active: filterState.filters.value.model === model.model,
-})))
+const rows = computed(() =>
+  ranking.value.top.map(({ model, share }) => ({
+    model: model.model,
+    value: formatModelValue(model),
+    share,
+    shareText: formatShare(share),
+    active: filterState.filters.value.model === model.model,
+  })),
+)
 
 const others = computed(() => {
   const rest = ranking.value.others
   if (!rest) return null
-  const value = metric.value === 'requests'
-    ? formatNumber(rest.amount)
-    : metric.value === 'cost'
-      ? formatBalanceAmount(rest.amount, { fractionDigits: rest.amount >= 1 ? 2 : 4 })
-      : formatTokensK(rest.amount)
+  const value =
+    metric.value === 'requests'
+      ? formatNumber(rest.amount)
+      : metric.value === 'cost'
+        ? formatBalanceAmount(rest.amount, { fractionDigits: rest.amount >= 1 ? 2 : 4 })
+        : formatTokensK(rest.amount)
   return { count: rest.count, value, shareText: formatShare(rest.share) }
 })
 
-// 名次越靠后，占比条越淡。
+// barOpacity reduces share-bar opacity by ranking position for the displayed leading models.
 const barOpacity = (index: number): number => 1 - index * 0.15
 </script>
 
 <style scoped>
-/* 占比条从 0 伸展到目标宽度，前一行先动；行 key 变化时重新播放。 */
+/* Each row grows toward its usage share after its stagger delay. Changing the
+   row key recreates the element so refreshed rankings replay the animation. */
 .top-model-bar {
   width: var(--bar-w);
   background-color: theme('colors.primary.600');
-  animation: top-model-bar var(--dash-top-model-bar-ms, 600ms) var(--motion-ease) var(--bar-delay) both;
+  animation: top-model-bar var(--dash-top-model-bar-ms, 600ms) var(--motion-ease) var(--bar-delay)
+    both;
 }
 
 .dark .top-model-bar {

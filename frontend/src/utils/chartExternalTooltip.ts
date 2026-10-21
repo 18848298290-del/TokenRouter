@@ -2,6 +2,25 @@ import type { Chart, ChartType, FontSpec, TooltipModel } from 'chart.js'
 import { toFont, toPadding } from 'chart.js/helpers'
 import { Z_INDEX } from '@/constants/overlay'
 
+/**
+ * chartExternalTooltip.ts renders Chart.js tooltip content in a shared DOM
+ * overlay outside the canvas. The overlay follows the active chart, moves
+ * between page and modal hosts, and uses chart tooltip styling while
+ * preserving text as text nodes.
+ *
+ * One active context owns scroll and interaction handling across charts.
+ * Hidden updates from a previous canvas cannot dismiss a newer chart tooltip.
+ * Scroll translation tracks canvas movement without vertically pinning the
+ * overlay, and offscreen or detached charts dismiss it. Rendering temporarily
+ * measures natural content, restores the preceding geometry, and commits a
+ * layout before animating to the new size and position.
+ */
+
+/**
+ * Tooltip identity and scalar defaults govern the shared overlay; movement
+ * uses a four-hundred-millisecond transition while opacity uses a separate
+ * two-hundred-millisecond fade.
+ */
 const TOOLTIP_ID = 'token-router-chart-tooltip'
 const VIEWPORT_PADDING = 8
 const DEFAULT_BACKGROUND = 'rgba(0, 0, 0, 0.8)'
@@ -17,40 +36,90 @@ const TOOLTIP_TRANSITION = [
   `opacity ${FADE_DURATION}ms linear`,
 ].join(', ')
 
+/**
+ * ExternalTooltipContext pairs a Chart.js instance with its current tooltip
+ * model.
+ */
 type ExternalTooltipContext = {
-  chart: Chart
-  tooltip: TooltipModel<ChartType>
+  chart: Chart // owning Chart.js instance
+  tooltip: TooltipModel<ChartType> // current tooltip model
 }
 
-// 记录图表锚点与浮层的相对位置，滚动时立即按该位置平移浮层。
-let activeTooltip: (ExternalTooltipContext & { canvasLeft: number; canvasTop: number }) | null = null
+/**
+ * activeTooltip owns the displayed chart and the last canvas offsets used to
+ * translate its overlay during scrolling.
+ */
+let activeTooltip:
+  | (ExternalTooltipContext & {
+      canvasLeft: number // previous canvas left
+      canvasTop: number // previous canvas top
+    })
+  | null = null
 
+/**
+ * onOutsideInteraction dismisses the active tooltip for events outside its
+ * canvas. Events whose target is exactly the active canvas leave it visible,
+ * allowing Chart.js to handle the chart interaction.
+ */
 function onOutsideInteraction(event: Event): void {
   const active = activeTooltip
   if (!active || event.target === active.chart.canvas) return
   dismissExternalTooltip()
 }
 
+/**
+ * dismissExternalTooltip hides the overlay and clears active points on the
+ * owning chart. Clearing Chart.js state before its nonanimated update prevents
+ * an existing active point from immediately recreating the dismissed tooltip.
+ */
 function dismissExternalTooltip(): void {
   const chart = activeTooltip?.chart
   hideExternalTooltip()
-  // 同时清除 Chart.js 活跃点，后续重绘时提示保持关闭。
+
+  /**
+   * Clear both chart and tooltip activation before requesting a redraw so
+   * Chart.js does not immediately recreate the overlay from its previous active
+   * point.
+   */
   chart?.setActiveElements?.([])
   chart?.tooltip?.setActiveElements([], { x: 0, y: 0 })
   chart?.update?.('none')
 }
 
+/**
+ * onChartScroll updates the active overlay from its canvas displacement since
+ * the previous observation. It dismisses the tooltip when the element is
+ * missing, the canvas is detached, or the canvas lies entirely outside the
+ * viewport.
+ *
+ * For a surviving canvas, the handler adds the measured horizontal and
+ * vertical deltas to the current overlay coordinates and then stores the new
+ * canvas offsets. Positional transitions are disabled during that translation,
+ * so scrolling does not lag behind the chart or pin a departing tooltip to the
+ * viewport edge.
+ */
 function onChartScroll(): void {
   const active = activeTooltip
   if (!active) return
   const element = document.getElementById(TOOLTIP_ID)
   const rect = active.chart.canvas.getBoundingClientRect()
-  if (!element || !active.chart.canvas.isConnected || rect.bottom <= 0 || rect.top >= window.innerHeight ||
-      rect.right <= 0 || rect.left >= window.innerWidth) {
+  if (
+    !element ||
+    !active.chart.canvas.isConnected ||
+    rect.bottom <= 0 ||
+    rect.top >= window.innerHeight ||
+    rect.right <= 0 ||
+    rect.left >= window.innerWidth
+  ) {
     dismissExternalTooltip()
     return
   }
-  // 不进行视口垂直钳制；图表滑出屏幕时提示也必须随之离开。
+
+  /**
+   * Track canvas displacement directly during scrolling rather than
+   * interpolating position, allowing the tooltip to move out of view with its
+   * chart.
+   */
   element.style.transition = `opacity ${FADE_DURATION}ms linear`
   element.style.left = `${Number.parseFloat(element.style.left) + rect.left - active.canvasLeft}px`
   element.style.top = `${Number.parseFloat(element.style.top) + rect.top - active.canvasTop}px`
@@ -58,12 +127,23 @@ function onChartScroll(): void {
   active.canvasTop = rect.top
 }
 
+/**
+ * onChartResize updates the active canvas position and rerenders a surviving
+ * tooltip. The scroll check can dismiss an offscreen chart first, in which
+ * case no further tooltip render is attempted.
+ */
 function onChartResize(): void {
   if (!activeTooltip) return
   onChartScroll()
   if (activeTooltip) externalTooltipHandler(activeTooltip)
 }
 
+/**
+ * bindTooltipEvents installs shared scroll, resize, and outside-interaction
+ * listeners while an overlay is active. Capture-phase listeners observe nested
+ * scrolling and interactions; hideExternalTooltip removes these same handler
+ * registrations during cleanup.
+ */
 function bindTooltipEvents(): void {
   window.addEventListener('scroll', onChartScroll, true)
   window.addEventListener('resize', onChartResize)
@@ -73,6 +153,12 @@ function bindTooltipEvents(): void {
   document.addEventListener('touchmove', onOutsideInteraction, { capture: true, passive: true })
 }
 
+/**
+ * unbindTooltipEvents removes the shared handlers used by an active tooltip.
+ * It uses the matching capture settings, allowing hideExternalTooltip to stop
+ * tracking movement and interactions without deleting the reusable DOM
+ * element.
+ */
 function unbindTooltipEvents(): void {
   window.removeEventListener('scroll', onChartScroll, true)
   window.removeEventListener('resize', onChartResize)
@@ -82,12 +168,21 @@ function unbindTooltipEvents(): void {
   document.removeEventListener('touchmove', onOutsideInteraction, true)
 }
 
+/**
+ * TooltipParts contains the shared overlay elements used for clipping,
+ * content, and the caret.
+ */
 type TooltipParts = {
-  viewport: HTMLDivElement
-  panel: HTMLDivElement
-  caret: HTMLDivElement
+  viewport: HTMLDivElement // content clipping container
+  panel: HTMLDivElement // styled content container
+  caret: HTMLDivElement // anchor triangle element
 }
 
+/**
+ * getTooltipParts returns or creates the overlay viewport, content panel, and
+ * caret elements. Existing panels are reparented into the viewport so later
+ * measurement and clipping operate on the expected nested structure.
+ */
 const getTooltipParts = (element: HTMLDivElement): TooltipParts => {
   let viewport = element.querySelector<HTMLDivElement>('[data-chart-tooltip-viewport]')
   if (!viewport) {
@@ -126,8 +221,22 @@ const getTooltipParts = (element: HTMLDivElement): TooltipParts => {
   return { viewport, panel, caret }
 }
 
+/**
+ * getTooltipElement returns the shared DOM overlay beneath the host
+ * appropriate to the current canvas. A chart inside a modal uses that modal
+ * overlay, while an ordinary page chart uses document.body.
+ *
+ * When the element already exists, it is moved to the selected host instead of
+ * replaced, preserving its identity and prior geometry for the next
+ * transition. Child parts are repaired before reuse. New elements start hidden
+ * with tooltip accessibility attributes and fixed positioning; the render
+ * handler later supplies measured geometry and visibility.
+ */
 const getTooltipElement = (canvas: HTMLCanvasElement): HTMLDivElement => {
-  // 普通图表浮层低于侧栏（40）和顶栏（50），弹窗图表浮层位于所属遮罩层上方。
+  /**
+   * Attach the shared overlay to the current modal when present so its stacking
+   * follows that modal instead of remaining in the page host.
+   */
   const host = canvas.closest<HTMLElement>('.modal-overlay') ?? document.body
   const existing = document.getElementById(TOOLTIP_ID)
   if (existing instanceof HTMLDivElement) {
@@ -156,14 +265,25 @@ const getTooltipElement = (canvas: HTMLCanvasElement): HTMLDivElement => {
   return element
 }
 
-const toCssColor = (value: unknown, fallback: string): string => (
+/**
+ * toCssColor accepts a string color or uses the supplied fallback. Nonstring
+ * Chart.js color representations are unsupported by these DOM styles and
+ * therefore do not pass through to CSS.
+ */
+const toCssColor = (value: unknown, fallback: string): string =>
   typeof value === 'string' ? value : fallback
-)
 
-const toNumber = (value: unknown, fallback: number): number => (
+/**
+ * toNumber accepts finite numeric tooltip options and otherwise returns the
+ * fallback. This excludes NaN and infinite values before they are used in DOM
+ * geometry or style calculations.
+ */
+const toNumber = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback
-)
 
+/**
+ * appendTextLine appends a div containing the supplied literal display text.
+ */
 const appendTextLine = (parent: HTMLElement, text: string): HTMLDivElement => {
   const line = document.createElement('div')
   line.textContent = text
@@ -171,11 +291,20 @@ const appendTextLine = (parent: HTMLElement, text: string): HTMLDivElement => {
   return line
 }
 
-const renderTooltipContent = (panel: HTMLDivElement, tooltip: TooltipModel<ChartType>): {
-  backgroundColor: string
-  caretPadding: number
-  caretSize: number
-  cornerRadius: number
+/**
+ * renderTooltipContent rebuilds the panel from Chart.js title, body, and
+ * footer data. Text enters through textContent, unsupported option forms use
+ * scalar defaults, and the returned style values drive caret geometry outside
+ * the panel.
+ */
+const renderTooltipContent = (
+  panel: HTMLDivElement,
+  tooltip: TooltipModel<ChartType>,
+): {
+  backgroundColor: string // panel background color
+  caretPadding: number // caret gap pixels
+  caretSize: number // caret triangle pixels
+  cornerRadius: number // panel corner pixels
 } => {
   const options = (tooltip.options || {}) as unknown as Record<string, unknown>
   const titleFont = toFont((options.titleFont || { weight: 'bold' }) as Partial<FontSpec>)
@@ -211,9 +340,10 @@ const renderTooltipContent = (panel: HTMLDivElement, tooltip: TooltipModel<Chart
     title.style.color = titleColor
     title.style.font = titleFont.string
     title.style.lineHeight = `${titleFont.lineHeight}px`
-    title.style.textAlign = options.titleAlign === 'center' || options.titleAlign === 'right'
-      ? options.titleAlign
-      : 'left'
+    title.style.textAlign =
+      options.titleAlign === 'center' || options.titleAlign === 'right'
+        ? options.titleAlign
+        : 'left'
     title.style.marginBottom = `${titleMarginBottom}px`
 
     tooltip.title.forEach((text, index) => {
@@ -276,9 +406,10 @@ const renderTooltipContent = (panel: HTMLDivElement, tooltip: TooltipModel<Chart
     footer.style.color = toCssColor(options.footerColor, DEFAULT_TEXT_COLOR)
     footer.style.font = footerFont.string
     footer.style.lineHeight = `${footerFont.lineHeight}px`
-    footer.style.textAlign = options.footerAlign === 'center' || options.footerAlign === 'right'
-      ? options.footerAlign
-      : 'left'
+    footer.style.textAlign =
+      options.footerAlign === 'center' || options.footerAlign === 'right'
+        ? options.footerAlign
+        : 'left'
 
     tooltip.footer.forEach((text, index) => {
       const line = appendTextLine(footer, text)
@@ -295,6 +426,11 @@ const renderTooltipContent = (panel: HTMLDivElement, tooltip: TooltipModel<Chart
   }
 }
 
+/**
+ * hideExternalTooltip releases active ownership, removes listeners, and fades
+ * the shared overlay out. The element remains reusable in its host, while
+ * aria-hidden marks it unavailable to accessibility consumers.
+ */
 export const hideExternalTooltip = (): void => {
   activeTooltip = null
   unbindTooltipEvents()
@@ -304,7 +440,18 @@ export const hideExternalTooltip = (): void => {
   element.setAttribute('aria-hidden', 'true')
 }
 
-// 外层在页面或所属弹窗中负责防裁切和动画，内层沿用 Chart.js 原生 tooltip 的视觉参数。
+/**
+ * externalTooltipHandler renders the active chart tooltip into the shared
+ * overlay and updates its owner. Hidden callbacks from another canvas are
+ * ignored so an older chart cannot dismiss the current overlay.
+ *
+ * Content is measured at natural size before the previous geometry is
+ * restored. A forced layout commits that starting frame, then dimensions and
+ * coordinates transition to the measured target. Canvas scaling places the
+ * anchor in viewport coordinates, while horizontal clamping and card-header
+ * avoidance choose its position. Callers hide the tooltip when their chart
+ * lifecycle ends.
+ */
 export const externalTooltipHandler = ({ chart, tooltip }: ExternalTooltipContext): void => {
   if (tooltip.opacity === 0 || tooltip.getActiveElements?.().length === 0) {
     if (activeTooltip && activeTooltip.chart.canvas !== chart.canvas) return
@@ -321,7 +468,11 @@ export const externalTooltipHandler = ({ chart, tooltip }: ExternalTooltipContex
   const hadLayout = !element.classList.contains('hidden') && previousRect.width > 0
   const style = renderTooltipContent(panel, tooltip)
 
-  // 临时恢复自然尺寸完成测量，随后从上一次渲染状态过渡到新状态。
+  /**
+   * Temporarily remove animation and fixed dimensions to measure the new
+   * content, then restore the preceding rectangle as the transition starting
+   * state.
+   */
   element.style.transition = 'none'
   element.classList.remove('hidden')
   element.style.width = 'max-content'
@@ -339,12 +490,19 @@ export const externalTooltipHandler = ({ chart, tooltip }: ExternalTooltipContex
   const height = naturalRect.height
 
   const canvasRect = chart.canvas.getBoundingClientRect()
-  const anchorX = canvasRect.left + (tooltip.caretX ?? chart.width / 2) * (canvasRect.width / chart.width || 1)
-  const anchorY = canvasRect.top + (tooltip.caretY ?? chart.height / 2) * (canvasRect.height / chart.height || 1)
+  /**
+   * Convert canvas-space caret coordinates using the measured canvas scale so
+   * CSS sizing does not detach the tooltip anchor from its plotted point.
+   */
+  const anchorX =
+    canvasRect.left + (tooltip.caretX ?? chart.width / 2) * (canvasRect.width / chart.width || 1)
+  const anchorY =
+    canvasRect.top + (tooltip.caretY ?? chart.height / 2) * (canvasRect.height / chart.height || 1)
   const maxLeft = Math.max(VIEWPORT_PADDING, window.innerWidth - width - VIEWPORT_PADDING)
   const left = Math.min(Math.max(anchorX - width / 2, VIEWPORT_PADDING), maxLeft)
   const card = chart.canvas.closest<HTMLElement>('.card')
-  const cardHeaderBottom = card?.firstElementChild?.getBoundingClientRect().bottom ?? VIEWPORT_PADDING
+  const cardHeaderBottom =
+    card?.firstElementChild?.getBoundingClientRect().bottom ?? VIEWPORT_PADDING
   const offset = style.caretSize + style.caretPadding
   let top = anchorY - height - offset
   let caretDirection: 'up' | 'down' = 'down'
@@ -393,7 +551,11 @@ export const externalTooltipHandler = ({ chart, tooltip }: ExternalTooltipContex
     element.style.opacity = '0'
   }
 
-  // 强制提交起始帧，确保位置和宽高都按 Chart.js 的默认时长进行过渡。
+  /**
+   * Commit the restored starting geometry before enabling transitions so the
+   * browser animates both location and size rather than collapsing both writes
+   * into one frame.
+   */
   void element.offsetWidth
   element.style.transition = TOOLTIP_TRANSITION
   element.style.left = `${Math.round(left)}px`
@@ -404,6 +566,11 @@ export const externalTooltipHandler = ({ chart, tooltip }: ExternalTooltipContex
   panel.style.height = `${Math.ceil(height)}px`
   element.style.opacity = '1'
   element.setAttribute('aria-hidden', 'false')
+  /**
+   * Publish the newly rendered owner and canvas offsets before binding shared
+   * handlers, so subsequent scrolling and outside interactions operate on this
+   * chart.
+   */
   activeTooltip = { chart, tooltip, canvasLeft: canvasRect.left, canvasTop: canvasRect.top }
   bindTooltipEvents()
 }

@@ -6,46 +6,63 @@
     @close="emit('cancel')"
   >
     <form id="refund-form" @submit.prevent="handleSubmit" class="space-y-4">
-      <!-- Refund Request Info -->
       <div
         v-if="order?.refund_requested_at || order?.refund_request_reason"
         class="rounded-control border border-violet-200 bg-violet-50 p-3 dark:border-violet-800 dark:bg-violet-900/20"
       >
-        <div class="flex items-center gap-2 text-sm font-medium text-violet-700 dark:text-violet-300">
+        <div
+          class="flex items-center gap-2 text-sm font-medium text-violet-700 dark:text-violet-300"
+        >
           <Icon name="infoCircle" size="sm" class="h-4 w-4" />
           {{ t('payment.admin.refundRequestInfo') }}
         </div>
         <div v-if="order?.refund_requested_at" class="mt-2 flex justify-between text-sm">
-          <span class="text-violet-600 dark:text-violet-400">{{ t('payment.admin.refundRequestedAt') }}</span>
-          <span class="text-violet-800 dark:text-violet-200">{{ formatDateTime(order.refund_requested_at) }}</span>
+          <span class="text-violet-600 dark:text-violet-400">{{
+            t('payment.admin.refundRequestedAt')
+          }}</span>
+          <span class="text-violet-800 dark:text-violet-200">{{
+            formatDateTime(order.refund_requested_at)
+          }}</span>
         </div>
         <div v-if="order?.refund_request_reason" class="mt-1 text-sm">
-          <span class="text-violet-600 dark:text-violet-400">{{ t('payment.admin.refundRequestReason') }}:</span>
-          <span class="ml-1 text-violet-800 dark:text-violet-200">{{ order.refund_request_reason }}</span>
+          <span class="text-violet-600 dark:text-violet-400"
+            >{{ t('payment.admin.refundRequestReason') }}:</span
+          >
+          <span class="ml-1 text-violet-800 dark:text-violet-200">{{
+            order.refund_request_reason
+          }}</span>
         </div>
       </div>
 
-      <!-- Order Info -->
       <div class="rounded-control bg-gray-50 p-3 dark:bg-dark-700">
         <div class="flex justify-between text-sm">
           <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.orderId') }}</span>
           <span class="font-mono text-gray-900 dark:text-white">#{{ order?.id }}</span>
         </div>
         <div class="mt-1 flex justify-between text-sm">
-          <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.creditedAmount') }}</span>
-          <span class="font-medium text-gray-900 dark:text-white">{{ order ? formatOrderAmount(order.amount, order) : '-' }}</span>
+          <span class="text-gray-500 dark:text-gray-400">{{
+            t('payment.orders.creditedAmount')
+          }}</span>
+          <span class="font-medium text-gray-900 dark:text-white">{{
+            order ? formatOrderAmount(order.amount, order) : '-'
+          }}</span>
         </div>
         <div class="mt-1 flex justify-between text-sm">
           <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
-          <span class="font-medium text-gray-900 dark:text-white">{{ order ? formatGatewayAmount(order.pay_amount, order.currency) : '-' }}</span>
+          <span class="font-medium text-gray-900 dark:text-white">{{
+            order ? formatGatewayAmount(order.pay_amount, order.currency) : '-'
+          }}</span>
         </div>
         <div v-if="actuallyRefunded > 0" class="mt-1 flex justify-between text-sm">
-          <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.alreadyRefunded') }}</span>
-          <span class="font-medium text-red-600 dark:text-red-400">{{ order ? formatOrderAmount(actuallyRefunded, order) : '-' }}</span>
+          <span class="text-gray-500 dark:text-gray-400">{{
+            t('payment.admin.alreadyRefunded')
+          }}</span>
+          <span class="font-medium text-red-600 dark:text-red-400">{{
+            order ? formatOrderAmount(actuallyRefunded, order) : '-'
+          }}</span>
         </div>
       </div>
 
-      <!-- Deduct Balance -->
       <div>
         <div class="flex items-center gap-2">
           <input
@@ -57,22 +74,26 @@
           <label for="deduct-balance" class="text-sm text-gray-700 dark:text-gray-300">
             {{ t('payment.admin.deductBalance') }}
           </label>
-          <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.deductBalanceHint') }}</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">{{
+            t('payment.admin.deductBalanceHint')
+          }}</span>
         </div>
 
-        <!-- User Balance Info (when deduct_balance is checked) -->
         <div v-if="form.deduct_balance && userBalance != null" class="mt-3 grid grid-cols-2 gap-3">
           <div class="rounded-control bg-gray-50 p-3 text-sm dark:bg-dark-700">
             <div class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.userBalance') }}</div>
-            <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ formatBalanceAmount(userBalance, { fractionDigits: 2 }) }}</div>
+            <div class="mt-1 font-semibold text-gray-900 dark:text-white">
+              {{ formatBalanceAmount(userBalance, { fractionDigits: 2 }) }}
+            </div>
           </div>
           <div class="rounded-control bg-gray-50 p-3 text-sm dark:bg-dark-700">
             <div class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.orderAmount') }}</div>
-            <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ order ? formatOrderAmount(order.amount, order) : '-' }}</div>
+            <div class="mt-1 font-semibold text-gray-900 dark:text-white">
+              {{ order ? formatOrderAmount(order.amount, order) : '-' }}
+            </div>
           </div>
         </div>
 
-        <!-- Insufficient balance warning -->
         <div
           v-if="form.deduct_balance && balanceInsufficient"
           class="mt-2 rounded-control bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
@@ -80,7 +101,6 @@
           {{ t('payment.admin.insufficientBalance') }}
         </div>
 
-        <!-- No deduction info -->
         <div
           v-if="!form.deduct_balance"
           class="mt-2 rounded-control bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-900/20 dark:text-blue-300"
@@ -89,7 +109,6 @@
         </div>
       </div>
 
-      <!-- Refund Amount -->
       <div>
         <label class="input-label">{{ t('payment.admin.refundAmount') }}</label>
         <div class="relative">
@@ -105,11 +124,11 @@
           />
         </div>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          {{ t('payment.admin.maxRefundable') }}: {{ order ? formatOrderAmount(maxRefundable, order) : '-' }}
+          {{ t('payment.admin.maxRefundable') }}:
+          {{ order ? formatOrderAmount(maxRefundable, order) : '-' }}
         </p>
       </div>
 
-      <!-- Reason -->
       <div>
         <label class="input-label">{{ t('payment.admin.refundReason') }}</label>
         <textarea
@@ -121,7 +140,6 @@
         ></textarea>
       </div>
 
-      <!-- Warning -->
       <div
         v-if="warning"
         class="rounded-control bg-yellow-50 p-3 text-sm text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300"
@@ -129,7 +147,6 @@
         {{ warning }}
       </div>
 
-      <!-- Force Refund -->
       <div v-if="requireForce" class="flex items-center gap-2">
         <input
           id="force-refund"
@@ -167,36 +184,76 @@ import { reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-import type { PaymentOrder } from '@/types/payment'
-import { formatOrderDateTime } from '@/components/payment/orderUtils'
-import { formatPaymentAmount } from '@/components/payment/currency'
+import type { PaymentOrder } from '@/api/payment.types'
+import { formatOrderDateTime } from '@/utils/payment/orderUtils'
+import { formatPaymentAmount } from '@/utils/payment/currency'
 
+// AdminRefundDialog.vue collects a refund amount and the administrator's balance deduction
+// and force choices. The requested amount uses the order's entitlement units for balance
+// purchases and the order currency for subscriptions. The refundable remainder subtracts
+// refund_amount only after the order reaches a completed refund state, because pending and
+// requested refunds reuse that field for proposed amounts.
+//
+// Opening the dialog initializes the draft from the selected order and clears force
+// consent. A server response requiring force leaves submission disabled until the
+// administrator selects the confirmation checkbox. The component emits a copied draft,
+// while its parent owns the API request and the decision to close or retain the dialog.
+
+// t resolves the locale labels used by payment controls, validation messages, and
+// displayed order information.
 const { t } = useI18n()
+// balanceUnitSymbol and formatBalanceAmount use the configured balance display for refund
+// units and balance purchase amounts.
 const { balanceUnitSymbol, formatBalanceAmount } = useBalanceDisplay()
 
+// props supplies parent-owned records and presentation state consumed by this component
+// and its event handlers.
 const props = defineProps<{
-  show: boolean
-  order: PaymentOrder | null
-  submitting?: boolean
-  userBalance?: number | null
-  requireForce?: boolean
-  warning?: string
+  show: boolean /* parent-controlled dialog visibility */
+  // order supplies the amount, status, and currency for the draft; null leaves derived
+  // amounts at zero until a record is selected.
+  order: PaymentOrder | null /* selected payment order record */
+  submitting?: boolean /* parent refund submission flag */
+  // userBalance enables the balance warning when known; omitted or null balances skip that
+  // advisory comparison in the refund dialog.
+  userBalance?: number | null /* known user balance amount */
+  // requireForce reflects the server response and blocks confirmation until the
+  // administrator selects force consent in the current draft.
+  requireForce?: boolean /* server force confirmation requirement */
+  warning?: string /* server refund guidance text */
 }>()
 
+// emit defines requests and completion signals that the parent uses to coordinate this
+// component with persistence.
 const emit = defineEmits<{
-  (e: 'confirm', data: { amount: number; reason: string; deduct_balance: boolean; force: boolean }): void
+  // confirm sends the copied refund draft after amount and force-consent validation. The
+  // parent performs persistence and decides whether the current dialog remains open for
+  // further confirmation.
+  (
+    e: 'confirm',
+    data: {
+      amount: number // requested refund amount
+      reason: string // administrator operation reason
+      deduct_balance: boolean // entitlement deduction request flag
+      force: boolean // administrator force confirmation flag
+    },
+  ): void
+  // cancel asks the parent to dismiss the refund editor and reset its response warning
+  // state.
   (e: 'cancel'): void
 }>()
 
+// form owns the editable dialog values emitted on confirmation; opening or loading an
+// entity initializes these values.
 const form = reactive({
-  amount: 0,
-  reason: '',
-  deduct_balance: true,
-  force: false,
+  amount: 0, // refund amount in order units
+  reason: '', // administrator refund explanation
+  deduct_balance: true, // deduct credited entitlement choice
+  force: false, // current force confirmation choice
 })
 
-// REFUND_REQUESTED/REFUND_PENDING 中的 refund_amount 是申请或待确认金额，不是已退款金额。
-// 只有 PARTIALLY_REFUNDED/REFUNDED 的 refund_amount 才是实际已退款金额。
+// actuallyRefunded counts refund_amount only in completed refund states; requested and
+// pending amounts remain proposals and do not reduce the available refund.
 const actuallyRefunded = computed(() => {
   if (!props.order) return 0
   const s = props.order.status
@@ -204,48 +261,76 @@ const actuallyRefunded = computed(() => {
   return 0
 })
 
+// maxRefundable subtracts completed refunds from the order amount and supplies the amount
+// input limit and submission check.
 const maxRefundable = computed(() => {
   if (!props.order) return 0
   return props.order.amount - actuallyRefunded.value
 })
 
+// balanceInsufficient compares known user balance with the whole order amount; absent
+// balance data leaves this advisory warning hidden.
 const balanceInsufficient = computed(() => {
   if (props.userBalance == null || !props.order) return false
   return props.userBalance < props.order.amount
 })
 
+// refundInputSymbol uses balance units for balance orders and extracts a gateway currency
+// symbol for subscription refund inputs.
 const refundInputSymbol = computed(() => {
   if (!props.order) return balanceUnitSymbol
   if (props.order.order_type === 'balance') return balanceUnitSymbol
-  return formatGatewayAmount(0, props.order.currency).replace(/[\d\s.,\u00a0]/g, '') || props.order.currency || '¥'
+  return (
+    // Currency formatting supplies a localized symbol when possible; retaining the
+    // currency code or yen default keeps the refund input visibly labeled.
+    formatGatewayAmount(0, props.order.currency).replace(/[\d\s.,\u00a0]/g, '') ||
+    props.order.currency ||
+    '¥'
+  )
 })
 
-watch(() => props.show, (val) => {
-  if (val && props.order) {
-    // REFUND_REQUESTED 优先回填用户申请的退款金额。
-    if (props.order.status === 'REFUND_REQUESTED' && props.order.refund_amount) {
-      form.amount = props.order.refund_amount
-    } else {
-      form.amount = maxRefundable.value
+// Opening the dialog resets the draft and force consent for this order; requested refunds
+// preferentially hydrate the user-requested amount before editing.
+watch(
+  () => props.show,
+  (val) => {
+    if (val && props.order) {
+      if (props.order.status === 'REFUND_REQUESTED' && props.order.refund_amount) {
+        form.amount = props.order.refund_amount
+      } else {
+        form.amount = maxRefundable.value
+      }
+      form.reason = props.order.refund_request_reason || ''
+      form.deduct_balance = true
+      form.force = false
     }
-    form.reason = props.order.refund_request_reason || ''
-    form.deduct_balance = true
-    form.force = false
-  }
-})
+  },
+)
 
+// formatDateTime formats an order timestamp through the shared payment date formatter.
 function formatDateTime(dateStr: string): string {
   return formatOrderDateTime(dateStr)
 }
 
+// formatOrderAmount formats an amount according to the selected order's purchase kind.
+// Balance purchases use configured balance units; subscription purchases use the order
+// currency through the gateway formatter.
 function formatOrderAmount(amount: number, order: PaymentOrder): string {
-  return order.order_type === 'balance' ? formatBalanceAmount(amount, { fractionDigits: 2 }) : formatGatewayAmount(amount, order.currency)
+  return order.order_type === 'balance'
+    ? formatBalanceAmount(amount, { fractionDigits: 2 })
+    : formatGatewayAmount(amount, order.currency)
 }
 
+// formatGatewayAmount renders an amount through the shared payment currency formatter.
+// Omitted, empty, or malformed currency labels normalize to CNY; valid labels use the
+// currency precision resolved by Intl, and nonfinite amounts display as zero.
 function formatGatewayAmount(amount: number, currency?: string | null): string {
   return formatPaymentAmount(amount, currency)
 }
 
+// handleSubmit emits a copied refund draft after checking its amount and force consent.
+// The parent handles persistence, and invalid amounts or an unconfirmed force requirement
+// emit nothing.
 function handleSubmit() {
   if (form.amount <= 0 || form.amount > maxRefundable.value) return
   if (props.requireForce && !form.force) return

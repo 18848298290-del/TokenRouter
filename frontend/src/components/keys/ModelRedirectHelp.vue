@@ -4,6 +4,12 @@ import { useI18n } from 'vue-i18n'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Icon from '@/components/icons/Icon.vue'
 
+// ModelRedirectHelp.vue illustrates how an API-key redirect replaces a requested model
+// before later routing. The tooltip uses fixed demonstration values and animation events to
+// mark arrivals, with a replay counter remounting the illustration for another run.
+
+// Translation and tooltip state identify the current demonstration; replay and arrivedNodes
+// reset its visual progress whenever the help panel reopens.
 const { t } = useI18n()
 const open = ref(false)
 const replay = ref(0)
@@ -14,28 +20,28 @@ watch([open, replay], () => {
   arrivedNodes.value = new Set()
 })
 
-// 直接使用节点到达动画的开始事件，不另设可能与 CSS 偏离的定时器。
+// animateArrival marks a demonstration node when its own arrival animation begins. Bubbling
+// child animation events are ignored so a nested effect cannot advance the request
+// illustration prematurely.
 function animateArrival(event: AnimationEvent, node: string) {
   if (event.target === event.currentTarget) arrivedNodes.value.add(node)
 }
 
-// 示例独立于表单；打开提示或重播时重新挂载，让动画从请求阶段开始。
+// stages defines independent demonstration checkpoints in animation seconds; opening or
+// replaying the tooltip remounts them so request movement starts from the first node.
 const stages = [
   { label: 'request', icon: 'monitor', arrival: 0 },
   { label: 'match', icon: 'key', arrival: 0.32 },
   { label: 'target', icon: 'server', arrival: 0.78 },
 ] as const
+// sourceModel and targetModel provide fixed illustrative identifiers independent from the
+// editable key redirect rules owned by the surrounding form.
 const sourceModel = 'codex-auto-review'
 const targetModel = 'gpt-6-luna'
 </script>
 
 <template>
-  <HelpTooltip
-    v-model:open="open"
-    trigger="click"
-    width-class="w-[32rem]"
-    :tooltip-id="tooltipId"
-  >
+  <HelpTooltip v-model:open="open" trigger="click" width-class="w-[32rem]" :tooltip-id="tooltipId">
     <template #trigger>
       <button
         type="button"
@@ -80,12 +86,18 @@ const targetModel = 'gpt-6-luna'
         class="redirect-demo relative m-0 rounded-surface border border-white/10 px-2 pb-3 pt-4 dark:border-dark-600"
         :aria-label="t('keys.modelRedirect.help.flow', { from: sourceModel, to: targetModel })"
       >
-        <!-- 节点与请求卡片均占三分之一宽度，位移百分比始终对准节点中心。 -->
+        <!-- Nodes and request cards each occupy one third of the track, keeping percentage travel aligned with their centers. -->
         <div class="relative" aria-hidden="true">
-          <div class="redirect-track absolute top-5 border-t border-dashed border-white/20 dark:border-dark-600" />
-          <!-- 线上数据包与下方卡片共用位移时间轴，进入节点时由节点背景遮住。 -->
-          <div class="redirect-packet redirect-line-packet pointer-events-none absolute left-0 top-5 w-1/3">
-            <span class="relative left-1/2 block h-2 w-3 -translate-x-1/2 -translate-y-1/2 rounded-compact bg-gray-200 ring-4 ring-white/10 dark:bg-dark-100" />
+          <div
+            class="redirect-track absolute top-5 border-t border-dashed border-white/20 dark:border-dark-600"
+          />
+          <!-- The track packet and lower card share one travel timeline; node backgrounds cover the packet as it arrives. -->
+          <div
+            class="redirect-packet redirect-line-packet pointer-events-none absolute left-0 top-5 w-1/3"
+          >
+            <span
+              class="relative left-1/2 block h-2 w-3 -translate-x-1/2 -translate-y-1/2 rounded-compact bg-gray-200 ring-4 ring-white/10 dark:bg-dark-100"
+            />
           </div>
           <ol class="relative grid grid-cols-3">
             <li
@@ -104,20 +116,36 @@ const targetModel = 'gpt-6-luna'
                   :animate-on-hover="false"
                   :animation-active="arrivedNodes.has(stage.label)"
                 />
-                <span class="redirect-node-check absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-gray-900 text-emerald-400 dark:bg-dark-900">
+                <span
+                  class="redirect-node-check absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-gray-900 text-emerald-400 dark:bg-dark-900"
+                >
                   <Icon name="check" size="xs" :animate-on-hover="false" />
                 </span>
               </span>
-              <span class="text-xs font-medium">{{ t(`keys.modelRedirect.help.${stage.label}`) }}</span>
+              <span class="text-xs font-medium">{{
+                t(`keys.modelRedirect.help.${stage.label}`)
+              }}</span>
             </li>
           </ol>
           <div class="redirect-packet mt-4 w-1/3 px-1">
-            <div class="redirect-payload relative rounded-control border border-white/20 bg-gray-900 p-2 shadow-sm dark:border-dark-600 dark:bg-dark-900">
-              <span class="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 border-l border-t border-white/20 bg-gray-900 dark:border-dark-600 dark:bg-dark-900" />
+            <div
+              class="redirect-payload relative rounded-control border border-white/20 bg-gray-900 p-2 shadow-sm dark:border-dark-600 dark:bg-dark-900"
+            >
+              <span
+                class="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 border-l border-t border-white/20 bg-gray-900 dark:border-dark-600 dark:bg-dark-900"
+              />
               <p class="text-xs text-gray-400 dark:text-dark-400">model</p>
-              <p class="redirect-original mt-1 break-words font-mono text-xs font-semibold text-primary-300">{{ sourceModel }}</p>
+              <p
+                class="redirect-original mt-1 break-words font-mono text-xs font-semibold text-primary-300"
+              >
+                {{ sourceModel }}
+              </p>
               <div class="redirect-replaced grid">
-                <p class="min-h-0 overflow-hidden break-words font-mono text-sm font-semibold text-amber-300">{{ targetModel }}</p>
+                <p
+                  class="min-h-0 overflow-hidden break-words font-mono text-sm font-semibold text-amber-300"
+                >
+                  {{ targetModel }}
+                </p>
               </div>
             </div>
           </div>
@@ -128,7 +156,7 @@ const targetModel = 'gpt-6-luna'
 </template>
 
 <style scoped>
-/* 同一时间轴控制移动和模型名替换，在密钥节点停留后再继续转发。 */
+/* One timeline moves the request and replaces its model label after the key stage before forwarding continues. */
 .redirect-demo {
   --redirect-duration: 6s;
 }
@@ -158,7 +186,7 @@ const targetModel = 'gpt-6-luna'
   animation-name: redirect-replaced;
 }
 
-/* 到达比例对应 redirect-travel 的停靠帧，完成状态保留到重播。 */
+/* Arrival offsets correspond to the travel animation stops, and reached nodes remain marked until replay resets them. */
 .redirect-node,
 .redirect-node-check {
   animation-duration: var(--motion-fast);
@@ -178,35 +206,42 @@ const targetModel = 'gpt-6-luna'
 }
 
 @keyframes redirect-travel {
-  0%, 15% {
+  0%,
+  15% {
     transform: translateX(0);
   }
-  32%, 58% {
+  32%,
+  58% {
     transform: translateX(100%);
   }
-  78%, 100% {
+  78%,
+  100% {
     transform: translateX(200%);
   }
 }
 
 @keyframes redirect-original {
-  0%, 40% {
+  0%,
+  40% {
     opacity: 1;
     text-decoration: none;
   }
-  46%, 100% {
+  46%,
+  100% {
     opacity: 0.65;
     text-decoration: line-through;
   }
 }
 
 @keyframes redirect-replaced {
-  0%, 42% {
+  0%,
+  42% {
     grid-template-rows: 0fr;
     opacity: 0;
     margin-top: 0;
   }
-  50%, 100% {
+  50%,
+  100% {
     grid-template-rows: 1fr;
     opacity: 1;
     margin-top: 4px;
@@ -227,7 +262,7 @@ const targetModel = 'gpt-6-luna'
   }
 }
 
-/* 减少动态效果时展示到达目标后的结果，仍保留改名前后的对照。 */
+/* Reduced motion shows the final target state while retaining source and destination names for comparison. */
 @media (prefers-reduced-motion: reduce) {
   .redirect-demo * {
     animation: none;

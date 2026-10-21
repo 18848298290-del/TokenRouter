@@ -1,39 +1,54 @@
-import type { AdminGroup } from '@/types'
+import type { AdminGroup } from '@/api/groups.types'
 
+// apiKeyGroupFilterOptions.ts constructs grouped options for filtering users by their
+// API keys' group identifiers. Active groups are separated into exclusive and public
+// sections, while nonactive groups remain selectable under a disabled-group section so
+// existing key bindings can still be located.
+//
+// Section headers use distinct negative sentinel identifiers because Select derives row
+// keys from value type and value. Reusing null for every header would create duplicate
+// keys; null is reserved for the leading option that clears filtering. Empty sections
+// are omitted, and group rows retain their server identifiers and input order within
+// each section.
+
+// ApiKeyGroupFilterOption represents a selectable group or disabled section heading.
 export interface ApiKeyGroupFilterOption {
-  value: number | null
-  label: string
-  kind?: 'group'
-  disabled?: boolean
+  // value is null for clearing, a distinct negative sentinel for a heading, or the
+  // server identifier for a group row.
+  value: number | null // selected option value
+  label: string // displayed option label
+  // kind marks section headers so Select can render them as group labels; ordinary
+  // selectable rows omit this presentation hint.
+  kind?: 'group' // option presentation kind
+  // disabled prevents selecting section headers; disabled-group records themselves
+  // remain selectable so administrators can locate existing key bindings.
+  disabled?: boolean // prevent option selection
 }
 
+// ApiKeyGroupFilterLabels supplies translated labels for the clearing option and group
+// sections.
 export interface ApiKeyGroupFilterLabels {
-  all: string
-  exclusive: string
-  public: string
-  disabled: string
+  all: string // clear-filter option label
+  exclusive: string // exclusive section label
+  public: string // public section label
+  disabled: string // disabled section label
 }
 
-// 分区标题使用负数 ID，分组使用后端返回的 ID。
-// Select.vue 会用 `${typeof value}:${String(value ?? '')}` 生成 :key，
-// 使用不同数字可避免多个 null 标题行产生重复的 "object:" key。
-const HEADER_EXCLUSIVE = -1
-const HEADER_PUBLIC = -2
-const HEADER_DISABLED = -3
+// Header sentinels distinguish section rows in Select keys; null remains reserved for
+// the all-groups option that clears filtering.
+const HEADER_EXCLUSIVE = -1 // exclusive section header
+const HEADER_PUBLIC = -2 // public section header
+const HEADER_DISABLED = -3 // disabled section header
 
-/**
- * 构建“API Key 分组”筛选 Select 的选项。
- *
- * 启用分组按专属 / 公开分区，每个非空分区前放一个禁用的标题行。
- * 禁用分组集中放到最后的“已禁用”分区，便于管理员筛选 Key 仍绑定在禁用分组上的用户。
- * 订阅套餐与 group_id 独立，选项按分组的专属、公开和禁用状态分区。
- * 空分区不渲染标题；最前面的“全部”选项（value 为 null）用于清除筛选。
- *
- * 分区标题行使用不同的负数哨兵值，Vue 的 v-for :key 因此能区分各标题行。
- */
+// buildApiKeyGroupFilterOptions returns an all-groups option followed by populated
+// exclusive, public, and disabled sections. Status takes precedence over exclusivity,
+// so every nonactive group belongs to the final section. Each section header is
+// disabled and receives a distinct negative value for Select's keyed rendering. Group
+// options retain their numeric server identifiers, while the leading null option clears
+// the filter and empty sections contribute no header.
 export function buildApiKeyGroupFilterOptions(
   groups: AdminGroup[],
-  labels: ApiKeyGroupFilterLabels
+  labels: ApiKeyGroupFilterLabels,
 ): ApiKeyGroupFilterOption[] {
   const exclusive: ApiKeyGroupFilterOption[] = []
   const publicGroups: ApiKeyGroupFilterOption[] = []
@@ -41,6 +56,9 @@ export function buildApiKeyGroupFilterOptions(
 
   for (const grp of groups) {
     const item: ApiKeyGroupFilterOption = { value: grp.id, label: grp.name }
+    // Classify nonactive groups before exclusivity so keys referencing disabled
+    // groups remain findable in their dedicated final section regardless of group
+    // access type.
     if (grp.status !== 'active') {
       disabledGroups.push(item)
     } else if (grp.is_exclusive) {
@@ -59,6 +77,8 @@ export function buildApiKeyGroupFilterOptions(
   ]
   for (const [label, headerValue, items] of sections) {
     if (items.length === 0) continue
+    // Distinct negative header values keep Select row keys unique, while real groups
+    // retain their server identifiers and the clearing option retains null.
     options.push({ value: headerValue, label, kind: 'group', disabled: true })
     options.push(...items)
   }

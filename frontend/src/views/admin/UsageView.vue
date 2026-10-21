@@ -7,7 +7,9 @@
         <div class="card p-4">
           <div class="time-controls flex flex-wrap items-center justify-between gap-2">
             <div class="flex min-w-0 items-center gap-2">
-              <span class="time-control-label text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
+              <span class="time-control-label text-sm font-medium text-gray-700 dark:text-gray-300"
+                >{{ t('admin.dashboard.timeRange') }}:</span
+              >
               <DateRangePicker
                 v-model:start-date="startDate"
                 v-model:end-date="endDate"
@@ -15,14 +17,20 @@
               />
             </div>
             <div class="flex shrink-0 items-center gap-2">
-              <span class="time-control-label text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.granularity') }}:</span>
+              <span class="time-control-label text-sm font-medium text-gray-700 dark:text-gray-300"
+                >{{ t('admin.dashboard.granularity') }}:</span
+              >
               <div class="w-28">
-                <Select v-model="granularity" :options="granularityOptions" @change="loadChartData" />
+                <Select
+                  v-model="granularity"
+                  :options="granularityOptions"
+                  @change="loadChartData"
+                />
               </div>
             </div>
           </div>
         </div>
-        <!-- 按请求 ID 筛选时只看统计卡和表格，分布图和趋势图隐藏 -->
+        <!-- Request-ID mode shows summary cards and records while hiding trend and distribution charts. -->
         <div v-if="!filters.request_id" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <ModelDistributionChart
             v-model:source="modelDistributionSource"
@@ -64,21 +72,29 @@
             :end-date="endDate"
             :filters="breakdownFilters"
           />
-          <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" :granularity="granularity" />
+          <TokenUsageTrend
+            :trend-data="trendData"
+            :loading="chartsLoading"
+            :granularity="granularity"
+          />
         </div>
       </div>
-      <!-- 标签和筛选保留在同一卡片，数据内容使用下方独立卡片。 -->
+      <!-- Tabs and filters share one card; each data section uses its own surface below. -->
       <div class="card" data-testid="admin-usage-filters-card">
-        <div class="flex flex-wrap items-center border-b border-gray-200 px-2 dark:border-dark-700 sm:px-4">
+        <div
+          class="flex flex-wrap items-center border-b border-gray-200 px-2 dark:border-dark-700 sm:px-4"
+        >
           <button
             v-for="tab in detailTabs"
             :key="tab.key"
             type="button"
             data-testid="usage-detail-tab"
             class="-mb-px inline-flex h-9 items-center gap-1.5 border-b-2 px-3 py-1.5 text-sm font-medium transition-colors sm:px-4"
-            :class="activeTab === tab.key
-              ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-              : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:border-dark-500 dark:hover:text-gray-200'"
+            :class="
+              activeTab === tab.key
+                ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:border-dark-500 dark:hover:text-gray-200'
+            "
             @click="switchTab(tab.key)"
           >
             <Icon :name="tab.icon" size="sm" />
@@ -86,7 +102,21 @@
           </button>
         </div>
 
-        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+        <UsageFilters
+          v-model="filters"
+          ref="usageFiltersRef"
+          flat
+          :mode="activeTab"
+          :start-date="startDate"
+          :end-date="endDate"
+          :exporting="exporting"
+          :model-options="modelNameOptions"
+          @change="applyFilters"
+          @refresh="refreshData"
+          @reset="resetFilters"
+          @cleanup="openCleanupDialog"
+          @export="exportToExcel"
+        >
           <template #after-reset>
             <IpGeoBatchToolbar
               v-if="activeTab === 'usage'"
@@ -107,7 +137,8 @@
               </button>
               <MotionTransition name="dropdown-fade">
                 <div
-                  v-if="showColumnDropdown" :inert="!(showColumnDropdown) || undefined"
+                  v-if="showColumnDropdown"
+                  :inert="!showColumnDropdown || undefined"
                   class="dropdown right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto"
                 >
                   <button
@@ -133,8 +164,13 @@
         </UsageFilters>
       </div>
 
-      <!-- 表格与分页共用外框，底部分隔线和圆角由卡片统一收口。 -->
-      <div v-show="activeTab === 'usage'" v-content-reveal="activeTab === 'usage'" class="card overflow-hidden" data-testid="admin-usage-table-section">
+      <!-- The shared card owns table and pagination borders and corner clipping. -->
+      <div
+        v-show="activeTab === 'usage'"
+        v-content-reveal="activeTab === 'usage'"
+        class="card overflow-hidden"
+        data-testid="admin-usage-table-section"
+      >
         <UsageTable
           flat
           column-order-storage-key="admin-usage-column-order"
@@ -149,13 +185,27 @@
           @sort="handleSort"
           @userClick="handleUserClick"
         />
-        <Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" />
+        <Pagination
+          v-if="pagination.total > 0"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+          @update:pageSize="handlePageSizeChange"
+        />
       </div>
 
-      <div v-show="activeTab === 'errors'" v-content-reveal="activeTab === 'errors'" data-testid="admin-usage-errors-section">
+      <div
+        v-show="activeTab === 'errors'"
+        v-content-reveal="activeTab === 'errors'"
+        data-testid="admin-usage-errors-section"
+      >
         <OpsErrorLogTable
-          :rows="errRows" :total="errTotal" :loading="errLoading"
-          :page="errPage" :page-size="errPageSize"
+          :rows="errRows"
+          :total="errTotal"
+          :loading="errLoading"
+          :page="errPage"
+          :page-size="errPageSize"
           :visible-column-keys="errVisibleColumnKeys"
           user-clickable
           @userClick="handleUserClick"
@@ -163,11 +213,17 @@
           @sort="onErrSort"
           @update:page="onErrPage"
           @update:pageSize="onErrPageSize"
-          @ipGeoBatchFailed="handleIpGeoBatchFailed" />
+          @ipGeoBatchFailed="handleIpGeoBatchFailed"
+        />
       </div>
 
-      <!-- 懒挂载：首次切到该 tab 才请求排行数据，之后随筛选自动刷新。 -->
-      <div v-if="rankingMounted" v-show="activeTab === 'ranking'" class="card overflow-hidden" data-testid="admin-usage-ranking-section">
+      <!-- Ranking mounts on its first tab visit, then remains mounted so shared filter changes continue to refresh it. -->
+      <div
+        v-if="rankingMounted"
+        v-show="activeTab === 'ranking'"
+        class="card overflow-hidden"
+        data-testid="admin-usage-ranking-section"
+      >
         <UserTokenRanking
           ref="rankingRef"
           :start-date="startDate"
@@ -177,10 +233,21 @@
           @select-user="handleRankingSelectUser"
         />
       </div>
-      <OpsErrorDetailModal v-model:show="showErrorModal" :error-id="selectedErrorId" :error-type="'request'" />
+      <OpsErrorDetailModal
+        v-model:show="showErrorModal"
+        :error-id="selectedErrorId"
+        :error-type="'request'"
+      />
     </div>
   </AppLayout>
-  <UsageExportProgress :show="exportProgress.show" :progress="exportProgress.progress" :current="exportProgress.current" :total="exportProgress.total" :estimated-time="exportProgress.estimatedTime" @cancel="cancelExport" />
+  <UsageExportProgress
+    :show="exportProgress.show"
+    :progress="exportProgress.progress"
+    :current="exportProgress.current"
+    :total="exportProgress.total"
+    :estimated-time="exportProgress.estimatedTime"
+    @cancel="cancelExport"
+  />
   <UsageCleanupDialog
     :show="cleanupDialogVisible"
     :filters="filters"
@@ -193,7 +260,10 @@
     :show="showBalanceHistoryModal"
     :user="balanceHistoryUser"
     :hide-actions="true"
-    @close="showBalanceHistoryModal = false; balanceHistoryUser = null"
+    @close="
+      showBalanceHistoryModal = false;
+      balanceHistoryUser = null;
+    "
   />
 </template>
 
@@ -206,14 +276,21 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
 import { useRoute } from 'vue-router'
-import { useAppStore } from '@/stores/app'; import { adminAPI } from '@/api/admin'; import { adminUsageAPI } from '@/api/admin/usage'
+import { useAppStore } from '@/stores/app'
+import { adminAPI } from '@/api/admin'
+import { adminUsageAPI } from '@/api/admin/usage'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import { calculateUsageTps } from '@/utils/usageTps'
-import AppLayout from '@/components/layout/AppLayout.vue'; import Pagination from '@/components/common/Pagination.vue'; import Select from '@/components/common/Select.vue'; import DateRangePicker from '@/components/common/DateRangePicker.vue'
-import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'; import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
-import UsageTable from '@/components/admin/usage/UsageTable.vue'; import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'
+import AppLayout from '@/components/layout/AppLayout.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import Select from '@/components/common/Select.vue'
+import DateRangePicker from '@/components/common/DateRangePicker.vue'
+import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'
+import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
+import UsageTable from '@/components/admin/usage/UsageTable.vue'
+import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'
 import IpGeoBatchToolbar from '@/components/common/IpGeoBatchToolbar.vue'
 import UserTokenRanking from '@/components/admin/usage/UserTokenRanking.vue'
 import UsageCleanupDialog from '@/components/admin/usage/UsageCleanupDialog.vue'
@@ -222,61 +299,130 @@ import OpsErrorLogTable from '@/views/admin/ops/components/OpsErrorLogTable.vue'
 import OpsErrorDetailModal from '@/views/admin/ops/components/OpsErrorDetailModal.vue'
 import { listErrorLogs } from '@/api/admin/ops'
 import type { OpsErrorLog } from '@/api/admin/ops'
-import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'; import GroupDistributionChart from '@/components/charts/GroupDistributionChart.vue'; import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
+import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'
+import GroupDistributionChart from '@/components/charts/GroupDistributionChart.vue'
+import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
+import type {
+  AdminUsageLog,
+  TrendDataPoint,
+  ModelStat,
+  GroupStat,
+  EndpointStat,
+} from '@/api/usage.types'
+import type { AdminUser } from '@/api/admin/users.types'
+import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
 
-// UsageView.vue loads administrator usage records, summaries and related error
-// views under the current filters. Request-ID searches use their own time-range
-// rules, while ordinary usage queries share the selected calendar range. Tables,
-// distributions and token trends retain their respective response shapes and
-// loading state rather than interpreting absent diagnostic values as zero.
+// UsageView.vue loads administrator usage records, summaries, distributions, and error
+// views under shared filters. Request-ID list and summary queries omit date predicates,
+// while chart visibility follows that search mode. The administrator export owns provider
+// fields and serializes every requested page into a workbook.
 //
-// Export walks the filtered pages and reports progress independently of the
-// currently displayed page. Cancellation ends that export through its controller.
-// Timing cells keep explicit metric names and raw milliseconds so spreadsheets
-// can distinguish stage durations from request-relative event offsets. Cleanup,
-// balance inspection and error details remain separate user-triggered operations.
+// Lists use cancellation ownership; model, summary, chart, and raw endpoint loaders also
+// use sequence checks where their responses can overlap. Raw endpoint caches and
+// model-source caches have separate invalidation rules. Column preferences are stored
+// independently for usage and errors, and hidden-column migration appends newly hidden
+// defaults while retaining saved choices. Ranking mounts on first selection and continues
+// following shared filters afterward.
 
+// Translation and application notifications provide labels and request feedback for usage
+// records, filters, and export actions.
 const { t } = useI18n()
 const appStore = useAppStore()
+// DistributionMetric selects token count or actual charge for distribution charts.
 type DistributionMetric = 'tokens' | 'actual_cost'
+// EndpointSource selects normalized inbound, upstream, or raw-path endpoint statistics.
 type EndpointSource = 'inbound' | 'upstream' | 'path'
+// ModelDistributionSource selects requested, forwarded, or mapping-grouped model
+// statistics.
 type ModelDistributionSource = 'requested' | 'upstream' | 'mapping'
+// route provides optional initial user and date filters consumed once during the page mount
+// sequence.
 const route = useRoute()
-const usageStats = ref<AdminUsageStatsResponse | null>(null); const usageLogs = ref<AdminUsageLog[]>([]); const loading = ref(false); const exporting = ref(false)
-const trendData = ref<TrendDataPoint[]>([]); const requestedModelStats = ref<ModelStat[]>([]); const upstreamModelStats = ref<ModelStat[]>([]); const mappingModelStats = ref<ModelStat[]>([]); const groupStats = ref<GroupStat[]>([]); const chartsLoading = ref(false); const modelStatsLoading = ref(false); const granularity = ref<'day' | 'hour'>('hour')
+// Usage display state stores the current summary and page separately from trend and
+// distribution responses used by charts.
+const usageStats = ref<AdminUsageStatsResponse | null>(null)
+const usageLogs = ref<AdminUsageLog[]>([])
+// Loading flags distinguish the records table, chart requests, and export operation so each
+// section can render its own progress.
+const loading = ref(false)
+const exporting = ref(false)
+const trendData = ref<TrendDataPoint[]>([])
+const requestedModelStats = ref<ModelStat[]>([])
+const upstreamModelStats = ref<ModelStat[]>([])
+const mappingModelStats = ref<ModelStat[]>([])
+const groupStats = ref<GroupStat[]>([])
+const chartsLoading = ref(false)
+const modelStatsLoading = ref(false)
+// granularity selects hourly or daily trend buckets, while distribution selectors choose
+// the displayed metric and endpoint source.
+const granularity = ref<'day' | 'hour'>('hour')
 const modelDistributionMetric = ref<DistributionMetric>('tokens')
 const modelDistributionSource = ref<ModelDistributionSource>('requested')
+// loadedModelSources records which model-source results remain reusable until filters
+// invalidate their individual cache flags.
 const loadedModelSources = reactive<Record<ModelDistributionSource, boolean>>({
   requested: false,
   upstream: false,
   mapping: false,
 })
+// Group and endpoint selectors change the visible metric independently of the model chart's
+// selected metric.
 const groupDistributionMetric = ref<DistributionMetric>('tokens')
 const endpointDistributionMetric = ref<DistributionMetric>('tokens')
 const endpointDistributionSource = ref<EndpointSource>('inbound')
+// Endpoint arrays hold normalized inbound counts separately from lazily fetched upstream
+// and raw-path statistics for this selection.
 const inboundEndpointStats = ref<EndpointStat[]>([])
 const upstreamEndpointStats = ref<EndpointStat[]>([])
 const endpointPathStats = ref<EndpointStat[]>([])
+// Endpoint loading state separates the summary's inbound request from raw-source requests
+// so changing source selects the correct indicator.
 const inboundEndpointLoading = ref(false)
 const rawEndpointLoading = ref(false)
-const endpointStatsLoading = computed(() => endpointDistributionSource.value === 'inbound' ? inboundEndpointLoading.value : rawEndpointLoading.value)
+const endpointStatsLoading = computed(() =>
+  endpointDistributionSource.value === 'inbound'
+    ? inboundEndpointLoading.value
+    : rawEndpointLoading.value,
+)
+// loadedRawEndpoints marks reusable upstream and path results; summary reloads clear both
+// flags before fetching the active raw source.
 const loadedRawEndpoints = reactive({ upstream: false, path: false })
+// Endpoint request ownership combines a sequence with a controller, while export and
+// summary controllers own their separate requests.
 let endpointReqSeq = 0
 let endpointAbortController: AbortController | null = null
-let abortController: AbortController | null = null; let exportAbortController: AbortController | null = null
+// abortController owns the latest usage-list request; sequence counters independently
+// identify current statistics and chart requests.
+let abortController: AbortController | null = null
+let exportAbortController: AbortController | null = null
+// Chart and summary sequences reject superseded responses independently; modelStatsReqSeq
+// governs the selected model-source request.
 let chartReqSeq = 0
 let statsReqSeq = 0
 let statsAbortController: AbortController | null = null
 let modelStatsReqSeq = 0
-const exportProgress = reactive({ show: false, progress: 0, current: 0, total: 0, estimatedTime: '' })
+// Export progress holds dialog visibility, percentage, processed rows, expected total, and
+// an optional formatted remaining-time estimate.
+const exportProgress = reactive({
+  show: false,
+  progress: 0,
+  current: 0,
+  total: 0,
+  estimatedTime: '',
+})
+// cleanupDialogVisible controls the separate cleanup dialog that copies the current
+// selection when it opens.
 const cleanupDialogVisible = ref(false)
-// Balance history modal state
+// Balance inspection state pairs modal visibility with the fetched administrator user
+// record selected from a usage row.
 const showBalanceHistoryModal = ref(false)
 const balanceHistoryUser = ref<AdminUser | null>(null)
 
+// breakdownFilters selects ranking-supported identity and billing predicates. It keeps
+// explicit false and zero for nullable options while dates and model are supplied
+// separately to the ranking component.
 const breakdownFilters = computed(() => {
   const f: Record<string, any> = {}
   if (filters.value.user_id) f.user_id = filters.value.user_id
@@ -285,26 +431,36 @@ const breakdownFilters = computed(() => {
   if (filters.value.group_id) f.group_id = filters.value.group_id
   if (filters.value.team_id) f.team_id = filters.value.team_id
   if (filters.value.request_type != null) f.request_type = filters.value.request_type
-  if (filters.value.native_compaction_v2 != null) f.native_compaction_v2 = filters.value.native_compaction_v2
+  if (filters.value.native_compaction_v2 != null)
+    f.native_compaction_v2 = filters.value.native_compaction_v2
   if (filters.value.billing_type != null) f.billing_type = filters.value.billing_type
   return f
 })
 
+// modelNameOptions deduplicates nonempty requested model names and sorts them for the
+// filter panel's model choices.
 const modelNameOptions = computed(() =>
-  Array.from(new Set(requestedModelStats.value.map((m) => m.model).filter(Boolean))).sort()
+  Array.from(new Set(requestedModelStats.value.map((m) => m.model).filter(Boolean))).sort(),
 )
 
+// handleUserClick retrieves a user including soft-deleted records before opening balance
+// history. Failures show a notification and leave the modal selection unchanged, keeping
+// historical usage identities inspectable.
 const handleUserClick = async (userId: number) => {
   try {
     const user = await adminAPI.users.getById(userId, true)
     balanceHistoryUser.value = user
     showBalanceHistoryModal.value = true
   } catch {
+    // A failed user lookup leaves balance history unopened and reports the missing detail
+    // while keeping the usage row available.
     appStore.showError(t('admin.usage.failedToLoadUser'))
   }
 }
 
-// 从用户 Token 排行下钻时筛选整页，并跳回用量明细展示结果。
+// handleRankingSelectUser applies a ranking identity to the page filter and search label.
+// It switches back to usage records and applies the new selection across the page's
+// dependent queries.
 const handleRankingSelectUser = (userId: number, email: string) => {
   filters.value = { ...filters.value, user_id: userId }
   usageFiltersRef.value?.setUserKeyword?.(email || '')
@@ -312,23 +468,41 @@ const handleRankingSelectUser = (userId: number, email: string) => {
   applyFilters()
 }
 
-const granularityOptions = computed(() => [{ value: 'day', label: t('admin.dashboard.day') }, { value: 'hour', label: t('admin.dashboard.hour') }])
-// Use local timezone to avoid UTC timezone issues
+// granularityOptions supplies translated daily and hourly choices for the trend chart
+// bucket-size selector in this page.
+const granularityOptions = computed(() => [
+  { value: 'day', label: t('admin.dashboard.day') },
+  { value: 'hour', label: t('admin.dashboard.hour') },
+])
+// formatLD formats browser-local calendar components as a year-month-day date string.
 const formatLD = (d: Date) => {
   const year = d.getFullYear()
   const month = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
-const getLast24HoursRangeDates = (): { start: string; end: string } => {
+// getLast24HoursRangeDates returns local calendar dates around the last twenty-four hours.
+// The resulting day strings describe calendar endpoints, so downstream date queries may
+// cover more than exactly twenty-four hours.
+const getLast24HoursRangeDates = (): {
+  start: string // beginning local calendar date
+  end: string // ending local calendar date
+} => {
   const end = new Date()
+  // Subtract an elapsed day before formatting local calendar endpoints.
   const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
   return {
     start: formatLD(start),
-    end: formatLD(end)
+    end: formatLD(end),
   }
 }
+// getGranularityForRange chooses hourly buckets for ranges no longer than one day.
+// Date-only strings are interpreted at local midnight, invalid endpoints select daily
+// buckets, and longer ranges use daily buckets.
 const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
+  // parseRangePoint reads an endpoint timestamp, interpreting date-only input at local
+  // midnight. Invalid dates return null so the enclosing granularity selection can choose
+  // its daily default safely.
   const parseRangePoint = (value: string) => {
     const timestamp = new Date(value.length === 10 ? `${value}T00:00:00` : value).getTime()
     return Number.isFinite(timestamp) ? timestamp : null
@@ -336,32 +510,70 @@ const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
   const startTime = parseRangePoint(start)
   const endTime = parseRangePoint(end)
   if (startTime === null || endTime === null) return 'day'
+  // Round partial elapsed days upward before choosing hourly or daily
+  // buckets.
   const daysDiff = Math.ceil((endTime - startTime) / (1000 * 60 * 60 * 24))
   return daysDiff <= 1 ? 'hour' : 'day'
 }
+// defaultRange initializes both calendar endpoints from now and the instant twenty-four
+// hours earlier in browser local time.
 const defaultRange = getLast24HoursRangeDates()
-const startDate = ref(defaultRange.start); const endDate = ref(defaultRange.end)
-// 按请求 ID 查询时不带日期范围，保留期内的记录都能查到。
-const requestDateParams = () => filters.value.request_id ? { start_date: undefined, end_date: undefined } : {}
-const filters = ref<AdminUsageQueryParams>({ user_id: undefined, model: undefined, group_id: undefined, request_type: undefined, billing_type: null, native_compaction_v2: null, start_date: startDate.value, end_date: endDate.value })
+// Date state supplies the selected calendar range to filters and determines trend
+// granularity when the range changes.
+const startDate = ref(defaultRange.start)
+const endDate = ref(defaultRange.end)
+// requestDateParams removes both date predicates when a request ID is selected. Otherwise
+// it returns an empty override object so the existing selected dates remain in the query.
+const requestDateParams = () =>
+  filters.value.request_id ? { start_date: undefined, end_date: undefined } : {}
+// filters owns the mutable usage query selection; page changes and exports combine these
+// values with sorting and paging.
+const filters = ref<AdminUsageQueryParams>({
+  user_id: undefined,
+  model: undefined,
+  group_id: undefined,
+  request_type: undefined,
+  billing_type: null,
+  native_compaction_v2: null,
+  start_date: startDate.value,
+  end_date: endDate.value,
+})
+// pagination holds the current one-based page, persisted page size, and most recently
+// returned matching-record total.
 const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
+// sortState holds the server sort column and direction used consistently by displayed pages
+// and exports.
 const sortState = reactive({
   sort_by: 'created_at',
-  sort_order: 'desc' as 'asc' | 'desc'
+  sort_order: 'desc' as 'asc' | 'desc',
 })
 
-const getSingleQueryValue = (value: string | null | Array<string | null> | undefined): string | undefined => {
-  if (Array.isArray(value)) return value.find((item): item is string => typeof item === 'string' && item.length > 0)
+// getSingleQueryValue extracts a nonempty string from a router query value. Arrays use
+// their first nonempty string, while null, missing values, and empty strings produce
+// undefined for omission.
+const getSingleQueryValue = (
+  value: string | null | Array<string | null> | undefined,
+): string | undefined => {
+  if (Array.isArray(value))
+    return value.find((item): item is string => typeof item === 'string' && item.length > 0)
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
-const getNumericQueryValue = (value: string | null | Array<string | null> | undefined): number | undefined => {
+// getNumericQueryValue converts the selected query string to a finite number. Missing
+// strings and nonfinite conversions produce undefined; this helper does not restrict
+// identifiers to positive integer values.
+const getNumericQueryValue = (
+  value: string | null | Array<string | null> | undefined,
+): number | undefined => {
   const raw = getSingleQueryValue(value)
   if (!raw) return undefined
   const parsed = Number(raw)
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
+// applyRouteQueryFilters imports initial date and user values from the route. Supplied date
+// endpoints replace the default range individually, then filter dates and trend granularity
+// follow the resulting selection.
 const applyRouteQueryFilters = () => {
   const queryStartDate = getSingleQueryValue(route.query.start_date)
   const queryEndDate = getSingleQueryValue(route.query.end_date)
@@ -378,50 +590,74 @@ const applyRouteQueryFilters = () => {
     ...filters.value,
     user_id: queryUserId,
     start_date: startDate.value,
-    end_date: endDate.value
+    end_date: endDate.value,
   }
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
 }
 
-// 路由只携带用户 ID，加载用户信息后回填可读标签，并防止过期结果覆盖新筛选。
+// loadRouteUserFilterLabel resolves the route-selected user into a readable filter label. A
+// missing user identifier skips retrieval, and a current failed lookup displays the numeric
+// identifier.
+//
+// Before requesting, it captures both user identity and the filter component's search
+// revision. Success and failure compare both values before assigning a label. Typing or
+// changing selection during the request therefore keeps the newer label, even when the
+// selected numeric user remains unchanged.
 const loadRouteUserFilterLabel = async () => {
+  // Capture the user and search revision together so successful label
+  // hydration cannot overwrite a newer selection or typed search.
   const requestedUserId = filters.value.user_id
   if (!requestedUserId) return
   const userSearchRevision = usageFiltersRef.value?.getUserSearchRevision?.()
 
-  const routeUserFilterIsCurrent = () => (
-    filters.value.user_id === requestedUserId
-    && usageFiltersRef.value?.getUserSearchRevision?.() === userSearchRevision
-  )
+  // routeUserFilterIsCurrent compares user identity and search revision with the captured
+  // route lookup.
+  const routeUserFilterIsCurrent = () =>
+    filters.value.user_id === requestedUserId &&
+    usageFiltersRef.value?.getUserSearchRevision?.() === userSearchRevision
 
   try {
     const user = await adminAPI.users.getById(requestedUserId, true)
     if (!routeUserFilterIsCurrent()) return
     usageFiltersRef.value?.setUserKeyword?.(user.email || String(requestedUserId))
   } catch {
+    // Use numeric identity only if both the filter and search revision still match; newer
+    // typed labels survive a failed hydration.
     if (!routeUserFilterIsCurrent()) return
     usageFiltersRef.value?.setUserKeyword?.(String(requestedUserId))
   }
 }
 
-const onDateRangeChange = (range: { startDate: string; endDate: string; preset: string | null }) => {
+// onDateRangeChange synchronizes the displayed dates with query filters and chooses trend
+// granularity. It then applies filters, resetting record pagination before dependent usage
+// requests start using the new range.
+const onDateRangeChange = (range: {
+  startDate: string // beginning calendar date
+  endDate: string // ending calendar date
+  preset: string | null // optional date preset identifier
+}) => {
   startDate.value = range.startDate
   endDate.value = range.endDate
   filters.value = {
     ...filters.value,
     start_date: range.startDate,
-    end_date: range.endDate
+    end_date: range.endDate,
   }
   granularity.value = getGranularityForRange(range.startDate, range.endDate)
   applyFilters()
 }
 
+// buildUsageListParams combines paging, filters, sort, and the requested total-count mode.
+// Request-ID filtering removes dates, while canonical request type controls compatible
+// legacy stream values sent to the usage API.
 const buildUsageListParams = (
   page: number,
   pageSize: number,
-  exactTotal: boolean
+  exactTotal: boolean,
 ): AdminUsageQueryParams => {
   const requestType = filters.value.request_type
+  // Translate canonical request mode through the shared compatibility map; modes without a
+  // legacy stream equivalent omit that older predicate.
   const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
   return {
     page,
@@ -431,21 +667,44 @@ const buildUsageListParams = (
     ...requestDateParams(),
     stream: legacyStream === null ? undefined : legacyStream,
     sort_by: sortState.sort_by,
-    sort_order: sortState.sort_order
+    sort_order: sortState.sort_order,
   }
 }
 
+// loadLogs replaces the usage page using the current filters and sort order. Starting a new
+// load aborts the previous controller before installing a new owner for the loading flag.
+//
+// A response publishes rows and total only while its signal remains active. Finalization
+// checks controller identity so a superseded request cannot hide the loading indicator of a
+// newer request. The error path retains previously displayed rows, with cancellation and
+// ordinary failures handled by the page's notification policy.
 const loadLogs = async () => {
-  abortController?.abort(); const c = new AbortController(); abortController = c; loading.value = true
+  // Abort the previous list owner before installing the new controller so late completion
+  // can identify that it no longer owns publication.
+  abortController?.abort()
+  const c = new AbortController()
+  abortController = c
+  loading.value = true
   try {
     const res = await adminAPI.usage.list(
       buildUsageListParams(pagination.page, pagination.page_size, false),
-      { signal: c.signal }
+      { signal: c.signal },
     )
-    if(!c.signal.aborted) { usageLogs.value = res.items; pagination.total = res.total }
-  } catch (error: any) { if(error?.name !== 'AbortError') console.error('Failed to load usage logs:', error) } finally { if(abortController === c) loading.value = false }
+    if (!c.signal.aborted) {
+      usageLogs.value = res.items
+      pagination.total = res.total
+    }
+  } catch (error: any) {
+    // Canceled list work stays quiet, while other failures are logged and the previous
+    // records remain available for inspection.
+    if (error?.name !== 'AbortError') console.error('Failed to load usage logs:', error)
+  } finally {
+    if (abortController === c) loading.value = false
+  }
 }
-// 摘要默认读取入站端点，原始端点图随当前选项加载。
+// statsParams builds summary filters for an endpoint source and optional forced refresh. It
+// applies request-ID date omission and compatible stream values before adding nocache for
+// callers requesting fresh totals.
 const statsParams = (source: EndpointSource, force: boolean) => {
   const requestType = filters.value.request_type
   const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
@@ -458,7 +717,17 @@ const statsParams = (source: EndpointSource, force: boolean) => {
   }
 }
 
+// loadEndpointStats lazily loads upstream or raw-path totals and reuses successfully loaded
+// sources unless forced. Inbound data belongs to the summary loader and returns immediately
+// here.
+//
+// Every invocation aborts the earlier raw-source request and advances its sequence,
+// including cache hits. Response publication checks both sequence and signal, while loading
+// cleanup checks sequence ownership. Summary refresh clears the caches before calling this
+// function, so a previous source request cannot repopulate an invalidated selection.
 const loadEndpointStats = async (source: EndpointSource, force = false) => {
+  // Changing raw endpoint source invalidates the previous request even on cache hits,
+  // preventing its late response from repopulating an obsolete selection.
   endpointAbortController?.abort()
   const seq = ++endpointReqSeq
   if (source === 'inbound' || (!force && loadedRawEndpoints[source])) {
@@ -469,12 +738,16 @@ const loadEndpointStats = async (source: EndpointSource, force = false) => {
   endpointAbortController = controller
   rawEndpointLoading.value = true
   try {
-    const response = await adminAPI.usage.getStats(statsParams(source, force), { signal: controller.signal })
+    const response = await adminAPI.usage.getStats(statsParams(source, force), {
+      signal: controller.signal,
+    })
     if (seq !== endpointReqSeq || controller.signal.aborted) return
     if (source === 'upstream') upstreamEndpointStats.value = response.upstream_endpoints || []
     else endpointPathStats.value = response.endpoint_paths || []
     loadedRawEndpoints[source] = true
   } catch (error) {
+    // Ignore superseded or aborted raw-source failures; a current failure leaves its cache
+    // flag unset so later selection can retry.
     if (seq !== endpointReqSeq || controller.signal.aborted) return
     console.error('加载端点统计失败:', error)
   } finally {
@@ -482,7 +755,17 @@ const loadEndpointStats = async (source: EndpointSource, force = false) => {
   }
 }
 
+// loadStats refreshes the usage summary and inbound endpoint counts, optionally bypassing
+// the server cache. It cancels the prior summary, advances its sequence, and invalidates
+// both raw endpoint caches.
+//
+// The active raw endpoint starts independently, allowing summary cards and that chart to
+// finish separately. Only the current summary sequence can replace totals, clear inbound
+// results on error, or release its loading state. A failed current summary keeps the
+// earlier usageStats record but clears inbound endpoint counts.
 const loadStats = async (force = false) => {
+  // Cancel the prior summary before invalidating raw-source caches so the replacement
+  // summary and selected raw chart use the refreshed filter state.
   statsAbortController?.abort()
   const controller = new AbortController()
   statsAbortController = controller
@@ -494,11 +777,15 @@ const loadStats = async (force = false) => {
   void loadEndpointStats(endpointDistributionSource.value, force)
   inboundEndpointLoading.value = true
   try {
-    const response = await adminAPI.usage.getStats(statsParams('inbound', force), { signal: controller.signal })
+    const response = await adminAPI.usage.getStats(statsParams('inbound', force), {
+      signal: controller.signal,
+    })
     if (seq !== statsReqSeq) return
     usageStats.value = response
     inboundEndpointStats.value = response.endpoints || []
   } catch (error) {
+    // Only the current summary failure clears inbound counts; previously displayed summary
+    // totals remain until another successful summary response arrives.
     if (seq !== statsReqSeq) return
     console.error('加载用量统计失败:', error)
     inboundEndpointStats.value = []
@@ -507,18 +794,33 @@ const loadStats = async (force = false) => {
   }
 }
 
-// 失效模型统计缓存:仅标记需要重取,保留旧数据直到新数据到达(避免刷新时图表闪空)。
+// invalidateModelStatsCache marks every model-source result as needing retrieval. It
+// retains displayed arrays so a refresh can keep earlier chart data visible until the next
+// response replaces it.
 const invalidateModelStatsCache = () => {
+  // Invalidate reuse flags together while keeping displayed arrays, allowing charts to
+  // retain their last values until a replacement request finishes.
   loadedModelSources.requested = false
   loadedModelSources.upstream = false
   loadedModelSources.mapping = false
 }
 
+// loadModelStats retrieves one model source unless its cache flag permits reuse and refresh
+// is not forced. Requests include the selected dates and supported identity, request-mode,
+// and billing filters.
+//
+// A shared model sequence makes the latest started request authoritative for publication
+// and loading cleanup. Current success stores the result and marks that source loaded;
+// current failure empties its array and clears its flag. Earlier responses are ignored,
+// while invalidation itself retains previously displayed arrays until a current result
+// arrives.
 const loadModelStats = async (source: ModelDistributionSource, force = false) => {
   if (!force && loadedModelSources[source]) {
     return
   }
 
+  // Capture model request ownership before fetching so a newer started model
+  // request controls published rows, cache flags, and loading cleanup.
   const seq = ++modelStatsReqSeq
   modelStatsLoading.value = true
   try {
@@ -553,6 +855,8 @@ const loadModelStats = async (source: ModelDistributionSource, force = false) =>
     }
     loadedModelSources[source] = true
   } catch (error) {
+    // Clear only the failed current source and mark it unloaded so a later source
+    // selection can retry the model query.
     if (seq !== modelStatsReqSeq) return
     console.error('Failed to load model stats:', error)
     if (source === 'requested') {
@@ -568,8 +872,18 @@ const loadModelStats = async (source: ModelDistributionSource, force = false) =>
   }
 }
 
+// loadChartData retrieves trend and group distribution together unless request-ID filtering
+// hides charts. Each request captures a new sequence so an older successful response cannot
+// replace a later selection.
+//
+// The sequence also protects loading cleanup. Failures log an error and retain the
+// displayed chart arrays, including failures from superseded requests. Model statistics are
+// excluded from the snapshot because their source selector has a separate loader and cache
+// lifecycle.
 const loadChartData = async () => {
   if (filters.value.request_id) return
+  // Capture chart ownership before awaiting the snapshot so only the latest
+  // request publishes successful arrays and releases loading.
   const seq = ++chartReqSeq
   chartsLoading.value = true
   try {
@@ -593,13 +907,22 @@ const loadChartData = async () => {
       include_trend: true,
       include_model_stats: false,
       include_group_stats: true,
-      include_users_trend: false
+      include_users_trend: false,
     })
     if (seq !== chartReqSeq) return
     trendData.value = snapshot.trend || []
     groupStats.value = snapshot.groups || []
-  } catch (error) { console.error('Failed to load chart data:', error) } finally { if (seq === chartReqSeq) chartsLoading.value = false }
+  } catch (error) {
+    // Keep the preceding trend and group observations after a snapshot failure so those
+    // charts retain their last available data.
+    console.error('Failed to load chart data:', error)
+  } finally {
+    if (seq === chartReqSeq) chartsLoading.value = false
+  }
 }
+// applyFilters resets usage and error pagination, invalidates model caches, and reloads
+// usage sections. Errors reload only while their tab is active; inactive rows are cleared
+// for the next visit.
 const applyFilters = () => {
   pagination.page = 1
   invalidateModelStatsCache()
@@ -614,6 +937,9 @@ const applyFilters = () => {
     errRows.value = []
   }
 }
+// refreshData refreshes usage sections and forces fresh summary and model data. It also
+// reloads active errors and an already mounted ranking, leaving each operation to manage
+// its own completion.
 const refreshData = () => {
   invalidateModelStatsCache()
   loadLogs()
@@ -623,16 +949,39 @@ const refreshData = () => {
   if (activeTab.value === 'errors') loadAdminErrors()
   if (rankingMounted.value) rankingRef.value?.reload()
 }
+// resetFilters restores the local last-day range and clears query predicates. It
+// recalculates granularity and applies the resulting selection so list, summary, model, and
+// visible error queries use matching filters.
 const resetFilters = () => {
   const range = getLast24HoursRangeDates()
   startDate.value = range.start
   endDate.value = range.end
-  filters.value = { start_date: startDate.value, end_date: endDate.value, request_type: undefined, billing_type: null, native_compaction_v2: null, billing_mode: undefined }
+  filters.value = {
+    start_date: startDate.value,
+    end_date: endDate.value,
+    request_type: undefined,
+    billing_type: null,
+    native_compaction_v2: null,
+    billing_mode: undefined,
+  }
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
   applyFilters()
 }
-const handlePageChange = (p: number) => { pagination.page = p; loadLogs() }
-const handlePageSizeChange = (s: number) => { pagination.page_size = s; pagination.page = 1; loadLogs() }
+// handlePageChange selects a usage page and reloads its records.
+const handlePageChange = (p: number) => {
+  pagination.page = p
+  loadLogs()
+}
+// handlePageSizeChange updates the record count and reloads the first page. Resetting
+// pagination prevents an old page index from pointing beyond the newly sized sequence of
+// usage pages.
+const handlePageSizeChange = (s: number) => {
+  pagination.page_size = s
+  pagination.page = 1
+  loadLogs()
+}
+// handleSort stores the requested server ordering and reloads page one. Returning to the
+// first page gives the selected ordering a consistent starting point for the usage table.
 const handleSort = (key: string, order: 'asc' | 'desc') => {
   sortState.sort_by = key
   sortState.sort_order = order
@@ -640,11 +989,21 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
   loadLogs()
 }
 
+// handleIpGeoBatchFailed reports the shared batch IP lookup failure notification.
 const handleIpGeoBatchFailed = () => {
   appStore.showError(t('usage.ipGeo.batchFailed'))
 }
+// cancelExport requests cancellation through the current workbook export controller.
+// With no controller it has no effect; the export flow owns request settlement,
+// progress cleanup, and releasing its controller.
 const cancelExport = () => exportAbortController?.abort()
-const openCleanupDialog = () => { cleanupDialogVisible.value = true }
+// openCleanupDialog opens the cleanup task editor with the current page filters.
+const openCleanupDialog = () => {
+  cleanupDialogVisible.value = true
+}
+// getRequestTypeLabel translates the canonical usage request mode after legacy resolution.
+// Unrecognized modes produce the unknown label so exported rows retain an explicit
+// request-type cell for incomplete records.
 const getRequestTypeLabel = (log: AdminUsageLog): string => {
   const requestType = resolveUsageRequestType(log)
   if (requestType === 'cyber') return t('usage.cyber')
@@ -655,50 +1014,123 @@ const getRequestTypeLabel = (log: AdminUsageLog): string => {
   return t('usage.unknown')
 }
 
+// exportToExcel retrieves filtered usage pages and writes an administrator workbook. A
+// running export blocks another start, and its controller supports cancellation while pages
+// are being fetched.
+//
+// The first page establishes the expected total; each appended batch advances row counts
+// and sets numeric TPS precision on the corresponding spreadsheet cells. Administrator
+// columns retain provider costs, upstream identities, and diagnostic timing separately from
+// user charges. Cancellation skips saving, and final cleanup releases progress only when
+// the controller still belongs to this export.
 const exportToExcel = async () => {
-  if (exporting.value) return; exporting.value = true; exportProgress.show = true
-  const c = new AbortController(); exportAbortController = c
+  if (exporting.value) return
+  exporting.value = true
+  exportProgress.show = true
+  const c = new AbortController()
+  exportAbortController = c
   try {
-    let p = 1; let total = pagination.total; let exportedCount = 0
+    let p = 1
+    let total = pagination.total
+    let exportedCount = 0
     const XLSX = await import('xlsx')
     const headers = [
-      t('usage.time'), t('admin.usage.user'), t('usage.apiKeyFilter'),
-      t('admin.usage.provider'), t('usage.model'), t('usage.upstreamModel'), t('usage.upstreamResponseModel'), t('usage.upstreamModelMismatch'), t('usage.requestedReasoningEffort'), t('usage.reasoningEffort'), t('admin.usage.group'),
-      t('usage.inboundEndpoint'), t('usage.upstreamEndpoint'),
+      t('usage.time'),
+      t('admin.usage.user'),
+      t('usage.apiKeyFilter'),
+      t('admin.usage.provider'),
+      t('usage.model'),
+      t('usage.upstreamModel'),
+      t('usage.upstreamResponseModel'),
+      t('usage.upstreamModelMismatch'),
+      t('usage.requestedReasoningEffort'),
+      t('usage.reasoningEffort'),
+      t('admin.usage.group'),
+      t('usage.inboundEndpoint'),
+      t('usage.upstreamEndpoint'),
       t('usage.type'),
-      t('admin.usage.inputTokens'), t('admin.usage.outputTokens'),
-      t('admin.usage.cacheReadTokens'), t('admin.usage.cacheCreationTokens'),
-      t('admin.usage.inputCost'), t('admin.usage.outputCost'),
-      t('admin.usage.cacheReadCost'), t('admin.usage.cacheCreationCost'),
-      t('usage.rate'), t('usage.providerMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.providerBilled'),
-      t('usage.firstToken'), t('usage.ttftMode'), t('usage.duration'), t('usage.tpsExport'), t('usage.detailedTiming'),
-      t('admin.usage.requestId'), t('admin.usage.upstreamRequestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
+      t('admin.usage.inputTokens'),
+      t('admin.usage.outputTokens'),
+      t('admin.usage.cacheReadTokens'),
+      t('admin.usage.cacheCreationTokens'),
+      t('admin.usage.inputCost'),
+      t('admin.usage.outputCost'),
+      t('admin.usage.cacheReadCost'),
+      t('admin.usage.cacheCreationCost'),
+      t('usage.rate'),
+      t('usage.providerMultiplier'),
+      t('usage.original'),
+      t('usage.userBilled'),
+      t('usage.providerBilled'),
+      t('usage.firstToken'),
+      t('usage.ttftMode'),
+      t('usage.duration'),
+      t('usage.tpsExport'),
+      t('usage.detailedTiming'),
+      t('admin.usage.requestId'),
+      t('admin.usage.upstreamRequestId'),
+      t('usage.userAgent'),
+      t('admin.usage.ipAddress'),
     ]
     const ws = XLSX.utils.aoa_to_sheet([headers])
     const tpsColumn = headers.indexOf(t('usage.tpsExport'))
     while (true) {
-      const res = await adminUsageAPI.list(
-        buildUsageListParams(p, 100, true),
-        { signal: c.signal }
-      )
-      if (c.signal.aborted) break; if (p === 1) { total = res.total; exportProgress.total = total }
+      const res = await adminUsageAPI.list(buildUsageListParams(p, 100, true), { signal: c.signal })
+      if (c.signal.aborted) break
+      if (p === 1) {
+        total = res.total
+        exportProgress.total = total
+      }
       const rows = (res.items || []).map((log: AdminUsageLog) => [
-        log.created_at, log.user?.email || '', log.api_key?.name || '', log.provider?.name || '', log.model,
-        log.upstream_model || '', log.upstream_response_model || '', log.upstream_model_mismatch == null ? '' : t(log.upstream_model_mismatch ? 'common.yes' : 'common.no'), formatReasoningEffort(log.requested_reasoning_effort || log.reasoning_effort), formatReasoningEffort(log.reasoning_effort), log.group?.name || '',
-        log.inbound_endpoint || '', log.upstream_endpoint || '', getRequestTypeLabel(log),
-        log.input_tokens, log.output_tokens, log.cache_read_tokens, log.cache_creation_tokens,
-        log.input_cost?.toFixed(6) || '0.000000', log.output_cost?.toFixed(6) || '0.000000',
-        log.cache_read_cost?.toFixed(6) || '0.000000', log.cache_creation_cost?.toFixed(6) || '0.000000',
-        log.rate_multiplier?.toPrecision(4) || '1.00', (log.provider_rate_multiplier ?? 1).toPrecision(4),
-        log.total_cost?.toFixed(6) || '0.000000', log.actual_cost?.toFixed(6) || '0.000000',
-        ((log.provider_stats_cost ?? log.total_cost) * (log.provider_rate_multiplier ?? 1)).toFixed(6), log.ttft_ms ?? '', log.ttft_mode === 'first_event' ? t('usage.latencyFirstEvent') : log.ttft_mode === 'first_output' ? t('usage.latencyFirstToken') : '', log.duration_ms,
+        log.created_at,
+        log.user?.email || '',
+        log.api_key?.name || '',
+        log.provider?.name || '',
+        log.model,
+        log.upstream_model || '',
+        log.upstream_response_model || '',
+        log.upstream_model_mismatch == null
+          ? ''
+          : t(log.upstream_model_mismatch ? 'common.yes' : 'common.no'),
+        formatReasoningEffort(log.requested_reasoning_effort || log.reasoning_effort),
+        formatReasoningEffort(log.reasoning_effort),
+        log.group?.name || '',
+        log.inbound_endpoint || '',
+        log.upstream_endpoint || '',
+        getRequestTypeLabel(log),
+        log.input_tokens,
+        log.output_tokens,
+        log.cache_read_tokens,
+        log.cache_creation_tokens,
+        log.input_cost?.toFixed(6) || '0.000000',
+        log.output_cost?.toFixed(6) || '0.000000',
+        log.cache_read_cost?.toFixed(6) || '0.000000',
+        log.cache_creation_cost?.toFixed(6) || '0.000000',
+        log.rate_multiplier?.toPrecision(4) || '1.00',
+        (log.provider_rate_multiplier ?? 1).toPrecision(4),
+        log.total_cost?.toFixed(6) || '0.000000',
+        log.actual_cost?.toFixed(6) || '0.000000',
+        ((log.provider_stats_cost ?? log.total_cost) * (log.provider_rate_multiplier ?? 1)).toFixed(
+          6,
+        ),
+        log.ttft_ms ?? '',
+        log.ttft_mode === 'first_event'
+          ? t('usage.latencyFirstEvent')
+          : log.ttft_mode === 'first_output'
+            ? t('usage.latencyFirstToken')
+            : '',
+        log.duration_ms,
         calculateUsageTps(log) ?? '',
         formatRequestTimingForExport(log.detailed_timing),
-        log.request_id || '', log.upstream_request_id || '', log.user_agent || '', log.ip_address || ''
+        log.request_id || '',
+        log.upstream_request_id || '',
+        log.user_agent || '',
+        log.ip_address || '',
       ])
       if (rows.length) {
         XLSX.utils.sheet_add_aoa(ws, rows, { origin: -1 })
-        // 每批追加后设置 TPS 的显示精度，单元格保存可用于计算的数值。
+        // Apply display precision after appending each batch so TPS cells retain
+        // numeric values usable by spreadsheet calculations.
         for (let index = 0; index < rows.length; index++) {
           const cell = ws[XLSX.utils.encode_cell({ r: exportedCount + index + 1, c: tpsColumn })]
           if (cell?.t === 'n') cell.z = '0.0'
@@ -706,27 +1138,49 @@ const exportToExcel = async () => {
       }
       exportedCount += rows.length
       exportProgress.current = exportedCount
-      exportProgress.progress = total > 0 ? Math.min(100, Math.round(exportedCount / total * 100)) : 0
-      if (exportedCount >= total || res.items.length < 100) break; p++
+      // Show rounded progress capped at a completed percentage.
+      exportProgress.progress =
+        total > 0 ? Math.min(100, Math.round((exportedCount / total) * 100)) : 0
+      if (exportedCount >= total || res.items.length < 100) break
+      p++
     }
-    if(!c.signal.aborted) {
+    if (!c.signal.aborted) {
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Usage')
-      saveAs(new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `usage_${filters.value.start_date}_to_${filters.value.end_date}.xlsx`)
+      saveAs(
+        new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+        `usage_${filters.value.start_date}_to_${filters.value.end_date}.xlsx`,
+      )
       appStore.showSuccess(t('usage.exportSuccess'))
     }
-  } catch (error) { console.error('Failed to export:', error); appStore.showError('Export Failed') }
-  finally { if(exportAbortController === c) { exportAbortController = null; exporting.value = false; exportProgress.show = false } }
+  } catch (error) {
+    // An export rejection reports failure and skips workbook saving; controller-owned
+    // cleanup still releases the progress dialog for subsequent attempts.
+    console.error('Failed to export:', error)
+    appStore.showError('Export Failed')
+  } finally {
+    if (exportAbortController === c) {
+      exportAbortController = null
+      exporting.value = false
+      exportProgress.show = false
+    }
+  }
 }
 
-// Column visibility
+// Usage column constants define mandatory fields, default hidden choices, and the browser
+// storage namespace for saved preferences.
 const ALWAYS_VISIBLE = ['user', 'created_at']
 const DEFAULT_HIDDEN_COLUMNS = ['reasoning_effort', 'upstream_request_id', 'user_agent']
 const HIDDEN_COLUMNS_KEY = 'usage-hidden-columns'
 const HIDDEN_COLUMNS_VERSION_KEY = 'usage-hidden-columns-version'
-// 隐藏列按版本逐级升级，每级将新增列加入隐藏集，用户打开的既有列保持可见。
+// HIDDEN_COLUMNS_CURRENT_VERSION identifies the migration that adds upstream request ID to
+// stored hidden preferences while keeping existing choices.
 const HIDDEN_COLUMNS_CURRENT_VERSION = 'upstream-request-id-hidden-by-default'
 
+// allColumns supplies the canonical translated usage column order before mandatory and
+// saved visibility choices are applied.
 const allColumns = computed(() => [
   { key: 'user', label: t('admin.usage.user'), sortable: false, class: 'w-36 min-w-36 max-w-36' },
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
@@ -745,23 +1199,27 @@ const allColumns = computed(() => [
   { key: 'request_id', label: t('admin.usage.requestId'), sortable: false },
   { key: 'upstream_request_id', label: t('admin.usage.upstreamRequestId'), sortable: false },
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false },
-  { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false }
+  { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false },
 ])
 
+// Usage visibility state keeps a mutable hidden-key set and derives the optional controls
+// and displayed column definitions.
 const hiddenColumns = reactive<Set<string>>(new Set())
 
 const toggleableColumns = computed(() =>
-  allColumns.value.filter(col => !ALWAYS_VISIBLE.includes(col.key))
+  allColumns.value.filter((col) => !ALWAYS_VISIBLE.includes(col.key)),
 )
 
 const visibleColumns = computed(() =>
-  allColumns.value.filter(col =>
-    ALWAYS_VISIBLE.includes(col.key) || !hiddenColumns.has(col.key)
-  )
+  allColumns.value.filter((col) => ALWAYS_VISIBLE.includes(col.key) || !hiddenColumns.has(col.key)),
 )
 
+// isColumnVisible reports whether a column key is absent from saved hidden choices.
 const isColumnVisible = (key: string) => !hiddenColumns.has(key)
 
+// toggleColumn flips one usage visibility choice before persisting its hidden set and
+// migration version. Storage errors are logged, leaving the in-memory selection active for
+// the current page session.
 const toggleColumn = (key: string) => {
   if (hiddenColumns.has(key)) {
     hiddenColumns.delete(key)
@@ -769,19 +1227,25 @@ const toggleColumn = (key: string) => {
     hiddenColumns.add(key)
   }
   try {
+    // Write the hidden set before its migration version so a later load can retry
+    // migration when the second write fails.
     localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
     localStorage.setItem(HIDDEN_COLUMNS_VERSION_KEY, HIDDEN_COLUMNS_CURRENT_VERSION)
   } catch (e) {
+    // Browser persistence failure leaves the selected usage visibility active in memory,
+    // while logging that a future reload may not retain it.
     console.error('Failed to save columns:', e)
   }
 }
 
-// ---- 错误请求 tab 列设置(与用量明细同机制,独立存储) ----
+// Error column constants define mandatory detail fields and a separate browser preference
+// namespace from the usage table.
 const ERR_ALWAYS_VISIBLE = ['user', 'status', 'created_at', 'actions']
 const ERR_DEFAULT_HIDDEN_COLUMNS = ['user_agent']
 const ERR_HIDDEN_COLUMNS_KEY = 'usage-error-hidden-columns'
 
-// key 集合须与 OpsErrorLogTable 内部 allColumns 一致
+// errAllColumns supplies settings keys in the order understood by the error table that
+// renders these records.
 const errAllColumns = computed(() => [
   { key: 'user', label: t('admin.ops.errorLog.user') },
   { key: 'api_key', label: t('admin.ops.errorLog.apiKey') },
@@ -800,18 +1264,23 @@ const errAllColumns = computed(() => [
   { key: 'actions', label: t('admin.ops.errorLog.action') },
 ])
 
+// Error visibility state stores its own hidden-key set so changing error columns does not
+// alter usage-table preferences.
 const errHiddenColumns = reactive<Set<string>>(new Set())
 
 const errToggleableColumns = computed(() =>
-  errAllColumns.value.filter(col => !ERR_ALWAYS_VISIBLE.includes(col.key))
+  errAllColumns.value.filter((col) => !ERR_ALWAYS_VISIBLE.includes(col.key)),
 )
 
 const errVisibleColumnKeys = computed(() =>
   errAllColumns.value
-    .filter(col => ERR_ALWAYS_VISIBLE.includes(col.key) || !errHiddenColumns.has(col.key))
-    .map(col => col.key)
+    .filter((col) => ERR_ALWAYS_VISIBLE.includes(col.key) || !errHiddenColumns.has(col.key))
+    .map((col) => col.key),
 )
 
+// toggleErrColumn flips one error visibility choice and persists the error hidden set.
+// Storage errors are logged while the current in-memory table selection remains available
+// to the user.
 const toggleErrColumn = (key: string) => {
   if (errHiddenColumns.has(key)) {
     errHiddenColumns.delete(key)
@@ -819,39 +1288,60 @@ const toggleErrColumn = (key: string) => {
     errHiddenColumns.add(key)
   }
   try {
+    // Persist the error hidden set separately from usage preferences so changing one tab
+    // leaves the other tab's saved column choices intact.
     localStorage.setItem(ERR_HIDDEN_COLUMNS_KEY, JSON.stringify([...errHiddenColumns]))
   } catch (e) {
+    // Browser persistence failure leaves error visibility active in memory and reports the
+    // issue only to the console for this interaction.
     console.error('Failed to save error columns:', e)
   }
 }
 
+// loadSavedErrColumns restores the error hidden-key set from browser storage. Missing
+// preferences or unreadable JSON use default hidden columns so the error table still starts
+// with a usable selection.
 const loadSavedErrColumns = () => {
   try {
     const saved = localStorage.getItem(ERR_HIDDEN_COLUMNS_KEY)
     const keys = saved ? (JSON.parse(saved) as string[]) : ERR_DEFAULT_HIDDEN_COLUMNS
     keys.forEach((key) => errHiddenColumns.add(key))
   } catch {
+    // Use error-column defaults when saved values cannot be read or decoded, allowing the
+    // table to initialize despite unavailable browser preferences.
     ERR_DEFAULT_HIDDEN_COLUMNS.forEach((key) => errHiddenColumns.add(key))
   }
 }
 
-// 列设置下拉按当前 tab 分发
+// currentToggleableColumns selects the current tab's column controls while each table
+// retains its own saved visibility state.
 const currentToggleableColumns = computed(() =>
-  activeTab.value === 'errors' ? errToggleableColumns.value : toggleableColumns.value
+  activeTab.value === 'errors' ? errToggleableColumns.value : toggleableColumns.value,
 )
+// isCurrentColumnVisible checks the active tab's hidden set for the requested key.
 const isCurrentColumnVisible = (key: string) =>
   activeTab.value === 'errors' ? !errHiddenColumns.has(key) : isColumnVisible(key)
+// toggleCurrentColumn delegates a visibility change to the active tab's preference owner.
 const toggleCurrentColumn = (key: string) =>
   activeTab.value === 'errors' ? toggleErrColumn(key) : toggleColumn(key)
 
+// loadSavedColumns restores administrator usage visibility and migrates old hidden-column
+// preferences. Existing saved keys remain in the hidden set, while an outdated version adds
+// upstream request ID before saving the updated set and version.
+//
+// New profiles use the default hidden choices and record the current version. Storage or
+// parsing failures add defaults to the in-memory set, including any keys already restored
+// before failure. The writes are sequential, so a failed version write can leave the
+// updated hidden set available for the next load.
 const loadSavedColumns = () => {
   try {
     const saved = localStorage.getItem(HIDDEN_COLUMNS_KEY)
     if (saved) {
-      (JSON.parse(saved) as string[]).forEach((key) => {
+      ;(JSON.parse(saved) as string[]).forEach((key) => {
         hiddenColumns.add(key)
       })
-      // 升级列偏好时追加新列的默认隐藏状态，已有列使用管理员保存的选择。
+      // Append the newly hidden column before storing the migration version so saved
+      // choices for existing columns remain intact.
       const savedVersion = localStorage.getItem(HIDDEN_COLUMNS_VERSION_KEY)
       if (savedVersion !== HIDDEN_COLUMNS_CURRENT_VERSION) {
         hiddenColumns.add('upstream_request_id')
@@ -865,31 +1355,41 @@ const loadSavedColumns = () => {
       localStorage.setItem(HIDDEN_COLUMNS_VERSION_KEY, HIDDEN_COLUMNS_CURRENT_VERSION)
     }
   } catch {
+    // Add usage defaults after a read or write failure; any keys already restored remain
+    // in the set for this session.
     DEFAULT_HIDDEN_COLUMNS.forEach((key) => {
       hiddenColumns.add(key)
     })
   }
 }
 
-// 明细标签状态
+// DetailTab identifies usage records, errors, or the administrator user ranking.
 type DetailTab = 'usage' | 'errors' | 'ranking'
+// Tab state selects the displayed section while rankingMounted retains the ranking instance
+// after its first visit.
 const activeTab = ref<DetailTab>('usage')
 const detailTabs = computed(() => [
   { key: 'usage' as const, label: t('usage.tabs.usage'), icon: 'document' as const },
   { key: 'errors' as const, label: t('usage.tabs.errors'), icon: 'exclamationTriangle' as const },
   { key: 'ranking' as const, label: t('usage.tabs.ranking'), icon: 'chart' as const },
 ])
+// Component refs coordinate ranking reloads and programmatic user-label changes with the
+// shared filter panel.
 const usageFiltersRef = ref<InstanceType<typeof UsageFilters> | null>(null)
 const rankingMounted = ref(false)
 const rankingRef = ref<InstanceType<typeof UserTokenRanking> | null>(null)
 
+// switchTab selects the visible detail section and lazily starts its data needs. Empty
+// error rows trigger retrieval, while first ranking selection mounts its component for
+// subsequent reactive filter updates.
 const switchTab = (tab: DetailTab) => {
   activeTab.value = tab
   if (tab === 'errors' && errRows.value.length === 0) loadAdminErrors()
   if (tab === 'ranking') rankingMounted.value = true
 }
 
-// 错误请求标签状态
+// Error request state owns its records, loading flag, paging, server sort, and selected
+// detail dialog independently of usage rows.
 const errRows = ref<OpsErrorLog[]>([])
 const errLoading = ref(false)
 const errPage = ref(1)
@@ -900,10 +1400,14 @@ const errSortOrder = ref<'asc' | 'desc'>('desc')
 const showErrorModal = ref(false)
 const selectedErrorId = ref<number | null>(null)
 
-// 日期字符串省略时区后缀，先按本地时区解析，再转为 UTC，与页面其它日期处理一致。
+// toRFC3339 converts a calendar date into a local day endpoint expressed in UTC. Missing
+// dates return undefined, and the end flag selects the final millisecond of that local day.
 const toRFC3339 = (d: string | undefined, endOfDay = false): string | undefined =>
   d ? new Date(d + (endOfDay ? 'T23:59:59.999' : 'T00:00:00')).toISOString() : undefined
 
+// loadAdminErrors retrieves administrator error records using supported shared and
+// error-specific predicates. Request-ID searches omit time bounds; failures retain earlier
+// rows and report an error, and loading clears after settlement.
 const loadAdminErrors = async () => {
   errLoading.value = true
   try {
@@ -921,13 +1425,16 @@ const loadAdminErrors = async () => {
       model: filters.value.model || undefined,
       phase: filters.value.error_phase || undefined,
       category: filters.value.error_category || undefined,
-      status_codes: filters.value.status_code != null ? String(filters.value.status_code) : undefined,
+      status_codes:
+        filters.value.status_code != null ? String(filters.value.status_code) : undefined,
       sort_by: errSortBy.value,
       sort_order: errSortOrder.value,
     })
     errRows.value = resp.items
     errTotal.value = resp.total
   } catch (error) {
+    // Keep the earlier error page after retrieval fails and notify the administrator; the
+    // finalizer still releases its loading indicator.
     console.error('Failed to load admin errors:', error)
     appStore.showError(t('usage.errors.failedToLoad'))
   } finally {
@@ -935,19 +1442,38 @@ const loadAdminErrors = async () => {
   }
 }
 
+// onErrSort stores the error ordering and reloads its first page.
 const onErrSort = (sortBy: string, sortOrder: 'asc' | 'desc') => {
   errSortBy.value = sortBy
   errSortOrder.value = sortOrder
   errPage.value = 1
   loadAdminErrors()
 }
-const onErrPage = (p: number) => { errPage.value = p; loadAdminErrors() }
-const onErrPageSize = (s: number) => { errPageSize.value = s; errPage.value = 1; loadAdminErrors() }
-const openError = (id: number) => { selectedErrorId.value = id; showErrorModal.value = true }
+// onErrPage selects an error page and starts its retrieval.
+const onErrPage = (p: number) => {
+  errPage.value = p
+  loadAdminErrors()
+}
+// onErrPageSize changes error page size and reloads from the first page.
+const onErrPageSize = (s: number) => {
+  errPageSize.value = s
+  errPage.value = 1
+  loadAdminErrors()
+}
+// openError selects an error record and opens its administrator detail dialog.
+const openError = (id: number) => {
+  selectedErrorId.value = id
+  showErrorModal.value = true
+}
 
+// Column menu state owns the dropdown visibility and container used to recognize clicks
+// outside its controls.
 const showColumnDropdown = ref(false)
 const columnDropdownRef = ref<HTMLElement | null>(null)
 
+// handleColumnClickOutside closes the column menu when a document click lands outside its
+// container. A missing container leaves visibility untouched, allowing the handler to run
+// during mount transitions.
 const handleColumnClickOutside = (event: MouseEvent) => {
   if (columnDropdownRef.value && !columnDropdownRef.value.contains(event.target as HTMLElement)) {
     showColumnDropdown.value = false
@@ -960,15 +1486,23 @@ onMounted(() => {
   loadLogs()
   loadStats()
   loadModelStats(modelDistributionSource.value, true)
+  // Defer the initial trend and group snapshot briefly after starting table and summary
+  // retrieval; the scheduled callback is not canceled on unmount.
   window.setTimeout(() => {
     void loadChartData()
   }, 120)
   loadSavedColumns()
   loadSavedErrColumns()
+  // Register one document listener for this mounted page so clicks outside the column menu
+  // can close its floating controls.
   document.addEventListener('click', handleColumnClickOutside)
 })
-watch(endpointDistributionSource, (source) => { void loadEndpointStats(source) })
+watch(endpointDistributionSource, (source) => {
+  void loadEndpointStats(source)
+})
 
+// Release page-owned request controllers and the outside-click listener when leaving this
+// view so pending cancelable work cannot retain those resources.
 onUnmounted(() => {
   statsReqSeq += 1
   endpointReqSeq += 1

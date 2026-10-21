@@ -2,86 +2,121 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 
-import type { AdminUser } from '@/types'
+import type { AdminUser } from '@/api/admin/users.types'
 
+// UserEditModal.spec.ts checks user-edit limit validation and explicit zero submission
+// with a fixed account fixture. Step-up verification delegates directly to the supplied
+// operation in these tests, and custom attributes are stubbed so assertions isolate
+// profile-limit payloads and validation feedback.
+
+// The hoisted profile, attribute, notification, and verification spies isolate the edit
+// form's validation and submitted limit values from server persistence.
 const { updateUser, updateUserAttributes, showError, showSuccess, runStepUp } = vi.hoisted(() => ({
-  updateUser: vi.fn(),
-  updateUserAttributes: vi.fn(),
-  showError: vi.fn(),
-  showSuccess: vi.fn(),
-  runStepUp: vi.fn()
+  updateUser: vi.fn(), // Profile update spy.
+  updateUserAttributes: vi.fn(), // Attribute update spy.
+  showError: vi.fn(), // Error notification spy.
+  showSuccess: vi.fn(), // Success notification spy.
+  runStepUp: vi.fn(), // Verification operation spy.
 }))
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
-    users: { update: updateUser },
-    userAttributes: { updateUserAttributeValues: updateUserAttributes }
-  }
+    users: {
+      update: updateUser, // Profile update substitute.
+    }, // User endpoint substitutes.
+    userAttributes: {
+      updateUserAttributeValues: updateUserAttributes, // Attribute update substitute.
+    }, // Attribute endpoint substitutes.
+  }, // Administrator API substitute.
 }))
 
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showError, showSuccess })
+  useAppStore: () => ({
+    showError, // Error notification spy.
+    showSuccess, // Success notification spy.
+  }), // Application notification-store substitute.
 }))
 
 vi.mock('@/composables/useClipboard', () => ({
-  useClipboard: () => ({ copyToClipboard: vi.fn() })
+  useClipboard: () => ({
+    copyToClipboard: vi.fn(), // Password copy substitute.
+  }), // Clipboard composable substitute.
 }))
 
 vi.mock('@/composables/useStepUp', () => ({
-  useStepUp: () => ({ run: runStepUp }),
-  isStepUpBlocked: () => false,
-  isStepUpCancelled: () => false,
-  stepUpBlockReason: () => ''
+  useStepUp: () => ({
+    run: runStepUp, // Verification operation delegate.
+  }), // Verification composable substitute.
+  isStepUpBlocked: () => false, // Blocked-verification classification substitute.
+  isStepUpCancelled: () => false, // Cancelled-verification classification substitute.
+  stepUpBlockReason: () => '', // Verification reason substitute.
 }))
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
-    useI18n: () => ({ t: (key: string) => key })
+    useI18n: () => ({
+      t: (key: string) => key, // Translation key passthrough.
+    }), // Translation composable substitute.
   }
 })
 
 import UserEditModal from '../UserEditModal.vue'
 
+// BaseDialogStub exposes visible form and footer slots while the tests exercise the
+// edit component's own inputs and submit handler.
 const BaseDialogStub = defineComponent({
-  name: 'BaseDialog',
-  props: { show: Boolean },
-  template: '<div v-if="show"><slot /><slot name="footer" /></div>'
+  name: 'BaseDialog', // Stub component name.
+  props: {
+    show: Boolean, // Parent-controlled dialog visibility.
+  }, // Accepted component props.
+  template: '<div v-if="show"><slot /><slot name="footer" /></div>', // Rendered stub markup.
 })
 
+// user provides an existing account with a seven-key limit and positive concurrency so
+// tests can distinguish loaded values from edited zeros.
 const user: AdminUser = {
-  id: 9,
-  email: 'edit-user@example.com',
-  username: 'editor',
-  notes: '',
-  role: 'user',
-  balance: 0,
-  concurrency: 3,
-  rpm_limit: 0,
-  api_key_limit: 7,
-  status: 'active',
-  allowed_groups: [],
-  disabled_public_groups: [],
-  balance_notify_enabled: true,
-  balance_notify_threshold: null,
-  balance_notify_extra_emails: [],
-  created_at: '2026-07-23T00:00:00Z',
-  updated_at: '2026-07-23T00:00:00Z'
+  id: 9, // Fixture record identifier.
+  email: 'edit-user@example.com', // User email address.
+  username: 'editor', // User display name.
+  notes: '', // Administrator account notes.
+  role: 'user', // Account authorization role.
+  balance: 0, // Existing user balance.
+  concurrency: 3, // Concurrent request limit.
+  rpm_limit: 0, // Requests per minute.
+  api_key_limit: 7, // API-key creation limit.
+  status: 'active', // Fixture account status.
+  allowed_groups: [], // Granted exclusive-group identifiers.
+  disabled_public_groups: [], // Blocked public-group identifiers.
+  balance_notify_enabled: true, // Balance-alert enable flag.
+  balance_notify_threshold: null, // Custom balance-alert threshold.
+  balance_notify_extra_emails: [], // Additional balance-alert recipients.
+  created_at: '2026-07-23T00:00:00Z', // Record creation timestamp.
+  updated_at: '2026-07-23T00:00:00Z', // Record update timestamp.
 }
 
+// mountModal opens the editor with a copied user fixture and optional concurrency
+// override. Attribute and step-up child components are stubbed while the actual limit
+// inputs and submit handler remain active.
 function mountModal(concurrency = user.concurrency) {
   return mount(UserEditModal, {
-    props: { show: true, user: { ...user, concurrency } },
+    props: {
+      show: true, // Parent-controlled dialog visibility.
+      user: {
+        ...user,
+        concurrency, // Concurrent request limit.
+      }, // Selected user record.
+    }, // Accepted component props.
     global: {
       stubs: {
-        BaseDialog: BaseDialogStub,
-        Select: true,
-        UserAttributeForm: true,
-        Icon: true,
-        TotpStepUpDialog: true
-      }
-    }
+        BaseDialog: BaseDialogStub, // Dialog rendering substitute.
+        Select: true, // Selector rendering substitute.
+        UserAttributeForm: true, // Attribute editor substitute.
+        Icon: true, // Icon rendering substitute.
+        TotpStepUpDialog: true, // Verification dialog substitute.
+      }, // Replaced child components.
+    }, // Mount-wide component overrides.
   })
 }
 
@@ -96,6 +131,8 @@ describe('UserEditModal API Key 上限与并发', () => {
     updateUser.mockResolvedValue({})
   })
 
+  // An existing user has a seven-key limit, then the administrator enters zero. The
+  // input must show the loaded value first and the update request must include zero.
   it('显示实际值并允许保存显式零值', async () => {
     const wrapper = mountModal()
     const input = wrapper.get('[data-test="api-key-limit-input"]')
@@ -105,9 +142,16 @@ describe('UserEditModal API Key 上限与并发', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(updateUser).toHaveBeenCalledWith(9, expect.objectContaining({ api_key_limit: 0 }))
+    expect(updateUser).toHaveBeenCalledWith(
+      9,
+      expect.objectContaining({
+        api_key_limit: 0, // API-key creation limit.
+      }),
+    )
   })
 
+  // The administrator changes the existing user API-key limit to a negative value. The
+  // form must display the limit validation error and avoid any profile update.
   it('拒绝负数 API Key 上限', async () => {
     const wrapper = mountModal()
     await wrapper.get('[data-test="api-key-limit-input"]').setValue('-1')
@@ -119,6 +163,8 @@ describe('UserEditModal API Key 上限与并发', () => {
     expect(showError).toHaveBeenCalledWith('admin.users.form.apiKeyLimitInvalid')
   })
 
+  // The edited API-key limit is one above the signed database integer range. The form
+  // must display the validation error and leave the profile update spy uncalled.
   it('拒绝超过数据库范围的 API Key 上限', async () => {
     const wrapper = mountModal()
     await wrapper.get('[data-test="api-key-limit-input"]').setValue('2147483648')
@@ -130,6 +176,9 @@ describe('UserEditModal API Key 上限与并发', () => {
     expect(showError).toHaveBeenCalledWith('admin.users.form.apiKeyLimitInvalid')
   })
 
+  // The editor opens with concurrency set to zero and the remaining fields valid.
+  // Submission must include zero, avoid validation errors, and emit a successful save
+  // event.
   it('允许用零保存不限制并发，而不会阻止其他字段保存', async () => {
     const wrapper = mountModal(0)
 
@@ -137,10 +186,18 @@ describe('UserEditModal API Key 上限与并发', () => {
     await flushPromises()
 
     expect(showError).not.toHaveBeenCalled()
-    expect(updateUser).toHaveBeenCalledWith(9, expect.objectContaining({ concurrency: 0 }))
+    expect(updateUser).toHaveBeenCalledWith(
+      9,
+      expect.objectContaining({
+        concurrency: 0, // Concurrent request limit.
+      }),
+    )
     expect(wrapper.emitted('success')).toBeTruthy()
   })
 
+  // A valid existing user receives a negative concurrency draft before submission. The
+  // form must show the concurrency validation message and prevent the profile mutation
+  // request.
   it('仍然拒绝负数并发', async () => {
     const wrapper = mountModal()
 

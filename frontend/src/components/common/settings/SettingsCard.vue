@@ -5,10 +5,7 @@
         <h2 class="text-lg font-semibold text-primary-900 dark:text-dark-50">
           {{ title }}
         </h2>
-        <p
-          v-if="description"
-          class="mt-1 text-sm text-primary-900/80 dark:text-dark-300"
-        >
+        <p v-if="description" class="mt-1 text-sm text-primary-900/80 dark:text-dark-300">
           {{ description }}
         </p>
         <slot name="description" />
@@ -22,10 +19,18 @@
 </template>
 
 <script setup lang="ts">
-// 整页设置的一组设置项放在一张卡片里：头部是标题、说明和 actions 插槽，内容区按 SettingsSection 分区。
-// 保存统一由页面底部的吸底保存条完成，卡片里只放刷新、测试这类操作按钮。
+/**
+ * SettingsCard.vue groups full page settings beneath a title, description, and
+ * optional header actions. The content area supplies shared section spacing; pages own
+ * saving and can place refresh or test controls in the actions slot.
+ */
+
+/**
+ * The card props supply its heading and optional introductory text; description
+ * and actions slots let the containing settings page extend the header.
+ */
 defineProps<{
-  title: string
-  description?: string
+  title: string /* displayed heading text */
+  description?: string /* optional explanatory text */
 }>()
 </script>

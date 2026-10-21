@@ -3,9 +3,16 @@ import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AdminGroup } from '@/types'
+import type { AdminGroup } from '@/api/groups.types'
 import GroupsView from '@/views/admin/GroupsView.vue'
 
+// GroupsView.duplicate.spec.ts checks group duplication progress, API errors, and list refresh
+// behavior. Mounted components or pure helper calls exercise the real owning implementation,
+// while controlled API and display dependencies expose the observable updates asserted by each
+// scenario.
+
+// Hoisted group API and notification mocks let each scenario control request outcomes before
+// the mounted page imports its dependencies.
 const {
   listGroups,
   duplicateGroup,
@@ -16,7 +23,7 @@ const {
   getCapacitySummary,
   getLiveCapability,
   showSuccess,
-  showError
+  showError,
 } = vi.hoisted(() => ({
   listGroups: vi.fn(),
   duplicateGroup: vi.fn(),
@@ -27,7 +34,7 @@ const {
   getCapacitySummary: vi.fn(),
   getLiveCapability: vi.fn(),
   showSuccess: vi.fn(),
-  showError: vi.fn()
+  showError: vi.fn(),
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -43,34 +50,36 @@ vi.mock('@/api/admin', () => ({
       create: vi.fn(),
       update: updateGroup,
       delete: vi.fn(),
-      updateSortOrder: vi.fn()
+      updateSortOrder: vi.fn(),
     },
     providers: {
       list: vi.fn(),
-      getById: vi.fn()
-    }
-  }
+      getById: vi.fn(),
+    },
+  },
 }))
 
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showSuccess, showError })
+  useAppStore: () => ({ showSuccess, showError }),
 }))
 
 vi.mock('@/stores/onboarding', () => ({
   useOnboardingStore: () => ({
     isCurrentStep: vi.fn(() => false),
-    nextStep: vi.fn()
-  })
+    nextStep: vi.fn(),
+  }),
 }))
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
-    useI18n: () => ({ t: (key: string) => key })
+    useI18n: () => ({ t: (key: string) => key }),
   }
 })
 
+// sourceGroup supplies the saved group identity and settings used as the selected duplication
+// and update target across these page scenarios.
 const sourceGroup: AdminGroup = {
   id: 42,
   name: 'Primary',
@@ -114,33 +123,42 @@ const sourceGroup: AdminGroup = {
   active_provider_count: 1,
   rate_limited_provider_count: 0,
   models_list_config: undefined,
-  sort_order: 10
+  sort_order: 10,
 }
 
+// The layout and table stubs expose page slots, row actions, and displayed columns so these
+// tests can inspect the actual page state.
 const AppLayoutStub = defineComponent({
-  template: '<main><slot /></main>'
+  template: '<main><slot /></main>',
 })
 
 const TablePageLayoutStub = defineComponent({
-  template: '<section><slot name="filters" /><slot name="table" /><slot name="pagination" /></section>'
+  template:
+    '<section><slot name="filters" /><slot name="table" /><slot name="pagination" /></section>',
 })
 
 const DataTableStub = defineComponent({
   props: {
     data: { type: Array, default: () => [] },
     columns: { type: Array, default: () => [] },
-    loading: { type: Boolean, default: false }
+    loading: { type: Boolean, default: false },
   },
-  template: '<div><div v-for="row in data" :key="row.id"><slot name="cell-actions" :row="row" /></div></div>'
+  template:
+    '<div><div v-for="row in data" :key="row.id"><slot name="cell-actions" :row="row" /></div></div>',
 })
 
+// BaseDialogStub and adjacent control stubs expose test-visible slots and events while keeping
+// dialog layout outside the tested page behavior.
 const BaseDialogStub = defineComponent({
   props: {
-    show: { type: Boolean, default: false }
+    show: { type: Boolean, default: false },
   },
-  template: '<div v-if="show"><slot /><slot name="footer" /></div>'
+  template: '<div v-if="show"><slot /><slot name="footer" /></div>',
 })
 
+// mountView mounts the administrator page with controlled API and display dependencies. The
+// returned wrapper exposes real page actions while stubs keep unrelated layout and dialog
+// rendering outside the assertions.
 function mountView() {
   return mount(GroupsView, {
     global: {
@@ -159,9 +177,9 @@ function mountView() {
         GroupCapacityBadge: true,
         GroupRateMultipliersModal: true,
         GroupRPMOverridesModal: true,
-        VueDraggable: true
-      }
-    }
+        VueDraggable: true,
+      },
+    },
   })
 }
 
@@ -179,7 +197,7 @@ describe('GroupsView duplicate action', () => {
       getCapacitySummary,
       getLiveCapability,
       showSuccess,
-      showError
+      showError,
     ]) {
       fn.mockReset()
     }
@@ -190,13 +208,13 @@ describe('GroupsView duplicate action', () => {
       total: 1,
       page: 1,
       page_size: 20,
-      pages: 1
+      pages: 1,
     })
     duplicateGroup.mockResolvedValue({
       ...sourceGroup,
       id: 43,
       name: 'Primary (Copy)',
-      status: 'inactive'
+      status: 'inactive',
     })
     getModelsListCandidates.mockResolvedValue([])
     getUsageSummary.mockResolvedValue([])
@@ -208,6 +226,8 @@ describe('GroupsView duplicate action', () => {
     vi.restoreAllMocks()
   })
 
+  // A group duplication request resolves successfully for the chosen row. The page reports the
+  // duplicate name and refreshes the list so the resulting group becomes discoverable.
   it('duplicates the selected group, reports success, and refreshes the list', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -225,10 +245,15 @@ describe('GroupsView duplicate action', () => {
     wrapper.unmount()
   })
 
+  // A duplicate request remains pending while the same action is clicked again. The page keeps
+  // that group's duplicate action disabled and submits only one request for its ID.
   it('ignores repeated clicks while the duplicate request is in flight', async () => {
     let resolveDuplicate!: (value: AdminGroup) => void
     duplicateGroup.mockImplementationOnce(
-      () => new Promise<AdminGroup>((resolve) => { resolveDuplicate = resolve })
+      () =>
+        new Promise<AdminGroup>((resolve) => {
+          resolveDuplicate = resolve
+        }),
     )
     const wrapper = mountView()
     await flushPromises()
@@ -240,7 +265,8 @@ describe('GroupsView duplicate action', () => {
     await wrapper.vm.$nextTick()
 
     expect(duplicateGroup).toHaveBeenCalledTimes(1)
-    // 请求期间复制按钮保持禁用，重新打开菜单时也使用此状态。
+    // The duplicate action stays disabled while its request is pending, including when the
+    // action menu is opened again.
     await wrapper.get('[data-testid="group-more"]').trigger('click')
     const pendingButton = wrapper.get('[data-testid="group-duplicate"]')
     expect(pendingButton.attributes('disabled')).toBeDefined()
@@ -252,6 +278,8 @@ describe('GroupsView duplicate action', () => {
     wrapper.unmount()
   })
 
+  // The duplicate endpoint rejects with an API error. The page displays the message and
+  // releases its per-group pending state so a later action can retry duplication.
   it('shows the API error and restores the action when duplication fails', async () => {
     duplicateGroup.mockRejectedValueOnce(new Error('duplicate failed'))
     const wrapper = mountView()
@@ -267,6 +295,9 @@ describe('GroupsView duplicate action', () => {
     wrapper.unmount()
   })
 
+  // Duplication succeeds but the subsequent list refresh fails. The page retains the
+  // duplication success result and reports loading separately instead of reclassifying the
+  // saved copy as failed.
   it('does not report a successful duplicate as failed when the refresh fails', async () => {
     listGroups
       .mockResolvedValueOnce({
@@ -274,7 +305,7 @@ describe('GroupsView duplicate action', () => {
         total: 1,
         page: 1,
         page_size: 20,
-        pages: 1
+        pages: 1,
       })
       .mockRejectedValueOnce(new Error('refresh failed'))
     const wrapper = mountView()
@@ -290,12 +321,15 @@ describe('GroupsView duplicate action', () => {
     wrapper.unmount()
   })
 
+  // Updating a group rejects with the standardized API error representation. The editor
+  // displays the extracted message so administrators receive the server's useful explanation of
+  // the failed save.
   it('shows the standardized API message when updating a group fails', async () => {
     updateGroup.mockRejectedValueOnce({
       status: 409,
       code: 409,
       message: 'group name already exists',
-      reason: 'GROUP_EXISTS'
+      reason: 'GROUP_EXISTS',
     })
     const wrapper = mountView()
     await flushPromises()

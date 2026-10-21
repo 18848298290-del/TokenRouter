@@ -1,25 +1,29 @@
 <template>
-  <!-- 画布即整个背景：透明无边框，圆点网格铺满 -->
   <div
     ref="containerRef"
     class="dot-grid relative h-full w-full overflow-hidden"
     :class="dropTargetActive && 'drop-target-active'"
   >
     <canvas ref="canvasElRef"></canvas>
-    <!-- mask 在独立画布中以不透明颜色合成，再统一设置透明度，重叠笔迹颜色一致。 -->
+    <!-- Composite mask strokes on a separate layer so shared opacity is applied after overlaps, while pointer input continues to reach Fabric. -->
     <canvas ref="maskCanvasElRef" class="mask-overlay"></canvas>
-    <!-- 拖放反馈层的指针事件穿透到 Fabric 画布。 -->
-    <div v-if="dropTargetActive" class="pointer-events-none absolute inset-2 z-[2] rounded-surface border-2 border-dashed border-primary-500/70 bg-primary-500/5"><!-- check-ui-allow: 画布内局部堆叠 --></div>
+    <div
+      v-if="dropTargetActive"
+      class="pointer-events-none absolute inset-2 z-[2] rounded-surface border-2 border-dashed border-primary-500/70 bg-primary-500/5"
+    >
+      <!-- check-ui-allow: Canvas-local stacking. -->
+    </div>
 
-    <!-- 浮动工具栏（顶部居中，含移动端）：上传 | 下载 | 框选 | 局部重绘画笔组 | 删除选中。
-         胶囊形，高度与左上角设置、右上角历史两个按钮相同。窄屏限宽并换行，两侧各留出浮层的位置；
-         局部重绘的画笔组在窄屏会折成两行，两行的胶囊端头会切到按钮，这时改用 dialog 圆角。 -->
     <div
       class="canvas-toolbar canvas-island absolute top-3 z-10 flex max-sm:w-fit max-sm:max-w-[calc(100%-8rem)] max-sm:flex-wrap max-sm:justify-center -translate-x-1/2 items-center gap-1 rounded-full p-1"
       :class="isInpaint && 'max-sm:rounded-dialog'"
     >
-      <!-- 上传图片：裁剪确认后直接放上画布当前视角中心 -->
-      <button type="button" class="canvas-tool-btn" :title="t('creative.panel.uploadSource')" @click="fileInputRef?.click()">
+      <button
+        type="button"
+        class="canvas-tool-btn"
+        :title="t('creative.panel.uploadSource')"
+        @click="fileInputRef?.click()"
+      >
         <Icon name="upload" size="sm" />
       </button>
       <input
@@ -30,7 +34,6 @@
         class="hidden"
         @change="onFilesPicked"
       />
-      <!-- 下载选中图片到本地 -->
       <button
         type="button"
         class="canvas-tool-btn"
@@ -41,7 +44,6 @@
         <Icon name="download" size="sm" />
       </button>
 
-      <!-- 框选参考图 / 画布对象工具：三种模式都可用，开启后空白拖拽画选框 -->
       <span class="canvas-tool-divider"></span>
       <button
         type="button"
@@ -53,7 +55,6 @@
         <Icon name="selection" size="sm" class="h-4 w-4" stroke-dasharray="3 2" />
       </button>
 
-      <!-- 画笔组：仅局部重绘模式可用（选中图片后自动进入涂抹，可用开关暂停去移动视角） -->
       <MotionTransition name="canvas-toolbar-extension">
         <div v-if="isInpaint" class="canvas-toolbar-extension">
           <span class="canvas-tool-divider flex-none"></span>
@@ -61,12 +62,13 @@
             type="button"
             class="canvas-tool-btn flex-none"
             :class="painting && 'canvas-tool-btn-active'"
-            :title="painting ? t('creative.canvas.paintToggleOff') : t('creative.canvas.paintToggleOn')"
+            :title="
+              painting ? t('creative.canvas.paintToggleOff') : t('creative.canvas.paintToggleOn')
+            "
             @click="togglePainting"
           >
             <Icon name="edit" size="sm" />
           </button>
-          <!-- 清除当前所有涂抹笔迹 -->
           <button
             type="button"
             class="canvas-tool-btn flex-none"
@@ -76,7 +78,6 @@
           >
             <Icon name="eraser" size="sm" />
           </button>
-          <!-- 撤销上一笔涂抹（同 Ctrl/Cmd+Z） -->
           <button
             type="button"
             class="canvas-tool-btn flex-none"
@@ -86,7 +87,6 @@
           >
             <Icon name="undo" size="sm" class="h-4 w-4" />
           </button>
-          <!-- 画笔粗细滑块：8–96（固定高度与工具栏按钮同高；轨道/滑块配色见 .brush-size） -->
           <div class="flex flex-none items-center gap-1.5 px-1">
             <input
               v-model.number="brushSize"
@@ -97,9 +97,10 @@
               class="brush-size h-8 w-16 cursor-pointer sm:w-24"
               :title="t('creative.canvas.brushSize')"
             />
-            <span class="w-6 text-center text-xs tabular-nums text-gray-500 dark:text-dark-400">{{ brushSize }}</span>
+            <span class="w-6 text-center text-xs tabular-nums text-gray-500 dark:text-dark-400">{{
+              brushSize
+            }}</span>
           </div>
-          <!-- 笔迹形状：圆头 / 方头 -->
           <button
             type="button"
             class="canvas-tool-btn flex-none"
@@ -122,7 +123,6 @@
       </MotionTransition>
 
       <span class="canvas-tool-divider"></span>
-      <!-- 删除选中图片 -->
       <button
         type="button"
         class="canvas-tool-btn"
@@ -134,24 +134,18 @@
       </button>
     </div>
 
-    <!-- 裁剪弹窗队列：每张图片依次进入，确认/跳过后直接放上画布 -->
-    <CropperModal :show="cropQueue.length > 0" :blob="cropQueue[0] ?? null" @confirm="onCropConfirm" @skip="onCropConfirm" @cancel="onCropCancel" />
+    <CropperModal
+      :show="cropQueue.length > 0"
+      :blob="cropQueue[0] ?? null"
+      @confirm="onCropConfirm"
+      @skip="onCropConfirm"
+      @cancel="onCropCancel"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import MotionTransition from '@/components/common/MotionTransition.vue'
-/**
- * 创作台无限画布（fabric 7）
- * - 逻辑尺寸跟随容器；空白处拖拽或普通 wheel 平移视角，触控板捏合（ctrlKey wheel）与移动端双指手势缩放（0.2–3）
- * - 图片对象可点选 / 拖动 / Delete 删除；生成输出自动按"上一个放置位置右侧 40px、约 2200px 换行"上板并平滑平移视角
- * - 局部重绘：选中图片自动进入涂抹模式（紫色笔迹 = 重绘区域，导出时自动转白底 mask）；
- *   涂抹中可用中键 / 右键拖拽平移，工具栏开关可暂停涂抹去移动 / 换选图片
- * - 工具栏：上传、下载选中、框选、画笔组（仅局部重绘）、删除选中；清空画布收在左上角设置里
- * - 选中框和控制点用品牌青圆点（模块加载时写入 fabric 的交互默认值）；操作引导由 guideKey 交给输入框状态行展示
- * - 拖放：外部 PNG/JPEG/WebP 直接保存并按落点上板，历史 output 通过本地 key 拖放并按落点上板
- * - 场景快照（含 data 自定义属性，图片 src 以 asset:// 占位）防抖存入 IndexedDB，刷新后恢复并重建输出注册表
- */
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
@@ -187,47 +181,105 @@ import {
   parseCreativeOutputDrag,
 } from '@/utils/creativeDrag'
 
+/**
+ * CreativeCanvas.vue owns the image workspace, Fabric interactions, mask
+ * drawing, and browser scene recovery. Image bytes live in IndexedDB while
+ * snapshots retain asset keys, so restoring a scene rebuilds temporary URLs and
+ * skips unavailable images. Uploaded sources are saved before their scene
+ * references, and output placement waits for initial restoration and earlier
+ * queued outputs before choosing positions.
+ *
+ * Mask strokes use a separate canvas whose viewport follows the main scene.
+ * Their uniform layer opacity keeps overlapping strokes consistent, while
+ * export temporarily restores scene coordinates and converts painted regions
+ * into transparent PNG pixels. Scene revisions serialize snapshot writes,
+ * restoration generations reject stale recovery work, and unmount removes
+ * listeners and disposes both canvases. These responsibilities share the same
+ * image identity and lifetime state.
+ */
+
+/**
+ * Props supplies the operation and upload formats accepted by the creative
+ * canvas.
+ */
 interface Props {
-  // 当前操作：局部重绘时启用画笔组并在选中图片后自动进入涂抹模式
+  /**
+   * The operation enables inpaint tools and determines whether selection supplies
+   * edit references or an inpaint anchor.
+   */
   operation: CreativeOperation
-  // 从服务端能力接口注入的文件 MIME 白名单
+  /**
+   * Allowed MIME types come from server capabilities; the file picker defaults to
+   * PNG, JPEG, and WebP when omitted.
+   */
   allowedMimes?: string[]
 }
 
+/**
+ * Emits forwards canvas storage and image-processing failures to the studio
+ * status line.
+ */
 interface Emits {
+  /**
+   * The error event forwards a localized storage or image-processing failure to
+   * the studio. The parent displays that message in the composer status line for
+   * the current canvas operation.
+   */
   (e: 'error', message: string): void
 }
 
+/**
+ * props, emit, and t connect server-supplied canvas options and localized
+ * failure feedback to the parent studio.
+ */
 const props = withDefaults(defineProps<Props>(), {
   allowedMimes: () => ['image/png', 'image/jpeg', 'image/webp'],
 })
 const emit = defineEmits<Emits>()
 const { t } = useI18n()
 
-// 场景快照在本地库中的 key（沿用既有约定）
+/**
+ * SCENE_KEY and SCENE_SAVE_DEBOUNCE identify the stored canvas snapshot and
+ * delay coalesced scene writes.
+ */
 const SCENE_KEY = 'creative:canvas'
-// 场景自动保存防抖
 const SCENE_SAVE_DEBOUNCE = 1000
-// 缩放范围
+/**
+ * MIN_ZOOM, MAX_ZOOM, and ZOOM_WHEEL_FACTOR bound gesture scaling and determine
+ * wheel pinch sensitivity.
+ */
 const MIN_ZOOM = 0.2
 const MAX_ZOOM = 3
-// 触控板捏合缩放灵敏度：相对最初的 0.999 系数约提升五倍
 const ZOOM_WHEEL_FACTOR = 0.995
-// 非像素 wheel 的常用换算；触控板通常使用像素模式，鼠标滚轮常使用行模式
+/**
+ * WHEEL_LINE_HEIGHT and wheel mode constants convert browser line or page
+ * scrolling into viewport pixels.
+ */
 const WHEEL_LINE_HEIGHT = 16
 const WHEEL_DELTA_MODE_LINE = 1
 const WHEEL_DELTA_MODE_PAGE = 2
-// 输出自动上板的排布参数
+/**
+ * PLACE_GAP, PLACE_WRAP_X, and PLACE_SCALE determine displayed image spacing,
+ * automatic row wrapping, and source-independent scaling.
+ */
 const PLACE_GAP = 40
 const PLACE_WRAP_X = 2200
-// 图片上板缩放（上传与生成输出统一）：原始图过大，按 1/4 线性尺寸（1/16 面积）放置，blob 本身不变
 const PLACE_SCALE = 0.25
-// 图片 src 在场景快照中的占位协议，恢复时回 IndexedDB 取 blob
+/**
+ * ASSET_PROTOCOL marks snapshot image references whose original bytes must be
+ * restored from the local asset store.
+ */
 const ASSET_PROTOCOL = 'asset://'
-// 选中框、控制点和框选区域的品牌青（primary-600），浅色和深色画布上都看得清
+/**
+ * SELECTION_COLOR and SELECTION_FILL give object borders and selection
+ * rectangles the same canvas interaction color.
+ */
 const SELECTION_COLOR = '#12A7E8'
 const SELECTION_FILL = 'rgba(18, 167, 232, 0.08)'
-// 项目里只有创作台使用 fabric，直接改交互默认值；新建图片和快照恢复的图片都读取这组值。
+/**
+ * Apply selection defaults before either new images or restored objects are
+ * constructed so both use the same interaction appearance.
+ */
 Object.assign(InteractiveFabricObject.ownDefaults, {
   borderColor: SELECTION_COLOR,
   borderScaleFactor: 1.5,
@@ -238,25 +290,42 @@ Object.assign(InteractiveFabricObject.ownDefaults, {
   transparentCorners: false,
   padding: 0,
 })
-// mask 导出色；画布内使用不透明紫色笔迹，再通过统一图层透明度显示
+/**
+ * MASK_COLOR, MASK_TINT, MASK_OPACITY, and MASK_PREVIEW_TINT separate exported
+ * stroke pixels from the translucent drawing preview.
+ */
 const MASK_COLOR = '#ffffff'
 const MASK_TINT = '#a855f7'
 const MASK_OPACITY = 0.55
 const MASK_PREVIEW_TINT = `rgba(168, 85, 247, ${MASK_OPACITY})`
-// 涂抹锚点描边 / 编辑参考图描边 / 分辨率标记（运行时辅助对象，不进快照、不进 mask）
+/**
+ * ANCHOR_OUTLINE_KIND, REF_OUTLINE_KIND, and RESOLUTION_TAG_KIND identify
+ * runtime helpers excluded from persistent scene snapshots.
+ */
 const ANCHOR_OUTLINE_KIND = 'anchor-outline'
 const REF_OUTLINE_KIND = 'ref-outline'
 const RESOLUTION_TAG_KIND = 'resolution-tag'
+/**
+ * ANCHOR_OUTLINE_STYLE supplies the shared dashed appearance used for inpaint
+ * anchors and selected edit references.
+ */
 const ANCHOR_OUTLINE_STYLE = {
   fill: 'transparent',
   stroke: 'rgba(0, 210, 255, 0.7)',
   strokeWidth: 1.5,
   strokeDashArray: [6, 4],
 }
-// 选中图片右下角的分辨率标记（场景辅助对象，不参与交互与持久化）
+/**
+ * Resolution tag padding and offset constants position its background and text
+ * inside the selected image bounds.
+ */
 const RESOLUTION_TAG_PADDING_X = 5
 const RESOLUTION_TAG_PADDING_Y = 3
 const RESOLUTION_TAG_OFFSET = 8
+/**
+ * RESOLUTION_TAG_TEXT_STYLE and RESOLUTION_TAG_BACKGROUND_STYLE create paired
+ * noninteractive label objects with left-top scene origins.
+ */
 const RESOLUTION_TAG_TEXT_STYLE = {
   fill: '#ffffff',
   fontSize: 11,
@@ -275,66 +344,108 @@ const RESOLUTION_TAG_BACKGROUND_STYLE = {
   selectable: false,
   evented: false,
 }
-// 圆点网格的场景间距（px，缩放 1 时）
+/**
+ * GRID_SPACING and GRID_MIN_PITCH control scene grid density while
+ * zoom-dependent layers blend between spacing levels.
+ */
 const GRID_SPACING = 20
-// 细网格在屏幕上的最小点距（px）。细网格点距落在 [GRID_MIN_PITCH, 2 × GRID_MIN_PITCH) 区间。
 const GRID_MIN_PITCH = 12
 
-// 圆点网格锚定场景坐标，平移时和图片同步滑动。
-// 场景间距按 2 的幂缩放，屏幕点距保持在固定区间：缩小到区间下限时步长翻倍，放大到上限时步长减半。
-// 网格分两层：粗网格点距是细网格的 2 倍，透明度固定。细网格随点距从下限增大到上限而淡入。
-// 跳级前后屏幕上可见的点相同，缩放过程中点阵密度连续变化。
+/**
+ * syncDotGrid positions the CSS dot grid and mask viewport from the main canvas
+ * transform. Grid pitch doubles or halves at zoom thresholds, with a smoothstep
+ * fade between the fine and coarse layers. The coarse layer supplies stable
+ * dots while the fine layer approaches the next density. Copying the same
+ * viewport to the separate mask canvas keeps painted paths aligned with images,
+ * and an explicit render refreshes its manually managed display.
+ */
 function syncDotGrid(): void {
   const el = containerRef.value
   if (!el || !canvas) return
   const vpt = canvas.viewportTransform
   const rawPitch = GRID_SPACING * canvas.getZoom()
+  /**
+   * Choose a power-of-two pitch so visible spacing stays within the configured
+   * interval while coarse and fine grid layers exchange density.
+   */
   const pitch = rawPitch * 2 ** Math.ceil(Math.log2(GRID_MIN_PITCH / rawPitch))
   const progress = Math.min(1, Math.max(0, (pitch - GRID_MIN_PITCH) / GRID_MIN_PITCH))
-  // smoothstep 让细网格在区间两端淡入淡出得更平缓
+  /**
+   * Smoothstep softens the fine-dot transition at both density limits.
+   */
   const fineOpacity = progress * progress * (3 - 2 * progress)
   const x = vpt[4]
   const y = vpt[5]
   el.style.setProperty('--grid-fine-opacity', fineOpacity.toFixed(3))
   el.style.backgroundSize = `${pitch * 2}px ${pitch * 2}px`
-  // 渐变圆点位于图块中心，图块边长为 2 × pitch。
-  // 第一层是粗网格，圆点落在场景原点；后三层是细网格，分别补齐右侧、下方和右下的点。
+  /**
+   * Gradient dots sit at tile centers; offset the coarse layer to the scene
+   * origin and use three fine layers to fill adjacent positions.
+   */
   el.style.backgroundPosition = [
     `${x - pitch}px ${y - pitch}px`,
     `${x}px ${y - pitch}px`,
     `${x - pitch}px ${y}px`,
     `${x}px ${y}px`,
   ].join(', ')
-  // 独立 mask 画布必须与主画布共享视口变换，保证平移和缩放时笔迹跟随图片
   if (maskCanvas) {
+    /**
+     * Keep the overlay on the same scene transform, then request rendering because
+     * its automatic add/remove rendering is disabled.
+     */
     maskCanvas.setViewportTransform([...vpt] as TMat2D)
-    // mask 画布关闭了自动增删重绘，视口变化后需主动刷新，否则下一笔才会显示新位置
     maskCanvas.requestRenderAll()
   }
 }
 
-// fabric 7 类型未声明自定义 data 属性，运行时允许挂任意键，这里做最小封装
-type ObjectWithData = { data?: Record<string, unknown> }
+/**
+ * ObjectWithData exposes the custom metadata attached to Fabric scene objects.
+ */
+type ObjectWithData = {
+  data?: Record<string, unknown> // custom Fabric object metadata
+}
 
+/**
+ * objectData returns the metadata attached to a Fabric object. An absent data
+ * property produces a new empty object; present metadata remains shared with
+ * its owning scene object.
+ */
 function objectData(object: FabricObject): Record<string, unknown> {
   return (object as unknown as ObjectWithData).data ?? {}
 }
 
+/**
+ * setObjectData attaches shared custom metadata to the supplied Fabric scene
+ * object.
+ */
 function setObjectData(object: FabricObject, data: Record<string, unknown>): void {
   const target = object as unknown as ObjectWithData
   target.data = data
 }
 
-// Fabric 7 序列化图片类型为大写 Image，兼容旧快照中的小写 image。
+/**
+ * isImageSnapshotObject recognizes serialized Fabric image types irrespective
+ * of letter case.
+ */
 function isImageSnapshotObject(object: Record<string, unknown>): boolean {
   return typeof object.type === 'string' && object.type.toLowerCase() === 'image'
 }
 
-// 读取图片原始像素尺寸：优先使用快照中的数据，兼容旧场景则回退到图片元素本身
+/**
+ * imageResolution returns positive original pixel dimensions for a Fabric
+ * image. Stored metadata takes precedence; older images use their element
+ * dimensions, and unavailable or nonpositive sizes produce null.
+ */
 function imageResolution(image: FabricImage): ImageResolution | null {
+  /**
+   * Round stored dimensions before accepting positive image pixel sizes.
+   */
   const stored = objectData(image).resolution
   if (stored && typeof stored === 'object') {
-    const value = stored as { width?: unknown; height?: unknown }
+    const value = stored as {
+      width?: unknown // image width pixels
+      height?: unknown // image height pixels
+    }
     const width = typeof value.width === 'number' ? Math.round(value.width) : 0
     const height = typeof value.height === 'number' ? Math.round(value.height) : 0
     if (width > 0 && height > 0) return { width, height }
@@ -345,6 +456,10 @@ function imageResolution(image: FabricImage): ImageResolution | null {
   return width > 0 && height > 0 ? { width, height } : null
 }
 
+/**
+ * removeResolutionTag removes both runtime label objects and clears their
+ * shared reference.
+ */
 function removeResolutionTag(): void {
   if (canvas && resolutionTag) {
     canvas.remove(resolutionTag.background, resolutionTag.text)
@@ -352,7 +467,12 @@ function removeResolutionTag(): void {
   resolutionTag = null
 }
 
-// 按图片场景包围盒右下角定位标记；对象处于 ActiveSelection 时先刷新绝对坐标
+/**
+ * refreshResolutionTag displays original pixel dimensions beside a selected
+ * image. Missing images or dimensions remove the tag; changed labels replace
+ * its objects, and refreshed scene coordinates position it even inside a
+ * grouped selection.
+ */
 function refreshResolutionTag(image: FabricImage | null): void {
   if (!canvas || !image) {
     removeResolutionTag()
@@ -366,7 +486,10 @@ function refreshResolutionTag(image: FabricImage | null): void {
   const label = `${resolution.width} × ${resolution.height}`
   if (!resolutionTag || resolutionTag.image !== image || resolutionTag.text.text !== label) {
     removeResolutionTag()
-    // 字体跟随页面正文，canvas 文字不会继承 CSS 字体
+    /**
+     * Canvas text does not inherit page CSS, so resolve the body font before
+     * constructing the image resolution label.
+     */
     const fontFamily = getComputedStyle(document.body).fontFamily || 'sans-serif'
     const text = new FabricText(label, { ...RESOLUTION_TAG_TEXT_STYLE, fontFamily })
     const textWidth = text.width ?? 0
@@ -388,13 +511,20 @@ function refreshResolutionTag(image: FabricImage | null): void {
   const left = bounds.left + bounds.width - backgroundWidth - RESOLUTION_TAG_OFFSET
   const top = bounds.top + bounds.height - backgroundHeight - RESOLUTION_TAG_OFFSET
   resolutionTag.background.set({ left, top })
-  resolutionTag.text.set({ left: left + RESOLUTION_TAG_PADDING_X, top: top + RESOLUTION_TAG_PADDING_Y })
+  resolutionTag.text.set({
+    left: left + RESOLUTION_TAG_PADDING_X,
+    top: top + RESOLUTION_TAG_PADDING_Y,
+  })
   resolutionTag.background.setCoords()
   resolutionTag.text.setCoords()
   canvas.requestRenderAll()
 }
 
-// 返回当前会话中的全部 mask 路径；画笔路径位于独立画布，普通对象仍位于主画布
+/**
+ * getMaskPaths collects marked mask objects from the main and overlay canvases.
+ * The result is a new array of shared Fabric objects; an unavailable main
+ * canvas yields an empty list.
+ */
 function getMaskPaths(): FabricObject[] {
   if (!canvas) return []
   const paths = canvas.getObjects().filter((object) => objectData(object).kind === 'mask')
@@ -404,7 +534,11 @@ function getMaskPaths(): FabricObject[] {
   return paths
 }
 
-// 把 mask 路径加入独立画布，并重新套用当前目标图片的裁剪框
+/**
+ * addMaskPath adds a stroke to the mask overlay and applies its shared clip.
+ * When the overlay is unavailable it uses the main canvas, allowing callers to
+ * restore strokes through one entry point.
+ */
 function addMaskPath(path: FabricObject): void {
   if (maskCanvas) {
     maskCanvas.add(path)
@@ -415,7 +549,11 @@ function addMaskPath(path: FabricObject): void {
   }
 }
 
-// 从 mask 所在画布移除路径，供撤销、清除和退出画笔模式复用
+/**
+ * removeMaskPath removes a stroke from its owning canvas and refreshes the
+ * overlay. Paths absent from the overlay are passed to the main canvas,
+ * including legacy strokes restored there.
+ */
 function removeMaskPath(path: FabricObject): void {
   if (maskCanvas?.getObjects().includes(path)) {
     maskCanvas.remove(path)
@@ -425,102 +563,253 @@ function removeMaskPath(path: FabricObject): void {
   }
 }
 
+/**
+ * BrushShape selects the round or square mask stroke implementation.
+ */
 type BrushShape = 'round' | 'square'
-type ImageResolution = { width: number; height: number }
-type ResolutionTag = { image: FabricImage; background: Rect; text: FabricText }
-type TouchPoint = { clientX: number; clientY: number }
+/**
+ * ImageResolution stores an image's original positive dimensions in pixels.
+ */
+type ImageResolution = {
+  width: number // image width pixels
+  height: number // image height pixels
+}
+/**
+ * ResolutionTag groups image, background, and text for one runtime resolution
+ * label. Removing or replacing the selected image removes both label objects
+ * together from the scene.
+ */
+type ResolutionTag = {
+  image: FabricImage // associated Fabric image
+  background: Rect // runtime tag background
+  text: FabricText // runtime tag text
+}
+/**
+ * TouchPoint carries client-space coordinates used by the two-finger gesture
+ * calculation.
+ */
+type TouchPoint = {
+  clientX: number // client horizontal pixels
+  clientY: number // client vertical pixels
+}
+/**
+ * PinchGesture captures startDistance and startZoom with startScenePoint and
+ * startViewportTransform at touch start. Later updates scale that transform
+ * while keeping the captured scene point beneath the current midpoint.
+ */
 type PinchGesture = {
-  startDistance: number
-  startZoom: number
-  startScenePoint: { x: number; y: number }
-  startViewportTransform: TMat2D
+  startDistance: number // initial touch separation
+  startZoom: number // initial canvas zoom
+  startScenePoint: {
+    x: number // horizontal scene coordinate
+    y: number // vertical scene coordinate
+  } // initial midpoint scene coordinates
+  startViewportTransform: TMat2D // copied initial viewport transform
 }
 
+/**
+ * containerRef, canvasElRef, maskCanvasElRef, and fileInputRef connect mounted
+ * elements to Fabric setup and image selection.
+ */
 const containerRef = ref<HTMLDivElement | null>(null)
 const canvasElRef = ref<HTMLCanvasElement | null>(null)
 const maskCanvasElRef = ref<HTMLCanvasElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
-// 待裁剪队列：确认/跳过一张后自动出队下一张
+/**
+ * cropQueue retains upload Blobs until each image is confirmed, skipped, or the
+ * remaining crop session is cancelled.
+ */
 const cropQueue = ref<Blob[]>([])
-// 涂抹模式开关：局部重绘 + 锚定图片时自动开启（工具栏可暂停）
+/**
+ * painting and hasMaskStrokes expose the drawing session and current stroke
+ * availability to toolbar controls.
+ */
 const painting = ref(false)
-// 是否已有 mask 笔迹（控制"清除涂抹"/橡皮按钮可用态）
 const hasMaskStrokes = ref(false)
-// 画笔粗细（8–96）/ 形状
+/**
+ * brushSize and brushShape configure the next mask stroke and replace the
+ * active brush when needed.
+ */
 const brushSize = ref(28)
 const brushShape = ref<BrushShape>('round')
-// 当前选中的图片对象（fabric 活动对象；画笔落笔时 fabric 会丢弃选中，不能作为 mask 锚点依据）
+/**
+ * selectedImage tracks Fabric selection; drawing can clear that selection while
+ * inpaintAnchor retains the target image.
+ */
 const selectedImage = shallowRef<FabricObject | null>(null)
-// 当前 Fabric 活动选区内的对象数量；框选多张图片时也要允许使用删除工具
+/**
+ * selectedObjectCount enables removal for grouped selections as well as a
+ * single selected image object.
+ */
 const selectedObjectCount = ref(0)
-// 当前是否有外部图片或历史输出悬停在画布上，用于显示拖放目标反馈
+/**
+ * dropTargetActive controls the canvas drop feedback while nested drag events
+ * update their shared depth count.
+ */
 const dropTargetActive = ref(false)
-// 选中图片时保存 mask 目标，画笔落笔清除 Fabric 选中态后仍向该图片涂抹。
+/**
+ * inpaintAnchor retains the paint target across Fabric selection clearing and
+ * changes when another image is selected.
+ */
 const inpaintAnchor = shallowRef<FabricObject | null>(null)
-// 手动暂停涂抹（移动视角 / 换选图片后再恢复）
+/**
+ * paintSuspended records manual drawing suspension so the user can pan or
+ * choose another image before resuming.
+ */
 const paintSuspended = ref(false)
-// 编辑模式（edit）的参考图集合：点击图片 = 单选替换，框选工具 = 批量替换为框内图片
+/**
+ * editRefs retains shared selected image objects for reference export even
+ * after ordinary Fabric selection is cleared.
+ */
 const editRefs = shallowRef<FabricObject[]>([])
-// 框选工具开关：三种模式均可开启，空白拖拽绘制选框
+/**
+ * boxSelectMode assigns blank-space dragging to Fabric selection while the
+ * default interaction pans the viewport.
+ */
 const boxSelectMode = ref(false)
-// 画布上的图片数量；父级据此在空画布时显示引导
+/**
+ * imageCount and sceneReady let the parent distinguish an empty restored scene
+ * from one still loading.
+ */
 const imageCount = ref(0)
-// 首次场景恢复结束后为 true，恢复期间画布暂时是空的，父级不应显示空画布引导
 const sceneReady = ref(false)
-// 锚点描边对象（运行时辅助，涂抹期间标示目标图片）
+/**
+ * anchorOutline, refOutlines, and resolutionTag own temporary scene helpers
+ * that are removed when their selected images change.
+ */
 let anchorOutline: Rect | null = null
-// 编辑参考图描边对象表：图片对象 → 描边矩形（运行时辅助）
 const refOutlines = new Map<FabricObject, Rect>()
-// 当前单选图片的分辨率标记
 let resolutionTag: ResolutionTag | null = null
 
+/**
+ * canvas and maskCanvas share dimensions and viewport transforms, but the
+ * overlay applies opacity once to all mask strokes.
+ */
 let canvas: Canvas | null = null
-// mask 使用独立静态画布，整层透明度只合成一次
 let maskCanvas: StaticCanvas | null = null
+/**
+ * resizeObserver owns container sizing notifications and is disconnected before
+ * the Fabric instances are disposed.
+ */
 let resizeObserver: ResizeObserver | null = null
+/**
+ * sceneSaveTimer coalesces scene writes and is cleared before explicit flushes
+ * or component disposal.
+ */
 let sceneSaveTimer: ReturnType<typeof setTimeout> | null = null
-// 恢复场景期间跳过 clear/add 事件触发的保存，快照在恢复完成后更新。
+/**
+ * sceneRestoreInProgress suppresses mutation-triggered saves while Fabric loads
+ * a snapshot, protecting stored images from temporary emptiness.
+ */
 let sceneRestoreInProgress = false
-// 恢复代际用于使卸载或用户清空后的迟到恢复回调失效
+/**
+ * sceneRestoreGeneration invalidates delayed recovery checks after reset or
+ * unmount, tying results to their captured scene lifetime.
+ */
 let sceneRestoreGeneration = 0
-// 组件销毁后忽略所有异步恢复与放置回调
+/**
+ * sceneDisposed blocks new persistence and queued placement after unmount;
+ * individual asynchronous functions retain their own checks.
+ */
 let sceneDisposed = false
-// 只有用户变更过画布才需要在卸载时刷新快照
+/**
+ * sceneDirty and sceneRevision track user mutations so an older successful
+ * write cannot mark a newer change saved.
+ */
 let sceneDirty = false
-// 快照版本递增，旧写入完成后不能把较新的变更标记为已保存
 let sceneRevision = 0
-// IndexedDB 快照写入串行化，保持提交顺序稳定
+/**
+ * sceneWriteChain serializes snapshot requests; rejected writes are logged
+ * while later queued snapshots can still run.
+ */
 let sceneWriteChain: Promise<void> = Promise.resolve()
-// 初始恢复 Promise 作为所有外部上板/导入操作的屏障
+/**
+ * sceneRestorePromise delays external placements until initial recovery
+ * finishes, preventing early additions from being replaced by loading.
+ */
 let sceneRestorePromise: Promise<void> = Promise.resolve()
-// dragenter/dragleave 在子元素间移动时会成对触发，使用深度计数避免反馈闪烁
+/**
+ * dragDepth counts nested drag entries so crossing child elements does not hide
+ * the active drop target.
+ */
 let dragDepth = 0
-// 平移拖拽状态：pointerId 统一鼠标 / 触摸
+/**
+ * isPanning, lastClientX, and lastClientY retain the pointer baseline consumed
+ * by each subsequent canvas drag event.
+ */
 let isPanning = false
 let lastClientX = 0
 let lastClientY = 0
-// 双指缩放以手势开始时中点下的场景点为固定锚点。
+/**
+ * pinchGesture captures the transform and scene anchor once, then current touch
+ * distances determine later viewport updates.
+ */
 let pinchGesture: PinchGesture | null = null
-// 平滑平移动画的 rAF 句柄
+/**
+ * panAnimFrame identifies the scheduled viewport animation callback, cancelled
+ * on replacement animations and component teardown.
+ */
 let panAnimFrame: number | null = null
-// 按 assetKey 缓存图片原始 blob，生成时从内存读取源图。
+/**
+ * runtimeBlobs caches original image bytes by asset key so exports can reuse
+ * full-resolution sources after display scaling.
+ */
 const runtimeBlobs = new Map<string, Blob>()
-// 上一个放置位置（场景坐标，right/bottom 为右缘 / 下缘）
-let lastPlaced: { right: number; top: number; bottom: number } | null = null
-// 异步输出按队列依次计算位置并放入画布。
+/**
+ * lastPlaced stores the displayed edges of the latest insertion for sequential
+ * automatic placement and row wrapping.
+ */
+let lastPlaced: {
+  right: number // displayed right edge
+  top: number // displayed top edge
+  bottom: number // displayed bottom edge
+} | null = null
+/**
+ * outputPlacementQueue orders decoded output insertions so each automatic
+ * position observes the preceding image placement.
+ */
 let outputPlacementQueue: Promise<void> = Promise.resolve()
-// mask 笔迹撤销栈（LIFO，上限见 MASK_UNDO_LIMIT）：记录笔迹新增与整体清除
+/**
+ * MaskUndoEntry retains shared stroke identities for one reversible operation.
+ * An add entry removes its path on undo; a clear entry restores every path in
+ * its retained array.
+ */
 type MaskUndoEntry =
-  | { type: 'add'; path: FabricObject }
-  | { type: 'clear'; paths: FabricObject[] }
+  | {
+      type: 'add' // undo operation kind
+      path: FabricObject // added shared stroke
+    }
+  | {
+      type: 'clear' // undo operation kind
+      paths: FabricObject[] // cleared shared strokes
+    }
+/**
+ * maskUndoStack retains shared stroke objects for undo and clears when the
+ * painting draft is discarded.
+ */
 const maskUndoStack: MaskUndoEntry[] = []
-// mask 笔迹共享裁剪框（限制笔迹不画出目标图片；fabric 允许跨对象共享 clipPath 实例）
+/**
+ * maskClipRect is shared by active strokes and replaced when the inpaint target
+ * changes scene bounds.
+ */
 let maskClipRect: Rect | null = null
-// 画笔模式下被锁定对象的原始交互状态
-let lockedStates: Map<FabricObject, { selectable: boolean; evented: boolean }> | null = null
+/**
+ * lockedStates records each object's original interaction flags before painting
+ * disables them, then unlockAllObjects restores those values.
+ */
+let lockedStates: Map<
+  FabricObject,
+  {
+    selectable: boolean // saved selection eligibility
+    evented: boolean // saved event eligibility
+  }
+> | null = null
 
-// ==================== 初始化 ====================
-
+/**
+ * Create the main and mask canvases before registering interactions and
+ * starting recovery, so handlers and restored strokes share initialized
+ * resources.
+ */
 onMounted(() => {
   const element = canvasElRef.value
   const container = containerRef.value
@@ -529,9 +818,7 @@ onMounted(() => {
     width: Math.max(container.clientWidth, 320),
     height: Math.max(container.clientHeight, 320),
     preserveObjectStacking: true,
-    // 背景透明，圆点网格由容器 CSS 透出；导出的 mask 带 alpha
     backgroundColor: '',
-    // 默认关闭组选；点击框选工具后由交互同步逻辑开启
     selection: false,
     selectionColor: SELECTION_FILL,
     selectionBorderColor: SELECTION_COLOR,
@@ -552,9 +839,7 @@ onMounted(() => {
   bindCanvasEvents()
   bindTouchGestures(container)
   syncCanvasSelection()
-  // 涂抹模式下右键 / 中键拖拽平移，需屏蔽画布上的右键菜单
   container.addEventListener('contextmenu', suppressContextMenu)
-  // 原生文件与历史缩略图拖放都在画布根节点接收，落点转换在 drop 时完成。
   container.addEventListener('dragenter', onDragEnter)
   container.addEventListener('dragover', onDragOver)
   container.addEventListener('dragleave', onDragLeave)
@@ -571,6 +856,10 @@ onMounted(() => {
   sceneRestorePromise = restoreScene(generation)
 })
 
+/**
+ * Remove browser listeners and stop scheduled work before disposing drawing
+ * resources; flush only a restored, dirty scene to protect the stored snapshot.
+ */
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('pagehide', onPageHide)
@@ -590,7 +879,10 @@ onBeforeUnmount(() => {
   stopPanAnim()
   if (sceneSaveTimer) clearTimeout(sceneSaveTimer)
   sceneSaveTimer = null
-  // 恢复尚未完成时不要用当前空画布覆盖已有快照；已完成且有变更时尽力刷新最后一次写入。
+  /**
+   * An incomplete restore leaves the live scene temporarily empty, so teardown
+   * must not persist that partial state over saved image references.
+   */
   if (!sceneRestoreInProgress && sceneDirty) flushSceneSave()
   sceneDisposed = true
   sceneRestoreGeneration++
@@ -604,7 +896,11 @@ onBeforeUnmount(() => {
   }
 })
 
-// 画布逻辑尺寸跟随容器（无上界，配合平移形成无限画布）
+/**
+ * fitToContainer updates both canvas dimensions from the visible container
+ * size. It ignores missing or zero-sized containers, preserving the current
+ * drawing surface while layout is unavailable or hidden.
+ */
 function fitToContainer(): void {
   if (!canvas || !containerRef.value) return
   const { clientWidth, clientHeight } = containerRef.value
@@ -613,25 +909,45 @@ function fitToContainer(): void {
   maskCanvas?.setDimensions({ width: Math.floor(clientWidth), height: Math.floor(clientHeight) })
 }
 
-// ==================== 事件绑定 ====================
-
+/**
+ * suppressContextMenu prevents the browser menu during alternate-button canvas
+ * panning.
+ */
 function suppressContextMenu(event: Event): void {
   event.preventDefault()
 }
 
-// 拖放过程中浏览器可能隐藏文件列表，只能同时检查 Files 类型与实际文件。
+/**
+ * isCreativeDropCandidate reports whether a drag may carry files or a history
+ * output. Browsers can hide file entries before dropping, so the Files type
+ * also enables feedback before content validation.
+ */
 function isCreativeDropCandidate(dataTransfer: DataTransfer | null): boolean {
   if (!dataTransfer) return false
   const types = Array.from(dataTransfer.types ?? [])
-  return types.includes(CREATIVE_OUTPUT_DRAG_MIME) || types.includes('Files') || dataTransfer.files.length > 0
+  return (
+    types.includes(CREATIVE_OUTPUT_DRAG_MIME) ||
+    types.includes('Files') ||
+    dataTransfer.files.length > 0
+  )
 }
 
+/**
+ * onDragEnter counts an entry from a recognized canvas drop candidate. It keeps
+ * feedback visible across nested child entries; later dragleave events
+ * decrement the same count before hiding the target.
+ */
 function onDragEnter(event: DragEvent): void {
   if (!isCreativeDropCandidate(event.dataTransfer)) return
   dragDepth += 1
   dropTargetActive.value = true
 }
 
+/**
+ * onDragOver accepts candidate drops and selects copy feedback for the browser.
+ * It prevents surrounding drop handlers from consuming the event; file and
+ * payload validation happens when the drop arrives.
+ */
 function onDragOver(event: DragEvent): void {
   if (!isCreativeDropCandidate(event.dataTransfer)) return
   event.preventDefault()
@@ -640,18 +956,36 @@ function onDragOver(event: DragEvent): void {
   dropTargetActive.value = true
 }
 
+/**
+ * onDragLeave decreases nested drag depth and hides feedback after the outer
+ * leave. The count is clamped to zero because browser child transitions can
+ * produce leave events after feedback has already cleared.
+ */
 function onDragLeave(event: DragEvent): void {
   if (!dropTargetActive.value && !isCreativeDropCandidate(event.dataTransfer)) return
   dragDepth = Math.max(0, dragDepth - 1)
   if (dragDepth === 0) dropTargetActive.value = false
 }
 
-// 将浏览器拖放事件转换为场景坐标；Fabric 会自动扣除当前缩放与视口平移。
-function scenePointForDrop(event: DragEvent): { x: number; y: number } | null {
+/**
+ * scenePointForDrop converts a browser drop event through Fabric scene
+ * coordinates. A missing canvas returns null, allowing the drop handler to stop
+ * before launching image loading or asset lookup.
+ */
+function scenePointForDrop(event: DragEvent): {
+  x: number // horizontal scene coordinate
+  y: number // vertical scene coordinate
+} | null {
   if (!canvas) return null
   return canvas.getScenePoint(event)
 }
 
+/**
+ * onDrop routes history references or supported external images to canvas
+ * placement. A nonempty private payload takes precedence over files and is
+ * validated before local lookup; unsupported files produce an error message
+ * after drop feedback is cleared.
+ */
 function onDrop(event: DragEvent): void {
   const dataTransfer = event.dataTransfer
   if (!isCreativeDropCandidate(dataTransfer)) return
@@ -682,9 +1016,17 @@ function onDrop(event: DragEvent): void {
   void addDroppedFiles(imageFiles, center)
 }
 
+/**
+ * bindCanvasEvents connects Fabric pointer, selection, object, and stroke
+ * events to component state. Blank primary drags pan unless box selection owns
+ * them, while alternate mouse buttons remain available during painting.
+ * Finished strokes move to the separate overlay and retain their undo identity.
+ * Selection clearing during a brush stroke keeps the inpaint anchor, whereas
+ * ordinary deselection clears it. Object mutations update guidance and schedule
+ * snapshots, with restoration suppression handled by scheduleSceneSave.
+ */
 function bindCanvasEvents(): void {
   if (!canvas) return
-  // 空白处按下左键 / 单指 = 平移视角；框选工具开启时交给 Fabric 绘制选框；中键 / 右键始终可平移
   canvas.on('mouse:down', (event) => {
     if (!canvas) return
     if (painting.value) {
@@ -697,7 +1039,6 @@ function bindCanvasEvents(): void {
     }
     if (event.target) return
     if (!isPrimaryPointer(event.e)) return
-    // 框选工具开启时空白拖拽交给 Fabric 绘制选框，不做平移
     if (boxSelectMode.value) return
     startPan(event.e)
     canvas.discardActiveObject()
@@ -709,7 +1050,6 @@ function bindCanvasEvents(): void {
     const dy = client.y - lastClientY
     lastClientX = client.x
     lastClientY = client.y
-    // 视口平移与缩放无关：直接改 vpt 平移分量
     const vpt = [...canvas.viewportTransform] as TMat2D
     vpt[4] += dx
     vpt[5] += dy
@@ -724,11 +1064,12 @@ function bindCanvasEvents(): void {
     wheel.preventDefault()
     wheel.stopPropagation()
     if (wheel.ctrlKey) {
-      // 浏览器会给触控板捏合 wheel 标记 ctrlKey；以光标位置为缩放中心。
-      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, canvas.getZoom() * ZOOM_WHEEL_FACTOR ** wheel.deltaY))
+      const next = Math.min(
+        MAX_ZOOM,
+        Math.max(MIN_ZOOM, canvas.getZoom() * ZOOM_WHEEL_FACTOR ** wheel.deltaY),
+      )
       canvas.zoomToPoint(new Point(wheel.offsetX, wheel.offsetY), next)
     } else {
-      // 普通双指滚动沿手指方向平移画布，取反 wheel delta 抵消浏览器滚动语义。
       const dx = normalizeWheelDelta(wheel.deltaX, wheel.deltaMode, canvas.getWidth())
       const dy = normalizeWheelDelta(wheel.deltaY, wheel.deltaMode, canvas.getHeight())
       const vpt = [...canvas.viewportTransform] as TMat2D
@@ -739,13 +1080,15 @@ function bindCanvasEvents(): void {
     syncDotGrid()
     scheduleSceneSave()
   })
-  // 画笔落笔完成：标记为 mask 轨迹，画在图片上层、不参与选中；入撤销栈并套用图片范围裁剪
+  /**
+   * Completed brush paths move to the independent overlay with opaque colors,
+   * where applying opacity once prevents overlaps from becoming darker.
+   */
   canvas.on('path:created', (event) => {
     const path = event.path as FabricObject | undefined
     if (path && painting.value) {
       setObjectData(path, { kind: 'mask' })
       path.set({ selectable: false, evented: false })
-      // 预览画笔带透明度，落笔后改为不透明颜色交给独立画布统一合成
       path.set({
         fill: path.fill ? MASK_TINT : path.fill,
         stroke: path.stroke ? MASK_TINT : path.stroke,
@@ -753,7 +1096,6 @@ function bindCanvasEvents(): void {
       if (maskClipRect) {
         path.clipPath = maskClipRect
       }
-      // 将每笔路径移入独立画布，先合成不透明笔迹，再由画布整体设置透明度
       if (maskCanvas) {
         canvas?.remove(path)
         addMaskPath(path)
@@ -772,7 +1114,6 @@ function bindCanvasEvents(): void {
     refreshResolutionTag(selectedImage.value instanceof FabricImage ? selectedImage.value : null)
     scheduleSceneSave()
   })
-  // 拖图 / 缩放 / 旋转过程持续同步参考图描边（这些操作只画 upper canvas）
   canvas.on('object:moving', () => {
     refreshRefOutlines()
     refreshResolutionTag(selectedImage.value instanceof FabricImage ? selectedImage.value : null)
@@ -786,7 +1127,6 @@ function bindCanvasEvents(): void {
     refreshResolutionTag(selectedImage.value instanceof FabricImage ? selectedImage.value : null)
   })
   canvas.on('object:removed', (event) => {
-    // 锚点图片被删除时同步清空，涂抹模式随之退出；参考图集合同步剔除
     if (event.target && inpaintAnchor.value === event.target) {
       inpaintAnchor.value = null
     }
@@ -812,24 +1152,28 @@ function bindCanvasEvents(): void {
     syncEditRefFromSelection(event.selected)
     onImageSelected(event.selected?.length === 1 ? pickImage(event.selected[0]) : null)
   })
+  /**
+   * Fabric clears selection when brush drawing begins; keep the inpaint anchor
+   * during painting so the active mask target survives that event.
+   */
   canvas.on('selection:cleared', () => {
     selectedObjectCount.value = 0
     selectedImage.value = null
-    // fabric 画笔落笔时会自动丢弃选中对象：涂抹期间保留锚点，仅手动取消选中才清空；
-    // 编辑模式的参考图集合与选中态解耦，取消选中不影响已选参考
     if (!painting.value) {
       removeResolutionTag()
       inpaintAnchor.value = null
     } else {
-      // 涂抹期间活动选中态会被 Fabric 清掉，标签仍跟随当前涂抹锚点
       refreshResolutionTag(inpaintAnchor.value instanceof FabricImage ? inpaintAnchor.value : null)
     }
   })
 }
 
-// ==================== 移动端双指缩放 ====================
-
-// 触控事件使用捕获阶段，确保 Fabric 的主触点拖动不会抢走双指移动事件。
+/**
+ * bindTouchGestures registers captured, nonpassive touch handlers for the
+ * canvas container. Capture allows a two-finger gesture to stop Fabric's
+ * single-pointer processing; unbindTouchGestures removes these registrations
+ * during component cleanup.
+ */
 function bindTouchGestures(container: HTMLDivElement): void {
   container.addEventListener('touchstart', onCanvasTouchStart, { capture: true, passive: false })
   container.addEventListener('touchmove', onCanvasTouchMove, { capture: true, passive: false })
@@ -837,6 +1181,11 @@ function bindTouchGestures(container: HTMLDivElement): void {
   container.addEventListener('touchcancel', onCanvasTouchCancel, { capture: true, passive: false })
 }
 
+/**
+ * unbindTouchGestures removes all captured gesture handlers from the supplied
+ * container. A missing container is accepted during teardown, and removal uses
+ * the same capture flag as registration.
+ */
 function unbindTouchGestures(container: HTMLDivElement | null): void {
   if (!container) return
   container.removeEventListener('touchstart', onCanvasTouchStart, true)
@@ -845,6 +1194,11 @@ function unbindTouchGestures(container: HTMLDivElement | null): void {
   container.removeEventListener('touchcancel', onCanvasTouchCancel, true)
 }
 
+/**
+ * touchPoints returns the first two active touch positions as client
+ * coordinates. Fewer than two usable entries return null so pinch handlers can
+ * leave single-pointer processing to the canvas.
+ */
 function touchPoints(event: TouchEvent): [TouchPoint, TouchPoint] | null {
   if (!event.touches || event.touches.length < 2) return null
   const first = event.touches[0]
@@ -856,7 +1210,14 @@ function touchPoints(event: TouchEvent): [TouchPoint, TouchPoint] | null {
   ]
 }
 
-function midpointAndDistance(points: [TouchPoint, TouchPoint]): { midpoint: TouchPoint; distance: number } {
+/**
+ * midpointAndDistance calculates the client-space center and separation of two
+ * touches.
+ */
+function midpointAndDistance(points: [TouchPoint, TouchPoint]): {
+  midpoint: TouchPoint // two-touch client midpoint
+  distance: number // two-touch separation pixels
+} {
   const [first, second] = points
   return {
     midpoint: {
@@ -867,8 +1228,15 @@ function midpointAndDistance(points: [TouchPoint, TouchPoint]): { midpoint: Touc
   }
 }
 
-// Fabric 的指针换算同时处理画布偏移、滚动和 Retina 缩放；没有该 API 时回退到 DOM 边界换算，便于测试和降级环境继续工作。
-function viewportPointForClient(point: TouchPoint): { x: number; y: number } {
+/**
+ * viewportPointForClient converts client coordinates into the drawing viewport.
+ * It delegates to Fabric when supported, otherwise subtracts the target element
+ * bounds; with no canvas it returns the supplied client coordinates.
+ */
+function viewportPointForClient(point: TouchPoint): {
+  x: number // horizontal viewport pixels
+  y: number // vertical viewport pixels
+} {
   if (!canvas) return { x: point.clientX, y: point.clientY }
   const target = canvas.upperCanvasEl ?? canvasElRef.value ?? containerRef.value
   const pointerEvent = {
@@ -878,11 +1246,18 @@ function viewportPointForClient(point: TouchPoint): { x: number; y: number } {
     changedTouches: [point],
   } as unknown as TouchEvent
   const fabricCanvas = canvas as unknown as {
-    getViewportPoint?: (event: TouchEvent) => { x: number; y: number }
+    getViewportPoint?: (event: TouchEvent) => {
+      x: number // horizontal viewport pixels
+      y: number // vertical viewport pixels
+    } // optional Fabric viewport converter
   }
   if (typeof fabricCanvas.getViewportPoint === 'function') {
     return fabricCanvas.getViewportPoint(pointerEvent)
   }
+  /**
+   * Reduced Fabric substitutes may omit viewport conversion, so DOM bounds supply
+   * the client-to-viewport offset for those environments.
+   */
   const bounds = target?.getBoundingClientRect?.()
   return {
     x: point.clientX - (bounds?.left ?? 0),
@@ -890,7 +1265,16 @@ function viewportPointForClient(point: TouchPoint): { x: number; y: number } {
   }
 }
 
-function scenePointForClient(point: TouchPoint): { x: number; y: number } {
+/**
+ * scenePointForClient converts client coordinates into the canvas scene plane.
+ * It prefers Fabric's conversion and otherwise inverts the viewport transform;
+ * a singular transform returns viewport coordinates because inversion is
+ * unavailable.
+ */
+function scenePointForClient(point: TouchPoint): {
+  x: number // horizontal scene coordinate
+  y: number // vertical scene coordinate
+} {
   if (!canvas) return { x: point.clientX, y: point.clientY }
   const target = canvas.upperCanvasEl ?? canvasElRef.value ?? containerRef.value
   const pointerEvent = {
@@ -900,11 +1284,19 @@ function scenePointForClient(point: TouchPoint): { x: number; y: number } {
     changedTouches: [point],
   } as unknown as TouchEvent
   const fabricCanvas = canvas as unknown as {
-    getScenePoint?: (event: TouchEvent) => { x: number; y: number }
+    getScenePoint?: (event: TouchEvent) => {
+      x: number // horizontal scene coordinate
+      y: number // vertical scene coordinate
+    } // optional Fabric scene converter
   }
   if (typeof fabricCanvas.getScenePoint === 'function') {
     return fabricCanvas.getScenePoint(pointerEvent)
   }
+  /**
+   * When Fabric scene conversion is unavailable, invert its affine viewport
+   * transform; singular transforms retain viewport coordinates because no inverse
+   * exists.
+   */
   const viewport = viewportPointForClient(point)
   const [a, b, c, d, tx, ty] = canvas.viewportTransform
   const determinant = a * d - b * c
@@ -915,6 +1307,11 @@ function scenePointForClient(point: TouchPoint): { x: number; y: number } {
   }
 }
 
+/**
+ * onCanvasTouchStart captures a valid two-finger gesture's transform and scene
+ * anchor. It stops panning and consumes the event so subsequent pinch updates
+ * use one initial zoom and midpoint reference.
+ */
 function onCanvasTouchStart(event: TouchEvent): void {
   const points = touchPoints(event)
   if (!canvas || !points) return
@@ -927,11 +1324,23 @@ function onCanvasTouchStart(event: TouchEvent): void {
     startScenePoint: scenePointForClient(midpoint),
     startViewportTransform,
   }
+  /**
+   * A captured two-finger gesture takes over movement, so clear single-pointer
+   * drag state before consuming the event from Fabric.
+   */
   stopPanning()
   event.preventDefault()
   event.stopPropagation()
 }
 
+/**
+ * onCanvasTouchMove updates the viewport from the captured pinch state and
+ * current touches. The distance ratio determines a bounded zoom, and the
+ * starting linear transform is scaled by that ratio. Translation is then solved
+ * so the original scene anchor follows the current midpoint. This combines
+ * pinch zoom with two-finger movement without accumulating per-event rounding
+ * drift, and the resulting transform updates the grid and pending scene save.
+ */
 function onCanvasTouchMove(event: TouchEvent): void {
   if (!canvas || !pinchGesture) return
   const points = touchPoints(event)
@@ -940,6 +1349,10 @@ function onCanvasTouchMove(event: TouchEvent): void {
   if (!Number.isFinite(distance) || distance <= 0) return
 
   const ratio = distance / pinchGesture.startDistance
+  /**
+   * Clamp the gesture zoom before computing translation so the same captured
+   * scene anchor stays beneath the current midpoint at either limit.
+   */
   const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchGesture.startZoom * ratio))
   const linearRatio = nextZoom / pinchGesture.startZoom
   const start = pinchGesture.startViewportTransform
@@ -949,8 +1362,10 @@ function onCanvasTouchMove(event: TouchEvent): void {
   vpt[2] = start[2] * linearRatio
   vpt[3] = start[3] * linearRatio
   const viewport = viewportPointForClient(midpoint)
-  vpt[4] = viewport.x - (vpt[0] * pinchGesture.startScenePoint.x + vpt[2] * pinchGesture.startScenePoint.y)
-  vpt[5] = viewport.y - (vpt[1] * pinchGesture.startScenePoint.x + vpt[3] * pinchGesture.startScenePoint.y)
+  vpt[4] =
+    viewport.x - (vpt[0] * pinchGesture.startScenePoint.x + vpt[2] * pinchGesture.startScenePoint.y)
+  vpt[5] =
+    viewport.y - (vpt[1] * pinchGesture.startScenePoint.x + vpt[3] * pinchGesture.startScenePoint.y)
   canvas.setViewportTransform(vpt)
   syncDotGrid()
   scheduleSceneSave()
@@ -958,6 +1373,11 @@ function onCanvasTouchMove(event: TouchEvent): void {
   event.stopPropagation()
 }
 
+/**
+ * onCanvasTouchEnd releases pinch ownership when fewer than two touches remain.
+ * It also clears panning so the remaining finger cannot continue a gesture with
+ * stale single-pointer coordinates.
+ */
 function onCanvasTouchEnd(event: TouchEvent): void {
   if (!pinchGesture || (event.touches?.length ?? 0) >= 2) return
   event.preventDefault()
@@ -965,6 +1385,11 @@ function onCanvasTouchEnd(event: TouchEvent): void {
   isPanning = false
 }
 
+/**
+ * onCanvasTouchCancel clears an interrupted pinch and its panning state. It
+ * consumes cancellation only while a pinch is active, leaving unrelated
+ * single-pointer cancellation to the other handlers.
+ */
 function onCanvasTouchCancel(event: TouchEvent): void {
   if (!pinchGesture) return
   event.preventDefault()
@@ -972,24 +1397,44 @@ function onCanvasTouchCancel(event: TouchEvent): void {
   isPanning = false
 }
 
-// 页面进入后台时提前刷新待写快照，降低直接关闭浏览器造成的最后一次变更丢失概率。
+/**
+ * onPageHide starts a best-effort flush of the latest dirty scene snapshot.
+ * Browser shutdown may interrupt asynchronous IndexedDB work, so this callback
+ * starts the write before normal debounce delay.
+ */
 function onPageHide(): void {
   flushSceneSave()
 }
 
+/**
+ * onVisibilityChange flushes scene changes when the document becomes hidden.
+ * Visible transitions keep the debounce schedule, while hidden transitions
+ * reuse the same best-effort persistence path as pagehide.
+ */
 function onVisibilityChange(): void {
   if (document.visibilityState === 'hidden') flushSceneSave()
 }
 
-// wheel 的像素、行和页单位统一换算成画布像素。
+/**
+ * normalizeWheelDelta converts line and page wheel deltas to canvas pixels.
+ * Invalid or zero deltas return zero; line mode uses the configured line
+ * estimate and page mode uses the supplied viewport dimension.
+ */
 function normalizeWheelDelta(delta: number, deltaMode: number, pageSize: number): number {
   if (!Number.isFinite(delta) || delta === 0) return 0
+  /**
+   * Line and page deltas need viewport pixel conversion.
+   */
   if (deltaMode === WHEEL_DELTA_MODE_LINE) return delta * WHEEL_LINE_HEIGHT
   if (deltaMode === WHEEL_DELTA_MODE_PAGE) return delta * pageSize
   return delta
 }
 
-// 平移拖拽开始（坐标记录 + 抓手光标）
+/**
+ * startPan records the current client position and enables the grabbing cursor.
+ * It requires a live canvas and establishes the baseline consumed by later
+ * Fabric mouse-move events.
+ */
 function startPan(event: Event): void {
   if (!canvas) return
   isPanning = true
@@ -999,18 +1444,25 @@ function startPan(event: Event): void {
   canvas.defaultCursor = 'grabbing'
 }
 
-// 画布平移的备用按键：鼠标中键 / 右键
+/**
+ * isPanButton recognizes middle and secondary mouse buttons for canvas panning.
+ */
 function isPanButton(event: Event): boolean {
   const mouse = event as MouseEvent
   return typeof mouse.button === 'number' && (mouse.button === 1 || mouse.button === 2)
 }
 
+/**
+ * stopPanning clears drag state and restores the cursor for the active tool.
+ */
 function stopPanning(): void {
   isPanning = false
   if (canvas) canvas.defaultCursor = boxSelectMode.value || painting.value ? 'crosshair' : 'grab'
 }
 
-// 鼠标左键或单指触摸才可平移
+/**
+ * isPrimaryPointer accepts primary mouse input or at most one active touch.
+ */
 function isPrimaryPointer(event: Event): boolean {
   const mouse = event as MouseEvent
   if (typeof mouse.button === 'number' && mouse.button !== 0) return false
@@ -1019,8 +1471,15 @@ function isPrimaryPointer(event: Event): boolean {
   return true
 }
 
-// 统一鼠标 / 触摸的屏幕坐标
-function clientPoint(event: Event): { x: number; y: number } {
+/**
+ * clientPoint reads client coordinates from current touches before changed
+ * touches. Mouse coordinates supply the result when neither touch collection
+ * provides a point, allowing one pan path to handle both input types.
+ */
+function clientPoint(event: Event): {
+  x: number // horizontal browser client pixels
+  y: number // vertical browser client pixels
+} {
   const touch = event as TouchEvent
   const point = touch.touches?.[0] ?? touch.changedTouches?.[0]
   if (point) return { x: point.clientX, y: point.clientY }
@@ -1028,15 +1487,29 @@ function clientPoint(event: Event): { x: number; y: number } {
   return { x: mouse.clientX, y: mouse.clientY }
 }
 
+/**
+ * pickImage returns the supplied target when it is a Fabric image. Missing
+ * targets and other object types return null so selection handlers can clear
+ * image-specific controls safely.
+ */
 function pickImage(target: FabricObject | undefined): FabricObject | null {
   return target instanceof FabricImage ? target : null
 }
 
-// Delete / Backspace 删除选中对象；Ctrl / Cmd + Z 撤销上一笔涂抹；Esc 退出框选（输入控件聚焦时不拦截）
+/**
+ * onKeyDown handles canvas deletion, mask undo, and box-selection escape
+ * shortcuts. Focused text editors retain their keyboard input, painting blocks
+ * deletion, and grouped selections are unpacked before their members are
+ * removed.
+ */
 function onKeyDown(event: KeyboardEvent): void {
   if (!canvas) return
   const target = event.target as HTMLElement | null
-  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+  if (
+    target &&
+    (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+  )
+    return
   if (event.key === 'Escape' && boxSelectMode.value) {
     event.preventDefault()
     setBoxSelectMode(false)
@@ -1047,24 +1520,30 @@ function onKeyDown(event: KeyboardEvent): void {
     undoMask()
     return
   }
-  if (painting.value || event.key !== 'Delete' && event.key !== 'Backspace') return
+  if (painting.value || (event.key !== 'Delete' && event.key !== 'Backspace')) return
   const selected = canvas.getActiveObjects()
   if (!selected.length) return
   event.preventDefault()
-  // ActiveSelection 包装了选区，删除时移除其中的图片对象。
+  /**
+   * Remove the ActiveSelection wrapper before deleting its member objects,
+   * because the wrapper itself is not the underlying set of scene images.
+   */
   canvas.discardActiveObject()
   canvas.remove(...selected)
   canvas.requestRenderAll()
 }
 
-// ==================== 涂抹（mask）模式 ====================
-
-// 仅局部重绘开放画笔组与涂抹模式
+/**
+ * isInpaint and isEdit derive the canvas interaction mode from the studio
+ * operation selection.
+ */
 const isInpaint = computed(() => props.operation === 'inpaint')
-// 图生图模式（未选中源图时展示引导胶囊）
 const isEdit = computed(() => props.operation === 'edit')
 
-// 当前操作缺少的画布输入，由输入框状态行显示对应引导文案
+/**
+ * guideKey chooses missing-anchor, missing-reference, or empty-mask guidance in
+ * the order shown by the composer status line.
+ */
 const guideKey = computed<CreativeCanvasGuide | null>(() => {
   if (isInpaint.value && !inpaintAnchor.value) return 'inpaintPick'
   if (isEdit.value && !editRefs.value.length) return 'editPick'
@@ -1072,12 +1551,21 @@ const guideKey = computed<CreativeCanvasGuide | null>(() => {
   return null
 })
 
-// 重新统计画布上的图片对象（不含描边、分辨率标记等辅助对象）
+/**
+ * syncImageCount publishes the number of image-tagged objects in the current
+ * canvas.
+ */
 function syncImageCount(): void {
-  imageCount.value = canvas ? canvas.getObjects().filter((object) => objectData(object).kind === 'image').length : 0
+  imageCount.value = canvas
+    ? canvas.getObjects().filter((object) => objectData(object).kind === 'image').length
+    : 0
 }
 
-// 选中图片时登记为涂抹锚点（换选自动切换）；仅局部重绘模式下登记
+/**
+ * onImageSelected updates the selected image and its resolution tag. In inpaint
+ * mode a selected image also replaces the painting anchor and clears manual
+ * suspension so painting can resume.
+ */
 function onImageSelected(image: FabricObject | null): void {
   selectedImage.value = image
   refreshResolutionTag(image instanceof FabricImage ? image : null)
@@ -1087,8 +1575,10 @@ function onImageSelected(image: FabricObject | null): void {
   }
 }
 
-// 切到局部重绘时若已有选中图片（此前在其它操作下选中），直接登记为锚点并自动进入涂抹；
-// 必须先于 syncPainting 的 watch 注册，保证同一 tick 内先登记锚点再判断涂抹条件
+/**
+ * Register anchor adoption before the painting watcher so entering inpaint with
+ * an existing selection can enable drawing in the same update.
+ */
 watch(isInpaint, (inpaint) => {
   if (inpaint && !inpaintAnchor.value && selectedImage.value) {
     inpaintAnchor.value = selectedImage.value
@@ -1096,30 +1586,48 @@ watch(isInpaint, (inpaint) => {
   }
 })
 
-// 涂抹条件 = 局部重绘 + 有锚点图片 + 未手动暂停；任一条件变化统一经 syncPainting 进出
 watch([isInpaint, inpaintAnchor, paintSuspended], syncPainting)
 
+/**
+ * syncPainting derives brush ownership from the operation, selected anchor, and
+ * manual suspension state. It enters drawing only for an unsuspended inpaint
+ * anchor and otherwise exits through the path that restores object
+ * interactions. An anchor can change while drawing remains active, causing
+ * enterPainting to return early. Clipping is therefore refreshed independently
+ * before the outline update, keeping existing strokes constrained to the
+ * current target rather than the previous image.
+ */
 function syncPainting(): void {
   const shouldPaint = isInpaint.value && inpaintAnchor.value !== null && !paintSuspended.value
   if (shouldPaint) enterPainting()
   else exitPainting()
-  // 锚点切换（生成结果/上传自动上板改选新图）时 painting 可能未中断，
-  // enterPainting 直接跳过，必须在此同步刷新笔迹裁剪框，否则会裁在旧锚点位置
+  /**
+   * Changing the anchor can leave painting enabled; refresh clipping
+   * independently because enterPainting returns early for an already active brush
+   * session.
+   */
   if (painting.value) refreshMaskClip()
   updateAnchorOutline()
 }
 
+/**
+ * makeBrush creates the selected brush shape against the current live canvas.
+ * Callers provide that canvas first; brush size and translucent preview color
+ * are taken from the current controls.
+ */
 function makeBrush(): PencilBrush {
   const brush =
     brushShape.value === 'square' ? new SquarePencilBrush(canvas!) : new PencilBrush(canvas!)
-  // 展示用紫色叠加层；导出 mask 时才统一改回白色
-  // 预览直接绘制在主画布上，保留与独立 mask 画布一致的视觉透明度
   brush.color = MASK_PREVIEW_TINT
   brush.width = brushSize.value
   return brush
 }
 
-// 进入涂抹时锁定全部对象，启用画笔，用独立描边标示锚点。
+/**
+ * enterPainting enables drawing for an inpaint anchor and locks existing scene
+ * objects. Repeated entry is ignored; interaction restoration belongs to
+ * exitPainting, which consumes the saved per-object flags.
+ */
 function enterPainting(): void {
   if (!canvas || painting.value || !isInpaint.value || !inpaintAnchor.value) return
   painting.value = true
@@ -1132,6 +1640,11 @@ function enterPainting(): void {
   canvas.requestRenderAll()
 }
 
+/**
+ * exitPainting disables drawing, restores saved interaction flags, and discards
+ * mask drafts. Calling it outside active painting is harmless; exiting
+ * deliberately clears undo history so discarded strokes cannot return.
+ */
 function exitPainting(): void {
   if (!canvas || !painting.value) return
   painting.value = false
@@ -1140,12 +1653,19 @@ function exitPainting(): void {
   unlockAllObjects()
   canvas.defaultCursor = 'grab'
   syncCanvasSelection()
-  // 退出画笔模式即丢弃全部笔迹：mask 是会话级草稿，不保留到下次涂抹
+  /**
+   * Leaving drawing mode discards session mask drafts and their undo entries,
+   * preventing later undo from restoring strokes for an abandoned target.
+   */
   discardMaskStrokes()
   canvas.requestRenderAll()
 }
 
-// 涂抹时用青色虚线标出目标图片。
+/**
+ * updateAnchorOutline positions the runtime outline around the active inpaint
+ * image. Missing canvas, anchor, or painting state removes the outline; newly
+ * created outlines use the image's left-top coordinate origin.
+ */
 function updateAnchorOutline(): void {
   const anchor = inpaintAnchor.value
   if (!canvas || !anchor || !painting.value) {
@@ -1155,7 +1675,6 @@ function updateAnchorOutline(): void {
   if (!anchorOutline) {
     anchorOutline = new Rect({
       ...ANCHOR_OUTLINE_STYLE,
-      // 描边与图片共用左上角原点，中心原点会产生半个尺寸的偏移。
       originX: 'left',
       originY: 'top',
       selectable: false,
@@ -1164,13 +1683,27 @@ function updateAnchorOutline(): void {
     setObjectData(anchorOutline, { kind: ANCHOR_OUTLINE_KIND })
     canvas.add(anchorOutline)
   }
-  const width = ((anchor as unknown as { width?: number }).width ?? 0) * (anchor.scaleX ?? 1)
-  const height = ((anchor as unknown as { height?: number }).height ?? 0) * (anchor.scaleY ?? 1)
+  const width =
+    ((
+      anchor as unknown as {
+        width?: number // image width pixels
+      }
+    ).width ?? 0) * (anchor.scaleX ?? 1)
+  const height =
+    ((
+      anchor as unknown as {
+        height?: number // image height pixels
+      }
+    ).height ?? 0) * (anchor.scaleY ?? 1)
   anchorOutline.set({ left: anchor.left, top: anchor.top, width, height, angle: anchor.angle ?? 0 })
   anchorOutline.setCoords()
   canvas.requestRenderAll()
 }
 
+/**
+ * removeAnchorOutline removes the runtime anchor rectangle and clears its
+ * stored reference.
+ */
 function removeAnchorOutline(): void {
   if (anchorOutline && canvas) {
     canvas.remove(anchorOutline)
@@ -1178,38 +1711,47 @@ function removeAnchorOutline(): void {
   anchorOutline = null
 }
 
-// 刷新 mask 笔迹的共享裁剪框：限制笔迹只能落在锚点图片的轴对齐包围盒内（场景坐标）。
-// 进入涂抹 / 换锚点时调用；锚点涂抹期间被锁定不会移动，无需持续刷新。
+/**
+ * refreshMaskClip replaces the shared stroke clip with the anchor's scene
+ * bounding box. It runs when painting starts or changes anchors; every existing
+ * stroke receives the same absolute-positioned clip rectangle.
+ */
 function refreshMaskClip(): void {
   maskClipRect = null
   if (!canvas || !inpaintAnchor.value) return
-  // getBoundingRect 返回场景坐标（fabric 7 getCoords 为 scene plane），无需视口换算
   const vp = inpaintAnchor.value.getBoundingRect()
   maskClipRect = new Rect({
     left: vp.left,
     top: vp.top,
     width: vp.width,
     height: vp.height,
-    // getBoundingRect 返回左上角坐标，此处以左上角为原点定位。
     originX: 'left',
     originY: 'top',
   })
   maskClipRect.absolutePositioned = true
-  // 局部变量收窄类型（forEach 闭包内无法收窄模块级 let）
+  /**
+   * Share the replacement clip across existing mask paths so changing the anchor
+   * updates every retained stroke to the same scene bounds.
+   */
   const clip = maskClipRect
   getMaskPaths().forEach((object) => {
     object.clipPath = clip
   })
 }
 
-// 工具栏涂抹开关：暂停涂抹去移动视角 / 换选图片，再次点击恢复
+/**
+ * togglePainting toggles manual suspension using the current active painting
+ * state.
+ */
 function togglePainting(): void {
   paintSuspended.value = painting.value
 }
 
-// ==================== 编辑模式参考图选择 ====================
-
-// 点击或框选变化时同步参考集：单点选中为 1 个元素，框选为框内全部图片；统一替换整个集合
+/**
+ * syncEditRefFromSelection replaces edit references with images from a nonempty
+ * selection. It acts only in edit mode and keeps existing references when
+ * selection contains no images or is cleared.
+ */
 function syncEditRefFromSelection(selected: FabricObject[] | undefined): void {
   if (!isEdit.value || !selected?.length) return
   const images = selected.filter((object): object is FabricObject => object instanceof FabricImage)
@@ -1218,7 +1760,11 @@ function syncEditRefFromSelection(selected: FabricObject[] | undefined): void {
   }
 }
 
-// 同步框选工具状态：开启时 Fabric 接管空白拖拽，关闭时恢复空白拖拽平移
+/**
+ * syncCanvasSelection enables Fabric box selection only when painting is
+ * inactive. Cursor feedback also reflects the chosen selection tool, and a
+ * render request applies the interaction change.
+ */
 function syncCanvasSelection(): void {
   if (!canvas) return
   canvas.selection = boxSelectMode.value && !painting.value
@@ -1226,25 +1772,38 @@ function syncCanvasSelection(): void {
   canvas.requestRenderAll()
 }
 
-// 框选工具开关：三种模式都可用；关闭后空白拖拽恢复平移
+/**
+ * setBoxSelectMode updates the selection tool and synchronizes Fabric
+ * interaction settings.
+ */
 function setBoxSelectMode(on: boolean): void {
   boxSelectMode.value = on
   syncCanvasSelection()
 }
 
-// 参考图集合变化 → 同步描边；离开编辑模式 → 清空集合
 watch(editRefs, refreshRefOutlines)
+/**
+ * Leaving edit mode drops its reference set; entering it adopts current
+ * selected images before synchronizing the canvas selection tool.
+ */
 watch(isEdit, (edit) => {
   if (!edit) {
     editRefs.value = []
   } else if (canvas) {
-    // 切入 edit 时继续使用其他模式下已框选的对象。
     syncEditRefFromSelection(canvas.getActiveObjects())
   }
   syncCanvasSelection()
 })
 
-// 参考图描边：为集合内每张图片维护一个青色虚线框，拖动/缩放时跟随
+/**
+ * refreshRefOutlines reconciles runtime reference rectangles with the current
+ * edit-image set. It first removes rectangles whose associated image left the
+ * set, then creates any missing outlines and updates every retained one from
+ * absolute scene bounds. The map preserves each outline's association with its
+ * Fabric image across selection changes. Refreshing coordinates before reading
+ * bounds keeps outlines aligned when images are temporarily reparented into an
+ * ActiveSelection group.
+ */
 function refreshRefOutlines(): void {
   if (!canvas) return
   const current = editRefs.value
@@ -1259,7 +1818,6 @@ function refreshRefOutlines(): void {
     if (!rect) {
       rect = new Rect({
         ...ANCHOR_OUTLINE_STYLE,
-        // 参考图可能处于 Fabric ActiveSelection 中，描边位置统一按绝对包围盒的左上角解释
         originX: 'left',
         originY: 'top',
         selectable: false,
@@ -1274,30 +1832,66 @@ function refreshRefOutlines(): void {
   canvas.requestRenderAll()
 }
 
-// 描边矩形对齐对象的绝对包围盒；ActiveSelection 中不能直接使用对象的 left/top 组内坐标
+/**
+ * syncOutlineToObject positions a reference rectangle using refreshed absolute
+ * scene bounds. Refreshing coordinates first matters after ActiveSelection
+ * reparents an image, because the image's own left and top may then be
+ * group-relative.
+ */
 function syncOutlineToObject(rect: Rect, object: FabricObject): void {
-  // ActiveSelection 改变对象父级后，刷新角点缓存以取得当前场景坐标。
+  /**
+   * Refresh absolute corner coordinates after selection grouping so reference
+   * outlines follow scene positions rather than image coordinates relative to the
+   * group.
+   */
   object.setCoords()
   const bounds = object.getBoundingRect()
-  rect.set({ left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height, angle: 0 })
+  rect.set({
+    left: bounds.left,
+    top: bounds.top,
+    width: bounds.width,
+    height: bounds.height,
+    angle: 0,
+  })
   rect.setCoords()
 }
 
-// mask 撤销栈上限，防止长会话无限增长
+/**
+ * MASK_UNDO_LIMIT bounds retained stroke history so repeated painting cannot
+ * grow the undo stack indefinitely.
+ */
 const MASK_UNDO_LIMIT = 50
 
-// 撤销是否可用（工具栏按钮置灰依据）
+/**
+ * canUndoMask mirrors whether the stroke history contains an operation
+ * available to the undo toolbar button.
+ */
 const canUndoMask = ref(false)
 
+/**
+ * pushMaskUndo records one reversible stroke operation and bounds retained
+ * history. When the limit is exceeded the oldest entry is discarded, while the
+ * newest operation remains available to the toolbar.
+ */
 function pushMaskUndo(entry: MaskUndoEntry): void {
   maskUndoStack.push(entry)
   if (maskUndoStack.length > MASK_UNDO_LIMIT) {
+    /**
+     * Drop the oldest operation when history reaches its limit.
+     */
     maskUndoStack.shift()
   }
   canUndoMask.value = true
 }
 
-// 撤销上一笔：新增 → 移除该笔迹；清除 → 整体恢复被清除的笔迹
+/**
+ * undoMask reverses the newest retained mask operation using the original
+ * Fabric path objects. An add entry removes one path, while a clear entry
+ * restores the full retained group through addMaskPath so current clipping
+ * applies. Empty history disables the control and changes no canvas content.
+ * After reversal the stroke and undo flags reflect the remaining objects and
+ * entries, then rendering and snapshot scheduling follow the updated state.
+ */
 function undoMask(): void {
   if (!canvas) return
   const entry = maskUndoStack.pop()
@@ -1319,9 +1913,17 @@ function undoMask(): void {
   scheduleSceneSave()
 }
 
+/**
+ * setBrushShape stores the desired shape and replaces an active drawing brush.
+ * The replacement uses current size and preview color, so the next stroke
+ * immediately reflects the toolbar selection.
+ */
 function setBrushShape(shape: BrushShape): void {
   brushShape.value = shape
-  // 涂抹开启时立即换笔，保证下一次落笔即新形状
+  /**
+   * Replacing an active brush applies the new shape to the next stroke while
+   * reusing current size and preview settings.
+   */
   if (painting.value && canvas) canvas.freeDrawingBrush = makeBrush()
 }
 
@@ -1329,7 +1931,11 @@ watch(brushSize, (size) => {
   if (canvas?.freeDrawingBrush) canvas.freeDrawingBrush.width = size
 })
 
-// 清除全部 mask 笔迹（整体入撤销栈，可一步恢复）
+/**
+ * clearMask removes all current strokes as one reversible operation. Empty
+ * canvases and empty stroke sets do nothing, and the retained path objects
+ * allow undo to restore the complete group.
+ */
 function clearMask(): void {
   if (!canvas) return
   const paths = getMaskPaths()
@@ -1339,8 +1945,11 @@ function clearMask(): void {
   pushMaskUndo({ type: 'clear', paths })
 }
 
-// 静默丢弃全部笔迹（退出画笔模式用）：不入撤销栈并清空撤销栈，
-// 避免丢弃的草稿被 Ctrl+Z / 撤销按钮复活
+/**
+ * discardMaskStrokes removes current strokes and empties their undo history. It
+ * is used when painting ends, so later undo cannot restore paths belonging to
+ * an abandoned mask draft.
+ */
 function discardMaskStrokes(): void {
   if (!canvas) return
   getMaskPaths().forEach(removeMaskPath)
@@ -1349,8 +1958,21 @@ function discardMaskStrokes(): void {
   canUndoMask.value = false
 }
 
+/**
+ * lockAllObjects records each current scene object's interaction flags before
+ * disabling selection and events for painting. The map retains object
+ * identities so later restoration targets the same instances, including objects
+ * whose flags were already disabled before painting began. Callers enter
+ * through enterPainting, which skips repeated entry while a session is active.
+ * unlockAllObjects consumes the retained flags on exit, restoring individual
+ * behavior rather than enabling all objects indiscriminately.
+ */
 function lockAllObjects(): void {
   if (!canvas) return
+  /**
+   * Capture each object's interaction flags before disabling them so exiting
+   * painting restores its previous selection and event behavior.
+   */
   lockedStates = new Map()
   canvas.getObjects().forEach((object) => {
     lockedStates?.set(object, { selectable: object.selectable, evented: object.evented })
@@ -1358,17 +1980,32 @@ function lockAllObjects(): void {
   })
 }
 
+/**
+ * unlockAllObjects restores interaction flags on each object retained by
+ * lockAllObjects. It uses the saved values even when an object originally
+ * rejected interaction, then drops the map so the next painting session records
+ * fresh state.
+ */
 function unlockAllObjects(): void {
   lockedStates?.forEach((state, object) => {
     object.set({ selectable: state.selectable, evented: state.evented })
   })
+  /**
+   * Release the saved interaction map after restoration so a later painting
+   * session cannot reuse flags captured before intervening object changes.
+   */
   lockedStates = null
 }
 
-// ==================== 视角与平滑平移 ====================
-
-// 当前视口中心的场景坐标
-function viewCenterScene(): { x: number; y: number } {
+/**
+ * viewCenterScene converts the viewport center to scene coordinates using
+ * current zoom. Callers require a live canvas; the calculation assumes the
+ * translation-and-uniform-scale viewport used by this component.
+ */
+function viewCenterScene(): {
+  x: number // horizontal scene coordinate
+  y: number // vertical scene coordinate
+} {
   const vpt = canvas!.viewportTransform
   const zoom = canvas!.getZoom()
   return {
@@ -1377,13 +2014,29 @@ function viewCenterScene(): { x: number; y: number } {
   }
 }
 
+/**
+ * stopPanAnim cancels the scheduled viewport animation frame and clears its
+ * handle. Calls with no pending frame are harmless, allowing replacement
+ * animation and unmount cleanup to share the same entry point.
+ */
 function stopPanAnim(): void {
   if (panAnimFrame !== null) cancelAnimationFrame(panAnimFrame)
   panAnimFrame = null
 }
 
-// 视角平滑移动到指定场景点（保持当前缩放）
-function panToScenePoint(point: { x: number; y: number }): void {
+/**
+ * panToScenePoint animates the viewport center toward a scene point at the
+ * current zoom. It cancels the prior scheduled frame before capturing a
+ * starting translation, so a replacement request begins from the currently
+ * displayed viewport. Each frame applies cubic easing and synchronizes the grid
+ * and mask transform. Completion clears the animation handle and schedules
+ * scene saving, while teardown can cancel the pending callback through
+ * stopPanAnim.
+ */
+function panToScenePoint(point: {
+  x: number // horizontal scene coordinate
+  y: number // vertical scene coordinate
+}): void {
   if (!canvas) return
   stopPanAnim()
   const zoom = canvas.getZoom()
@@ -1391,11 +2044,22 @@ function panToScenePoint(point: { x: number; y: number }): void {
   const targetY = canvas.getHeight() / 2 - zoom * point.y
   const startX = canvas.viewportTransform[4]
   const startY = canvas.viewportTransform[5]
+  /**
+   * The viewport transition duration is measured in milliseconds.
+   */
   const duration = 240
   const startTime = performance.now()
+  /**
+   * step advances the active pan interpolation and updates the synchronized grid.
+   * It requests another frame until the duration elapses, then clears the handle
+   * and schedules the final scene snapshot.
+   */
   const step = (now: number) => {
     if (!canvas) return
     const progress = Math.min(1, (now - startTime) / duration)
+    /**
+     * Cubic easing slows movement near the destination center.
+     */
     const eased = 1 - (1 - progress) ** 3
     const vpt = [...canvas.viewportTransform] as TMat2D
     vpt[4] = startX + (targetX - startX) * eased
@@ -1412,24 +2076,41 @@ function panToScenePoint(point: { x: number; y: number }): void {
   panAnimFrame = requestAnimationFrame(step)
 }
 
-// ==================== 图片上板 ====================
-
-// 读取 blob 的像素尺寸（优先 createImageBitmap，失败回退 Image 元素）
-async function probeImageSize(blob: Blob): Promise<{ width: number; height: number }> {
+/**
+ * probeImageSize decodes original pixel dimensions and releases its temporary
+ * resources. It closes a successful ImageBitmap; when bitmap decoding fails, an
+ * Image element owns a Blob URL revoked on either load or error.
+ */
+async function probeImageSize(blob: Blob): Promise<{
+  width: number // image width pixels
+  height: number // image height pixels
+}> {
   try {
     const bitmap = await createImageBitmap(blob)
     const size = { width: bitmap.width, height: bitmap.height }
     bitmap.close()
     return size
   } catch {
+    /**
+     * Bitmap decoding can be unavailable or reject this image; use an Image element
+     * whose temporary URL is released on both completion paths.
+     */
     return await new Promise((resolve, reject) => {
       const url = URL.createObjectURL(blob)
       const image = new Image()
       image.onload = () => {
+        /**
+         * Release the image element's temporary URL after decoding has supplied
+         * dimensions, before resolving the waiting placement operation.
+         */
         URL.revokeObjectURL(url)
         resolve({ width: image.naturalWidth, height: image.naturalHeight })
       }
       image.onerror = () => {
+        /**
+         * Release the temporary URL on decoding failure as well, since no successful
+         * placement will take ownership of this resource.
+         */
         URL.revokeObjectURL(url)
         reject(new Error('image load failed'))
       }
@@ -1438,8 +2119,18 @@ async function probeImageSize(blob: Blob): Promise<{ width: number; height: numb
   }
 }
 
-// 下一个放置位置（场景坐标，返回左上角）：上一个右侧 40px，超出约 2200px 换行
-function nextPlacementPoint(width: number, height: number): { x: number; y: number } {
+/**
+ * nextPlacementPoint chooses the next output's left-top scene position. The
+ * first image centers in the current viewport; later images follow the previous
+ * right edge and wrap when their displayed width crosses the configured limit.
+ */
+function nextPlacementPoint(
+  width: number,
+  height: number,
+): {
+  x: number // horizontal scene coordinate
+  y: number // vertical scene coordinate
+} {
   if (!lastPlaced) {
     const center = viewCenterScene()
     return { x: center.x - width / 2, y: center.y - height / 2 }
@@ -1453,19 +2144,45 @@ function nextPlacementPoint(width: number, height: number): { x: number; y: numb
   return { x, y }
 }
 
-// 根据图片中心与显示比例计算左上角场景坐标，保证拖放落点对应图片中心。
+/**
+ * centeredPlacementPoint calculates a displayed image's left-top position
+ * around a scene center. The default scale matches output placement; callers
+ * pass original pixel dimensions so scaling is applied exactly once.
+ */
 function centeredPlacementPoint(
-  size: { width: number; height: number },
-  center: { x: number; y: number },
+  size: {
+    width: number // image width pixels
+    height: number // image height pixels
+  },
+  center: {
+    x: number // horizontal scene coordinate
+    y: number // vertical scene coordinate
+  },
   scale = PLACE_SCALE,
-): { x: number; y: number } {
+): {
+  x: number // horizontal scene coordinate
+  y: number // vertical scene coordinate
+} {
   return {
     x: center.x - (size.width * scale) / 2,
     y: center.y - (size.height * scale) / 2,
   }
 }
 
-function recordLastPlaced(position: { x: number; y: number }, size: { width: number; height: number }): void {
+/**
+ * recordLastPlaced records displayed image edges for the next automatic output
+ * position.
+ */
+function recordLastPlaced(
+  position: {
+    x: number // horizontal scene coordinate
+    y: number // vertical scene coordinate
+  },
+  size: {
+    width: number // image width pixels
+    height: number // image height pixels
+  },
+): void {
   lastPlaced = {
     right: position.x + size.width,
     top: position.y,
@@ -1473,11 +2190,23 @@ function recordLastPlaced(position: { x: number; y: number }, size: { width: num
   }
 }
 
-// 把图片 blob 放上画布：左上角定位于 position，按 scale 缩放显示（原始 blob 不受影响），登记 data 与运行时 blob
+/**
+ * addImageToScene decodes a Blob and adds a selected image with asset metadata.
+ * Position uses a left-top origin and scale changes display dimensions. The
+ * temporary URL is revoked in finally; decoding or canvas errors emit a message
+ * and return null.
+ */
 async function addImageToScene(
   blob: Blob,
-  meta: { assetKey: string; runId?: string; outputIndex?: number },
-  position: { x: number; y: number },
+  meta: {
+    assetKey: string // local image record key
+    runId?: string // server output owner
+    outputIndex?: number // zero-based output index
+  },
+  position: {
+    x: number // horizontal scene coordinate
+    y: number // vertical scene coordinate
+  },
   scale = 1,
 ): Promise<FabricImage | null> {
   if (!canvas) return null
@@ -1485,7 +2214,11 @@ async function addImageToScene(
   try {
     const image = await FabricImage.fromURL(url)
     image.set({
-      // position 是按左上角计算的，覆盖 FabricImage 默认的中心原点，保证拖放中心定位准确。
+      /**
+       * Placement positions describe the image's top-left corner, so override
+       * Fabric's origin defaults before applying drop-centered coordinates and
+       * display scaling.
+       */
       originX: 'left',
       originY: 'top',
       left: position.x,
@@ -1516,22 +2249,47 @@ async function addImageToScene(
   }
 }
 
-// 收割成功的输出自动上板：通过队列串行执行，记录 blob → 放置 → 视角移动到新图中心
-async function placeOutput(asset: { blob: Blob; runId: string; outputIndex: number }): Promise<void> {
+/**
+ * placeOutput queues an automatic output placement behind prior outputs and
+ * initial scene restoration. Each queued callback checks disposal before
+ * calling placeOutputNow, so decoded dimensions can determine the next position
+ * after the previous image updates layout state. The queue retains a caught
+ * continuation to allow later work after rejection. The returned promise
+ * follows this placement, and callers may await it before proceeding to another
+ * recovered output.
+ */
+async function placeOutput(asset: {
+  blob: Blob // original image bytes
+  runId: string // server output owner
+  outputIndex: number // zero-based output index
+}): Promise<void> {
   const placement = outputPlacementQueue.then(async () => {
     await sceneRestorePromise
     if (sceneDisposed) return
     await placeOutputNow(asset)
   })
-  // 队列本身不能被单次失败阻塞；具体错误由 placeOutputNow 自行处理并转为已完成。
   outputPlacementQueue = placement.catch(() => undefined)
   await placement
 }
 
-// 历史输出按指定中心点放置，与自动生成的输出共用队列，依次修改 Fabric 场景。
+/**
+ * placeOutputAt queues a history output at a supplied scene-space center. It
+ * shares the automatic output queue so image decoding and insertion complete in
+ * the same order as accepted placements. The queued callback waits for initial
+ * restoration and skips work if disposal has occurred before its turn. A caught
+ * queue continuation allows later placements after rejection, while the
+ * returned promise still follows this requested insertion.
+ */
 async function placeOutputAt(
-  asset: { blob: Blob; runId: string; outputIndex: number },
-  center: { x: number; y: number },
+  asset: {
+    blob: Blob // original image bytes
+    runId: string // server output owner
+    outputIndex: number // zero-based output index
+  },
+  center: {
+    x: number // horizontal scene coordinate
+    y: number // vertical scene coordinate
+  },
 ): Promise<void> {
   const placement = outputPlacementQueue.then(async () => {
     await sceneRestorePromise
@@ -1542,15 +2300,31 @@ async function placeOutputAt(
   await placement
 }
 
+/**
+ * placeOutputNow loads and positions one output using its browser-local asset
+ * key. It records the Blob in memory, chooses automatic layout unless a center
+ * was supplied, and flushes the resulting scene after successful insertion;
+ * loading errors emit feedback.
+ */
 async function placeOutputNow(
-  asset: { blob: Blob; runId: string; outputIndex: number },
-  center?: { x: number; y: number },
+  asset: {
+    blob: Blob // original image bytes
+    runId: string // server output owner
+    outputIndex: number // zero-based output index
+  },
+  center?: {
+    x: number // horizontal scene coordinate
+    y: number // vertical scene coordinate
+  },
 ): Promise<void> {
   if (!canvas) return
   const assetKey = outputAssetKey(asset.runId, asset.outputIndex)
   runtimeBlobs.set(assetKey, asset.blob)
   try {
-    // 生成输出与上传图统一按 1/4 尺寸上板；排布、换行与视角定位均按缩放后尺寸计算
+    /**
+     * Use displayed dimensions for both automatic layout and centering; original
+     * Blob bytes remain cached for full-resolution submission and download.
+     */
     const size = await probeImageSize(asset.blob)
     const placedWidth = size.width * PLACE_SCALE
     const placedHeight = size.height * PLACE_SCALE
@@ -1569,7 +2343,6 @@ async function placeOutputNow(
       panToScenePoint({ x: position.x + placedWidth / 2, y: position.y + placedHeight / 2 })
     }
     scheduleSceneSave()
-    // 图片放入画布后立即保存快照，用户随后刷新时可恢复该场景。
     flushSceneSave()
   } catch (error) {
     console.error('Failed to place creative output:', error)
@@ -1577,16 +2350,44 @@ async function placeOutputNow(
   }
 }
 
-// 上传或外部拖入的源图先保存本地库，再按指定中心点放置，保证场景刷新后仍可恢复。
-async function addUploadedImageAt(blob: Blob, center: { x: number; y: number }): Promise<void> {
+/**
+ * addUploadedImageAt persists a source image before creating its scene
+ * reference. It waits for initial restoration and checks the component lifetime
+ * before storage begins, preventing an early upload from racing the initial
+ * scene replacement. A storage failure stops placement and selects quota or
+ * general error feedback. Successful storage supplies the runtime Blob cache,
+ * then decoded dimensions center the displayed image and the completed
+ * insertion triggers an immediate snapshot write.
+ */
+async function addUploadedImageAt(
+  blob: Blob,
+  center: {
+    x: number // horizontal scene coordinate
+    y: number // vertical scene coordinate
+  },
+): Promise<void> {
   await sceneRestorePromise
   if (sceneDisposed) return
   if (!canvas) return
-  const assetKey = localAssetKey('source', `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+  /**
+   * A short random suffix distinguishes upload keys created within the same
+   * millisecond.
+   */
+  const assetKey = localAssetKey(
+    'source',
+    `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  )
   try {
+    /**
+     * Persist source bytes before creating their scene reference so a successful
+     * scene snapshot can resolve that asset after a reload.
+     */
     await saveAsset({ key: assetKey, kind: 'source', blob, createdAt: Date.now() })
   } catch (error) {
-    // 本地保存失败时终止放置，配额不足时提示用户。
+    /**
+     * A failed source write prevents scene insertion; quota errors select backup
+     * guidance while other storage errors use image-load feedback.
+     */
     if (error instanceof LocalStoreQuotaError) {
       emit('error', t('creative.error.quotaExceeded'))
     } else {
@@ -1596,21 +2397,14 @@ async function addUploadedImageAt(blob: Blob, center: { x: number; y: number }):
   }
   runtimeBlobs.set(assetKey, blob)
   try {
-    // 上传图按 1/4 尺寸上板（与生成输出统一；原始 blob 不变，源图仍发全分辨率给模型）
     const size = await probeImageSize(blob)
     const scale = PLACE_SCALE
     const position = centeredPlacementPoint(size, center, scale)
-    const image = await addImageToScene(
-      blob,
-      { assetKey },
-      position,
-      scale,
-    )
+    const image = await addImageToScene(blob, { assetKey }, position, scale)
     if (image) {
       recordLastPlaced(position, { width: size.width * scale, height: size.height * scale })
     }
     scheduleSceneSave()
-    // 上传图片已经写入素材库后立即保存场景，确保刚放置完成就刷新也能恢复。
     flushSceneSave()
   } catch (error) {
     console.error('Failed to place uploaded image:', error)
@@ -1618,26 +2412,56 @@ async function addUploadedImageAt(blob: Blob, center: { x: number; y: number }):
   }
 }
 
-// 工具栏上传仍沿用“当前视角中心”语义；外部拖放通过 addUploadedImageAt 传入落点。
+/**
+ * addUploadedImage places a source Blob around the current viewport center. A
+ * missing canvas makes it a no-op; storage, restoration ordering, and
+ * image-load errors are handled by addUploadedImageAt.
+ */
 async function addUploadedImage(blob: Blob): Promise<void> {
   if (!canvas) return
   await addUploadedImageAt(blob, viewCenterScene())
 }
 
-// 多张外部图片按落点中心开始斜向错开，单张失败不会阻塞后续文件。
-async function addDroppedFiles(files: File[], center: { x: number; y: number }): Promise<void> {
+/**
+ * addDroppedFiles places supported files sequentially with diagonal offsets
+ * from the drop center. Each upload handles its own storage or decode failure,
+ * allowing the next file to continue through the placement loop.
+ */
+async function addDroppedFiles(
+  files: File[],
+  center: {
+    x: number // horizontal scene coordinate
+    y: number // vertical scene coordinate
+  },
+): Promise<void> {
   for (const [index, file] of files.entries()) {
     const offset = index * PLACE_GAP
     await addUploadedImageAt(file, { x: center.x + offset, y: center.y + offset })
   }
 }
 
-// 历史缩略图传递本地 key，图片从当前浏览器的 IndexedDB 读取。
+/**
+ * importDroppedOutput resolves a history reference from the local asset store.
+ * Missing, unreadable, or non-output records emit unavailable-history feedback;
+ * usable assets enter the shared placement queue at the drop center.
+ */
 async function importDroppedOutput(
-  payload: { runId: string; outputIndex: number },
-  center: { x: number; y: number },
+  payload: {
+    runId: string // server output owner
+    outputIndex: number // zero-based output index
+  },
+  center: {
+    x: number // horizontal scene coordinate
+    y: number // vertical scene coordinate
+  },
 ): Promise<void> {
-  const asset = await loadAsset(outputAssetKey(payload.runId, payload.outputIndex)).catch(() => null)
+  /**
+   * A failed history asset read is treated as unavailable local content, allowing
+   * the drop handler to show its dedicated recovery message.
+   */
+  const asset = await loadAsset(outputAssetKey(payload.runId, payload.outputIndex)).catch(
+    () => null,
+  )
   if (!asset || asset.kind !== 'output') {
     emit('error', t('creative.error.dropHistoryUnavailable'))
     return
@@ -1648,10 +2472,11 @@ async function importDroppedOutput(
   )
 }
 
-// ==================== 生成输入采集 ====================
-
-// 当前关联图片对象：优先 fabric 活动对象，缺失时回退到涂抹锚点
-// （画笔落笔时 fabric 会自动丢弃选中，涂抹期间锚点才是可靠的图片引用）
+/**
+ * selectedImageObject returns the active image or retained inpaint anchor. The
+ * anchor remains usable while Fabric clears selection during brush drawing, and
+ * an unavailable canvas returns null.
+ */
 function selectedImageObject(): FabricImage | null {
   if (!canvas) return null
   const active = canvas.getActiveObject()
@@ -1659,7 +2484,11 @@ function selectedImageObject(): FabricImage | null {
   return inpaintAnchor.value instanceof FabricImage ? inpaintAnchor.value : null
 }
 
-// 选中图片的原始 blob：运行时缓存优先，缺失时回 IndexedDB 取
+/**
+ * getSelectedImageBlob reads the original bytes for the selected image or
+ * anchor. Runtime cache entries take precedence; missing keys, unreadable
+ * records, and absent images return null for submission validation.
+ */
 async function getSelectedImageBlob(): Promise<Blob | null> {
   const image = selectedImageObject()
   if (!image) return null
@@ -1667,6 +2496,10 @@ async function getSelectedImageBlob(): Promise<Blob | null> {
   if (typeof assetKey !== 'string') return null
   const cached = runtimeBlobs.get(assetKey)
   if (cached) return cached
+  /**
+   * An unreadable local record supplies no source bytes, so submission validation
+   * can report a missing image instead of propagating a storage exception.
+   */
   const asset = await loadAsset(assetKey).catch(() => null)
   if (asset) {
     runtimeBlobs.set(assetKey, asset.blob)
@@ -1675,7 +2508,11 @@ async function getSelectedImageBlob(): Promise<Blob | null> {
   return null
 }
 
-// 编辑模式已选参考图的原始 blob（按画布对象顺序收集，解析失败的跳过）
+/**
+ * getEditRefBlobs collects original image bytes in the stored edit-reference
+ * order. It reuses runtime cache entries and reads remaining assets locally,
+ * skipping references whose image type, key, or stored record is unavailable.
+ */
 async function getEditRefBlobs(): Promise<Blob[]> {
   const blobs: Blob[] = []
   for (const image of editRefs.value) {
@@ -1687,6 +2524,10 @@ async function getEditRefBlobs(): Promise<Blob[]> {
       blobs.push(cached)
       continue
     }
+    /**
+     * Skip unreadable reference assets while retaining other selected images, so
+     * one missing local record does not prevent exporting the remaining references.
+     */
     const asset = await loadAsset(assetKey).catch(() => null)
     if (asset) {
       runtimeBlobs.set(assetKey, asset.blob)
@@ -1696,8 +2537,15 @@ async function getEditRefBlobs(): Promise<Blob[]> {
   return blobs
 }
 
-// 导出 mask：选中图片 → 独立 mask 画布切到单位阵视口
-// → 展示色笔迹临时改回纯白 → toCanvasElement 裁剪 → 离屏铺不透明底并清除笔迹 → PNG
+/**
+ * getMaskBlob exports painted regions as a PNG matching the selected image's
+ * natural dimensions. It temporarily makes strokes white and removes the mask
+ * viewport transform so extraction uses scene coordinates. A finally block
+ * restores colors and the viewport even when extraction fails. The extracted
+ * strokes erase an opaque offscreen image through destination-out, producing
+ * transparent repaint regions. Missing canvas, image, strokes, or drawing
+ * context returns null for the caller's required-mask validation.
+ */
 async function getMaskBlob(): Promise<Blob | null> {
   if (!canvas || !maskCanvas) return null
   const image = selectedImageObject()
@@ -1706,8 +2554,15 @@ async function getMaskBlob(): Promise<Blob | null> {
   if (!maskObjects.length) return null
 
   const rect = image.getBoundingRect()
-  // 展示用紫色叠加层，导出先统一改为纯白轨迹，结束后恢复原样。
-  const styleBackup = maskObjects.map((object) => ({ object, fill: object.fill, stroke: object.stroke }))
+  /**
+   * Keep each stroke's display colors before white-mask extraction so finally can
+   * restore the same path objects even if export fails.
+   */
+  const styleBackup = maskObjects.map((object) => ({
+    object,
+    fill: object.fill,
+    stroke: object.stroke,
+  }))
   styleBackup.forEach(({ object }) => {
     object.set({
       fill: object.fill ? MASK_COLOR : object.fill,
@@ -1715,7 +2570,10 @@ async function getMaskBlob(): Promise<Blob | null> {
     })
   })
   const viewport = [...maskCanvas.viewportTransform] as TMat2D
-  // 单位阵视口：裁剪框即场景坐标系下的包围盒
+  /**
+   * Export bounds are expressed in scene coordinates, so temporarily remove
+   * viewport pan and zoom before extracting the painted rectangle.
+   */
   maskCanvas.setViewportTransform([1, 0, 0, 1, 0, 0])
   let element: HTMLCanvasElement
   try {
@@ -1726,6 +2584,10 @@ async function getMaskBlob(): Promise<Blob | null> {
       height: rect.height,
     })
   } finally {
+    /**
+     * Restore the viewport and stroke colors before requesting either render,
+     * including when canvas extraction throws and no PNG is produced.
+     */
     maskCanvas.setViewportTransform(viewport)
     styleBackup.forEach(({ object, fill, stroke }) => {
       object.set({ fill: fill ?? null, stroke: stroke ?? null })
@@ -1735,8 +2597,11 @@ async function getMaskBlob(): Promise<Blob | null> {
     syncDotGrid()
   }
 
-  // 拉伸回原图自然尺寸，与服务端"mask 尺寸必须与源图一致"的校验对齐
   const source = image.getElement() as HTMLImageElement
+  /**
+   * Resize the extracted region to source pixel dimensions because mask upload
+   * validation expects the mask and source image sizes to match.
+   */
   const naturalWidth = source.naturalWidth || Math.max(1, Math.round(rect.width))
   const naturalHeight = source.naturalHeight || Math.max(1, Math.round(rect.height))
   const offscreen = document.createElement('canvas')
@@ -1744,29 +2609,37 @@ async function getMaskBlob(): Promise<Blob | null> {
   offscreen.height = naturalHeight
   const context = offscreen.getContext('2d')
   if (!context) return null
-  // OpenAI mask 约定 alpha=0 的透明区域为重绘区域；因此先铺不透明底，
-  // 再用用户笔迹做 destination-out 清除，保证用户涂抹的区域透明。
   context.fillStyle = '#ffffff'
   context.fillRect(0, 0, naturalWidth, naturalHeight)
+  /**
+   * Painted strokes erase the opaque offscreen base, converting the visible mask
+   * draft into transparent regions used for image repainting.
+   */
   context.globalCompositeOperation = 'destination-out'
   context.drawImage(element, 0, 0, naturalWidth, naturalHeight)
   context.globalCompositeOperation = 'source-over'
   return await new Promise<Blob | null>((resolve) => offscreen.toBlob(resolve, 'image/png'))
 }
 
-// ==================== 移除与重置 ====================
-
+/**
+ * removeSelected removes members of the current Fabric selection from the
+ * scene. It discards the ActiveSelection wrapper first so deleting a group
+ * removes its images, then requests a render.
+ */
 function removeSelected(): void {
   if (!canvas) return
   const selected = canvas.getActiveObjects()
   if (!selected.length) return
-  // ActiveSelection 不是画布中的实际图片，逐个移除其成员才能删除框选的全部图片。
   canvas.discardActiveObject()
   canvas.remove(...selected)
   canvas.requestRenderAll()
 }
 
-// 下载选中图片的原始 blob 到本地（与历史下载一致走 file-saver）
+/**
+ * downloadSelected downloads the selected image's original Blob through
+ * file-saver. Missing image bytes are ignored, and the filename extension comes
+ * from its MIME type with PNG as the default.
+ */
 async function downloadSelected(): Promise<void> {
   const blob = await getSelectedImageBlob()
   if (!blob) return
@@ -1774,9 +2647,21 @@ async function downloadSelected(): Promise<void> {
   saveAs(blob, `creative-image-${Date.now()}.${extension}`)
 }
 
+/**
+ * resetCanvas clears image state and invalidates any pending scene restoration.
+ * The generation changes before objects are removed, so later restoration
+ * checks reject their captured generation. Runtime references, mask undo
+ * history, and cached Blobs are cleared alongside the canvas, and the viewport
+ * returns to its default transform. The empty scene is then marked dirty and
+ * flushed immediately, making a successful clear the snapshot used on the next
+ * page visit.
+ */
 function resetCanvas(): void {
   if (!canvas) return
-  // 清空画布时取消尚未完成的快照恢复，迟到的恢复结果随之失效。
+  /**
+   * Invalidate recovery before clearing scene state, so pending reads fail their
+   * generation check when they resume after the user reset.
+   */
   sceneRestoreGeneration++
   sceneRestoreInProgress = false
   stopPanAnim()
@@ -1805,12 +2690,18 @@ function resetCanvas(): void {
   sceneReady.value = true
   canvas.requestRenderAll()
   scheduleSceneSave()
-  // 清空操作立即保存空场景快照。
   flushSceneSave()
 }
 
-// ==================== 场景持久化 ====================
-
+/**
+ * scheduleSceneSave records a user mutation and restarts the scene-save
+ * debounce. Calls made during restoration or after disposal are ignored because
+ * those scene events must not create a user snapshot. Each accepted call
+ * increments the revision before replacing the pending timer. When the callback
+ * runs it captures the current scene through persistSceneNow, whose
+ * matching-revision check prevents an older write from clearing later dirty
+ * state.
+ */
 function scheduleSceneSave(): void {
   if (sceneDisposed || sceneRestoreInProgress) return
   sceneDirty = true
@@ -1822,21 +2713,37 @@ function scheduleSceneSave(): void {
   }, SCENE_SAVE_DEBOUNCE)
 }
 
+/**
+ * flushSceneSave cancels the debounce and starts persistence of the current
+ * dirty scene. It does not await the write, allowing pagehide and unmount to
+ * initiate best-effort storage synchronously.
+ */
 function flushSceneSave(): void {
   if (sceneSaveTimer) clearTimeout(sceneSaveTimer)
   sceneSaveTimer = null
   void persistSceneNow()
 }
 
+/**
+ * persistSceneNow serializes the current dirty scene and appends its write to
+ * the ordered persistence chain. Disposed or restoring canvases leave the
+ * existing chain unchanged. Each write captures its revision and clears dirty
+ * state only if no newer mutation has occurred before success. A rejected
+ * predecessor is consumed so later saves can run, while a failed current write
+ * is logged and leaves the dirty flag available for a later flush.
+ */
 function persistSceneNow(): Promise<void> {
   if (!canvas || sceneDisposed || sceneRestoreInProgress || !sceneDirty) return sceneWriteChain
   const json = snapshotScene()
   const revision = sceneRevision
+  /**
+   * Queue snapshot writes in capture order and clear dirty state only for the
+   * captured revision, keeping newer mutations eligible for another save.
+   */
   sceneWriteChain = sceneWriteChain
     .catch(() => undefined)
     .then(() => saveSceneJson(SCENE_KEY, json))
     .then(() => {
-      // 只有期间没有更新过画布时才清除脏标记，否则保留给下一次写入。
       if (sceneRevision === revision) sceneDirty = false
     })
     .catch((error) => {
@@ -1845,17 +2752,35 @@ function persistSceneNow(): Promise<void> {
   return sceneWriteChain
 }
 
-// 序列化（含自定义 data）：图片像素不进快照，src 用 asset://<assetKey> 占位；
-// 锚点/参考图描边和分辨率标记是运行时辅助对象，不持久化
+/**
+ * snapshotScene serializes persistent Fabric objects with their custom asset
+ * metadata. Image sources are rewritten to asset-key placeholders so ephemeral
+ * Blob URLs and image bytes are separated from scene JSON. Runtime outlines,
+ * resolution labels, and session mask strokes are excluded from the object
+ * list. Restoration resolves the retained asset keys against IndexedDB, keeping
+ * image identity across reloads while allowing missing local images to be
+ * skipped independently.
+ */
 function snapshotScene(): string {
   if (!canvas) return '{}'
-  const json = canvas.toObject(['data']) as { objects?: Array<Record<string, unknown> & ObjectWithData> }
+  const json = canvas.toObject(['data']) as {
+    objects?: Array<Record<string, unknown> & ObjectWithData> // serialized Fabric scene objects
+  }
   for (const object of json.objects ?? []) {
     const assetKey = object.data?.assetKey
     if (isImageSnapshotObject(object) && typeof assetKey === 'string') {
+      /**
+       * Replace ephemeral image URLs with durable asset references while keeping
+       * custom metadata, allowing reload to reconstruct bytes from the local store.
+       */
       object.src = `${ASSET_PROTOCOL}${assetKey}`
     }
   }
+  /**
+   * Exclude selection helpers and mask drafts from persistence because their
+   * lifecycle belongs to the current interaction rather than the saved image
+   * workspace.
+   */
   json.objects = (json.objects ?? []).filter(
     (object) =>
       object.data?.kind !== ANCHOR_OUTLINE_KIND &&
@@ -1866,7 +2791,16 @@ function snapshotScene(): string {
   return JSON.stringify(json)
 }
 
-// 挂载时恢复：asset:// 图片回 IndexedDB 取 blob，缺失的图跳过不阻塞
+/**
+ * restoreScene loads a saved scene and rebuilds its image sources from
+ * browser-local assets. The captured canvas and generation are checked around
+ * asynchronous reads and after Fabric loading to stop obsolete recovery before
+ * further publication. Missing assets and expired legacy Blob URLs are skipped,
+ * while runtime helpers and mask drafts are discarded. Every temporary URL is
+ * revoked in finally, including interrupted recovery; readiness is published
+ * after cleanup, and only the matching generation clears restoration
+ * suppression.
+ */
 async function restoreScene(generation: number): Promise<void> {
   const target = canvas
   if (!target) {
@@ -1874,15 +2808,21 @@ async function restoreScene(generation: number): Promise<void> {
     return
   }
   const pendingUrls: string[] = []
-  const isCurrent = () => !sceneDisposed && canvas === target && sceneRestoreGeneration === generation
+  /**
+   * isCurrent reports whether restoration still owns the same live canvas
+   * generation.
+   */
+  const isCurrent = () =>
+    !sceneDisposed && canvas === target && sceneRestoreGeneration === generation
   try {
     const stored = await loadSceneJson(SCENE_KEY)
     if (!stored || !isCurrent()) return
-    const parsed = JSON.parse(stored) as { objects?: Array<Record<string, unknown> & ObjectWithData> }
+    const parsed = JSON.parse(stored) as {
+      objects?: Array<Record<string, unknown> & ObjectWithData> // serialized Fabric scene objects
+    }
     const objects = Array.isArray(parsed.objects) ? parsed.objects : []
     const restored: typeof objects = []
     for (const object of objects) {
-      // 旧快照里可能残留锚点/参考图描边等运行时辅助对象，直接跳过
       if (
         object.data?.kind === ANCHOR_OUTLINE_KIND ||
         object.data?.kind === REF_OUTLINE_KIND ||
@@ -1890,19 +2830,20 @@ async function restoreScene(generation: number): Promise<void> {
       ) {
         continue
       }
-      // mask 笔迹是会话级草稿（退出画笔即丢弃），不应跨刷新复活：
-      // 历史快照里残留的笔迹位置可能与拖动后的图片错位，直接丢弃
       if (object.data?.kind === 'mask') {
         continue
       }
       const assetKey = object.data?.assetKey
       if (isImageSnapshotObject(object) && typeof assetKey === 'string') {
+        /**
+         * A missing or failed asset read skips this image while allowing other scene
+         * objects to recover from their own available records.
+         */
         const blob = await loadAsset(assetKey)
           .then((asset) => asset?.blob ?? null)
           .catch(() => null)
         if (!isCurrent()) return
         if (!blob) {
-          // 本地素材缺失：跳过该图，继续恢复其它对象
           continue
         }
         runtimeBlobs.set(assetKey, blob)
@@ -1912,7 +2853,10 @@ async function restoreScene(generation: number): Promise<void> {
       } else if (
         isImageSnapshotObject(object) &&
         typeof object.src === 'string' &&
-        // 旧版本快照里的 blob: 对象 URL 已失效，无法恢复，跳过
+        /**
+         * Legacy Blob URLs expire with their creating document; skip those image
+         * entries when no durable asset key can rebuild their source.
+         */
         object.src.startsWith('blob:')
       ) {
         continue
@@ -1924,16 +2868,27 @@ async function restoreScene(generation: number): Promise<void> {
     await target.loadFromJSON(parsed as never)
     if (!isCurrent()) return
     target.requestRenderAll()
-    // 恢复的视口/缩放同步到圆点网格
     syncDotGrid()
     hasMaskStrokes.value = getMaskPaths().length > 0
   } catch (error) {
+    /**
+     * Recovery errors are logged while finally releases temporary URLs and marks
+     * loading complete, leaving the currently available scene accessible to the
+     * user.
+     */
     console.error('Failed to restore creative scene:', error)
   } finally {
+    /**
+     * Revoke every temporary source after Fabric loading or interrupted recovery so
+     * success, failure, and stale generations all release allocated Blob URLs.
+     */
     pendingUrls.forEach((url) => URL.revokeObjectURL(url))
+    /**
+     * Matching recovery completes with a clean scene because Fabric add/remove
+     * events during loading do not represent user edits to persist.
+     */
     if (sceneRestoreGeneration === generation) {
       sceneRestoreInProgress = false
-      // 恢复过程本身触发的 Fabric 事件不属于用户变更。
       sceneDirty = false
     }
     syncImageCount()
@@ -1941,25 +2896,39 @@ async function restoreScene(generation: number): Promise<void> {
   }
 }
 
-// ==================== 上传（裁剪流程） ====================
-
-// 选择文件后全部进入裁剪队列
+/**
+ * onFilesPicked appends MIME-approved files to the crop queue and resets the
+ * input. Clearing the input allows choosing the same file again, while each
+ * queue entry remains available for crop confirmation.
+ */
 function onFilesPicked(event: Event): void {
   const input = event.target as HTMLInputElement
   const allowedMIMEs = new Set(props.allowedMimes.map((mime) => mime.toLowerCase()))
-  const files = Array.from(input.files ?? []).filter((file) => allowedMIMEs.has(file.type.toLowerCase()))
+  const files = Array.from(input.files ?? []).filter((file) =>
+    allowedMIMEs.has(file.type.toLowerCase()),
+  )
+  /**
+   * Reset the file input after collecting selected files so choosing the same
+   * image again can trigger another upload event.
+   */
   input.value = ''
   if (!files.length) return
   cropQueue.value = [...cropQueue.value, ...files]
 }
 
-// 裁剪确认（跳过也走这里，直接保留原图）：放上画布当前视角中心
+/**
+ * onCropConfirm removes the current crop entry and starts centered source
+ * placement. Skip events use the same path with original bytes, and remaining
+ * queued images advance independently of placement completion.
+ */
 function onCropConfirm(blob: Blob): void {
   cropQueue.value = cropQueue.value.slice(1)
   void addUploadedImage(blob)
 }
 
-// 取消裁剪：丢弃剩余队列
+/**
+ * onCropCancel discards every remaining image in the current crop queue.
+ */
 function onCropCancel(): void {
   cropQueue.value = []
 }
@@ -1973,9 +2942,7 @@ defineExpose({
   getMaskBlob,
   resetCanvas,
   clearMask,
-  // 打开系统文件选择框，空画布引导的上传按钮调用
   openFilePicker: () => fileInputRef.value?.click(),
-  // 是否已有 mask 笔迹
   hasMaskStrokes,
   guideKey,
   imageCount,
@@ -1984,12 +2951,9 @@ defineExpose({
 </script>
 
 <style scoped>
-/* 圆点网格：浅色主题用暗点，dark 类下用亮点，画布背景透明透出；点的透明度压低，不和图片抢视线。
-   第一层是粗网格，后三层是细网格，图块尺寸、位置和 --grid-fine-opacity 由 syncDotGrid 写入。
-   默认值对应缩放 1 时的网格，供脚本同步前的首帧使用。
-   圆点从 0.55px 开始渐隐到 1.25px，边缘带抗锯齿，高分屏上是干净的小圆点。 */
+/* syncDotGrid supplies tile pitch and positions for one coarse and three fine dot layers. Initial values cover the first frame before viewport synchronization. */
 .dot-grid {
-  /* 禁止浏览器接管双指手势，交由画布实现缩放与平移。 */
+  /* Keep browser gestures from consuming two-finger input before the captured canvas handlers calculate scene pan and zoom. */
   touch-action: none;
   --grid-fine-opacity: 0.74;
   --grid-dot-alpha: 0.1;
@@ -2008,7 +2972,6 @@ defineExpose({
     0 0;
 }
 
-/* 拖放期间给画布边缘提供稳定反馈，不改变图片与 Fabric 对象尺寸。 */
 .drop-target-active {
   box-shadow: inset 0 0 0 2px rgb(0 210 255 / 0.45);
 }
@@ -2019,8 +2982,7 @@ defineExpose({
   --grid-dot-fine: rgb(255 255 255 / calc(var(--grid-dot-alpha) * var(--grid-fine-opacity)));
 }
 
-/* 胶囊工具条里的按钮用圆形，悬停底色和外壳弧线同心 */
-/* 工具条在历史侧栏左侧的区域居中，--creative-history-reserve 由创作台页面在侧栏展开时设置 */
+/* The page supplies reserved history width so toolbar positioning shares the remaining desktop workspace center with the composer and empty guide. */
 .canvas-toolbar {
   left: calc((100% - var(--creative-history-reserve, 0px)) / 2);
   transition: left var(--motion-layout) var(--motion-ease);
@@ -2030,12 +2992,12 @@ defineExpose({
   border-radius: 9999px;
 }
 
-/* mask 画布让指针事件穿透至主画布，透明度应用于整层，使重叠笔迹保持同样的深浅。 */
+/* Pointer events pass through to Fabric while whole-layer opacity keeps overlapping mask strokes at the same visible intensity. */
 .mask-overlay {
-  @apply pointer-events-none absolute inset-0 z-[1]; /* check-ui-allow: 画布内局部堆叠 */
+  @apply pointer-events-none absolute inset-0 z-[1]; /* check-ui-allow: Canvas-local stacking. */
 }
 
-/* 画笔组出现时，桌面工具条平滑扩展。窄屏逐项换行，控件淡入。 */
+/* Desktop expansion animates the brush group as one bounded row. The narrow-screen rule switches to contents so individual controls can wrap. */
 .canvas-toolbar-extension {
   display: flex;
   min-width: 0;
@@ -2084,8 +3046,7 @@ defineExpose({
   }
 }
 
-/* 画笔粗细滑块自定义配色：accent-color 对未填充轨道的着色在浅色模式下过深。
-   轨道 4px，浅色 gray-200、深色 dark-700；滑块 16px，用 primary-600。 */
+/* Explicit track and thumb colors avoid relying on accent-color for the unfilled range track, keeping the same controls readable in both themes. */
 .brush-size {
   -webkit-appearance: none;
   appearance: none;

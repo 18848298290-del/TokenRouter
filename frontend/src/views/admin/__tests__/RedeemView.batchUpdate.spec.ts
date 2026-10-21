@@ -3,6 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import RedeemView from '../RedeemView.vue'
 
+// RedeemView.batchUpdate.spec.ts exercises redeem-code batch payloads and generation
+// validation through mounted form controls. Endpoint mocks expose submitted identifiers
+// and fields, while table and select stubs retain slot events and selected-value types
+// needed to test production form behavior.
+
+// Hoisted redeem endpoints and message spies expose form submissions and validation
+// feedback while plan loading uses predictable test responses.
 const {
   listRedeemCodes,
   generateRedeemCodes,
@@ -10,17 +17,16 @@ const {
   getPlans,
   showSuccess,
   showError,
-  showInfo
-} =
-  vi.hoisted(() => ({
-    listRedeemCodes: vi.fn(),
-    generateRedeemCodes: vi.fn(),
-    batchUpdateRedeemCodes: vi.fn(),
-    getPlans: vi.fn(),
-    showSuccess: vi.fn(),
-    showError: vi.fn(),
-    showInfo: vi.fn()
-  }))
+  showInfo,
+} = vi.hoisted(() => ({
+  listRedeemCodes: vi.fn(),
+  generateRedeemCodes: vi.fn(),
+  batchUpdateRedeemCodes: vi.fn(),
+  getPlans: vi.fn(),
+  showSuccess: vi.fn(),
+  showError: vi.fn(),
+  showInfo: vi.fn(),
+}))
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
@@ -31,32 +37,32 @@ vi.mock('@/api/admin', () => ({
       delete: vi.fn(),
       batchDelete: vi.fn(),
       batchUpdate: batchUpdateRedeemCodes,
-      exportCodes: vi.fn()
+      exportCodes: vi.fn(),
     },
     payment: {
-      getPlans
-    }
-  }
+      getPlans,
+    },
+  },
 }))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showSuccess,
     showError,
-    showInfo
-  })
+    showInfo,
+  }),
 }))
 
 vi.mock('@/composables/useClipboard', () => ({
   useClipboard: () => ({
-    copyToClipboard: vi.fn()
-  })
+    copyToClipboard: vi.fn(),
+  }),
 }))
 
 vi.mock('@/composables/useBalanceDisplay', () => ({
   useBalanceDisplay: () => ({
-    formatBalanceAmount: (value: number) => `$${value.toFixed(2)}`
-  })
+    formatBalanceAmount: (value: number) => `$${value.toFixed(2)}`,
+  }),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -64,12 +70,16 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
-    })
+      t: (key: string) => key,
+    }),
   }
 })
 
+// DataTableStub renders production header and cell slots, allowing row selection and
+// batch form controls to run against mounted code rows.
 const DataTableStub = {
+  // columns names the production slots and data supplies their rows; the fixture
+  // exposes both so assertions exercise the parent cell renderers.
   props: ['columns', 'data'],
   template: `
     <table>
@@ -90,16 +100,38 @@ const DataTableStub = {
         </tr>
       </tbody>
     </table>
-  `
+  `,
 }
 
+// SelectStub keeps option values typed when native change events emit model updates and
+// selection events to the production form.
 const SelectStub = {
+  // modelValue selects the current native option and options retains typed values;
+  // onChange restores the selected value before forwarding production-compatible
+  // events.
   props: ['modelValue', 'options'],
+  // Model updates replace the bound draft value, and change also supplies the
+  // matching option so parent handlers receive both selection outputs.
   emits: ['update:modelValue', 'change'],
+  // setup binds a select change handler that restores the selected option's value type.
+  // Both model update and change events are emitted so the production draft responds
+  // like it does to Select.
   setup(
-    props: { options: Array<{ value: unknown; label: string }> },
-    { emit }: { emit: (event: string, ...args: unknown[]) => void }
+    props: {
+      options: Array<{
+        value: unknown // selected option value
+        label: string // displayed option label
+      }> // available selection options
+    },
+    {
+      emit,
+    }: {
+      emit: (event: string, ...args: unknown[]) => void // selection event emitter
+    },
   ) {
+    // onChange resolves the native select's string back to its configured option value.
+    // It emits the restored value through model update and change, retaining numeric or
+    // boolean choices used by the forms.
     const onChange = (event: Event) => {
       const raw = (event.target as HTMLSelectElement).value
       const option = props.options.find((item) => String(item.value ?? '') === raw)
@@ -115,7 +147,7 @@ const SelectStub = {
         {{ option.label }}
       </option>
     </select>
-  `
+  `,
 }
 
 describe('admin RedeemView batch update', () => {
@@ -144,7 +176,7 @@ describe('admin RedeemView batch update', () => {
           used_by: null,
           used_at: null,
           created_at: '2026-01-01T00:00:00Z',
-          expires_at: null
+          expires_at: null,
         },
         {
           id: 2,
@@ -157,13 +189,13 @@ describe('admin RedeemView batch update', () => {
           used_by: null,
           used_at: null,
           created_at: '2026-01-01T00:00:00Z',
-          expires_at: null
-        }
+          expires_at: null,
+        },
       ],
       total: 2,
       page: 1,
       page_size: 20,
-      pages: 1
+      pages: 1,
     })
     generateRedeemCodes.mockResolvedValue([
       {
@@ -177,13 +209,16 @@ describe('admin RedeemView batch update', () => {
         used_by: null,
         used_at: null,
         created_at: '2026-01-01T00:00:00Z',
-        expires_at: null
-      }
+        expires_at: null,
+      },
     ])
     batchUpdateRedeemCodes.mockResolvedValue({ updated: 1, message: 'ok' })
     getPlans.mockResolvedValue({ data: [] })
   })
 
+  // One code is selected and only status and notes are enabled for batch editing.
+  // Submission must include that identifier and those fields while leaving expiry
+  // absent.
   it('submits only checked fields for selected redeem codes', async () => {
     const wrapper = mount(RedeemView, {
       attachTo: document.body,
@@ -191,7 +226,8 @@ describe('admin RedeemView batch update', () => {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
           TablePageLayout: {
-            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+            template:
+              '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>',
           },
           DataTable: DataTableStub,
           Pagination: true,
@@ -199,12 +235,12 @@ describe('admin RedeemView batch update', () => {
           Select: SelectStub,
           BaseDialog: {
             props: ['show'],
-            template: '<div v-if="show"><slot /><slot name="footer" /></div>'
+            template: '<div v-if="show"><slot /><slot name="footer" /></div>',
           },
           Icon: true,
-          Teleport: true
-        }
-      }
+          Teleport: true,
+        },
+      },
     })
 
     await flushPromises()
@@ -221,12 +257,14 @@ describe('admin RedeemView batch update', () => {
 
     expect(batchUpdateRedeemCodes).toHaveBeenCalledWith([1], {
       status: 'disabled',
-      notes: 'maintenance'
+      notes: 'maintenance',
     })
     expect(showSuccess).toHaveBeenCalledWith('admin.redeem.batchUpdateSuccess')
   })
 
-  // 生僻汉字按一个字符计数，超长输入在提交时提示并保留供用户修改。
+  // Custom code fixtures include common and supplementary Unicode characters around the
+  // length limit. Accepted values must submit trimmed text, while overlong values
+  // remain editable and never reach generation.
   it.each([
     { name: '32 个常用汉字', code: '兑'.repeat(32), tooLong: false },
     { name: '32 个生僻汉字', code: '𠮷'.repeat(32), tooLong: false },
@@ -234,7 +272,7 @@ describe('admin RedeemView batch update', () => {
     { name: '首尾空白', code: ` \t${'𠮷'.repeat(32)}\n `, tooLong: false },
     { name: '33 个常用汉字', code: '兑'.repeat(33), tooLong: true },
     { name: '33 个生僻汉字', code: '𠮷'.repeat(33), tooLong: true },
-    { name: '33 个英文字母', code: 'a'.repeat(33), tooLong: true }
+    { name: '33 个英文字母', code: 'a'.repeat(33), tooLong: true },
   ])('按字符校验自定义兑换码：$name', async ({ code, tooLong }) => {
     const wrapper = mount(RedeemView, {
       attachTo: document.body,
@@ -242,7 +280,8 @@ describe('admin RedeemView batch update', () => {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
           TablePageLayout: {
-            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+            template:
+              '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>',
           },
           DataTable: DataTableStub,
           Pagination: true,
@@ -250,18 +289,20 @@ describe('admin RedeemView batch update', () => {
           Select: SelectStub,
           BaseDialog: {
             props: ['show'],
-            template: '<div v-if="show"><slot /><slot name="footer" /></div>'
+            template: '<div v-if="show"><slot /><slot name="footer" /></div>',
           },
           Icon: true,
-          Teleport: true
-        }
-      }
+          Teleport: true,
+        },
+      },
     })
 
     try {
       await flushPromises()
       await wrapper.get('[data-testid="generate-open"]').trigger('click')
-      const input = wrapper.get<HTMLInputElement>('[placeholder="admin.redeem.customCodePlaceholder"]')
+      const input = wrapper.get<HTMLInputElement>(
+        '[placeholder="admin.redeem.customCodePlaceholder"]',
+      )
       await input.setValue(code)
       await wrapper.get('[data-testid="generate-form"]').trigger('submit')
       await flushPromises()
@@ -276,13 +317,17 @@ describe('admin RedeemView batch update', () => {
       expect(showError).not.toHaveBeenCalled()
       expect(generateRedeemCodes).toHaveBeenCalledTimes(1)
       expect(generateRedeemCodes.mock.calls[0][6]).toBe(code.trim())
-      // jsdom 跳过 maxlength 的输入截断，需检查原生长度限制是否存在。
+      // jsdom does not apply native maxlength truncation, so inspect the attribute
+      // itself to protect supplementary characters from browser UTF-16 length limits.
       expect(input.attributes('maxlength')).toBeUndefined()
     } finally {
       wrapper.unmount()
     }
   })
 
+  // The generation form is submitted with each supported payment-condition flag. The
+  // endpoint must receive the selected boolean and requested maximum uses through the
+  // production form controls.
   it.each([false, true])('提交生成兑换码的付款条件：%s', async (requiresPayment) => {
     const wrapper = mount(RedeemView, {
       attachTo: document.body,
@@ -290,7 +335,8 @@ describe('admin RedeemView batch update', () => {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
           TablePageLayout: {
-            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+            template:
+              '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>',
           },
           DataTable: DataTableStub,
           Pagination: true,
@@ -298,12 +344,12 @@ describe('admin RedeemView batch update', () => {
           Select: SelectStub,
           BaseDialog: {
             props: ['show'],
-            template: '<div v-if="show"><slot /><slot name="footer" /></div>'
+            template: '<div v-if="show"><slot /><slot name="footer" /></div>',
           },
           Icon: true,
-          Teleport: true
-        }
-      }
+          Teleport: true,
+        },
+      },
     })
 
     await flushPromises()
@@ -330,7 +376,7 @@ describe('admin RedeemView batch update', () => {
       null,
       undefined,
       undefined,
-      requiresPayment
+      requiresPayment,
     )
   })
 })

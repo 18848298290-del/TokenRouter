@@ -2,10 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import OrderTable from '@/components/payment/OrderTable.vue'
 
+/**
+ * OrderTable.spec.ts checks account-unit and gateway-currency rendering in payment order rows.
+ * Mounted table slots use supplied order records and formatter doubles so credited quantities
+ * remain distinguishable from the amount collected by a gateway.
+ */
+
+// The balance formatter double records credited-quantity rendering so table assertions can distinguish account units from gateway currency amounts.
 const formatBalanceAmountMock = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-i18n', async () => ({
-  ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'),
+  ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
   useI18n: () => ({
     t: (key: string) => key,
   }),
@@ -54,8 +61,11 @@ describe('OrderTable', () => {
     })
   })
 
+  // A balance order uses a custom account unit in its credited amount. The table must invoke the
+  // shared balance formatter so credited quantity is distinct from gateway currency.
   it('uses configured balance unit for credited balance orders', () => {
-    // 回归覆盖：余额订单到账金额不能写死为 $，必须走用户配置的余额单位格式化。
+    // A custom account unit distinguishes credited balance from gateway currency and proves
+    // the row uses the configured balance formatter.
     formatBalanceAmountMock.mockReturnValue('点数65.00')
 
     const wrapper = mount(OrderTable, {
@@ -75,6 +85,8 @@ describe('OrderTable', () => {
     expect(wrapper.text()).not.toContain('$65.00')
   })
 
+  // A subscription order stores a gateway currency different from the default. The table must
+  // display both the charge and purchase amount using the currency on that order.
   it('uses order currency for pay amount and subscription amount', () => {
     const wrapper = mount(OrderTable, {
       props: {

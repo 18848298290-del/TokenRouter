@@ -1,5 +1,10 @@
 <template>
-  <DataTable column-order-storage-key="user-orders-column-order" :columns="columns" :data="orders" :loading="loading">
+  <DataTable
+    column-order-storage-key="user-orders-column-order"
+    :columns="columns"
+    :data="orders"
+    :loading="loading"
+  >
     <template #cell-id="{ value }">
       <span class="font-mono text-sm">#{{ value }}</span>
     </template>
@@ -8,14 +13,22 @@
     </template>
     <template v-if="showUser" #cell-user_email="{ value, row }">
       <div class="text-sm">
-        <span class="text-gray-900 dark:text-white">{{ value || row.user_name || '#' + row.user_id }}</span>
+        <span class="text-gray-900 dark:text-white">{{
+          value || row.user_name || '#' + row.user_id
+        }}</span>
         <span v-if="row.user_notes" class="ml-1 text-xs text-gray-400">({{ row.user_notes }})</span>
       </div>
     </template>
     <template #cell-pay_amount="{ value, row }">
       <div class="text-sm">
-        <span class="font-medium text-gray-900 dark:text-white">{{ formatGatewayAmount(value, row.currency) }}</span>
-        <span v-if="row.fee_rate > 0" class="ml-1 text-xs text-gray-400" :title="t('payment.orders.fee') + ': ' + row.fee_rate + '%'">
+        <span class="font-medium text-gray-900 dark:text-white">{{
+          formatGatewayAmount(value, row.currency)
+        }}</span>
+        <span
+          v-if="row.fee_rate > 0"
+          class="ml-1 text-xs text-gray-400"
+          :title="t('payment.orders.fee') + ': ' + row.fee_rate + '%'"
+        >
           ({{ t('payment.orders.fee') }} {{ row.fee_rate }}%)
         </span>
         <div v-if="row.amount !== row.pay_amount" class="text-xs text-gray-500">
@@ -24,7 +37,9 @@
       </div>
     </template>
     <template #cell-payment_type="{ value }">
-      <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('payment.methods.' + value, value) }}</span>
+      <span class="text-sm text-gray-700 dark:text-gray-300">{{
+        t('payment.methods.' + value, value)
+      }}</span>
     </template>
     <template #cell-status="{ value }">
       <OrderStatusBadge :status="value" />
@@ -42,33 +57,51 @@
 import { getLocale } from '@/i18n'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { PaymentOrder } from '@/types/payment'
-import type { Column } from '@/components/common/types'
-import DataTable from '@/components/common/DataTable.vue'
+import type { PaymentOrder } from '@/api/payment.types'
+import type { Column } from '@/components/common/table/types'
+import DataTable from '@/components/common/table/DataTable.vue'
 import OrderStatusBadge from '@/components/payment/OrderStatusBadge.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-import { formatPaymentAmount } from '@/components/payment/currency'
+import { formatPaymentAmount } from '@/utils/payment/currency'
+
+/**
+ * OrderTable.vue presents payment orders with currency-aware amounts, status badges, and
+ * caller-provided row actions. Balance purchase quantities use the account balance unit
+ * while gateway charges and subscription quantities use the currency stored on each order.
+ */
 
 const { t } = useI18n()
 const { formatBalanceAmount } = useBalanceDisplay()
 
 const props = defineProps<{
-  orders: PaymentOrder[]
-  loading: boolean
-  showUser?: boolean
+  orders: PaymentOrder[] // current page order records
+  loading: boolean // order retrieval loading state
+  showUser?: boolean // optional purchaser email column
 }>()
 
-function formatDate(dateStr: string) { return new Date(dateStr).toLocaleString(getLocale()) }
-
-/** 余额到账金额使用用户配置的单位，套餐订单使用渠道币种。 */
-function formatOrderAmount(amount: number, order: PaymentOrder): string {
-  return order.order_type === 'balance' ? formatBalanceAmount(amount, { fractionDigits: 2 }) : formatGatewayAmount(amount, order.currency)
+/**
+ * formatDate renders the order creation timestamp in the active locale.
+ */
+function formatDate(dateStr: string) {
+  return new Date(dateStr).toLocaleString(getLocale())
 }
 
+/** formatOrderAmount uses the configured balance unit for recharge quantities and the gateway currency for subscription purchase amounts. */
+function formatOrderAmount(amount: number, order: PaymentOrder): string {
+  return order.order_type === 'balance'
+    ? formatBalanceAmount(amount, { fractionDigits: 2 })
+    : formatGatewayAmount(amount, order.currency)
+}
+
+/**
+ * formatGatewayAmount formats a gateway charge with the supplied order currency.
+ */
 function formatGatewayAmount(amount: number, currency?: string | null): string {
   return formatPaymentAmount(amount, currency)
 }
 
+// Localized column definitions follow the requested user-column visibility while the parent
+// supplies rows, loading, and per-order actions.
 const columns = computed((): Column[] => {
   const cols: Column[] = [
     { key: 'id', label: t('payment.orders.orderId') },

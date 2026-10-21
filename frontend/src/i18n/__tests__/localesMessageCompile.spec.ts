@@ -4,17 +4,23 @@ import { baseCompile } from '@intlify/message-compiler'
 import en from '../locales/en'
 import zh from '../locales/zh'
 
-// vue-i18n 在运行时才编译消息：文案里未转义的花括号（如内嵌 JSON 示例
-// "{\"user-agent\": ...}"）会在渲染时抛 "Invalid token in placeholder"，
-// 直接炸掉整个组件树，且构建期完全无感。本测试把全部文案预编译一遍，
-// 将该类问题固化为显式失败。字面量花括号请用 {'{'} / {'}'} 转义，
-// 或将语言中立的示例文本（如 JSON）移出 i18n。
+// localesMessageCompile.spec.ts compiles every string in the English and Chinese
+// message catalogs with the Vue I18n compiler. Recursive traversal records
+// message paths so malformed placeholders fail this test before a rendered
+// component encounters the invalid message.
+
+// collectCompileErrors walks nested catalog values and appends compiler failures
+// with their message paths. Arrays retain numeric path segments, non-string
+// scalar values are skipped, and the supplied output array accumulates all
+// discovered errors.
 function collectCompileErrors(node: unknown, path: string, out: string[]): void {
   if (typeof node === 'string') {
+    // Collect invalid placeholders with their catalog paths so traversal can
+    // report failures from subsequent messages during the same catalog check.
     baseCompile(node, {
       onError: (err) => {
         out.push(`${path}: ${err.message}`)
-      }
+      },
     })
     return
   }
@@ -30,9 +36,12 @@ function collectCompileErrors(node: unknown, path: string, out: string[]): void 
 }
 
 describe('locale messages compile', () => {
+  // Each catalog supplies nested strings that Vue I18n compiles when used.
+  // Compiling every string collects no placeholder errors, protecting messages
+  // containing literal braces and interpolation syntax.
   it.each([
     ['zh', zh],
-    ['en', en]
+    ['en', en],
   ] as const)('%s messages all compile without placeholder errors', (locale, messages) => {
     const errors: string[] = []
     collectCompileErrors(messages, locale, errors)

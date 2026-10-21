@@ -3,7 +3,13 @@ import { mount, flushPromises } from '@vue/test-utils'
 
 import UsageFilters from '../UsageFilters.vue'
 
-// 仅保留 UsageFilters 当前测试需要的 i18n 文案。
+// UsageFilters.spec.ts tests administrator autocomplete ordering, stale user responses,
+// and supplied filter choices. Mounted components use API substitutes and selected
+// control stubs, allowing assertions to observe shared filter mutation and emitted
+// changes without contacting the server.
+
+// messages fixes user-deletion badges and unfiltered selector labels so autocomplete
+// and option assertions compare actual rendered text.
 const messages: Record<string, string> = {
   'admin.usage.userDeletedBadge': 'deleted',
   'admin.usage.userFilter': 'User',
@@ -39,7 +45,8 @@ const messages: Record<string, string> = {
   'usage.exportExcel': 'Export',
 }
 
-// 固定 i18n 输出，便于直接断言下拉文案。
+// Deterministic translation text lets dropdown assertions identify rendered labels
+// independently of the application locale catalog.
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
@@ -50,12 +57,23 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
-// 管理端 API mock 由各用例按需控制返回值。
+// mockSearchUsers controls autocomplete response order and records queries used by
+// stale-user-search tests in this suite.
 const mockSearchUsers = vi.fn()
+// mockSearchApiKeys supplies selected-user key suggestions while recording the identity
+// passed by user selection and key focus.
 const mockSearchApiKeys = vi.fn().mockResolvedValue([])
+// mockGroupsList supplies group choices for mounting filters while keeping user-search
+// assertions independent of administrator group retrieval.
 const mockGroupsList = vi.fn().mockResolvedValue({ items: [] })
+// mockTeamsList supplies team identities and names whose values are inspected through
+// the project Select component props.
 const mockTeamsList = vi.fn().mockResolvedValue([])
+// mockGetModelStats records unexpected dashboard model retrieval so the suite can
+// protect ownership of parent-supplied model choices.
 const mockGetModelStats = vi.fn().mockResolvedValue({ models: [] })
+// mockProvidersList supplies a controlled empty provider page while tests exercise the
+// other autocomplete and selector paths.
 const mockProvidersList = vi.fn().mockResolvedValue({ items: [] })
 
 vi.mock('@/api/admin', () => ({
@@ -71,7 +89,7 @@ vi.mock('@/api/admin', () => ({
   },
 }))
 
-// 每个用例使用独立的默认筛选参数。
+// defaultFilters returns a fresh unselected usage filter object for each mount.
 const defaultFilters = () => ({
   user_id: undefined,
   api_key_id: undefined,
@@ -86,6 +104,9 @@ const defaultFilters = () => ({
   end_date: '',
 })
 
+// mountFilters renders UsageFilters with deterministic dates and caller-provided mutable
+// filters. It stubs Select and Teleport so tests can observe control props and emitted
+// changes while autocomplete requests remain controlled.
 function mountFilters(filters = defaultFilters()) {
   return mount(UsageFilters, {
     props: {
@@ -105,6 +126,9 @@ function mountFilters(filters = defaultFilters()) {
   })
 }
 
+// deferred returns a promise and its externally controlled settlement functions. Tests
+// resolve or reject that promise after later input to reproduce response ordering
+// independently of elapsed network time.
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
   let reject!: (reason?: unknown) => void
@@ -127,12 +151,18 @@ describe('UsageFilters — user search dropdown', () => {
     mockProvidersList.mockClear()
   })
 
+  // Restore the real clock after each fake-timer scenario so later cases do not inherit
+  // its pending debounce or refresh schedule.
   afterEach(() => {
     vi.useRealTimers()
   })
 
+  // Active and deleted users arrive together in autocomplete results. The test protects
+  // active-first ordering, translated deletion badges, and the selected user identifier
+  // emitted through shared filters.
   it('(a) labels deleted users with the i18n badge and (b) sorts active users before deleted ones, (c) selection sets user_id', async () => {
-    // 故意让接口先返回已删用户，验证组件会把活跃用户排在前面。
+    // Return the deleted user first so the rendered order proves that active users
+    // receive priority in suggestions.
     mockSearchUsers.mockResolvedValue([
       { id: 2, email: 'gone@test.com', deleted: true },
       { id: 1, email: 'active@test.com', deleted: false },
@@ -140,17 +170,20 @@ describe('UsageFilters — user search dropdown', () => {
 
     const wrapper = mountFilters()
 
-    // 聚焦并输入关键词以触发防抖搜索。
+    // Focus and typing reproduce the autocomplete path that schedules the user debounce
+    // timer before requesting suggestions.
     const input = wrapper.find('input[placeholder="Search user..."]')
     await input.trigger('focus')
     await input.setValue('test')
     await input.trigger('input')
 
-    // 推进防抖定时器后等待搜索 Promise 完成。
+    // Advance the debounce clock before flushing promises so the request callback has
+    // started when assertions inspect its results.
     vi.advanceTimersByTime(300)
     await flushPromises()
 
-    // 通过实际 DOM 顺序验证活跃用户排在已删用户前面。
+    // Inspect actual element order so the assertion covers displayed suggestion
+    // ordering rather than the response fixture alone.
     const buttons = wrapper.findAll('.usage-filter-dropdown button[type="button"]')
     const emailTexts = buttons.map((b) => b.text())
 
@@ -173,13 +206,28 @@ describe('UsageFilters — user search dropdown', () => {
     expect(changeEmits).toBeTruthy()
     expect(changeEmits!.length).toBeGreaterThan(0)
 
-    // 组件通过 toRef 修改 modelValue，再发出 change 事件。
+    // The component mutates the supplied modelValue object through toRef before
+    // notifying its parent with a change event.
     expect(wrapper.props('modelValue').user_id).toBe(1)
   })
 
+  // Two typed user queries complete in reverse order. The test protects the newest
+  // suggestion list from being replaced by an older response arriving later.
   it('keeps results from the latest user search when responses arrive out of order', async () => {
-    const firstSearch = deferred<Array<{ id: number; email: string; deleted: boolean }>>()
-    const secondSearch = deferred<Array<{ id: number; email: string; deleted: boolean }>>()
+    const firstSearch = deferred<
+      Array<{
+        id: number // record numeric identifier
+        email: string // user email display text
+        deleted: boolean // user soft-deletion marker
+      }>
+    >()
+    const secondSearch = deferred<
+      Array<{
+        id: number // record numeric identifier
+        email: string // user email display text
+        deleted: boolean // user soft-deletion marker
+      }>
+    >()
     mockSearchUsers
       .mockImplementationOnce(() => firstSearch.promise)
       .mockImplementationOnce(() => secondSearch.promise)
@@ -206,8 +254,16 @@ describe('UsageFilters — user search dropdown', () => {
     expect(wrapper.text()).not.toContain('a@test.com')
   })
 
+  // A user search completes after its input has been cleared. The test protects the empty
+  // suggestion state from restoration by that stale response.
   it('does not restore stale user results after the search is cleared', async () => {
-    const pendingSearch = deferred<Array<{ id: number; email: string; deleted: boolean }>>()
+    const pendingSearch = deferred<
+      Array<{
+        id: number // record numeric identifier
+        email: string // user email display text
+        deleted: boolean // user soft-deletion marker
+      }>
+    >()
     mockSearchUsers.mockImplementationOnce(() => pendingSearch.promise)
 
     const wrapper = mountFilters()
@@ -236,10 +292,14 @@ describe('UsageFilters — model options come from prop (no dup request)', () =>
     mockTeamsList.mockClear()
   })
 
+  // Restore the real clock after each fake-timer scenario so later cases do not inherit
+  // its pending debounce or refresh schedule.
   afterEach(() => {
     vi.useRealTimers()
   })
 
+  // The parent supplies model options when the filter panel mounts. The test protects the
+  // supplied choices and checks that no separate model-statistics request runs.
   it('does not call dashboard.getModelStats on mount and renders model options from prop', async () => {
     const wrapper = mount(UsageFilters, {
       props: {
@@ -261,21 +321,27 @@ describe('UsageFilters — model options come from prop (no dup request)', () =>
 
     expect(mockGetModelStats).not.toHaveBeenCalled()
 
-    const opts = (wrapper.vm as any).modelOptions as Array<{ value: string | null; label: string }>
+    const opts = (wrapper.vm as any).modelOptions as Array<{
+      value: string | null // option selection value
+      label: string // option display label
+    }>
     expect(opts.map((o) => o.value)).toEqual([null, 'claude-3', 'gpt-4o'])
   })
 })
 
 describe('UsageFilters — team options', () => {
+  // Team options arrive through the administrator team API during mounting. The test
+  // protects their numeric values and labels in the project Select options.
   it('loads admin teams into the project Select options', async () => {
-    mockTeamsList.mockResolvedValueOnce([
-      { id: 9, name: 'Platform Team' },
-    ])
+    mockTeamsList.mockResolvedValueOnce([{ id: 9, name: 'Platform Team' }])
 
     const wrapper = mountFilters()
     await flushPromises()
 
-    const options = (wrapper.vm as any).teamOptions as Array<{ value: number | null; label: string }>
+    const options = (wrapper.vm as any).teamOptions as Array<{
+      value: number | null // option selection value
+      label: string // option display label
+    }>
     expect(options).toEqual([
       { value: null, label: 'All Teams' },
       { value: 9, label: 'Platform Team' },
@@ -284,6 +350,9 @@ describe('UsageFilters — team options', () => {
 })
 
 describe('UsageFilters — 未设置的条件', () => {
+  // Unselected predicates arrive as undefined values in the shared filter object. The test
+  // protects null dropdown presentation and writing a selected request type back into
+  // filters.
   it('undefined 条件按 null 传给下拉框，显示“全部”选项；选择后写回筛选对象', async () => {
     const filters: Record<string, any> = { start_date: '', end_date: '' }
     const wrapper = mountFilters(filters as ReturnType<typeof defaultFilters>)

@@ -209,7 +209,7 @@ async function handleSubmit() {
 <script setup lang="ts">
 import { ref } from 'vue'
 import { AppLayout } from '@/components/layout'
-import type { ApiKey } from '@/types'
+import type { ApiKey } from '@/api/keys.types'
 
 const showCreateModal = ref(false)
 const apiKeys = ref<ApiKey[]>([])
@@ -277,7 +277,7 @@ const apiKeys = ref<ApiKey[]>([])
 <script setup lang="ts">
 import { ref } from 'vue'
 import { AppLayout } from '@/components/layout'
-import type { User } from '@/types'
+import type { User } from '@/api/identity.types'
 
 const showCreateUser = ref(false)
 const users = ref<User[]>([])

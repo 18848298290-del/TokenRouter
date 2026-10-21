@@ -1,12 +1,11 @@
 <template>
   <MotionTransition name="pop-float">
-    <!-- 外层占满宽度只负责居中，点击穿透到下面的内容。 -->
     <div
       v-if="visible"
       class="pointer-events-none sticky bottom-6 flex justify-center"
       data-testid="settings-save-bar"
     >
-      <!-- 外框 16px 圆角、8px 内边距，内部 8px 圆角的按钮与外框弧度同心。 -->
+      <!-- The dialog radius and two unit padding surround control radius buttons, keeping the inner action corners concentric with the outer bar. -->
       <div
         class="pointer-events-auto flex max-w-full flex-wrap items-center gap-x-6 gap-y-2 rounded-dialog bg-gray-900 p-2 pl-5 text-white shadow-2xl ring-1 ring-black/10 dark:bg-dark-900 dark:text-dark-50 dark:ring-dark-500"
         role="status"
@@ -23,9 +22,19 @@
 <script setup lang="ts">
 import MotionTransition from '@/components/common/MotionTransition.vue'
 
-// 整页设置有未保存的修改时，在视口底部居中浮出深色操作条，放弃和保存按钮由调用方放进默认插槽。
+/**
+ * SettingsSaveBar.vue presents pending settings changes in a sticky action bar near
+ * the viewport bottom. The parent controls visibility and message and supplies discard
+ * or save buttons; the outer centering container lets pointer events pass through
+ * surrounding space.
+ */
+
+/**
+ * The save bar props control whether pending changes are announced and provide
+ * the message shown beside the caller supplied actions.
+ */
 defineProps<{
-  visible: boolean
-  message: string
+  visible: boolean /* bar visibility flag */
+  message: string /* caller supplied message */
 }>()
 </script>

@@ -4,21 +4,36 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useClipboard } from '@/composables/useClipboard'
 import { COPY_FEEDBACK_MS } from '@/constants/ui'
-import type { CustomEndpoint } from '@/types'
+import type { CustomEndpoint } from '@/api/settings.types'
 
+// EndpointPopover.vue lists the default and custom API endpoints for key setup. Each
+// endpoint can be copied with temporary per-URL confirmation, while custom entries also
+// retain their configured names and descriptions for users choosing a destination.
+
+// The configured API base and custom endpoint records supply the copyable destinations shown
+// for the current key usage flow.
 const props = defineProps<{
-  apiBaseUrl: string
-  customEndpoints: CustomEndpoint[]
+  apiBaseUrl: string // Default API base URL.
+  customEndpoints: CustomEndpoint[] // Configured alternate endpoint records.
 }>()
 
+// Clipboard feedback uses translated messages; copiedEndpoint and its reset timer retain the
+// last successfully copied URL for a short visual confirmation.
 const { t } = useI18n()
 const { copyToClipboard } = useClipboard()
 const copiedEndpoint = ref<string | null>(null)
 
 let copiedResetTimer: number | undefined
 
+// allEndpoints places a nonempty default API base before custom endpoints, marking its
+// origin so the popover can distinguish its label and actions.
 const allEndpoints = computed(() => {
-  const items: Array<{ name: string; endpoint: string; description: string; isDefault: boolean }> = []
+  const items: Array<{
+    name: string // Displayed endpoint label.
+    endpoint: string // Copyable API base URL.
+    description: string // Configured endpoint explanation text.
+    isDefault: boolean // Default API endpoint flag.
+  }> = []
   if (props.apiBaseUrl) {
     items.push({
       name: t('keys.endpoints.title'),
@@ -33,6 +48,10 @@ const allEndpoints = computed(() => {
   return items
 })
 
+// copy sends the selected URL to the clipboard and shows endpoint-specific feedback after
+// success. It replaces the previous reset timer, and disposal clears the handle registered
+// at that moment. A pending clipboard operation can still complete after disposal and
+// register another timer because its continuation has no disposal check.
 async function copy(url: string) {
   const success = await copyToClipboard(url, t('keys.endpoints.copied'))
   if (!success) return
@@ -48,16 +67,20 @@ async function copy(url: string) {
   }, COPY_FEEDBACK_MS)
 }
 
+// tooltipHint selects the copy instruction or confirmation for the hovered endpoint.
 function tooltipHint(endpoint: string): string {
   return copiedEndpoint.value === endpoint
     ? t('keys.endpoints.copiedHint')
     : t('keys.endpoints.clickToCopy')
 }
 
+// speedTestUrl encodes the endpoint into the external HTTP speed-test URL.
 function speedTestUrl(endpoint: string): string {
   return `https://www.tcptest.cn/http/${encodeURIComponent(endpoint)}`
 }
 
+// Clear the currently registered feedback timeout when the popover unmounts. Clipboard
+// operations still awaiting completion can later change the marker and register another timer.
 onBeforeUnmount(() => {
   if (copiedResetTimer !== undefined) {
     window.clearTimeout(copiedResetTimer)
@@ -76,7 +99,8 @@ onBeforeUnmount(() => {
       <span
         v-if="item.isDefault"
         class="rounded-compact bg-primary-50 px-1 py-px text-xs font-medium leading-tight text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
-      >{{ t('keys.endpoints.default') }}</span>
+        >{{ t('keys.endpoints.default') }}</span
+      >
 
       <span class="text-gray-300 dark:text-dark-500">|</span>
 
@@ -97,7 +121,9 @@ onBeforeUnmount(() => {
             <span class="h-1.5 w-1.5 rounded-full bg-primary-500 dark:bg-primary-300"></span>
             {{ tooltipHint(item.endpoint) }}
           </p>
-          <div class="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-primary-900/10 bg-white dark:border-dark-600 dark:bg-dark-900"></div>
+          <div
+            class="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-primary-900/10 bg-white dark:border-dark-600 dark:bg-dark-900"
+          ></div>
         </div>
 
         <code
@@ -107,14 +133,17 @@ onBeforeUnmount(() => {
           @click="copy(item.endpoint)"
           @keydown.enter.prevent="copy(item.endpoint)"
           @keydown.space.prevent="copy(item.endpoint)"
-        >{{ item.endpoint }}</code>
+          >{{ item.endpoint }}</code
+        >
 
         <button
           type="button"
           class="rounded-compact p-0.5 transition-colors"
-          :class="copiedEndpoint === item.endpoint
-            ? 'text-emerald-500 dark:text-emerald-400'
-            : 'text-gray-400 hover:text-primary-500 dark:text-gray-500 dark:hover:text-primary-400'"
+          :class="
+            copiedEndpoint === item.endpoint
+              ? 'text-emerald-500 dark:text-emerald-400'
+              : 'text-gray-400 hover:text-primary-500 dark:text-gray-500 dark:hover:text-primary-400'
+          "
           :aria-label="tooltipHint(item.endpoint)"
           @click="copy(item.endpoint)"
         >

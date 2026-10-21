@@ -1,9 +1,6 @@
 <template>
   <div :class="props.embedded ? '' : 'card'">
-    <div
-      v-if="!props.embedded"
-      class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
-    >
+    <div v-if="!props.embedded" class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
       <h2 class="text-lg font-medium text-gray-900 dark:text-white">
         {{ t('profile.avatar.title') }}
       </h2>
@@ -12,7 +9,13 @@
       </p>
     </div>
 
-    <div :class="props.embedded ? 'flex items-center gap-4' : 'flex flex-col gap-5 px-6 py-6 sm:flex-row sm:items-start'">
+    <div
+      :class="
+        props.embedded
+          ? 'flex items-center gap-4'
+          : 'flex flex-col gap-5 px-6 py-6 sm:flex-row sm:items-start'
+      "
+    >
       <UserAvatar
         :avatar-url="avatarDisplayUrl"
         :user-id="user?.id"
@@ -43,7 +46,7 @@
               class="hidden"
               :disabled="avatarSaving"
               @change="handleAvatarFileChange"
-            >
+            />
             {{ t('profile.avatar.uploadAction') }}
           </label>
 
@@ -68,29 +71,58 @@ import { useI18n } from 'vue-i18n'
 import { userAPI } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
-import type { User } from '@/types'
+import type { User } from '@/api/identity.types'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
-const props = withDefaults(defineProps<{
-  user: User | null
-  embedded?: boolean
-}>(), {
-  embedded: false,
-})
+// ProfileAvatarCard.vue edits the current account avatar through the profile API and
+// publishes successful responses to the auth store. Upload preparation checks image type and
+// size before creating the base64 payload expected by that endpoint. Small images pass
+// through, and oversized GIFs report an error because re-encoding would change their
+// animation representation.
+//
+// Oversized static images are decoded once, then tested across descending dimensions and
+// WebP qualities until a candidate fits the byte budget. The shared save flag prevents
+// upload and deletion from overlapping. Failed preparation or persistence leaves the
+// currently stored profile in place, while the file input resets for a later retry.
 
+// Profile ownership and presentation props select the current avatar source and whether the
+// surrounding profile card supplies its own heading.
+const props = withDefaults(
+  defineProps<{
+    user: User | null // Current account profile.
+    embedded?: boolean // Parent supplies card framing.
+  }>(),
+  {
+    embedded: false,
+  },
+)
+
+// The auth store publishes saved profiles, while app notifications and translated labels
+// report upload and deletion outcomes.
 const { t } = useI18n()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 
+// targetAvatarUploadBytes limits prepared images to twenty kibibytes; scale and quality
+// steps search progressively smaller WebP encodings for oversized static images.
 const targetAvatarUploadBytes = 20 * 1024
 const avatarScaleSteps = [1, 0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.44, 0.36]
 const avatarQualitySteps = [0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.44, 0.36]
+// avatarSaving guards overlapping avatar operations and disables the upload and delete
+// controls until their current request settles.
 const avatarSaving = ref(false)
 
-const displayName = computed(() => props.user?.username?.trim() || props.user?.email?.trim() || t('profile.user'))
+// displayName selects a trimmed username, email, or localized account label;
+// avatarDisplayUrl supplies the trimmed image source for the preview.
+const displayName = computed(
+  () => props.user?.username?.trim() || props.user?.email?.trim() || t('profile.user'),
+)
 const avatarDisplayUrl = computed(() => props.user?.avatar_url?.trim() || '')
 
+// normalizeUploadedAvatar accepts a nonempty base64 image data URL after trimming. Empty
+// input returns null silently, while another representation reports the upload-required
+// error and stops profile submission.
 function normalizeUploadedAvatar(value: string): string | null {
   const normalized = value.trim()
   if (!normalized) {
@@ -105,6 +137,9 @@ function normalizeUploadedAvatar(value: string): string | null {
   return normalized
 }
 
+// readFileAsDataURL resolves the browser FileReader result as a string for avatar
+// preparation. Read failures reject with the reader error or a local error when the browser
+// omits its cause.
 function readFileAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -114,6 +149,9 @@ function readFileAsDataURL(file: File): Promise<string> {
   })
 }
 
+// loadImage decodes a prepared data URL into a browser image for canvas resizing. Load
+// errors reject with the translated read failure, which the upload handler reports through
+// its normal error notification.
 function loadImage(dataURL: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image()
@@ -123,18 +161,31 @@ function loadImage(dataURL: string): Promise<HTMLImageElement> {
   })
 }
 
+// canvasToBlob encodes the canvas using the requested MIME type and quality. A null browser
+// encoder result rejects with a compression failure so preparation cannot submit a missing
+// image.
 function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error(t('profile.avatar.compressFailed')))
-        return
-      }
-      resolve(blob)
-    }, type, quality)
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error(t('profile.avatar.compressFailed')))
+          return
+        }
+        resolve(blob)
+      },
+      type,
+      quality,
+    )
   })
 }
 
+// compressAvatarFile searches dimension and quality combinations for an avatar within the
+// upload budget. Each scale redraws the decoded source before progressively reducing WebP
+// quality, and the first fitting result becomes a new WebP File. Both dimensions remain at
+// least one pixel to keep the canvas drawable. Missing canvas support, decoding failures, or
+// exhaustion of every candidate reject the operation so the existing account avatar remains
+// until a valid payload is submitted.
 async function compressAvatarFile(file: File): Promise<File> {
   const sourceDataURL = await readFileAsDataURL(file)
   const image = await loadImage(sourceDataURL)
@@ -144,6 +195,8 @@ async function compressAvatarFile(file: File): Promise<File> {
     throw new Error(t('profile.avatar.compressFailed'))
   }
 
+  // Try each scale at descending quality before shrinking again, keeping the first image
+  // whose encoded bytes meet the upload budget.
   for (const scale of avatarScaleSteps) {
     const width = Math.max(1, Math.round(image.naturalWidth * scale))
     const height = Math.max(1, Math.round(image.naturalHeight * scale))
@@ -164,6 +217,9 @@ async function compressAvatarFile(file: File): Promise<File> {
   throw new Error(t('profile.avatar.compressTooLarge'))
 }
 
+// prepareAvatarUpload validates image MIME types and applies the byte limit before
+// submission. Small images pass through, GIFs above the limit reject to retain their
+// animation format, and oversized other images enter WebP compression.
 async function prepareAvatarUpload(file: File): Promise<File> {
   if (!file.type.startsWith('image/')) {
     throw new Error(t('profile.avatar.invalidType'))
@@ -180,7 +236,11 @@ async function prepareAvatarUpload(file: File): Promise<File> {
   return compressAvatarFile(file)
 }
 
-// 选中的图片压缩完成后直接提交更新。
+// handleAvatarFileChange prepares the selected file and submits its base64 image data as the
+// profile avatar. It clears the browser input immediately so the same file can be selected
+// again, and ignores missing files or overlapping saves. The auth store receives the
+// returned profile only after a successful update. Preparation and request failures display
+// an error, and the save guard resets after every completion path.
 async function handleAvatarFileChange(event: Event) {
   const input = event.target as HTMLInputElement | null
   const file = input?.files?.[0]
@@ -209,6 +269,9 @@ async function handleAvatarFileChange(event: Event) {
   }
 }
 
+// handleAvatarDelete clears a present avatar by sending an empty avatar_url. Busy operations
+// and already-empty profiles prevent submission; a successful response replaces the shared
+// auth profile and reports completion.
 async function handleAvatarDelete() {
   if (avatarSaving.value) {
     return

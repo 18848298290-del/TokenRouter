@@ -3,15 +3,15 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 
 import UsageView from '../UsageView.vue'
 
-// UsageView.spec.ts verifies user usage queries, table preferences, and exports
-// with API responses controlled by each test. Locale refresh cases cover both
-// disabled error visibility and lazily loaded error rows, including revisiting
-// a tab whose translated results have been invalidated.
+// UsageView.spec.ts tests user usage filters, error visibility, team scope, and CSV export.
+// API substitutes expose the parameters sent by real page loaders, while child-control
+// stubs reveal column permissions and export assertions compare the complete user-facing
+// record format across pages.
 
 enableAutoUnmount(afterEach)
 
-// Shared API spies and public settings let each case select responses and
-// error visibility before mounting the page and dispatching locale events.
+// User and team API substitutes record queries and control membership, public error
+// visibility, translated options, chart data, and notification effects for the page.
 const {
   query,
   getStats,
@@ -48,6 +48,8 @@ const {
   showInfo: vi.fn(),
 }))
 
+// messages supplies user CSV headers and column-setting labels so export assertions
+// compare the complete user-facing field sequence.
 const messages: Record<string, string> = {
   'usage.time': 'Time',
   'usage.reasoningEffort': 'Reasoning Effort',
@@ -129,7 +131,13 @@ vi.mock('@/api/team', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showError, showWarning, showSuccess, showInfo, cachedPublicSettings: publicSettings }),
+  useAppStore: () => ({
+    showError,
+    showWarning,
+    showSuccess,
+    showInfo,
+    cachedPublicSettings: publicSettings,
+  }),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -142,13 +150,25 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
+// simpleStub exposes the child slots or props exercised by this suite while leaving the
+// owning component logic active.
 const simpleStub = { template: '<div><slot /></div>' }
+// chartStub omits chart rendering while leaving the usage page loaders active
+// for API request and filter assertions.
 const chartStub = { template: '<div />' }
+// UsageTableStub accepts visible columns and member presentation flags so tests inspect
+// user permissions and team attribution configuration.
 const UsageTableStub = {
-  props: ['columns', 'userClickable', 'compactUserColumn'],
+  props: [
+    'columns', // visible table column definitions
+    'userClickable', // administrator navigation permission flag
+    'compactUserColumn', // compact member attribution flag
+  ],
   template: '<div data-test="usage-table" />',
 }
 
+// usageLog supplies representative usage measurements reused by rendering cases, with each
+// test overriding the fields relevant to its scenario.
 const usageLog = {
   id: 1,
   request_id: 'req-user-export',
@@ -182,7 +202,9 @@ const usageLog = {
   stream: false,
 }
 
-// mountUsageView renders page interactions while stubbing tables and charts.
+// mountUsageView renders the user page with controlled child widgets and API substitutes.
+// The actual page loaders, preference actions, permission checks, and CSV serialization
+// stay active for these assertions.
 function mountUsageView() {
   return mount(UsageView, {
     global: {
@@ -240,7 +262,19 @@ describe('user UsageView', () => {
       endpoint_paths: [],
     })
     getDashboardModels.mockResolvedValue({
-      models: [{ model: 'gpt-5.4', requests: 1, input_tokens: 10, output_tokens: 20, cache_creation_tokens: 0, cache_read_tokens: 0, total_tokens: 30, cost: 0.1, actual_cost: 0.08 }],
+      models: [
+        {
+          model: 'gpt-5.4',
+          requests: 1,
+          input_tokens: 10,
+          output_tokens: 20,
+          cache_creation_tokens: 0,
+          cache_read_tokens: 0,
+          total_tokens: 30,
+          cost: 0.1,
+          actual_cost: 0.08,
+        },
+      ],
       start_date: '2026-03-08',
       end_date: '2026-03-08',
     })
@@ -260,6 +294,8 @@ describe('user UsageView', () => {
     getTeamMemberUsage.mockResolvedValue([])
   })
 
+  // The usage page mounts with personal scope and no selected filters. The test protects
+  // initial record and statistics requests together with personal key and group lookups.
   it('loads logs, stats, model stats, and snapshot on first render', async () => {
     mountUsageView()
     await flushPromises()
@@ -267,20 +303,30 @@ describe('user UsageView', () => {
     expect(query).toHaveBeenCalled()
     expect(getStats).toHaveBeenCalled()
     expect(getDashboardModels).toHaveBeenCalled()
-    expect(getDashboardSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({
-      include_trend: true,
-      include_model_stats: false,
-      include_group_stats: true,
-    }))
+    expect(getDashboardSnapshotV2).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include_trend: true,
+        include_model_stats: false,
+        include_group_stats: true,
+      }),
+    )
     expect(list).toHaveBeenCalledWith(1, 100, { scope: 'personal' })
     expect(getAvailable).toHaveBeenCalledWith('personal', undefined, false)
   })
 
+  // Group options contain translated and legacy names before a locale change. The test
+  // protects display-name precedence and refreshing the selected language's labels after
+  // language restoration.
   it('分组筛选使用展示名称，并在切换语言后刷新', async () => {
-    getAvailable.mockResolvedValue([{ id: 1, name: 'business-group', display_name: 'English group' }, { id: 2, name: 'Legacy group' }])
+    getAvailable.mockResolvedValue([
+      { id: 1, name: 'business-group', display_name: 'English group' },
+      { id: 2, name: 'Legacy group' },
+    ])
     const wrapper = mountUsageView()
     await flushPromises()
-    const options = () => wrapper.findAllComponents({ name: 'Select' }).flatMap(item => item.props('options') || [])
+    // options collects option objects exposed by every mounted Select stub in the page.
+    const options = () =>
+      wrapper.findAllComponents({ name: 'Select' }).flatMap((item) => item.props('options') || [])
     expect(options()).toContainEqual(expect.objectContaining({ value: 1, label: 'English group' }))
     expect(options()).toContainEqual(expect.objectContaining({ value: 2, label: 'Legacy group' }))
     getAvailable.mockResolvedValue([{ id: 1, name: 'business-group', display_name: '中文分组' }])
@@ -290,28 +336,31 @@ describe('user UsageView', () => {
     wrapper.unmount()
   })
 
-  // Account language restoration emits the same event as a manual language
-  // change. Missing or disabled error visibility must leave normal usage loading
-  // available while preventing the forbidden query and its error notification.
-  it.each([undefined, false])('skips error queries on locale refresh when visibility is %s', async (enabled) => {
-    publicSettings.allow_user_view_error_requests = enabled
-    listMyErrorRequests.mockRejectedValue({ status: 403 })
-    const wrapper = mountUsageView()
-    await flushPromises()
-    query.mockClear()
+  // The public error-visibility setting is absent or false on first render. The test
+  // protects loading ordinary usage without querying errors, displaying error
+  // notifications, or hiding the usage table.
+  it.each([undefined, false])(
+    'skips error queries on locale refresh when visibility is %s',
+    async (enabled) => {
+      publicSettings.allow_user_view_error_requests = enabled
+      listMyErrorRequests.mockRejectedValue({ status: 403 })
+      const wrapper = mountUsageView()
+      await flushPromises()
+      query.mockClear()
 
-    window.dispatchEvent(new CustomEvent('locale-changed', { detail: 'zh-Hans' }))
-    await flushPromises()
+      window.dispatchEvent(new CustomEvent('locale-changed', { detail: 'zh-Hans' }))
+      await flushPromises()
 
-    expect(query).toHaveBeenCalledOnce()
-    expect(listMyErrorRequests).not.toHaveBeenCalled()
-    expect(showError).not.toHaveBeenCalled()
-    expect(wrapper.findComponent(UsageTableStub).exists()).toBe(true)
-  })
+      expect(query).toHaveBeenCalledOnce()
+      expect(listMyErrorRequests).not.toHaveBeenCalled()
+      expect(showError).not.toHaveBeenCalled()
+      expect(wrapper.findComponent(UsageTableStub).exists()).toBe(true)
+    },
+  )
 
-  // Callers can reach the loader independently of the locale listener. The
-  // disabled feature must reject that entry before changing loading state or
-  // sending a request that the server would refuse.
+  // The error loader is invoked directly while visibility is disabled. The test protects
+  // returning before any API request, loading state change, or error notification is
+  // produced.
   it('guards the error loader when error visibility is disabled', async () => {
     publicSettings.allow_user_view_error_requests = false
     const wrapper = mountUsageView()
@@ -324,8 +373,8 @@ describe('user UsageView', () => {
     expect(showError).not.toHaveBeenCalled()
   })
 
-  // Enabled error visibility still leaves the usage tab as the initial view.
-  // A language refresh must defer error retrieval until the user opens its tab.
+  // Error visibility is enabled but the error tab remains unopened. The test protects
+  // deferring its API request until the user selects the error view.
   it('defers enabled error queries until the errors tab is opened', async () => {
     publicSettings.allow_user_view_error_requests = true
     const wrapper = mountUsageView()
@@ -335,20 +384,26 @@ describe('user UsageView', () => {
     await flushPromises()
     expect(listMyErrorRequests).not.toHaveBeenCalled()
 
-    await wrapper.findAll('button').find(button => button.text() === 'usage.tabs.errors')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'usage.tabs.errors')!
+      .trigger('click')
     await flushPromises()
     expect(listMyErrorRequests).toHaveBeenCalledOnce()
   })
 
-  // Visible error rows refresh immediately after a locale event. Cached rows
-  // in an inactive tab must be fetched again when that tab is revisited, so
-  // translated messages do not remain in the previous language.
+  // Locale changes occur with errors visible and then with their tab inactive. The test
+  // protects immediate visible refresh and invalidating inactive records for retrieval when
+  // reopened.
   it('refreshes visible errors and invalidates inactive error rows on locale changes', async () => {
     publicSettings.allow_user_view_error_requests = true
     listMyErrorRequests.mockResolvedValue({ items: [{ id: 1 }], total: 1, pages: 1 })
     const wrapper = mountUsageView()
     await flushPromises()
-    await wrapper.findAll('button').find(button => button.text() === 'usage.tabs.errors')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'usage.tabs.errors')!
+      .trigger('click')
     await flushPromises()
     listMyErrorRequests.mockClear()
 
@@ -356,25 +411,39 @@ describe('user UsageView', () => {
     await flushPromises()
     expect(listMyErrorRequests).toHaveBeenCalledOnce()
 
-    await wrapper.findAll('button').find(button => button.text() === 'usage.tabs.usage')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'usage.tabs.usage')!
+      .trigger('click')
     listMyErrorRequests.mockClear()
     window.dispatchEvent(new CustomEvent('locale-changed', { detail: 'zh-Hans' }))
     await flushPromises()
     expect(listMyErrorRequests).not.toHaveBeenCalled()
 
-    await wrapper.findAll('button').find(button => button.text() === 'usage.tabs.errors')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'usage.tabs.errors')!
+      .trigger('click')
     await flushPromises()
     expect(listMyErrorRequests).toHaveBeenCalledOnce()
     expect(showError).not.toHaveBeenCalled()
   })
 
+  // Main selectors start with unselected null values in the UI. The test protects their
+  // all-option presentation and omitting those predicates from the normalized usage query.
   it('主筛选框初始值为 null，显示“全部”选项，请求参数不带未选条件', async () => {
     const wrapper = mountUsageView()
     await flushPromises()
 
-    const labels = ['usage.allApiKeys', 'admin.usage.allModels', 'admin.usage.allGroups', 'admin.usage.allTypes']
+    const labels = [
+      'usage.allApiKeys',
+      'admin.usage.allModels',
+      'admin.usage.allGroups',
+      'admin.usage.allTypes',
+    ]
     for (const label of labels) {
-      const select = wrapper.findAllComponents({ name: 'Select' })
+      const select = wrapper
+        .findAllComponents({ name: 'Select' })
         .find((item) => item.props('options')?.[0]?.label === (messages[label] ?? label))
       expect(select?.props('modelValue')).toBeNull()
     }
@@ -384,6 +453,9 @@ describe('user UsageView', () => {
     }
   })
 
+  // A team owner loads team keys and aggregate member usage. The test protects owner
+  // requests, member column presentation, compact attribution, and disabling administrator
+  // navigation for user rows.
   it('loads team keys and aggregated member charts for a team owner', async () => {
     getCurrentTeam.mockResolvedValue({
       team: { id: 7, name: 'Demo team' },
@@ -400,13 +472,25 @@ describe('user UsageView', () => {
         actor_user_id: 42,
         display_name: 'Owner',
         status: 'active',
-        summary: { actual_cost: 1.2, request_count: 1, input_tokens: 10, output_tokens: 5, daily: [] },
+        summary: {
+          actual_cost: 1.2,
+          request_count: 1,
+          input_tokens: 10,
+          output_tokens: 5,
+          daily: [],
+        },
       },
       {
         actor_user_id: 43,
         display_name: 'Former member',
         status: 'left',
-        summary: { actual_cost: 0.8, request_count: 1, input_tokens: 10, output_tokens: 5, daily: [] },
+        summary: {
+          actual_cost: 0.8,
+          request_count: 1,
+          input_tokens: 10,
+          output_tokens: 5,
+          daily: [],
+        },
       },
     ])
 
@@ -416,12 +500,17 @@ describe('user UsageView', () => {
     expect(getTeamKeys).toHaveBeenCalledOnce()
     expect(getTeamMembers).toHaveBeenCalledOnce()
     expect(getTeamMemberUsage).toHaveBeenCalledOnce()
-    expect(getTeamMemberUsage).toHaveBeenCalledWith(expect.objectContaining({
-      from: expect.any(String),
-      to: expect.any(String),
-    }))
+    expect(getTeamMemberUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: expect.any(String),
+        to: expect.any(String),
+      }),
+    )
     const usageTable = wrapper.findComponent(UsageTableStub)
-    const columns = usageTable.props('columns') as Array<{ key: string; class?: string }>
+    const columns = usageTable.props('columns') as Array<{
+      key: string // table column identifier
+      class?: string // table column layout classes
+    }>
     expect(columns.map((column) => column.key)).toContain('user')
     expect(columns.map((column) => column.key)).toContain('tps')
     expect(columns.find((column) => column.key === 'user')?.class).toContain('w-36')
@@ -429,32 +518,62 @@ describe('user UsageView', () => {
     expect(usageTable.props('compactUserColumn')).toBe(true)
   })
 
+  // The user usage table mounts with default column preferences. The test protects showing
+  // reasoning effort while keeping user-agent details hidden until the user enables them.
   it('shows reasoning effort column by default while hiding user agent', async () => {
     const wrapper = mountUsageView()
     await flushPromises()
 
     const usageTable = wrapper.findComponent(UsageTableStub)
-    const columns = usageTable.props('columns') as Array<{ key: string }>
+    const columns = usageTable.props('columns') as Array<{
+      key: string // table column identifier
+    }>
     expect(columns.map((col) => col.key)).toContain('reasoning_effort')
     expect(columns.map((col) => col.key)).not.toContain('user_agent')
   })
 
+  // Old user preferences precede TPS and then explicitly hide it. The test protects default
+  // placement after latency, its unsortable status, and persistence after the page
+  // remounts.
   it('TPS 默认放在延迟后，旧偏好可见且隐藏后重新挂载仍隐藏', async () => {
     localStorage.setItem('user-usage-hidden-columns', JSON.stringify(['ip_address']))
     const wrapper = mountUsageView()
     await flushPromises()
-    const columns = wrapper.findComponent(UsageTableStub).props('columns') as Array<{ key: string; sortable?: boolean }>
-    expect(columns.findIndex(column => column.key === 'tps')).toBe(columns.findIndex(column => column.key === 'latency') + 1)
-    expect(columns.find(column => column.key === 'tps')?.sortable).toBe(false)
+    const columns = wrapper.findComponent(UsageTableStub).props('columns') as Array<{
+      key: string // table column identifier
+      sortable?: boolean // server sorting availability flag
+    }>
+    expect(columns.findIndex((column) => column.key === 'tps')).toBe(
+      columns.findIndex((column) => column.key === 'latency') + 1,
+    )
+    expect(columns.find((column) => column.key === 'tps')?.sortable).toBe(false)
     await wrapper.get('button[title="Columns"]').trigger('click')
-    await wrapper.findAll('button').find(button => button.text() === 'TPS')!.trigger('click')
-    expect(JSON.parse(localStorage.getItem('user-usage-hidden-columns')!)).toEqual(['ip_address', 'tps'])
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'TPS')!
+      .trigger('click')
+    expect(JSON.parse(localStorage.getItem('user-usage-hidden-columns')!)).toEqual([
+      'ip_address',
+      'tps',
+    ])
     wrapper.unmount()
     const restored = mountUsageView()
     await flushPromises()
-    expect(restored.findComponent(UsageTableStub).props('columns').map((column: { key: string }) => column.key)).not.toContain('tps')
+    expect(
+      restored
+        .findComponent(UsageTableStub)
+        .props('columns')
+        .map(
+          (column: {
+            key: string // table column identifier
+          }) => column.key,
+        ),
+    ).not.toContain('tps')
   })
 
+  // CSV export runs with selected user filters and representative usage values. The test
+  // protects exact user-facing columns, byte-order mark, filtered requests, and excluding
+  // provider-specific administrator fields.
   it('exports csv with current filters and without admin-only fields', async () => {
     const wrapper = mountUsageView()
     await flushPromises()
@@ -462,10 +581,13 @@ describe('user UsageView', () => {
     let exportedBlob: Blob | null = null
     let csvContent = ''
     const OriginalBlob = globalThis.Blob
-    vi.stubGlobal('Blob', vi.fn(function (parts: BlobPart[], options?: BlobPropertyBag) {
-      csvContent = parts.map((part) => String(part)).join('')
-      return new OriginalBlob(parts, options)
-    }))
+    vi.stubGlobal(
+      'Blob',
+      vi.fn(function (parts: BlobPart[], options?: BlobPropertyBag) {
+        csvContent = parts.map((part) => String(part)).join('')
+        return new OriginalBlob(parts, options)
+      }),
+    )
     const originalCreateObjectURL = window.URL.createObjectURL
     const originalRevokeObjectURL = window.URL.revokeObjectURL
     window.URL.createObjectURL = vi.fn((blob: Blob | MediaSource) => {
@@ -478,18 +600,22 @@ describe('user UsageView', () => {
     await (wrapper.vm as any).exportToCSV()
 
     expect(exportedBlob).not.toBeNull()
-    expect(query).toHaveBeenCalledWith(expect.objectContaining({
-      page_size: 100,
-      sort_by: 'created_at',
-      sort_order: 'desc',
-    }))
+    expect(query).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page_size: 100,
+        sort_by: 'created_at',
+        sort_order: 'desc',
+      }),
+    )
     expect(clickSpy).toHaveBeenCalled()
     expect(showSuccess).toHaveBeenCalled()
     expect(csvContent.startsWith('\uFEFF')).toBe(true)
-    expect(csvContent.slice(1)).toBe([
-      'Time,API Key,Model,Reasoning Effort,Inbound Endpoint,IP Address,Type,Billing mode,Input Tokens,Output Tokens,Cache Read Tokens,Cache Creation Tokens,Rate Multiplier,Billed Cost,Original Cost,TTFT (ms),TTFT mode,Duration (ms),TPS (tok/s)',
-      '2026-03-08T00:00:00Z,demo-key,gpt-5.4,"\'-",,203.0.113.10,Sync,Token,4057,101,278272,4,1,0.09288300,0.09288300,12,First output,345,303.3',
-    ].join('\n'))
+    expect(csvContent.slice(1)).toBe(
+      [
+        'Time,API Key,Model,Reasoning Effort,Inbound Endpoint,IP Address,Type,Billing mode,Input Tokens,Output Tokens,Cache Read Tokens,Cache Creation Tokens,Rate Multiplier,Billed Cost,Original Cost,TTFT (ms),TTFT mode,Duration (ms),TPS (tok/s)',
+        '2026-03-08T00:00:00Z,demo-key,gpt-5.4,"\'-",,203.0.113.10,Sync,Token,4057,101,278272,4,1,0.09288300,0.09288300,12,First output,345,303.3',
+      ].join('\n'),
+    )
     expect(csvContent).toContain('IP Address')
     expect(csvContent).toContain('203.0.113.10')
     expect(csvContent).toContain('Billed Cost')
@@ -504,23 +630,38 @@ describe('user UsageView', () => {
     clickSpy.mockRestore()
   })
 
+  // CSV export spans multiple pages with numeric and unavailable TPS observations. The test
+  // protects shared formatting, consistent row width, and empty cells when the estimate is
+  // unavailable.
   it('CSV 分页导出使用相同 TPS 公式，缺少首字耗时时留空', async () => {
     query.mockResolvedValue({ items: [usageLog], total: 103, pages: 2 })
     const wrapper = mountUsageView()
     await flushPromises()
-    query.mockReset()
-      .mockResolvedValueOnce({ items: Array.from({ length: 100 }, () => usageLog), total: 103, pages: 2 })
-      .mockResolvedValueOnce({ items: [
-        { ...usageLog, output_tokens: 23, duration_ms: 21000, ttft_ms: 1000, tps: 1.2 },
-        { ...usageLog, output_tokens: 469, duration_ms: 21000, ttft_ms: 1000, tps: 23.5 },
-        { ...usageLog, ttft_ms: null, tps: null },
-      ], total: 103, pages: 2 })
+    query
+      .mockReset()
+      .mockResolvedValueOnce({
+        items: Array.from({ length: 100 }, () => usageLog),
+        total: 103,
+        pages: 2,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          { ...usageLog, output_tokens: 23, duration_ms: 21000, ttft_ms: 1000, tps: 1.2 },
+          { ...usageLog, output_tokens: 469, duration_ms: 21000, ttft_ms: 1000, tps: 23.5 },
+          { ...usageLog, ttft_ms: null, tps: null },
+        ],
+        total: 103,
+        pages: 2,
+      })
     let csvContent = ''
     const OriginalBlob = globalThis.Blob
-    vi.stubGlobal('Blob', vi.fn(function (parts: BlobPart[], options?: BlobPropertyBag) {
-      csvContent = parts.map(String).join('')
-      return new OriginalBlob(parts, options)
-    }))
+    vi.stubGlobal(
+      'Blob',
+      vi.fn(function (parts: BlobPart[], options?: BlobPropertyBag) {
+        csvContent = parts.map(String).join('')
+        return new OriginalBlob(parts, options)
+      }),
+    )
     const originalCreateObjectURL = window.URL.createObjectURL
     const originalRevokeObjectURL = window.URL.revokeObjectURL
     window.URL.createObjectURL = vi.fn(() => 'blob:usage-tps')
@@ -528,8 +669,11 @@ describe('user UsageView', () => {
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     try {
       await (wrapper.vm as any).exportToCSV()
-      expect(query.mock.calls.map(call => call[0].page)).toEqual([1, 2])
-      const lines = csvContent.slice(1).split('\n').map(line => line.split(','))
+      expect(query.mock.calls.map((call) => call[0].page)).toEqual([1, 2])
+      const lines = csvContent
+        .slice(1)
+        .split('\n')
+        .map((line) => line.split(','))
       const tpsIndex = lines[0].indexOf('TPS (tok/s)')
       expect(tpsIndex).toBe(lines[0].indexOf('Duration (ms)') + 1)
       expect(lines).toHaveLength(104)
@@ -538,7 +682,7 @@ describe('user UsageView', () => {
       expect(lines[101][tpsIndex]).toBe('1.2')
       expect(lines[102][tpsIndex]).toBe('23.5')
       expect(lines[103][tpsIndex]).toBe('')
-      expect(lines.every(line => line.length === lines[0].length)).toBe(true)
+      expect(lines.every((line) => line.length === lines[0].length)).toBe(true)
     } finally {
       window.URL.createObjectURL = originalCreateObjectURL
       window.URL.revokeObjectURL = originalRevokeObjectURL
@@ -547,6 +691,8 @@ describe('user UsageView', () => {
     }
   })
 
+  // A historical exported row has image count but no explicit billing mode. The test
+  // protects deriving image billing and retaining the final empty measurement cell in CSV.
   it('exports historical image rows with image billing mode derived from image_count', async () => {
     query.mockResolvedValue({
       items: [
@@ -581,13 +727,18 @@ describe('user UsageView', () => {
 
     let csvContent = ''
     const OriginalBlob = globalThis.Blob
-    vi.stubGlobal('Blob', vi.fn(function (parts: BlobPart[], options?: BlobPropertyBag) {
-      csvContent = parts.map((part) => String(part)).join('')
-      return new OriginalBlob(parts, options)
-    }))
+    vi.stubGlobal(
+      'Blob',
+      vi.fn(function (parts: BlobPart[], options?: BlobPropertyBag) {
+        csvContent = parts.map((part) => String(part)).join('')
+        return new OriginalBlob(parts, options)
+      }),
+    )
     const originalCreateObjectURL = window.URL.createObjectURL
     const originalRevokeObjectURL = window.URL.revokeObjectURL
-    window.URL.createObjectURL = vi.fn(() => 'blob:usage-export') as typeof window.URL.createObjectURL
+    window.URL.createObjectURL = vi.fn(
+      () => 'blob:usage-export',
+    ) as typeof window.URL.createObjectURL
     window.URL.revokeObjectURL = vi.fn(() => {}) as typeof window.URL.revokeObjectURL
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 

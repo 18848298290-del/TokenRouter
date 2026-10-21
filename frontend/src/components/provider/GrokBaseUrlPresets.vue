@@ -15,18 +15,32 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { GROK_BASE_URL_PRESETS, type GrokBaseUrlPreset } from './credentialsBuilder'
+import {
+  GROK_BASE_URL_PRESETS,
+  type GrokBaseUrlPreset,
+} from '@/components/provider/form/providerEndpoints'
 
-// Grok 快捷端点：点击把预设地址填入调用方的输入框。
-// 预设用于快速填充，输入框也接受任意第三方转发地址。
+// GrokBaseUrlPresets.vue offers Grok gateway, official, and regional endpoint shortcuts.
+// Selecting a shortcut emits its URL to the owning form, whose address input remains
+// available for manually supplied relay addresses and other destinations.
+
+// emit publishes typed draft changes and actions to the parent that owns this component.
 const emit = defineEmits<{
+  // select supplies the chosen Grok endpoint URL to the parent address field. It carries
+  // the full URL even though the button label removes its scheme for compact display.
   (e: 'select', url: string): void
 }>()
 
+// t resolves interface labels from the active component locale while reactive consumers
+// update their displayed text.
 const { t } = useI18n()
 
+// presetLabel returns a literal regional label or translates the preset label key. The
+// nullish check preserves an explicitly supplied empty label, so callers should supply
+// displayable literal values.
 const presetLabel = (preset: GrokBaseUrlPreset) =>
   preset.label ?? t(`admin.providers.grokCustomBaseUrl.presets.${preset.labelKey}`)
 
+// displayUrl removes an HTTP or HTTPS scheme from the displayed address.
 const displayUrl = (url: string) => url.replace(/^https?:\/\//i, '')
 </script>

@@ -31,25 +31,38 @@ import {
   type ModelMappingRow,
 } from '@/utils/modelMappingRules'
 
+// ProviderModelMappingEditor.vue connects provider model mapping labels and wildcard
+// diagnostics to the shared row editor. Optional live validation supplies field errors,
+// while row changes and add or remove events are forwarded to the parent that owns
+// payload construction.
+
+// props exposes caller-owned inputs used by the template and derived state in this
+// component.
 const props = defineProps<{
-  modelValue: ModelMappingRow[]
-  title?: string
-  hint?: string
-  sourcePlaceholder?: string
-  targetPlaceholder?: string
+  modelValue: ModelMappingRow[] // Parent-owned selected value.
+  title?: string // Displayed section title.
+  hint?: string // Supplemental field help text.
+  sourcePlaceholder?: string // Request model input placeholder.
+  targetPlaceholder?: string // Upstream model input placeholder.
+  // Enables live wildcard diagnostics; the parent still validates and builds the
+  // persisted mapping.
   wildcardValidation?: boolean
-  testId?: string
+  testId?: string // Stable test selector value.
 }>()
 
+// emit publishes typed draft changes and actions to the parent that owns this component.
 const emit = defineEmits<{
-  'update:modelValue': [rows: ModelMappingRow[]]
-  add: [row: ModelMappingRow]
-  remove: [row: ModelMappingRow, index: number]
+  'update:modelValue': [rows: ModelMappingRow[]] // Replacement model value draft value.
+  add: [row: ModelMappingRow] // Mapping row addition notification.
+  remove: [row: ModelMappingRow, index: number] // Mapping row removal notification.
 }>()
 
+// t resolves interface labels from the active component locale while reactive consumers
+// update their displayed text.
 const { t } = useI18n()
 
-// 通配符提示只做实时展示，提交时仍由 buildModelMappingObject 跳过无效规则。
+// fieldErrors supplies optional wildcard diagnostics to the shared editor; payload
+// construction still applies the owning form validation rules.
 const fieldErrors = computed(() => {
   if (!props.wildcardValidation) return undefined
   return validateModelMappingRows(props.modelValue, WILDCARD_ONLY_RULES).map((issue) => ({

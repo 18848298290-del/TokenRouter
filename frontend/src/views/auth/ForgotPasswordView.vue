@@ -1,7 +1,6 @@
 <template>
   <AuthLayout>
     <div class="space-y-6">
-      <!-- Title -->
       <div class="text-center">
         <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
           {{ t('auth.forgotPasswordTitle') }}
@@ -11,11 +10,14 @@
         </p>
       </div>
 
-      <!-- Success State -->
       <div v-if="isSubmitted" class="space-y-6">
-        <div class="rounded-surface border border-green-200 bg-green-50 p-6 dark:border-green-800/50 dark:bg-green-900/20">
+        <div
+          class="rounded-surface border border-green-200 bg-green-50 p-6 dark:border-green-800/50 dark:bg-green-900/20"
+        >
           <div class="flex flex-col items-center gap-4 text-center">
-            <div class="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-800/50">
+            <div
+              class="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-800/50"
+            >
               <Icon
                 name="checkCircle"
                 size="lg"
@@ -45,9 +47,7 @@
         </div>
       </div>
 
-      <!-- Form State -->
       <form v-else @submit.prevent="handleSubmit" class="space-y-5">
-        <!-- Email Input -->
         <div>
           <label for="email" class="input-label">
             {{ t('auth.emailLabel') }}
@@ -71,7 +71,6 @@
           </div>
         </div>
 
-        <!-- Turnstile Widget -->
         <div v-if="captchaEnabled">
           <TurnstileWidget
             ref="turnstileRef"
@@ -90,7 +89,6 @@
           />
         </div>
 
-        <!-- Submit Button -->
         <button
           type="submit"
           :disabled="isLoading || (turnstileEnabled && !turnstileToken)"
@@ -109,7 +107,6 @@
       </form>
     </div>
 
-    <!-- Footer -->
     <template #footer>
       <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.rememberedPassword') }}
@@ -129,73 +126,89 @@ import { computed, ref, reactive, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
 import Icon from '@/components/icons/Icon.vue'
-import TurnstileWidget from '@/components/CaptchaChallenge.vue'
+import TurnstileWidget from '@/components/auth/CaptchaChallenge.vue'
 import { useAppStore } from '@/stores'
 import { getPublicSettings, forgotPassword } from '@/api/auth'
 
-const { t } = useI18n()
+// ForgotPasswordView.vue requests a password-reset email using the configured
+// captcha provider. It validates the address before acquiring action proof,
+// displays endpoint failures through the app toast, and clears consumed proof
+// after each request settles.
 
-// ==================== Stores ====================
+// t resolves the authentication messages displayed by this component. Nearby store
+// and navigation services deliver those messages and handle the requested
+// authentication transition.
+const { t } = useI18n() // translated authentication message resolver
 
-const appStore = useAppStore()
+const appStore = useAppStore() // public settings and toast owner
 
-// ==================== State ====================
+// The request and display state controls authentication progress, failure
+// feedback, and input visibility. Handlers publish successful completion
+// separately from merely starting or settling a request.
+const isLoading = ref<boolean>(false) // current form request busy flag
+const isSubmitted = ref<boolean>(false) // recovery email confirmation screen flag
+const errorMessage = ref<string>('') // current action failure message
 
-const isLoading = ref<boolean>(false)
-const isSubmitted = ref<boolean>(false)
-const errorMessage = ref<string>('')
+// These values carry public challenge configuration and local verification state
+// into the widget and request handlers. Provider-specific token and random-string
+// fields travel together when Tencent is enabled.
+const turnstileEnabled = ref<boolean>(false) // public Turnstile enable flag
+const turnstileSiteKey = ref<string>('') // public Turnstile widget identifier
+const tencentCaptchaEnabled = ref<boolean>(false) // public Tencent captcha enable flag
+const tencentCaptchaAppId = ref<string>('') // public Tencent application identifier
+const tencentCaptchaRegion = ref<string>('cn') // Tencent SDK region selector
+const aliyunCaptchaEnabled = ref<boolean>(false) // public Aliyun captcha enable flag
+const aliyunCaptchaSceneId = ref<string>('') // public Aliyun scene identifier
+const aliyunCaptchaPrefix = ref<string>('') // public Aliyun SDK prefix
+const aliyunCaptchaRegion = ref<string>('cn') // Aliyun SDK region selector
 
-// Public settings
-const turnstileEnabled = ref<boolean>(false)
-const turnstileSiteKey = ref<string>('')
-const tencentCaptchaEnabled = ref<boolean>(false)
-const tencentCaptchaAppId = ref<string>('')
-const tencentCaptchaRegion = ref<string>('cn')
-const aliyunCaptchaEnabled = ref<boolean>(false)
-const aliyunCaptchaSceneId = ref<string>('')
-const aliyunCaptchaPrefix = ref<string>('')
-const aliyunCaptchaRegion = ref<string>('cn')
-
-// Turnstile
-const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
-const turnstileToken = ref<string>('')
-const tencentCaptchaRandstr = ref<string>('')
+const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null) // captcha widget action handle
+const turnstileToken = ref<string>('') // prepared challenge proof value
+const tencentCaptchaRandstr = ref<string>('') // paired Tencent proof random string
 const aliyunCaptchaReady = computed(
   () =>
     aliyunCaptchaEnabled.value &&
     Boolean(aliyunCaptchaSceneId.value) &&
-    Boolean(aliyunCaptchaPrefix.value)
-)
-// 动作触发式验证码（腾讯/阿里云）：提交时弹窗验证
+    Boolean(aliyunCaptchaPrefix.value),
+) // complete Aliyun configuration flag
+
 const actionCaptchaEnabled = computed(
   () =>
-    (tencentCaptchaEnabled.value && Boolean(tencentCaptchaAppId.value)) ||
-    aliyunCaptchaReady.value
-)
+    (tencentCaptchaEnabled.value && Boolean(tencentCaptchaAppId.value)) || aliyunCaptchaReady.value,
+) // Tencent or Aliyun action gate
 const captchaEnabled = computed(
-  () =>
-    (turnstileEnabled.value && Boolean(turnstileSiteKey.value)) || actionCaptchaEnabled.value
-)
+  () => (turnstileEnabled.value && Boolean(turnstileSiteKey.value)) || actionCaptchaEnabled.value,
+) // available challenge provider flag
 
+// formData owns the editable authentication values read by submission. errors
+// records local validation feedback without replacing the draft, allowing the user
+// to correct a failed attempt.
 const formData = reactive({
-  email: ''
-})
+  email: '', // entered account email
+}) // editable authentication form draft
 
 const errors = reactive({
-  email: '',
-  turnstile: ''
-})
+  email: '', // email field validation message
+  turnstile: '', // turnstile field validation message
+}) // field validation message collection
 
-const validationToastMessage = computed(() => errors.email || errors.turnstile || '')
+// validationToastMessage selects the first currently active validation error for
+// the toast watcher. Empty values clear the selection without emitting a
+// notification.
+const validationToastMessage = computed(() => errors.email || errors.turnstile || '') // first active validation toast message
 
+// Only changed nonempty validation messages reach the app toast, preventing an
+// unchanged reactive error from producing repeated notifications during field
+// updates.
 watch(validationToastMessage, (value, previousValue) => {
   if (value && value !== previousValue) {
     appStore.showError(value)
   }
 })
 
-// ==================== Lifecycle ====================
-
+// Initialize this page from public settings before user actions depend on its
+// configured authentication requirements, retaining the documented defaults when
+// that request fails.
 onMounted(async () => {
   try {
     const settings = await getPublicSettings()
@@ -209,30 +222,43 @@ onMounted(async () => {
     aliyunCaptchaPrefix.value = settings.aliyun_captcha_prefix || ''
     aliyunCaptchaRegion.value = settings.aliyun_captcha_region || 'cn'
   } catch (error) {
+    // A settings fetch failure leaves the current page defaults available. The
+    // catch path reports the diagnostic rather than rejecting component
+    // initialization.
     console.error('Failed to load public settings:', error)
   }
 })
 
-// ==================== Turnstile Handlers ====================
-
+// onTurnstileVerify stores the challenge token and optional Tencent random string.
+// It clears the captcha error so the current proof can enable the next guarded
+// form action.
 function onTurnstileVerify(token: string, randstr = ''): void {
   turnstileToken.value = token
   tencentCaptchaRandstr.value = randstr
   errors.turnstile = ''
 }
 
+// onTurnstileExpire clears both challenge proof fields after widget expiration. It
+// publishes the translated expiry error, requiring a later verification callback
+// or action challenge before guarded submission can proceed.
 function onTurnstileExpire(): void {
   turnstileToken.value = ''
   tencentCaptchaRandstr.value = ''
   errors.turnstile = t('auth.turnstileExpired')
 }
 
+// onTurnstileError clears both challenge proof fields after widget failure. It
+// publishes the translated verification error so a failed proof cannot remain
+// available for a later form submission.
 function onTurnstileError(): void {
   turnstileToken.value = ''
   tencentCaptchaRandstr.value = ''
   errors.turnstile = t('auth.turnstileFailed')
 }
 
+// resetCaptchaProof resets the challenge widget and clears both local proof
+// fields. It also clears the captcha validation message, preparing subsequent user
+// actions to obtain a fresh challenge result.
 function resetCaptchaProof(): void {
   turnstileRef.value?.reset()
   turnstileToken.value = ''
@@ -240,6 +266,9 @@ function resetCaptchaProof(): void {
   errors.turnstile = ''
 }
 
+// acquireActionProof obtains a fresh proof only for enabled action-based captcha
+// providers. It returns true immediately otherwise; cancellation or an unavailable
+// widget returns false, and successful proof fields replace the local values.
 async function acquireActionProof(): Promise<boolean> {
   if (!actionCaptchaEnabled.value) return true
 
@@ -251,15 +280,15 @@ async function acquireActionProof(): Promise<boolean> {
   return true
 }
 
-// ==================== Validation ====================
-
+// validateForm checks the current inputs and updates their validation messages. It
+// returns whether all required fields and prepared Turnstile proof pass, allowing
+// submission handlers to stop before action captcha or network work.
 function validateForm(): boolean {
   errors.email = ''
   errors.turnstile = ''
 
   let isValid = true
 
-  // Email validation
   if (!formData.email.trim()) {
     errors.email = t('auth.emailRequired')
     isValid = false
@@ -268,7 +297,6 @@ function validateForm(): boolean {
     isValid = false
   }
 
-  // Turnstile validation
   if (turnstileEnabled.value && !turnstileToken.value) {
     errors.turnstile = t('auth.completeVerification')
     isValid = false
@@ -277,8 +305,9 @@ function validateForm(): boolean {
   return isValid
 }
 
-// ==================== Form Handlers ====================
-
+// handleSubmit requests a password-reset email after local validation and action
+// captcha. Success switches to confirmation content; endpoint detail or a fallback
+// message is toasted on failure, and enabled proof is reset afterward.
 async function handleSubmit(): Promise<void> {
   errorMessage.value = ''
 
@@ -298,13 +327,22 @@ async function handleSubmit(): Promise<void> {
       turnstile_token:
         turnstileEnabled.value || aliyunCaptchaEnabled.value ? turnstileToken.value : undefined,
       tencent_captcha_ticket: tencentCaptchaEnabled.value ? turnstileToken.value : undefined,
-      tencent_captcha_randstr: tencentCaptchaEnabled.value ? tencentCaptchaRandstr.value : undefined
+      tencent_captcha_randstr: tencentCaptchaEnabled.value
+        ? tencentCaptchaRandstr.value
+        : undefined,
     })
 
     isSubmitted.value = true
     appStore.showSuccess(t('auth.resetEmailSent'))
   } catch (error: unknown) {
-    const err = error as { message?: string; response?: { data?: { detail?: string } } }
+    const err = error as {
+      message?: string // reported failure message
+      response?: {
+        data?: {
+          detail?: string // server detailed failure message
+        } // HTTP response payload
+      } // optional HTTP error response
+    }
 
     if (err.response?.data?.detail) {
       errorMessage.value = err.response.data.detail
@@ -316,6 +354,8 @@ async function handleSubmit(): Promise<void> {
 
     appStore.showError(errorMessage.value)
   } finally {
+    // A submitted request or reported server error can consume this proof. Reset
+    // the widget and local values before the user retries the action.
     if (captchaEnabled.value) {
       resetCaptchaProof()
     }
@@ -324,5 +364,4 @@ async function handleSubmit(): Promise<void> {
 }
 </script>
 
-<style scoped>
-</style>
+<style scoped></style>

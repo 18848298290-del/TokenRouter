@@ -12,10 +12,23 @@
 <script setup lang="ts">
 import { useId } from 'vue'
 import SettingToggleRow from '@/components/common/settings/SettingToggleRow.vue'
-import type { OpenAICompactMode } from '@/types'
+import type { OpenAICompactMode } from '@/api/admin/providers.types'
 
-// 控件只展示管理员的明确开关，历史输入在进入控件前完成转换。
-defineProps<{ modelValue: OpenAICompactMode; label: string; hint?: string; disabled?: boolean; testId?: string }>()
-const emit = defineEmits<{ 'update:modelValue': [value: OpenAICompactMode] }>()
+// OpenAICompactionToggle.vue presents an administrator-selected OpenAI compaction switch.
+// The parent supplies an already normalized enabled or disabled value, and the row
+// converts switch events back to that value for the parent form to persist.
+defineProps<{
+  modelValue: OpenAICompactMode // Parent-owned selected value.
+  label: string // Displayed input label.
+  hint?: string // Supplemental field help text.
+  disabled?: boolean // Disables the rendered control.
+  testId?: string // Stable test selector value.
+}>()
+// emit publishes typed draft changes and actions to the parent that owns this component.
+const emit = defineEmits<{
+  'update:modelValue': [value: OpenAICompactMode] // Replacement model value draft value.
+}>()
+// id connects the compaction label and switch with an identifier unique to this component
+// instance.
 const id = useId()
 </script>

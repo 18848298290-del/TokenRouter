@@ -3,6 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import OpenAIFastPolicyUserSelector from '../OpenAIFastPolicyUserSelector.vue'
 
+/**
+ * OpenAIFastPolicyUserSelector.spec.ts checks persisted user labels, interactive
+ * search selection, and unresolved historical IDs through the mounted selector.
+ * API substitutes isolate account lookups, while fake timers make its debounce
+ * observable before inspecting emitted rule identifiers.
+ */
+
+// A small translation fixture makes selected labels and button accessibility observable in these mounted tests.
 const messages: Record<string, string> = {
   'admin.settings.openaiFastPolicy.userDeleted': '(deleted)',
   'admin.settings.openaiFastPolicy.userIdFallback': 'User #{id}',
@@ -26,6 +34,7 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
+// Independent search and hydration substitutes distinguish interactive queries from resolving the labels of saved rule IDs.
 const mockSearchUsers = vi.fn()
 const mockGetUserById = vi.fn()
 
@@ -42,15 +51,21 @@ vi.mock('@/api/admin', () => ({
 
 describe('OpenAIFastPolicyUserSelector', () => {
   beforeEach(() => {
+    // Each case controls the debounce clock and resets API results so earlier searches
+    // cannot determine the request timing or account labels asserted by the next case.
     vi.useFakeTimers()
     mockSearchUsers.mockReset()
     mockGetUserById.mockReset()
   })
 
   afterEach(() => {
+    // Restore the runner clock after each case so fake debounce timing does not leak
+    // into other mounted component tests sharing this worker process.
     vi.useRealTimers()
   })
 
+  // A saved rule references an existing user whose label requires hydration. The selector
+  // displays the fetched email while leaving the persisted user identifiers unchanged.
   it('hydrates existing IDs to email labels without changing the saved IDs', async () => {
     mockGetUserById.mockResolvedValue({
       id: 7,
@@ -70,10 +85,10 @@ describe('OpenAIFastPolicyUserSelector', () => {
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   })
 
+  // An administrator enters one character and waits for the debounce timer to fire.
+  // Selecting the returned user emits that identifier in the rule selection.
   it('searches after one character and adds the selected user ID', async () => {
-    mockSearchUsers.mockResolvedValue([
-      { id: 9, email: 'alice@example.com', deleted: false },
-    ])
+    mockSearchUsers.mockResolvedValue([{ id: 9, email: 'alice@example.com', deleted: false }])
 
     const wrapper = mount(OpenAIFastPolicyUserSelector, {
       props: { modelValue: [] },
@@ -87,15 +102,17 @@ describe('OpenAIFastPolicyUserSelector', () => {
     await flushPromises()
 
     expect(mockSearchUsers).toHaveBeenCalledWith('a')
-    const result = wrapper.findAll('button').find((button) =>
-      button.text().includes('alice@example.com'),
-    )
+    const result = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('alice@example.com'))
     expect(result).toBeDefined()
     await result!.trigger('click')
 
     expect(wrapper.emitted('update:modelValue')).toEqual([[[9]]])
   })
 
+  // A saved user identifier cannot be resolved by the lookup endpoint. Its numeric
+  // fallback remains visible and the removal action still emits an empty selection.
   it('keeps an unresolved saved ID visible and removable', async () => {
     mockGetUserById.mockRejectedValue(new Error('not found'))
 

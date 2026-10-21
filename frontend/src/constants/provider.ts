@@ -1,14 +1,26 @@
-/** 额度通知阈值类型，必须与后端 balance_notify_service.go 中的 thresholdType* 常量一致。 */
+// provider.ts defines quota modes and grouped cloud-region choices used by provider
+// forms. Literal values are sent to backend configuration fields, while display labels
+// remain presentation data; the grouping helper converts region groups to disabled
+// headings followed by their selectable entries.
+
+// Quota threshold values match the backend balance notification modes: fixed compares a
+// quantity, while percentage compares a ratio.
 export const QUOTA_THRESHOLD_TYPE_FIXED = 'fixed' as const
 export const QUOTA_THRESHOLD_TYPE_PERCENTAGE = 'percentage' as const
-export type QuotaThresholdType = typeof QUOTA_THRESHOLD_TYPE_FIXED | typeof QUOTA_THRESHOLD_TYPE_PERCENTAGE
+// QuotaThresholdType limits quota notification inputs to the two supported threshold
+// representations.
+export type QuotaThresholdType =
+  typeof QUOTA_THRESHOLD_TYPE_FIXED | typeof QUOTA_THRESHOLD_TYPE_PERCENTAGE
 
-/** 额度重置模式值。 */
+// Quota reset values distinguish rolling intervals from fixed schedules when provider
+// forms serialize their reset configuration.
 export const QUOTA_RESET_MODE_ROLLING = 'rolling' as const
 export const QUOTA_RESET_MODE_FIXED = 'fixed' as const
+// QuotaResetMode represents the supported rolling or fixed quota reset schedule.
 export type QuotaResetMode = typeof QUOTA_RESET_MODE_ROLLING | typeof QUOTA_RESET_MODE_FIXED
 
-/** Service Account 提供商可选的 Vertex AI 区域。 */
+// VERTEX_LOCATION_OPTIONS groups service-account Vertex locations by display region
+// while retaining the location values sent to provider configuration.
 export const VERTEX_LOCATION_OPTIONS = [
   {
     label: 'Common',
@@ -16,8 +28,8 @@ export const VERTEX_LOCATION_OPTIONS = [
       { value: 'us-central1', label: 'us-central1 (Iowa)' },
       { value: 'global', label: 'global' },
       { value: 'us', label: 'us' },
-      { value: 'eu', label: 'eu' }
-    ]
+      { value: 'eu', label: 'eu' },
+    ],
   },
   {
     label: 'United States',
@@ -27,8 +39,8 @@ export const VERTEX_LOCATION_OPTIONS = [
       { value: 'us-east5', label: 'us-east5 (Columbus)' },
       { value: 'us-south1', label: 'us-south1 (Dallas)' },
       { value: 'us-west1', label: 'us-west1 (Oregon)' },
-      { value: 'us-west4', label: 'us-west4 (Las Vegas)' }
-    ]
+      { value: 'us-west4', label: 'us-west4 (Las Vegas)' },
+    ],
   },
   {
     label: 'Europe',
@@ -39,8 +51,8 @@ export const VERTEX_LOCATION_OPTIONS = [
       { value: 'europe-west4', label: 'europe-west4 (Netherlands)' },
       { value: 'europe-west6', label: 'europe-west6 (Zurich)' },
       { value: 'europe-west8', label: 'europe-west8 (Milan)' },
-      { value: 'europe-west9', label: 'europe-west9 (Paris)' }
-    ]
+      { value: 'europe-west9', label: 'europe-west9 (Paris)' },
+    ],
   },
   {
     label: 'Asia Pacific',
@@ -51,12 +63,13 @@ export const VERTEX_LOCATION_OPTIONS = [
       { value: 'asia-northeast3', label: 'asia-northeast3 (Seoul)' },
       { value: 'asia-south1', label: 'asia-south1 (Mumbai)' },
       { value: 'asia-southeast1', label: 'asia-southeast1 (Singapore)' },
-      { value: 'australia-southeast1', label: 'australia-southeast1 (Sydney)' }
-    ]
-  }
+      { value: 'australia-southeast1', label: 'australia-southeast1 (Sydney)' },
+    ],
+  },
 ] as const
 
-/** AWS Bedrock 可选区域。 */
+// BEDROCK_REGION_OPTIONS groups AWS region identifiers for provider form choices while
+// preserving their backend-facing values and display order.
 export const BEDROCK_REGION_OPTIONS = [
   {
     label: 'US',
@@ -66,8 +79,8 @@ export const BEDROCK_REGION_OPTIONS = [
       { value: 'us-west-1', label: 'us-west-1 (N. California)' },
       { value: 'us-west-2', label: 'us-west-2 (Oregon)' },
       { value: 'us-gov-east-1', label: 'us-gov-east-1 (GovCloud US-East)' },
-      { value: 'us-gov-west-1', label: 'us-gov-west-1 (GovCloud US-West)' }
-    ]
+      { value: 'us-gov-west-1', label: 'us-gov-west-1 (GovCloud US-West)' },
+    ],
   },
   {
     label: 'Europe',
@@ -79,8 +92,8 @@ export const BEDROCK_REGION_OPTIONS = [
       { value: 'eu-central-2', label: 'eu-central-2 (Zurich)' },
       { value: 'eu-south-1', label: 'eu-south-1 (Milan)' },
       { value: 'eu-south-2', label: 'eu-south-2 (Spain)' },
-      { value: 'eu-north-1', label: 'eu-north-1 (Stockholm)' }
-    ]
+      { value: 'eu-north-1', label: 'eu-north-1 (Stockholm)' },
+    ],
   },
   {
     label: 'Asia Pacific',
@@ -91,40 +104,43 @@ export const BEDROCK_REGION_OPTIONS = [
       { value: 'ap-south-1', label: 'ap-south-1 (Mumbai)' },
       { value: 'ap-south-2', label: 'ap-south-2 (Hyderabad)' },
       { value: 'ap-southeast-1', label: 'ap-southeast-1 (Singapore)' },
-      { value: 'ap-southeast-2', label: 'ap-southeast-2 (Sydney)' }
-    ]
+      { value: 'ap-southeast-2', label: 'ap-southeast-2 (Sydney)' },
+    ],
   },
   {
     label: 'Canada',
-    options: [
-      { value: 'ca-central-1', label: 'ca-central-1 (Canada)' }
-    ]
+    options: [{ value: 'ca-central-1', label: 'ca-central-1 (Canada)' }],
   },
   {
     label: 'South America',
-    options: [
-      { value: 'sa-east-1', label: 'sa-east-1 (Sao Paulo)' }
-    ]
-  }
+    options: [{ value: 'sa-east-1', label: 'sa-east-1 (Sao Paulo)' }],
+  },
 ] as const
 
+// ProviderSelectGroup represents a named cloud-region group and its readonly selectable
+// entries.
 export type ProviderSelectGroup = {
-  readonly label: string
+  readonly label: string // Visible group or option label.
+  // options retains the supplied readonly region entries, which the flattening helper
+  // shares with its result after each generated group heading.
   readonly options: readonly {
-    readonly value: string | number
-    readonly label: string
+    readonly value: string | number // Backend region option value.
+    readonly label: string // Visible group or option label.
   }[]
 }
 
-// 将 optgroup 数据转换为项目 Select 可识别的分组头与选项。
+// groupedProviderSelectOptions flattens cloud-region groups into disabled headings and
+// their original option records. Heading values use the __group__ prefix and label,
+// while existing options retain their values and reference identity for Select
+// consumers.
 export const groupedProviderSelectOptions = (groups: readonly ProviderSelectGroup[]) => {
   return groups.flatMap((group) => [
     {
       value: `__group__${group.label}`,
       label: group.label,
       disabled: true,
-      kind: 'group'
+      kind: 'group',
     },
-    ...group.options
+    ...group.options,
   ])
 }

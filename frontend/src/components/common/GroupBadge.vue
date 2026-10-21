@@ -2,17 +2,15 @@
   <span
     :class="[
       'inline-flex items-center gap-1.5 rounded-compact px-2 py-0.5 text-xs font-medium transition-colors',
-      badgeClass
+      badgeClass,
     ]"
   >
-    <!-- 分组使用管理员配置的展示品牌。 -->
     <ProviderIcon v-if="brandName" :brand="brandName" size="14px" />
-    <!-- 分组名和右侧标签都加 self-baseline。徽章的基线取自分组名，移动卡片的标签和它对齐。
-         右侧标签有上下内边距，比分组名高，两者按基线对齐后文字在同一高度。 -->
+
+    <!-- The group name establishes the badge baseline. Matching the padded right label to that baseline keeps neighboring mobile card labels aligned. -->
     <span class="self-baseline truncate">{{ name }}</span>
     <span v-if="showLabel" :class="labelClass">
       <template v-if="hasCustomRate">
-        <!-- 原倍率删除线 + 专属倍率高亮 -->
         <span class="line-through opacity-50 mr-0.5">{{ rateMultiplier }}x</span>
         <span class="font-bold">{{ userRateMultiplier }}x</span>
       </template>
@@ -33,31 +31,69 @@ import { currentServerTimezoneLabel, formatPeakRateWindow } from '@/utils/peak-r
 import ProviderIcon from './ProviderIcon.vue'
 import { resolveProviderBrand } from '@/utils/providerBrand'
 
+/**
+ * GroupBadge.vue displays a group name with its configured brand, rate, peak window,
+ * or subscription lifetime. A user rate replaces the ordinary rate presentation when
+ * different; remaining days take precedence in the ordinary label and determine
+ * expiration warning colors.
+ */
+
+/**
+ * Props describes the caller supplied values consumed by GroupBadge.
+ */
 interface Props {
-  name: string
-  displayBrand?: string | null
-  rateMultiplier?: number
-  userRateMultiplier?: number | null // 用户专属倍率
-  peakRateEnabled?: boolean
-  peakStart?: string
-  peakEnd?: string
-  peakRateMultiplier?: number
-  showRate?: boolean
+  name: string /* group display name */
+  displayBrand?: string | null /* configured display brand */
+  rateMultiplier?: number /* ordinary billing multiplier */
+  /**
+   * userRateMultiplier shows a custom rate when both rates exist and differ; null
+   * leaves the ordinary rate label in use.
+   */
+  userRateMultiplier?: number | null
+  /**
+   * peakRateEnabled permits a peak label only when peakStart and peakEnd both
+   * exist; peakRateMultiplier supplies its rate text, and the times use the
+   * server schedule timezone.
+   */
+  peakRateEnabled?: boolean /* peak schedule enablement */
+  peakStart?: string /* peak start time */
+  peakEnd?: string /* peak end time */
+  peakRateMultiplier?: number /* peak billing multiplier */
+  showRate?: boolean /* rate label visibility */
+  /**
+   * daysRemaining overrides the ordinary rate label when supplied; nonpositive values
+   * display expiration and smaller positive values receive warning colors.
+   */
   daysRemaining?: number | null
 }
 
+/**
+ * props supplies group identity, ordinary and user rates, peak schedule, and optional
+ * subscription days for the compact badge.
+ */
 const props = withDefaults(defineProps<Props>(), {
   showRate: true,
   daysRemaining: null,
   userRateMultiplier: null,
-  peakRateEnabled: false
+  peakRateEnabled: false,
 })
 
+/**
+ * The i18n translator resolves this component's message keys using the current
+ * application locale and its configured translation catalog.
+ */
 const { t } = useI18n()
 
+/**
+ * brandName trims the configured display brand before deciding whether the badge
+ * receives brand styling.
+ */
 const brandName = computed(() => props.displayBrand?.trim() || '')
 
-// 是否有专属倍率（且与默认倍率不同）
+/**
+ * hasCustomRate requires both rates and a differing user rate before showing the
+ * ordinary rate crossed out.
+ */
 const hasCustomRate = computed(() => {
   return (
     props.userRateMultiplier !== null &&
@@ -67,34 +103,52 @@ const hasCustomRate = computed(() => {
   )
 })
 
+/**
+ * hasPeakRate requires rate labels to be visible and a peak schedule enabled
+ * with both start and end times before rendering the window.
+ */
 const hasPeakRate = computed(() => {
   return Boolean(props.showRate && props.peakRateEnabled && props.peakStart && props.peakEnd)
 })
 
+/**
+ * peakRateText formats the supplied peak schedule with the current server timezone
+ * label for display.
+ */
 const peakRateText = computed(() => {
   return formatPeakRateWindow(
     {
       peak_rate_enabled: props.peakRateEnabled,
       peak_start: props.peakStart,
       peak_end: props.peakEnd,
-      peak_rate_multiplier: props.peakRateMultiplier
+      peak_rate_multiplier: props.peakRateMultiplier,
     },
-    currentServerTimezoneLabel()
+    currentServerTimezoneLabel(),
   )
 })
 
+/**
+ * peakRateTitle wraps the formatted peak window in the translated explanation used by
+ * the badge tooltip.
+ */
 const peakRateTitle = computed(() => {
   return t('common.peakRateTooltip', { window: peakRateText.value })
 })
 
-// 是否显示右侧标签
+/**
+ * showLabel requires showRate and then accepts remaining days, an ordinary rate, or a
+ * custom rate as label content.
+ */
 const showLabel = computed(() => {
   if (!props.showRate) return false
   if (props.daysRemaining !== null && props.daysRemaining !== undefined) return true
   return props.rateMultiplier !== undefined || hasCustomRate.value
 })
 
-// Label text
+/**
+ * labelText gives remaining subscription days precedence over the ordinary multiplier,
+ * including a translated expired label for nonpositive days.
+ */
 const labelText = computed(() => {
   if (props.daysRemaining !== null && props.daysRemaining !== undefined) {
     if (props.daysRemaining <= 0) {
@@ -105,7 +159,10 @@ const labelText = computed(() => {
   return props.rateMultiplier !== undefined ? `${props.rateMultiplier}x` : ''
 })
 
-// Label style based on type and days remaining
+/**
+ * labelClass uses neutral rate styling or progressively stronger expiry colors as the
+ * remaining days approach zero.
+ */
 const labelClass = computed(() => {
   const base = 'self-baseline px-1.5 py-0.5 rounded-compact text-xs font-semibold'
 
@@ -113,9 +170,15 @@ const labelClass = computed(() => {
     return `${base} bg-black/10 dark:bg-white/10`
   }
 
+  /**
+   * The last three days receive the strongest expiry warning.
+   */
   if (props.daysRemaining <= 0 || props.daysRemaining <= 3) {
     return `${base} bg-red-200/80 text-red-800 dark:bg-red-800/50 dark:text-red-300`
   }
+  /**
+   * The final week receives an intermediate expiry warning.
+   */
   if (props.daysRemaining <= 7) {
     return `${base} bg-amber-200/80 text-amber-800 dark:bg-amber-800/50 dark:text-amber-300`
   }
@@ -123,15 +186,27 @@ const labelClass = computed(() => {
   return `${base} bg-violet-200/60 text-violet-800 dark:bg-violet-800/40 dark:text-violet-300`
 })
 
+/**
+ * peakRateClass supplies the amber schedule label styling independently of the group
+ * brand and expiry label.
+ */
 const peakRateClass = computed(() => {
   return 'self-baseline px-1.5 py-0.5 rounded-compact text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
 })
 
+/**
+ * badgeClass resolves a configured brand or supplies a neutral outlined group badge
+ * when no brand is configured.
+ */
 const badgeClass = computed(() => {
   if (brandName.value) {
     return `ring-1 ring-inset ${resolveProviderBrand(brandName.value).badgeClass}`
   }
-  // 未指定品牌时，与复合分组共用中性配色，并用内描边明确徽章边缘。
+
+  /**
+   * An absent brand uses the same neutral group treatment with an inset ring, keeping
+   * its edge visible against nearby surfaces.
+   */
   return 'ring-1 ring-inset bg-gray-100 text-gray-900 ring-gray-200 dark:bg-dark-800 dark:text-dark-50 dark:ring-dark-600'
 })
 </script>

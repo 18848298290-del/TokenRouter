@@ -1,3 +1,19 @@
+/**
+ * providerBrand.ts resolves provider names into shared brand labels, icon data
+ * references, and filter identities. The catalog includes localized labels and
+ * normalized aliases, while display helpers retain nonempty custom names that cannot be
+ * associated with a known brand. Missing names use the unknown brand's presentation.
+ *
+ * Resolution tries a normalized whole-name alias, then exact tokens, then eligible
+ * substring aliases in catalog order. Short Latin aliases require exact matching so
+ * common fragments do not claim unrelated names; Han-character aliases and @cf can use substring
+ * matching. Filter keys prefix recognized brands and custom names differently so
+ * normalized custom text remains a separate identity.
+ */
+
+/**
+ * ProviderBrandKey enumerates catalog identities, including the generic unknown brand.
+ */
 export type ProviderBrandKey =
   | 'anthropic'
   | 'deepseek'
@@ -30,267 +46,351 @@ export type ProviderBrandKey =
   | 'typesafe'
   | 'unknown'
 
+/**
+ * ProviderBrand holds the shared label, icon, and classes for one catalog identity.
+ */
 export interface ProviderBrand {
-  key: ProviderBrandKey
-  label: string
-  iconKey: string | null
-  iconColor: string
-  badgeClass: string
-  iconWrapClass: string
+  key: ProviderBrandKey // canonical brand identity
+  label: string // display brand label
+  /**
+   * iconKey names the modelIconData entry; null makes ProviderIcon display its
+   * fallback letter or question mark instead of icon data.
+   */
+  iconKey: string | null // icon lookup key
+  /**
+   * iconColor supplies ProviderIcon color after a nonempty color prop;
+   * currentColor inherits the surrounding foreground for monochrome brand marks.
+   */
+  iconColor: string // icon foreground color
+  badgeClass: string // brand badge classes
+  iconWrapClass: string // icon container classes
 }
 
+/**
+ * ProviderBrandOption carries a selectable brand value and label with optional extra
+ * data.
+ */
 export interface ProviderBrandOption {
-  value: string
-  label: string
-  [key: string]: unknown
+  value: string // selectable brand value
+  label: string // display brand label
+
+  [key: string]: unknown // additional option data
 }
 
+/**
+ * providerBrands owns shared brand presentation objects; currentColor marks inherit
+ * their consumer text color for light and dark themes.
+ */
 const providerBrands: Record<ProviderBrandKey, ProviderBrand> = {
   anthropic: {
     key: 'anthropic',
     label: 'Anthropic',
     iconKey: 'anthropic',
     iconColor: '#D97706',
-    badgeClass: 'bg-orange-100 text-orange-900 ring-orange-200 dark:bg-orange-500/20 dark:text-orange-50 dark:ring-orange-400/30',
-    iconWrapClass: 'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-500/15 dark:text-orange-200 dark:ring-orange-400/30',
+    badgeClass:
+      'bg-orange-100 text-orange-900 ring-orange-200 dark:bg-orange-500/20 dark:text-orange-50 dark:ring-orange-400/30',
+    iconWrapClass:
+      'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-500/15 dark:text-orange-200 dark:ring-orange-400/30',
   },
   deepseek: {
     key: 'deepseek',
     label: 'DeepSeek',
     iconKey: 'deepseek',
     iconColor: '#4D6BFE',
-    badgeClass: 'bg-blue-100 text-blue-900 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-50 dark:ring-blue-400/30',
-    iconWrapClass: 'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-400/30',
+    badgeClass:
+      'bg-blue-100 text-blue-900 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-50 dark:ring-blue-400/30',
+    iconWrapClass:
+      'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-400/30',
   },
   google: {
     key: 'google',
     label: 'Google',
     iconKey: 'google',
     iconColor: '#4285F4',
-    badgeClass: 'bg-sky-100 text-sky-900 ring-sky-200 dark:bg-sky-500/20 dark:text-sky-50 dark:ring-sky-400/30',
-    iconWrapClass: 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/15 dark:text-sky-200 dark:ring-sky-400/30',
+    badgeClass:
+      'bg-sky-100 text-sky-900 ring-sky-200 dark:bg-sky-500/20 dark:text-sky-50 dark:ring-sky-400/30',
+    iconWrapClass:
+      'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/15 dark:text-sky-200 dark:ring-sky-400/30',
   },
   moonshot: {
     key: 'moonshot',
     label: 'Moonshot',
     iconKey: 'moonshot',
-    // Moonshot 是单色标识，继承徽标文字色以适配深浅主题。
+
     iconColor: 'currentColor',
-    badgeClass: 'bg-zinc-100 text-zinc-900 ring-zinc-200 dark:bg-zinc-500/20 dark:text-zinc-50 dark:ring-zinc-400/30',
-    iconWrapClass: 'bg-zinc-50 text-zinc-700 ring-zinc-200 dark:bg-zinc-500/15 dark:text-zinc-200 dark:ring-zinc-400/30',
+    badgeClass:
+      'bg-zinc-100 text-zinc-900 ring-zinc-200 dark:bg-zinc-500/20 dark:text-zinc-50 dark:ring-zinc-400/30',
+    iconWrapClass:
+      'bg-zinc-50 text-zinc-700 ring-zinc-200 dark:bg-zinc-500/15 dark:text-zinc-200 dark:ring-zinc-400/30',
   },
   openai: {
     key: 'openai',
     label: 'OpenAI',
     iconKey: 'openai',
-    // OpenAI 使用随主题切换的黑白单色标识。
+
     iconColor: 'currentColor',
-    badgeClass: 'bg-emerald-100 text-emerald-900 ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-50 dark:ring-emerald-400/30',
-    iconWrapClass: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-200 dark:ring-emerald-400/30',
+    badgeClass:
+      'bg-emerald-100 text-emerald-900 ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-50 dark:ring-emerald-400/30',
+    iconWrapClass:
+      'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-200 dark:ring-emerald-400/30',
   },
   zhipu: {
     key: 'zhipu',
     label: '智谱',
     iconKey: 'zhipu',
     iconColor: '#3859FF',
-    badgeClass: 'bg-indigo-100 text-indigo-900 ring-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-50 dark:ring-indigo-400/30',
-    iconWrapClass: 'bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-200 dark:ring-indigo-400/30',
+    badgeClass:
+      'bg-indigo-100 text-indigo-900 ring-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-50 dark:ring-indigo-400/30',
+    iconWrapClass:
+      'bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-200 dark:ring-indigo-400/30',
   },
   alibaba: {
     key: 'alibaba',
     label: '阿里巴巴',
     iconKey: 'alibaba',
     iconColor: '#FF6A00',
-    badgeClass: 'bg-amber-100 text-amber-900 ring-amber-200 dark:bg-amber-500/20 dark:text-amber-50 dark:ring-amber-400/30',
-    iconWrapClass: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-200 dark:ring-amber-400/30',
+    badgeClass:
+      'bg-amber-100 text-amber-900 ring-amber-200 dark:bg-amber-500/20 dark:text-amber-50 dark:ring-amber-400/30',
+    iconWrapClass:
+      'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-200 dark:ring-amber-400/30',
   },
   xai: {
     key: 'xai',
     label: 'xAI',
     iconKey: 'xai',
-    // xAI 是单色标识，继承徽标文字色以适配深浅主题。
+
     iconColor: 'currentColor',
-    badgeClass: 'bg-neutral-100 text-neutral-900 ring-neutral-200 dark:bg-neutral-500/20 dark:text-neutral-50 dark:ring-neutral-400/30',
-    iconWrapClass: 'bg-neutral-50 text-neutral-800 ring-neutral-200 dark:bg-neutral-500/15 dark:text-neutral-200 dark:ring-neutral-400/30',
+    badgeClass:
+      'bg-neutral-100 text-neutral-900 ring-neutral-200 dark:bg-neutral-500/20 dark:text-neutral-50 dark:ring-neutral-400/30',
+    iconWrapClass:
+      'bg-neutral-50 text-neutral-800 ring-neutral-200 dark:bg-neutral-500/15 dark:text-neutral-200 dark:ring-neutral-400/30',
   },
   midjourney: {
     key: 'midjourney',
     label: 'Midjourney',
     iconKey: 'midjourney',
     iconColor: '#111827',
-    badgeClass: 'bg-gray-100 text-gray-900 ring-gray-200 dark:bg-gray-500/20 dark:text-gray-50 dark:ring-gray-400/30',
-    iconWrapClass: 'bg-gray-50 text-gray-800 ring-gray-200 dark:bg-gray-500/15 dark:text-gray-200 dark:ring-gray-400/30',
+    badgeClass:
+      'bg-gray-100 text-gray-900 ring-gray-200 dark:bg-gray-500/20 dark:text-gray-50 dark:ring-gray-400/30',
+    iconWrapClass:
+      'bg-gray-50 text-gray-800 ring-gray-200 dark:bg-gray-500/15 dark:text-gray-200 dark:ring-gray-400/30',
   },
   mistral: {
     key: 'mistral',
     label: 'Mistral',
     iconKey: 'mistral',
     iconColor: '#F7D046',
-    badgeClass: 'bg-yellow-100 text-yellow-900 ring-yellow-200 dark:bg-yellow-500/20 dark:text-yellow-50 dark:ring-yellow-400/30',
-    iconWrapClass: 'bg-yellow-50 text-yellow-700 ring-yellow-200 dark:bg-yellow-500/15 dark:text-yellow-200 dark:ring-yellow-400/30',
+    badgeClass:
+      'bg-yellow-100 text-yellow-900 ring-yellow-200 dark:bg-yellow-500/20 dark:text-yellow-50 dark:ring-yellow-400/30',
+    iconWrapClass:
+      'bg-yellow-50 text-yellow-700 ring-yellow-200 dark:bg-yellow-500/15 dark:text-yellow-200 dark:ring-yellow-400/30',
   },
   meta: {
     key: 'meta',
     label: 'Meta',
     iconKey: 'meta',
     iconColor: '#0668E1',
-    badgeClass: 'bg-blue-100 text-blue-900 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-50 dark:ring-blue-400/30',
-    iconWrapClass: 'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-400/30',
+    badgeClass:
+      'bg-blue-100 text-blue-900 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-50 dark:ring-blue-400/30',
+    iconWrapClass:
+      'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-400/30',
   },
   cohere: {
     key: 'cohere',
     label: 'Cohere',
     iconKey: 'cohere',
     iconColor: '#39594D',
-    badgeClass: 'bg-teal-100 text-teal-900 ring-teal-200 dark:bg-teal-500/20 dark:text-teal-50 dark:ring-teal-400/30',
-    iconWrapClass: 'bg-teal-50 text-teal-700 ring-teal-200 dark:bg-teal-500/15 dark:text-teal-200 dark:ring-teal-400/30',
+    badgeClass:
+      'bg-teal-100 text-teal-900 ring-teal-200 dark:bg-teal-500/20 dark:text-teal-50 dark:ring-teal-400/30',
+    iconWrapClass:
+      'bg-teal-50 text-teal-700 ring-teal-200 dark:bg-teal-500/15 dark:text-teal-200 dark:ring-teal-400/30',
   },
   perplexity: {
     key: 'perplexity',
     label: 'Perplexity',
     iconKey: 'perplexity',
     iconColor: '#22B8CD',
-    badgeClass: 'bg-cyan-100 text-cyan-900 ring-cyan-200 dark:bg-cyan-500/20 dark:text-cyan-50 dark:ring-cyan-400/30',
-    iconWrapClass: 'bg-cyan-50 text-cyan-700 ring-cyan-200 dark:bg-cyan-500/15 dark:text-cyan-200 dark:ring-cyan-400/30',
+    badgeClass:
+      'bg-cyan-100 text-cyan-900 ring-cyan-200 dark:bg-cyan-500/20 dark:text-cyan-50 dark:ring-cyan-400/30',
+    iconWrapClass:
+      'bg-cyan-50 text-cyan-700 ring-cyan-200 dark:bg-cyan-500/15 dark:text-cyan-200 dark:ring-cyan-400/30',
   },
   openrouter: {
     key: 'openrouter',
     label: 'OpenRouter',
     iconKey: 'openrouter',
     iconColor: '#6566F1',
-    badgeClass: 'bg-violet-100 text-violet-900 ring-violet-200 dark:bg-violet-500/20 dark:text-violet-50 dark:ring-violet-400/30',
-    iconWrapClass: 'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/15 dark:text-violet-200 dark:ring-violet-400/30',
+    badgeClass:
+      'bg-violet-100 text-violet-900 ring-violet-200 dark:bg-violet-500/20 dark:text-violet-50 dark:ring-violet-400/30',
+    iconWrapClass:
+      'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/15 dark:text-violet-200 dark:ring-violet-400/30',
   },
   ollama: {
     key: 'ollama',
     label: 'Ollama',
     iconKey: 'ollama',
     iconColor: '#111827',
-    badgeClass: 'bg-stone-100 text-stone-900 ring-stone-200 dark:bg-stone-500/20 dark:text-stone-50 dark:ring-stone-400/30',
-    iconWrapClass: 'bg-stone-50 text-stone-800 ring-stone-200 dark:bg-stone-500/15 dark:text-stone-200 dark:ring-stone-400/30',
+    badgeClass:
+      'bg-stone-100 text-stone-900 ring-stone-200 dark:bg-stone-500/20 dark:text-stone-50 dark:ring-stone-400/30',
+    iconWrapClass:
+      'bg-stone-50 text-stone-800 ring-stone-200 dark:bg-stone-500/15 dark:text-stone-200 dark:ring-stone-400/30',
   },
   baidu: {
     key: 'baidu',
     label: '百度千帆',
     iconKey: 'wenxin',
     iconColor: '#167ADF',
-    badgeClass: 'bg-sky-100 text-sky-900 ring-sky-200 dark:bg-sky-500/20 dark:text-sky-50 dark:ring-sky-400/30',
-    iconWrapClass: 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/15 dark:text-sky-200 dark:ring-sky-400/30',
+    badgeClass:
+      'bg-sky-100 text-sky-900 ring-sky-200 dark:bg-sky-500/20 dark:text-sky-50 dark:ring-sky-400/30',
+    iconWrapClass:
+      'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/15 dark:text-sky-200 dark:ring-sky-400/30',
   },
   iflytek: {
     key: 'iflytek',
     label: '讯飞星火',
     iconKey: 'spark',
     iconColor: '#0070F0',
-    badgeClass: 'bg-blue-100 text-blue-900 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-50 dark:ring-blue-400/30',
-    iconWrapClass: 'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-400/30',
+    badgeClass:
+      'bg-blue-100 text-blue-900 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-50 dark:ring-blue-400/30',
+    iconWrapClass:
+      'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-400/30',
   },
   tencent: {
     key: 'tencent',
     label: '腾讯混元',
     iconKey: 'hunyuan',
     iconColor: '#0053E0',
-    badgeClass: 'bg-indigo-100 text-indigo-900 ring-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-50 dark:ring-indigo-400/30',
-    iconWrapClass: 'bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-200 dark:ring-indigo-400/30',
+    badgeClass:
+      'bg-indigo-100 text-indigo-900 ring-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-50 dark:ring-indigo-400/30',
+    iconWrapClass:
+      'bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-200 dark:ring-indigo-400/30',
   },
   ai360: {
     key: 'ai360',
     label: '360',
     iconKey: 'ai360',
     iconColor: '#23B7E5',
-    badgeClass: 'bg-cyan-100 text-cyan-900 ring-cyan-200 dark:bg-cyan-500/20 dark:text-cyan-50 dark:ring-cyan-400/30',
-    iconWrapClass: 'bg-cyan-50 text-cyan-700 ring-cyan-200 dark:bg-cyan-500/15 dark:text-cyan-200 dark:ring-cyan-400/30',
+    badgeClass:
+      'bg-cyan-100 text-cyan-900 ring-cyan-200 dark:bg-cyan-500/20 dark:text-cyan-50 dark:ring-cyan-400/30',
+    iconWrapClass:
+      'bg-cyan-50 text-cyan-700 ring-cyan-200 dark:bg-cyan-500/15 dark:text-cyan-200 dark:ring-cyan-400/30',
   },
   zeroone: {
     key: 'zeroone',
     label: '零一万物',
     iconKey: 'yi',
     iconColor: '#003425',
-    badgeClass: 'bg-emerald-100 text-emerald-900 ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-50 dark:ring-emerald-400/30',
-    iconWrapClass: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-200 dark:ring-emerald-400/30',
+    badgeClass:
+      'bg-emerald-100 text-emerald-900 ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-50 dark:ring-emerald-400/30',
+    iconWrapClass:
+      'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-200 dark:ring-emerald-400/30',
   },
   doubao: {
     key: 'doubao',
     label: '豆包',
     iconKey: 'doubao',
     iconColor: '#1C64F2',
-    badgeClass: 'bg-blue-100 text-blue-900 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-50 dark:ring-blue-400/30',
-    iconWrapClass: 'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-400/30',
+    badgeClass:
+      'bg-blue-100 text-blue-900 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-50 dark:ring-blue-400/30',
+    iconWrapClass:
+      'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-400/30',
   },
   xiaomi: {
     key: 'xiaomi',
     label: '小米',
     iconKey: 'xiaomimimo',
     iconColor: '#FF6900',
-    badgeClass: 'bg-orange-100 text-orange-900 ring-orange-200 dark:bg-orange-500/20 dark:text-orange-50 dark:ring-orange-400/30',
-    iconWrapClass: 'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-500/15 dark:text-orange-200 dark:ring-orange-400/30',
+    badgeClass:
+      'bg-orange-100 text-orange-900 ring-orange-200 dark:bg-orange-500/20 dark:text-orange-50 dark:ring-orange-400/30',
+    iconWrapClass:
+      'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-500/15 dark:text-orange-200 dark:ring-orange-400/30',
   },
   minimax: {
     key: 'minimax',
     label: 'MiniMax',
     iconKey: 'minimax',
     iconColor: '#F23F5D',
-    badgeClass: 'bg-rose-100 text-rose-900 ring-rose-200 dark:bg-rose-500/20 dark:text-rose-50 dark:ring-rose-400/30',
-    iconWrapClass: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-200 dark:ring-rose-400/30',
+    badgeClass:
+      'bg-rose-100 text-rose-900 ring-rose-200 dark:bg-rose-500/20 dark:text-rose-50 dark:ring-rose-400/30',
+    iconWrapClass:
+      'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-200 dark:ring-rose-400/30',
   },
   suno: {
     key: 'suno',
     label: 'Suno',
     iconKey: 'suno',
     iconColor: '#111827',
-    badgeClass: 'bg-zinc-100 text-zinc-900 ring-zinc-200 dark:bg-zinc-500/20 dark:text-zinc-50 dark:ring-zinc-400/30',
-    iconWrapClass: 'bg-zinc-50 text-zinc-800 ring-zinc-200 dark:bg-zinc-500/15 dark:text-zinc-200 dark:ring-zinc-400/30',
+    badgeClass:
+      'bg-zinc-100 text-zinc-900 ring-zinc-200 dark:bg-zinc-500/20 dark:text-zinc-50 dark:ring-zinc-400/30',
+    iconWrapClass:
+      'bg-zinc-50 text-zinc-800 ring-zinc-200 dark:bg-zinc-500/15 dark:text-zinc-200 dark:ring-zinc-400/30',
   },
   dify: {
     key: 'dify',
     label: 'Dify',
     iconKey: 'dify',
     iconColor: '#1677FF',
-    badgeClass: 'bg-blue-100 text-blue-900 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-50 dark:ring-blue-400/30',
-    iconWrapClass: 'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-400/30',
+    badgeClass:
+      'bg-blue-100 text-blue-900 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-50 dark:ring-blue-400/30',
+    iconWrapClass:
+      'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-400/30',
   },
   coze: {
     key: 'coze',
     label: 'Coze',
     iconKey: 'coze',
     iconColor: '#5436F5',
-    badgeClass: 'bg-purple-100 text-purple-900 ring-purple-200 dark:bg-purple-500/20 dark:text-purple-50 dark:ring-purple-400/30',
-    iconWrapClass: 'bg-purple-50 text-purple-700 ring-purple-200 dark:bg-purple-500/15 dark:text-purple-200 dark:ring-purple-400/30',
+    badgeClass:
+      'bg-purple-100 text-purple-900 ring-purple-200 dark:bg-purple-500/20 dark:text-purple-50 dark:ring-purple-400/30',
+    iconWrapClass:
+      'bg-purple-50 text-purple-700 ring-purple-200 dark:bg-purple-500/15 dark:text-purple-200 dark:ring-purple-400/30',
   },
   cloudflare: {
     key: 'cloudflare',
     label: 'Cloudflare',
     iconKey: 'cloudflare',
     iconColor: '#F38020',
-    badgeClass: 'bg-orange-100 text-orange-900 ring-orange-200 dark:bg-orange-500/20 dark:text-orange-50 dark:ring-orange-400/30',
-    iconWrapClass: 'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-500/15 dark:text-orange-200 dark:ring-orange-400/30',
+    badgeClass:
+      'bg-orange-100 text-orange-900 ring-orange-200 dark:bg-orange-500/20 dark:text-orange-50 dark:ring-orange-400/30',
+    iconWrapClass:
+      'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-500/15 dark:text-orange-200 dark:ring-orange-400/30',
   },
   jina: {
     key: 'jina',
     label: 'Jina',
     iconKey: 'jina',
     iconColor: '#111827',
-    badgeClass: 'bg-slate-100 text-slate-900 ring-slate-200 dark:bg-slate-500/20 dark:text-slate-50 dark:ring-slate-400/30',
-    iconWrapClass: 'bg-slate-50 text-slate-800 ring-slate-200 dark:bg-slate-500/15 dark:text-slate-200 dark:ring-slate-400/30',
+    badgeClass:
+      'bg-slate-100 text-slate-900 ring-slate-200 dark:bg-slate-500/20 dark:text-slate-50 dark:ring-slate-400/30',
+    iconWrapClass:
+      'bg-slate-50 text-slate-800 ring-slate-200 dark:bg-slate-500/15 dark:text-slate-200 dark:ring-slate-400/30',
   },
   typesafe: {
     key: 'typesafe',
     label: 'TypeSafe',
     iconKey: 'typesafe',
     iconColor: 'currentColor',
-    badgeClass: 'bg-zinc-100 text-zinc-900 ring-zinc-200 dark:bg-zinc-500/20 dark:text-zinc-50 dark:ring-zinc-400/30',
-    iconWrapClass: 'bg-zinc-50 text-zinc-800 ring-zinc-200 dark:bg-zinc-500/15 dark:text-zinc-200 dark:ring-zinc-400/30',
+    badgeClass:
+      'bg-zinc-100 text-zinc-900 ring-zinc-200 dark:bg-zinc-500/20 dark:text-zinc-50 dark:ring-zinc-400/30',
+    iconWrapClass:
+      'bg-zinc-50 text-zinc-800 ring-zinc-200 dark:bg-zinc-500/15 dark:text-zinc-200 dark:ring-zinc-400/30',
   },
   unknown: {
     key: 'unknown',
     label: '未知供应商',
     iconKey: null,
     iconColor: '#64748B',
-    badgeClass: 'bg-slate-100 text-slate-800 ring-slate-200 dark:bg-slate-500/20 dark:text-slate-100 dark:ring-slate-400/30',
-    iconWrapClass: 'bg-slate-50 text-slate-600 ring-slate-200 dark:bg-slate-500/15 dark:text-slate-200 dark:ring-slate-400/30',
+    badgeClass:
+      'bg-slate-100 text-slate-800 ring-slate-200 dark:bg-slate-500/20 dark:text-slate-100 dark:ring-slate-400/30',
+    iconWrapClass:
+      'bg-slate-50 text-slate-600 ring-slate-200 dark:bg-slate-500/15 dark:text-slate-200 dark:ring-slate-400/30',
   },
 }
 
+/**
+ * defaultProviderBrandKeys fixes the order used to produce default brand selection
+ * options, including the unknown choice at the end.
+ */
 const defaultProviderBrandKeys: ProviderBrandKey[] = [
   'anthropic',
   'deepseek',
@@ -324,15 +424,39 @@ const defaultProviderBrandKeys: ProviderBrandKey[] = [
   'unknown',
 ]
 
+/**
+ * providerBrandAliases groups exact and potential fuzzy spellings by canonical brand;
+ * entry order breaks ties during substring-based brand resolution.
+ */
 const providerBrandAliases: Record<ProviderBrandKey, string[]> = {
   anthropic: ['anthropic', 'claude'],
   deepseek: ['deepseek', 'deep seek'],
-  google: ['google', 'gemini', 'gemma', 'vertex', 'google ai studio', 'imagen', 'veo', 'nano-banana'],
+  google: [
+    'google',
+    'gemini',
+    'gemma',
+    'vertex',
+    'google ai studio',
+    'imagen',
+    'veo',
+    'nano-banana',
+  ],
   moonshot: ['moonshot', 'kimi'],
   openai: ['openai', 'open ai', 'chatgpt', 'gpt', 'dalle', 'sora'],
-  // Z.ai 和 GLM 共用智谱品牌名称与图标。
+
   zhipu: ['智谱', 'zhipu', 'zai', 'z.ai', 'glm', 'chatglm', 'cogview'],
-  alibaba: ['阿里巴巴', '阿里', 'alibaba', 'aliyun', '通义', '通义千问', 'tongyi', 'qwen', 'qwq', 'wanx'],
+  alibaba: [
+    '阿里巴巴',
+    '阿里',
+    'alibaba',
+    'aliyun',
+    '通义',
+    '通义千问',
+    'tongyi',
+    'qwen',
+    'qwq',
+    'wanx',
+  ],
   xai: ['xai', 'x.ai', 'grok'],
   midjourney: ['midjourney', 'mj'],
   mistral: ['mistral', 'mixtral', 'codestral', 'pixtral', 'voxtral', 'magistral'],
@@ -358,6 +482,10 @@ const providerBrandAliases: Record<ProviderBrandKey, string[]> = {
   unknown: ['未知供应商', '未知', 'unknown'],
 }
 
+/**
+ * providerBrandAliasEntries flattens normalized aliases in catalog order for
+ * exact-token and substring matching while retaining each canonical brand key.
+ */
 const providerBrandAliasEntries = Object.entries(providerBrandAliases).flatMap(([key, aliases]) =>
   aliases.map((alias) => ({
     key: key as ProviderBrandKey,
@@ -365,14 +493,32 @@ const providerBrandAliasEntries = Object.entries(providerBrandAliases).flatMap((
   })),
 )
 
+/**
+ * providerBrandAliasMap indexes normalized exact aliases for whole-name and token
+ * lookup; repeated normalized aliases take the later mapped key.
+ */
 const providerBrandAliasMap = new Map(
   providerBrandAliasEntries.map(({ alias, key }) => [alias, key]),
 )
 
+/**
+ * canUseProviderBrandFuzzyAlias selects aliases permitted for substring matching.
+ * Ordinary aliases need at least four UTF-16 code units; a Han character in the
+ * tested range or the exact @cf alias also permits fuzzy matching.
+ */
 function canUseProviderBrandFuzzyAlias(alias: string): boolean {
+  /**
+   * Require longer Latin substrings to reduce accidental matches from short aliases,
+   * while Han-character names and @cf retain substring lookup.
+   */
   return alias.length >= 4 || /[\u4e00-\u9fff]/.test(alias) || alias === '@cf'
 }
 
+/**
+ * providerBrandTokens splits a name at the configured separators, normalizes each
+ * token, and removes empty tokens. Tokens retain input order, which decides precedence
+ * when multiple exact aliases occur in one name.
+ */
 function providerBrandTokens(value: string): string[] {
   return value
     .toLocaleLowerCase()
@@ -381,15 +527,40 @@ function providerBrandTokens(value: string): string[] {
     .filter(Boolean)
 }
 
-export const defaultProviderBrandOptions: ProviderBrandOption[] = defaultProviderBrandKeys.map((key) => ({
-  value: providerBrands[key].label,
-  label: providerBrands[key].label,
-}))
+/**
+ * defaultProviderBrandOptions exposes catalog labels as both option values and labels
+ * in the configured default brand order for selection controls.
+ */
+export const defaultProviderBrandOptions: ProviderBrandOption[] = defaultProviderBrandKeys.map(
+  (key) => ({
+    value: providerBrands[key].label,
+    label: providerBrands[key].label,
+  }),
+)
 
+/**
+ * normalizeProviderBrand trims a name, lowercases it using the host locale, and removes
+ * whitespace, underscores, and hyphens. Other punctuation remains significant for exact
+ * alias lookup and custom filter identity.
+ */
 export function normalizeProviderBrand(value: string): string {
-  return value.trim().toLocaleLowerCase().replace(/[\s_-]+/g, '')
+  return value
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[\s_-]+/g, '')
 }
 
+/**
+ * resolveProviderBrandKey resolves a supplied name to a known brand key or null. It
+ * normalizes the whole value first and returns an exact alias match before considering
+ * individual tokens.
+ *
+ * Tokens are checked in input order, giving a recognized token precedence over
+ * substring matches elsewhere in the name. The final pass permits sufficiently long,
+ * Han-character, or @cf aliases and uses catalog order for competing matches. Empty and unmatched
+ * values return null, leaving display helpers to choose unknown presentation or retain
+ * custom text.
+ */
 export function resolveProviderBrandKey(value?: string | null): ProviderBrandKey | null {
   const normalized = normalizeProviderBrand(value ?? '')
   if (!normalized) {
@@ -401,6 +572,10 @@ export function resolveProviderBrandKey(value?: string | null): ProviderBrandKey
     return exactKey
   }
 
+  /**
+   * Try exact tokens before fuzzy substrings so a named brand in a compound value wins
+   * over a broader incidental fragment.
+   */
   for (const token of providerBrandTokens(value ?? '')) {
     const tokenKey = providerBrandAliasMap.get(token)
     if (tokenKey) {
@@ -408,14 +583,32 @@ export function resolveProviderBrandKey(value?: string | null): ProviderBrandKey
     }
   }
 
-  return providerBrandAliasEntries.find(({ alias }) => canUseProviderBrandFuzzyAlias(alias) && normalized.includes(alias))?.key ?? null
+  /**
+   * After exact lookups fail, the ordered alias list supplies the first eligible
+   * substring match; ambiguous fuzzy names therefore follow catalog order.
+   */
+  return (
+    providerBrandAliasEntries.find(
+      ({ alias }) => canUseProviderBrandFuzzyAlias(alias) && normalized.includes(alias),
+    )?.key ?? null
+  )
 }
 
+/**
+ * resolveProviderBrand returns the shared catalog object for a recognized name, using
+ * unknown presentation for empty or unmatched input. Callers receive the catalog
+ * reference and should treat its properties as shared display data.
+ */
 export function resolveProviderBrand(value?: string | null): ProviderBrand {
   const key = resolveProviderBrandKey(value)
   return key ? providerBrands[key] : providerBrands.unknown
 }
 
+/**
+ * providerBrandDisplayName returns a known catalog label or the trimmed custom name.
+ * Empty input uses the unknown label; unrecognized nonempty text remains visible with
+ * its supplied case and punctuation.
+ */
 export function providerBrandDisplayName(value?: string | null): string {
   const source = value?.trim()
   if (!source) {
@@ -426,6 +619,17 @@ export function providerBrandDisplayName(value?: string | null): string {
   return key ? providerBrands[key].label : source
 }
 
+/**
+ * providerBrandFilterKey produces a stable filtering identity for known brands
+ * and custom names. Recognized aliases receive the brand prefix and canonical
+ * key, while missing names share the unknown brand identity.
+ *
+ * Unrecognized nonempty names receive a custom prefix followed by their
+ * normalized text. The separate prefix keeps a custom spelling from colliding
+ * with a catalog key merely because their final words match. Normalization
+ * removes case, spaces, underscores, and hyphens, so cosmetic variants of a
+ * custom name group together.
+ */
 export function providerBrandFilterKey(value?: string | null): string {
   const source = value?.trim()
   if (!source) {

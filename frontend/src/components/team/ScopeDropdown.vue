@@ -16,7 +16,8 @@
 
     <MotionTransition name="dropdown-fade">
       <div
-        v-if="open" :inert="!(open) || undefined"
+        v-if="open"
+        :inert="!open || undefined"
         class="dropdown right-0 top-full z-50 mt-2 w-48 p-2"
         role="menu"
         data-test="scope-dropdown-menu"
@@ -54,14 +55,25 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '@/components/icons/Icon.vue'
 
+// ScopeDropdown.vue switches key lists between personal and team ownership. The parent
+// controls the selected value, while this dropdown preserves the scope in the route query
+// and notifies the list owner after that navigation completes.
+
+// DataScope selects personal or team ownership for the consuming key list.
 export type DataScope = 'personal' | 'team'
 
-const props = defineProps<{ modelValue: DataScope }>()
+// modelValue is the parent-owned list scope; the dropdown emits its selected value before
+// persisting the URL query.
+const props = defineProps<{ modelValue: DataScope /* Parent-owned list scope. */ }>()
+// The model update changes visible selection immediately; change follows successful query
+// replacement so the page reloads the chosen ownership scope.
 const emit = defineEmits<{
-  (event: 'update:modelValue', value: DataScope): void
-  (event: 'change', value: DataScope): void
+  (event: 'update:modelValue', value: DataScope): void // Selected ownership scope.
+  (event: 'change', value: DataScope): void // URL-persisted scope selection.
 }>()
 
+// Route dependencies retain unrelated query parameters, while local open state and the root
+// element control dropdown dismissal and selected-label rendering.
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
@@ -72,9 +84,13 @@ const options = computed(() => [
   { value: 'personal' as const, label: t('team.personalKeys'), icon: 'user' as const },
   { value: 'team' as const, label: t('team.teamKeys'), icon: 'users' as const },
 ])
-const currentLabel = computed(() => options.value.find((option) => option.value === scope.value)?.label || '')
+const currentLabel = computed(
+  () => options.value.find((option) => option.value === scope.value)?.label || '',
+)
 
-// 作用域写入 URL，刷新页面后仍能恢复当前密钥列表。
+// setScope closes the menu and publishes a different selected scope before replacing its URL
+// query. The change event follows navigation completion so the list owner can reload with
+// the persisted scope.
 const setScope = async (value: DataScope) => {
   open.value = false
   if (value === scope.value) return
@@ -83,6 +99,9 @@ const setScope = async (value: DataScope) => {
   emit('change', value)
 }
 
+// closeOnOutsideClick closes the dropdown when a captured document click targets outside its
+// root. Mount and unmount own the same capture listener so nested click handlers do not
+// prevent dismissal.
 const closeOnOutsideClick = (event: MouseEvent) => {
   if (!dropdownRef.value?.contains(event.target as Node)) open.value = false
 }

@@ -1,9 +1,16 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { UserAffiliateDetail } from '@/types'
+import type { UserAffiliateDetail } from '@/api/user.types'
 import AffiliateView from '../AffiliateView.vue'
 
+// AffiliateView.spec.ts checks affiliate display and transfer feedback against a configured
+// balance formatter. The production page receives fixed referral data and mocked requests,
+// while assertions inspect formatted amounts, responsive invite controls, and copied code or
+// registration-link payloads.
+
+// Hoisted service, notification, clipboard, and amount-format mocks let assertions observe
+// the production page's displayed values and completed transfer feedback.
 const {
   getAffiliateDetail,
   transferAffiliateQuota,
@@ -70,7 +77,7 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
-// 使用不同于美元的符号，确保页面确实依赖后台余额单位格式化器。
+// Use a non-dollar balance symbol so assertions prove the page delegates amounts to the configured balance formatter.
 const affiliateDetail: UserAffiliateDetail = {
   user_id: 1,
   aff_code: 'INVITE20',
@@ -91,6 +98,9 @@ const affiliateDetail: UserAffiliateDetail = {
   ],
 }
 
+// mountView renders the affiliate page through a slot-preserving layout stub. Callers settle
+// its initial detail promise before inspecting loaded amounts or invoking transfer and copy
+// actions.
 function mountView() {
   return mount(AffiliateView, {
     global: {
@@ -120,6 +130,9 @@ describe('AffiliateView', () => {
     )
   })
 
+  // Affiliate detail includes available, historical, frozen, and invitee rebate amounts. The
+  // test protects use of the configured balance formatter for every displayed amount in the
+  // page.
   it('uses the configured balance unit for every affiliate amount', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -134,6 +147,8 @@ describe('AffiliateView', () => {
     expect(formatBalanceAmount).toHaveBeenCalledWith(affiliateDetail.invitees[0].total_rebate)
   })
 
+  // A successful quota transfer returns its actual transferred amount. The test protects the
+  // configured balance unit in success feedback after the production transfer action runs.
   it('uses the configured balance unit in the transfer success message', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -145,6 +160,9 @@ describe('AffiliateView', () => {
     expect(showSuccess).toHaveBeenCalledWith('affiliate.transfer.success:积分200.00')
   })
 
+  // A long invite code expands both code and registration-link content. The test protects
+  // shrinkable mobile layout classes and exact copied values while retaining desktop row
+  // controls.
   it('stacks long invite values and copy buttons on mobile while retaining desktop rows', async () => {
     const longCode = 'INVITE-' + 'X'.repeat(120)
     getAffiliateDetail.mockResolvedValueOnce({ ...affiliateDetail, aff_code: longCode })
@@ -152,10 +170,22 @@ describe('AffiliateView', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="affiliate-code-row"]').classes()).toEqual(
-      expect.arrayContaining(['min-w-0', 'flex-col', 'items-stretch', 'sm:flex-row', 'sm:items-center']),
+      expect.arrayContaining([
+        'min-w-0',
+        'flex-col',
+        'items-stretch',
+        'sm:flex-row',
+        'sm:items-center',
+      ]),
     )
     expect(wrapper.get('[data-testid="affiliate-link-row"]').classes()).toEqual(
-      expect.arrayContaining(['min-w-0', 'flex-col', 'items-stretch', 'sm:flex-row', 'sm:items-center']),
+      expect.arrayContaining([
+        'min-w-0',
+        'flex-col',
+        'items-stretch',
+        'sm:flex-row',
+        'sm:items-center',
+      ]),
     )
     expect(wrapper.get('[data-testid="affiliate-code"]').classes()).toEqual(
       expect.arrayContaining(['min-w-0', 'break-all', 'sm:flex-1', 'sm:truncate']),

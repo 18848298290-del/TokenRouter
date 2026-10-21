@@ -1,82 +1,116 @@
+import { apiClient } from '../client'
+import type { PaginatedResponse } from '@/api/common.types'
+
 /**
- * 管理端邀请返利 API。
- * 用于维护用户专属邀请码和专属返利比例。
+ * affiliates.ts retrieves administrator referral records and per-user rebate
+ * summaries. Invite, rebate and transfer lists share date, sorting and
+ * pagination normalization, while user overview requests select one referral
+ * account by its numeric user identifier.
  */
 
-import { apiClient } from '../client'
-import type { PaginatedResponse } from '@/types'
-
+/**
+ * ListAffiliateRecordsParams selects referral-record pagination, date range,
+ * search and ordering for administrator lists.
+ */
 export interface ListAffiliateRecordsParams {
-  page?: number
-  page_size?: number
-  search?: string
-  start_at?: string
-  end_at?: string
-  sort_by?: string
-  sort_order?: 'asc' | 'desc'
-  timezone?: string
+  page?: number // Requested page number.
+  page_size?: number // Requested page size.
+  search?: string // Free-text search query.
+  start_at?: string // Requested start at.
+  end_at?: string // Requested end at.
+  sort_by?: string // Requested sort column.
+  sort_order?: 'asc' | 'desc' // Requested ordering direction.
+  timezone?: string // IANA timezone name.
 }
 
+/**
+ * AffiliateInviteRecord pairs inviter and invitee identities with the referral
+ * code and accumulated rebate.
+ */
 export interface AffiliateInviteRecord {
-  inviter_id: number
-  inviter_email: string
-  inviter_username: string
-  invitee_id: number
-  invitee_email: string
-  invitee_username: string
-  aff_code: string
-  total_rebate: number
-  created_at: string
+  inviter_id: number // Inviting user identifier.
+  inviter_email: string // Recorded inviter email.
+  inviter_username: string // Recorded inviter username.
+  invitee_id: number // Invited user identifier.
+  invitee_email: string // Recorded invitee email.
+  invitee_username: string // Recorded invitee username.
+  aff_code: string // Referral invitation code.
+  total_rebate: number // Recorded total rebate.
+  created_at: string // Record creation timestamp.
 }
 
+/**
+ * AffiliateRebateRecord records a paid order's referral relationship, charged
+ * currencies and resulting rebate amount.
+ */
 export interface AffiliateRebateRecord {
-  order_id: number
-  out_trade_no: string
-  inviter_id: number
-  inviter_email: string
-  inviter_username: string
-  invitee_id: number
-  invitee_email: string
-  invitee_username: string
-  order_amount: number
-  pay_amount: number
-  order_type: 'balance' | 'subscription'
-  /** 订阅套餐的标价币种；余额订单为空。 */
-  order_currency: string
-  /** 支付渠道的实际扣款币种。 */
-  pay_currency: string
-  rebate_amount: number
-  payment_type: string
-  order_status: string
-  created_at: string
+  order_id: number // Payment order identifier.
+  out_trade_no: string // External trade identifier.
+  inviter_id: number // Inviting user identifier.
+  inviter_email: string // Recorded inviter email.
+  inviter_username: string // Recorded inviter username.
+  invitee_id: number // Invited user identifier.
+  invitee_email: string // Recorded invitee email.
+  invitee_username: string // Recorded invitee username.
+  order_amount: number // Recorded order amount.
+  pay_amount: number // Recorded pay amount.
+  order_type: 'balance' | 'subscription' // Recorded order type.
+  /**
+   * Subscription list-price currency; balance orders return an empty string
+   * because their principal is represented as account credit.
+   */
+  order_currency: string // Recorded order currency.
+  /**
+   * Payment channel charge currency.
+   */
+  pay_currency: string // Recorded pay currency.
+  rebate_amount: number // Recorded rebate amount.
+  payment_type: string // Recorded payment type.
+  order_status: string // Recorded order status.
+  created_at: string // Record creation timestamp.
 }
 
+/**
+ * AffiliateTransferRecord describes a referral-credit transfer and optional
+ * resulting balance snapshots. snapshot_available tells consumers whether the
+ * post-transfer quota and balance observations are present for historical
+ * display.
+ */
 export interface AffiliateTransferRecord {
-  ledger_id: number
-  user_id: number
-  user_email: string
-  username: string
-  amount: number
-  balance_after?: number | null
-  available_quota_after?: number | null
-  frozen_quota_after?: number | null
-  history_quota_after?: number | null
-  snapshot_available: boolean
-  created_at: string
+  ledger_id: number // Transfer ledger identifier.
+  user_id: number // Owning user identifier.
+  user_email: string // Recorded user email.
+  username: string // Account display username.
+  amount: number // Credit transfer amount.
+  balance_after?: number | null // Recorded balance after.
+  available_quota_after?: number | null // Available quota after.
+  frozen_quota_after?: number | null // Frozen quota after.
+  history_quota_after?: number | null // History quota after.
+  snapshot_available: boolean // Post-transfer snapshot availability.
+  created_at: string // Record creation timestamp.
 }
 
+/**
+ * AffiliateUserOverview summarizes one user's referral code, rebate percentage,
+ * invite counts and available credit.
+ */
 export interface AffiliateUserOverview {
-  user_id: number
-  email: string
-  username: string
-  aff_code: string
-  rebate_rate_percent: number
-  invited_count: number
-  rebated_invitee_count: number
-  available_quota: number
-  history_quota: number
+  user_id: number // Owning user identifier.
+  email: string // Account email address.
+  username: string // Account display username.
+  aff_code: string // Referral invitation code.
+  rebate_rate_percent: number // Rebate rate percent.
+  invited_count: number // Recorded invited count.
+  rebated_invitee_count: number // Rebated invitee count.
+  available_quota: number // Recorded available quota.
+  history_quota: number // Recorded history quota.
 }
 
+/**
+ * recordParams builds the shared referral-record query parameters. Page and page
+ * size default to one and twenty, search defaults to empty, and falsy dates,
+ * sort fields and timezone are omitted from the query.
+ */
 function recordParams(params: ListAffiliateRecordsParams = {}) {
   return {
     page: params.page ?? 1,
@@ -90,6 +124,11 @@ function recordParams(params: ListAffiliateRecordsParams = {}) {
   }
 }
 
+/**
+ * listInviteRecords retrieves referral invitations using the shared record
+ * filters. Omitted parameters select page one with twenty records, and empty
+ * date, sorting or timezone filters are omitted by recordParams.
+ */
 export async function listInviteRecords(
   params: ListAffiliateRecordsParams = {},
 ): Promise<PaginatedResponse<AffiliateInviteRecord>> {
@@ -100,6 +139,11 @@ export async function listInviteRecords(
   return data
 }
 
+/**
+ * listRebateRecords retrieves rebate ledger records using the shared query
+ * normalization. Page and size default to one and twenty; empty date or ordering
+ * values stay absent from the outgoing query.
+ */
 export async function listRebateRecords(
   params: ListAffiliateRecordsParams = {},
 ): Promise<PaginatedResponse<AffiliateRebateRecord>> {
@@ -110,6 +154,11 @@ export async function listRebateRecords(
   return data
 }
 
+/**
+ * listTransferRecords retrieves referral-credit transfers with the shared list
+ * filters. Omitted parameters request the first twenty records, and recordParams
+ * removes empty dates, sorting fields and timezone values before dispatch.
+ */
 export async function listTransferRecords(
   params: ListAffiliateRecordsParams = {},
 ): Promise<PaginatedResponse<AffiliateTransferRecord>> {
@@ -120,15 +169,20 @@ export async function listTransferRecords(
   return data
 }
 
-export async function getUserOverview(
-  userId: number,
-): Promise<AffiliateUserOverview> {
+/**
+ * getUserOverview retrieves user overview and returns the server response data.
+ */
+export async function getUserOverview(userId: number): Promise<AffiliateUserOverview> {
   const { data } = await apiClient.get<AffiliateUserOverview>(
     `/admin/affiliates/users/${userId}/overview`,
   )
   return data
 }
 
+/**
+ * affiliatesAPI groups administrator referral records and rebate summaries for
+ * callers using the module's named or default API object.
+ */
 export const affiliatesAPI = {
   listInviteRecords,
   listRebateRecords,

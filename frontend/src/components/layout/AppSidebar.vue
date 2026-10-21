@@ -3,7 +3,7 @@
     class="sidebar"
     :class="[
       sidebarCollapsed ? 'w-[var(--sidebar-w-collapsed)]' : 'w-[var(--sidebar-w)]',
-      { '-translate-x-full lg:translate-x-0': !mobileOpen }
+      { '-translate-x-full lg:translate-x-0': !mobileOpen },
     ]"
   >
     <!-- Navigation -->
@@ -20,7 +20,7 @@
                 class="sidebar-link mb-1 w-full"
                 :class="{
                   'sidebar-link-active': isGroupActive(item) && !isGroupExpanded(item),
-                  'sidebar-link-collapsed': sidebarCollapsed
+                  'sidebar-link-collapsed': sidebarCollapsed,
                 }"
                 :title="sidebarCollapsed ? item.label : undefined"
                 :aria-expanded="!sidebarCollapsed && isGroupExpanded(item)"
@@ -44,7 +44,11 @@
                 </span>
               </button>
               <!-- Children -->
-              <Collapse :id="`sidebar-group-${item.path}`" :open="!sidebarCollapsed && isGroupExpanded(item)" unmount-on-hide>
+              <Collapse
+                :id="`sidebar-group-${item.path}`"
+                :open="!sidebarCollapsed && isGroupExpanded(item)"
+                unmount-on-hide
+              >
                 <div class="mb-1 ml-4 border-l border-primary-900/10 pl-2 dark:border-dark-600">
                   <router-link
                     v-for="child in item.children"
@@ -65,7 +69,10 @@
               v-else
               :to="item.path"
               class="sidebar-link mb-1"
-              :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
+              :class="{
+                'sidebar-link-active': isActive(item.path),
+                'sidebar-link-collapsed': sidebarCollapsed,
+              }"
               :title="sidebarCollapsed ? item.label : undefined"
               :id="
                 item.path === '/admin/providers'
@@ -78,17 +85,33 @@
               "
               @click="handleMenuItemClick(item.path)"
             >
-              <span v-if="item.iconSvg" class="flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
+              <span
+                v-if="item.iconSvg"
+                class="flex-shrink-0 sidebar-svg-icon"
+                v-html="sanitizeSvg(item.iconSvg)"
+              ></span>
               <Icon v-else :name="item.icon ?? 'home'" size="md" class="flex-shrink-0" />
-              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+              <span
+                class="sidebar-label"
+                :class="{ 'sidebar-label-collapsed': sidebarCollapsed }"
+                :aria-hidden="sidebarCollapsed ? 'true' : 'false'"
+                >{{ item.label }}</span
+              >
             </router-link>
           </template>
         </div>
 
-        <!-- 管理员的个人功能区 -->
+        <!-- Personal account destinations for administrators. -->
         <div class="sidebar-section">
-          <div class="sidebar-section-title" :class="{ 'sidebar-section-title-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
-            <span class="sidebar-section-title-text" :class="{ 'sidebar-section-title-text-collapsed': sidebarCollapsed }">
+          <div
+            class="sidebar-section-title"
+            :class="{ 'sidebar-section-title-collapsed': sidebarCollapsed }"
+            :aria-hidden="sidebarCollapsed ? 'true' : 'false'"
+          >
+            <span
+              class="sidebar-section-title-text"
+              :class="{ 'sidebar-section-title-text-collapsed': sidebarCollapsed }"
+            >
               {{ t('nav.myAccount') }}
             </span>
           </div>
@@ -98,14 +121,32 @@
             :key="item.path"
             :to="item.path"
             class="sidebar-link mb-1"
-            :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
+            :class="{
+              'sidebar-link-active': isActive(item.path),
+              'sidebar-link-collapsed': sidebarCollapsed,
+            }"
             :title="sidebarCollapsed ? item.label : undefined"
-            :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : item.path === '/usage' ? 'sidebar-usage' : undefined"
+            :data-tour="
+              item.path === '/keys'
+                ? 'sidebar-my-keys'
+                : item.path === '/usage'
+                  ? 'sidebar-usage'
+                  : undefined
+            "
             @click="handleMenuItemClick(item.path)"
           >
-            <span v-if="item.iconSvg" class="flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
+            <span
+              v-if="item.iconSvg"
+              class="flex-shrink-0 sidebar-svg-icon"
+              v-html="sanitizeSvg(item.iconSvg)"
+            ></span>
             <Icon v-else :name="item.icon ?? 'home'" size="md" class="flex-shrink-0" />
-            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+            <span
+              class="sidebar-label"
+              :class="{ 'sidebar-label-collapsed': sidebarCollapsed }"
+              :aria-hidden="sidebarCollapsed ? 'true' : 'false'"
+              >{{ item.label }}</span
+            >
           </router-link>
         </div>
       </template>
@@ -118,19 +159,36 @@
             :key="item.path"
             :to="item.path"
             class="sidebar-link mb-1"
-            :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
+            :class="{
+              'sidebar-link-active': isActive(item.path),
+              'sidebar-link-collapsed': sidebarCollapsed,
+            }"
             :title="sidebarCollapsed ? item.label : undefined"
-            :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : item.path === '/usage' ? 'sidebar-usage' : undefined"
+            :data-tour="
+              item.path === '/keys'
+                ? 'sidebar-my-keys'
+                : item.path === '/usage'
+                  ? 'sidebar-usage'
+                  : undefined
+            "
             @click="handleMenuItemClick(item.path)"
           >
-            <span v-if="item.iconSvg" class="flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
+            <span
+              v-if="item.iconSvg"
+              class="flex-shrink-0 sidebar-svg-icon"
+              v-html="sanitizeSvg(item.iconSvg)"
+            ></span>
             <Icon v-else :name="item.icon ?? 'home'" size="md" class="flex-shrink-0" />
-            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+            <span
+              class="sidebar-label"
+              :class="{ 'sidebar-label-collapsed': sidebarCollapsed }"
+              :aria-hidden="sidebarCollapsed ? 'true' : 'false'"
+              >{{ item.label }}</span
+            >
           </router-link>
         </div>
       </template>
     </nav>
-
   </aside>
 
   <!-- Mobile Overlay -->
@@ -156,16 +214,33 @@ import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } 
 import { sanitizeSvg } from '@/utils/sanitize'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 
+// AppSidebar.vue builds role-specific navigation from public and administrator settings.
+// Feature predicates filter optional destinations, custom links retain their configured
+// order, and administrator groups highlight the current exact child route. The mobile
+// drawer closes after route changes and also handles clicks on the current route.
+//
+// Group expansion uses route activity until the user supplies a local override; that
+// override can keep an active group collapsed. The sidebar saves its scroll position
+// into application state before unmount and restores it after the next mounted render.
+// Collapsed labels remain in the layout for transitions while accessibility attributes
+// hide their text.
+
+// NavItem represents a destination or collapsible group in sidebar navigation.
 interface NavItem {
-  path: string
-  label: string
+  path: string // Destination or group key
+  label: string // Translated navigation text
+  // Selects a registered icon; null permits a custom SVG, and templates use home when
+  // neither supplies an icon.
   icon: IconName | null
-  iconSvg?: string
-  // featureFlag 返回 false 时隐藏菜单项，用于按公开设置控制可选入口。
+  iconSvg?: string // Custom uploaded SVG
+  // featureFlag hides an entry when it returns false; omitted predicates leave the
+  // destination visible in its navigation group.
   featureFlag?: () => boolean
-  children?: NavItem[]
+  children?: NavItem[] // Nested navigation entries
 }
 
+// Translation, routing, role, settings, onboarding, and batch-image access state
+// determine which destinations the sidebar renders for the current account.
 const { t } = useI18n()
 
 const route = useRoute()
@@ -175,40 +250,74 @@ const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 
+// Sidebar width and mobile visibility come from shared application state, allowing the
+// header toggle and layout offsets to follow the same values.
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 
-// 移动端抽屉的收起挂在导航完成事件上，取代原来 150ms 的定时器猜测：
-// 路由一变，抽屉里那份导航清单就过时了，所以不限于菜单点击引发的导航。
+// Close the mobile drawer when the completed route changes, including navigation
+// initiated outside the sidebar, so its previous navigation view does not cover the
+// destination.
 watch(
   () => route.fullPath,
   () => {
     if (mobileOpen.value) appStore.setMobileOpen(false)
-  }
+  },
 )
+// isAdmin selects the role-specific menu and settings fetch; sidebarNavRef identifies
+// the scroll container whose position survives component remounts.
 const isAdmin = computed(() => authStore.isAdmin)
 const sidebarNavRef = ref<HTMLElement | null>(null)
 
-// 未手动操作的分组随当前路由展开；手动选择优先，允许收起当前分组。
+// groupExpandOverrides records local user choices by group path. An absent entry follows
+// route activity, while a recorded false keeps even the active group collapsed.
 const groupExpandOverrides = ref<Map<string, boolean>>(new Map())
 
-// 批量图片入口还需要用户 API Key 和分组权限同时满足。
+// flagBatchImageAccess reports whether the shared access check permits batch-image
+// navigation.
 const flagBatchImageAccess = () => canUseBatchImage.value
-// 创作台入口由功能开关控制（默认开），可用模型以页面内目录为准。
+// flagCreativeStudioAccess permits creative navigation unless the public setting is
+// false. An omitted setting leaves the entry visible; the creative page resolves its
+// available models independently after navigation.
 const flagCreativeStudioAccess = () => appStore.cachedPublicSettings?.creative_enabled !== false
+// flagTeamAccess permits the team destination unless its public setting is false.
+//
+// An omitted setting keeps the entry visible, matching the optional feature predicate
+// used by both personal and user menus.
 const flagTeamAccess = () => appStore.cachedPublicSettings?.team_enabled !== false
+// flagUsageRankingAccess permits the usage-ranking destination unless its public setting
+// is false.
+//
+// An omitted setting keeps the entry visible, matching the optional feature predicate
+// used by both personal and user menus.
 const flagUsageRankingAccess = () => appStore.cachedPublicSettings?.usage_ranking_enabled !== false
 
-// 普通用户导航项。
+// userNavItems builds the ordinary user destinations, applies feature predicates, and
+// appends visible custom links in their configured sort order.
 const userNavItems = computed((): NavItem[] => {
   const items: NavItem[] = [
     { path: '/dashboard', label: t('nav.dashboard'), icon: 'dashboard' as const },
     { path: '/models', label: t('nav.modelMarketplace'), icon: 'modelMarketplace' as const },
-    { path: '/usage-ranking', label: t('nav.usageRanking'), icon: 'ranking' as const, featureFlag: flagUsageRankingAccess },
+    {
+      path: '/usage-ranking',
+      label: t('nav.usageRanking'),
+      icon: 'ranking' as const,
+      featureFlag: flagUsageRankingAccess,
+    },
     { path: '/keys', label: t('nav.apiKeys'), icon: 'key' as const },
     { path: '/team', label: t('nav.team'), icon: 'users' as const, featureFlag: flagTeamAccess },
-    { path: '/batch-image', label: t('nav.batchImage'), icon: 'batchImage' as const, featureFlag: flagBatchImageAccess },
-    { path: '/creative', label: t('nav.creative'), icon: 'creative' as const, featureFlag: flagCreativeStudioAccess },
+    {
+      path: '/batch-image',
+      label: t('nav.batchImage'),
+      icon: 'batchImage' as const,
+      featureFlag: flagBatchImageAccess,
+    },
+    {
+      path: '/creative',
+      label: t('nav.creative'),
+      icon: 'creative' as const,
+      featureFlag: flagCreativeStudioAccess,
+    },
     { path: '/usage', label: t('nav.usage'), icon: 'chart' as const },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: 'creditCard' as const },
     ...(appStore.cachedPublicSettings?.payment_enabled
@@ -247,20 +356,36 @@ const userNavItems = computed((): NavItem[] => {
       iconSvg: item.icon_svg,
     })),
   ]
-  const visibleItems = items.filter(item => item.featureFlag?.() !== false)
+  const visibleItems = items.filter((item) => item.featureFlag?.() !== false)
   return visibleItems
 })
 
-// 管理员“我的提供商”分组使用的个人导航项
+// personalNavItems builds the administrator's personal account section using public
+// feature flags and the user-visible custom menu entries.
 const personalNavItems = computed((): NavItem[] => {
   const items: NavItem[] = [
     { path: '/dashboard', label: t('nav.dashboard'), icon: 'dashboard' as const },
     { path: '/models', label: t('nav.modelMarketplace'), icon: 'modelMarketplace' as const },
-    { path: '/usage-ranking', label: t('nav.usageRanking'), icon: 'ranking' as const, featureFlag: flagUsageRankingAccess },
+    {
+      path: '/usage-ranking',
+      label: t('nav.usageRanking'),
+      icon: 'ranking' as const,
+      featureFlag: flagUsageRankingAccess,
+    },
     { path: '/keys', label: t('nav.apiKeys'), icon: 'key' as const },
     { path: '/team', label: t('nav.team'), icon: 'users' as const, featureFlag: flagTeamAccess },
-    { path: '/batch-image', label: t('nav.batchImage'), icon: 'batchImage' as const, featureFlag: flagBatchImageAccess },
-    { path: '/creative', label: t('nav.creative'), icon: 'creative' as const, featureFlag: flagCreativeStudioAccess },
+    {
+      path: '/batch-image',
+      label: t('nav.batchImage'),
+      icon: 'batchImage' as const,
+      featureFlag: flagBatchImageAccess,
+    },
+    {
+      path: '/creative',
+      label: t('nav.creative'),
+      icon: 'creative' as const,
+      featureFlag: flagCreativeStudioAccess,
+    },
     { path: '/usage', label: t('nav.usage'), icon: 'chart' as const },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: 'creditCard' as const },
     ...(appStore.cachedPublicSettings?.payment_enabled
@@ -299,11 +424,12 @@ const personalNavItems = computed((): NavItem[] => {
       iconSvg: item.icon_svg,
     })),
   ]
-  const visibleItems = items.filter(item => item.featureFlag?.() !== false)
+  const visibleItems = items.filter((item) => item.featureFlag?.() !== false)
   return visibleItems
 })
 
-// Custom menu items filtered by visibility
+// customMenuItemsForUser filters public settings to user-visible links and sorts the
+// resulting array by configured order before navigation entries are built.
 const customMenuItemsForUser = computed(() => {
   const items = appStore.cachedPublicSettings?.custom_menu_items ?? []
   return items
@@ -311,13 +437,16 @@ const customMenuItemsForUser = computed(() => {
     .sort((a, b) => a.sort_order - b.sort_order)
 })
 
+// customMenuItemsForAdmin filters administrator settings to administrator-visible links
+// and sorts that filtered array before the entries are appended after settings.
 const customMenuItemsForAdmin = computed(() => {
   return adminSettingsStore.customMenuItems
     .filter((item) => item.visibility === 'admin')
     .sort((a, b) => a.sort_order - b.sort_order)
 })
 
-// Admin navigation items
+// adminNavItems combines administrator destinations, feature-gated groups, settings, and
+// custom links; child routes are retained in their displayed group order.
 const adminNavItems = computed((): NavItem[] => {
   const baseItems: NavItem[] = [
     { path: '/admin/dashboard', label: t('nav.dashboard'), icon: 'dashboard' as const },
@@ -325,10 +454,17 @@ const adminNavItems = computed((): NavItem[] => {
       ? [{ path: '/admin/ops', label: t('nav.ops'), icon: 'chart' as const }]
       : []),
     { path: '/admin/users', label: t('nav.users'), icon: 'users' as const },
-    { path: '/admin/teams', label: t('nav.teams'), icon: 'users' as const, featureFlag: flagTeamAccess },
+    {
+      path: '/admin/teams',
+      label: t('nav.teams'),
+      icon: 'users' as const,
+      featureFlag: flagTeamAccess,
+    },
     { path: '/admin/groups', label: t('nav.groups'), icon: 'folder' as const },
     {
-      path: '/admin/model-management', label: t('nav.modelManagement'), icon: 'pricing' as const,
+      path: '/admin/model-management',
+      label: t('nav.modelManagement'),
+      icon: 'pricing' as const,
       children: [
         { path: '/admin/pricing', label: t('nav.pricing'), icon: 'pricing' as const },
         { path: '/admin/model-attributes', label: t('nav.modelAttributes'), icon: 'cog' as const },
@@ -340,9 +476,16 @@ const adminNavItems = computed((): NavItem[] => {
       icon: 'creditCard' as const,
       children: [
         { path: '/admin/subscriptions', label: t('nav.userSubscriptions'), icon: 'users' as const },
-        // 套餐入口随支付功能开放，用户订阅入口始终保留。
+        // Payment settings control plan management while user subscription management
+        // remains available in the same administrator group.
         ...(adminSettingsStore.paymentEnabled
-          ? [{ path: '/admin/orders/plans', label: t('nav.paymentPlans'), icon: 'creditCard' as const }]
+          ? [
+              {
+                path: '/admin/orders/plans',
+                label: t('nav.paymentPlans'),
+                icon: 'creditCard' as const,
+              },
+            ]
           : []),
       ],
     },
@@ -353,7 +496,7 @@ const adminNavItems = computed((): NavItem[] => {
       path: '/admin/risk-control',
       label: t('nav.riskControl'),
       icon: 'shieldCheck' as const,
-      featureFlag: () => appStore.cachedPublicSettings?.risk_control_enabled === true
+      featureFlag: () => appStore.cachedPublicSettings?.risk_control_enabled === true,
     },
     { path: '/admin/redeem', label: t('nav.redeemCodes'), icon: 'ticket' as const },
     { path: '/admin/promo-codes', label: t('nav.promoCodes'), icon: 'gift' as const },
@@ -364,9 +507,21 @@ const adminNavItems = computed((): NavItem[] => {
             label: t('nav.affiliateManagement'),
             icon: 'users' as const,
             children: [
-              { path: '/admin/affiliates/invites', label: t('nav.affiliateInviteRecords'), icon: 'users' as const },
-              { path: '/admin/affiliates/rebates', label: t('nav.affiliateRebateRecords'), icon: 'order' as const },
-              { path: '/admin/affiliates/transfers', label: t('nav.affiliateTransferRecords'), icon: 'creditCard' as const },
+              {
+                path: '/admin/affiliates/invites',
+                label: t('nav.affiliateInviteRecords'),
+                icon: 'users' as const,
+              },
+              {
+                path: '/admin/affiliates/rebates',
+                label: t('nav.affiliateRebateRecords'),
+                icon: 'order' as const,
+              },
+              {
+                path: '/admin/affiliates/transfers',
+                label: t('nav.affiliateTransferRecords'),
+                icon: 'creditCard' as const,
+              },
             ],
           },
         ]
@@ -378,7 +533,11 @@ const adminNavItems = computed((): NavItem[] => {
             label: t('nav.orderManagement'),
             icon: 'order' as const,
             children: [
-              { path: '/admin/orders/dashboard', label: t('nav.paymentDashboard'), icon: 'chart' as const },
+              {
+                path: '/admin/orders/dashboard',
+                label: t('nav.paymentDashboard'),
+                icon: 'chart' as const,
+              },
               { path: '/admin/orders', label: t('nav.orderManagement'), icon: 'order' as const },
             ],
           },
@@ -386,62 +545,96 @@ const adminNavItems = computed((): NavItem[] => {
       : []),
     { path: '/admin/usage', label: t('nav.usage'), icon: 'chart' as const },
     { path: '/admin/requests', label: t('requests.title'), icon: 'search' as const },
-    { path: '/admin/audit-logs', label: t('nav.auditLogs'), icon: 'shieldCheck' as const }
+    { path: '/admin/audit-logs', label: t('nav.auditLogs'), icon: 'shieldCheck' as const },
   ]
 
-  const visibleItems = baseItems.filter(item => item.featureFlag?.() !== false)
+  const visibleItems = baseItems.filter((item) => item.featureFlag?.() !== false)
   visibleItems.push({ path: '/admin/settings', label: t('nav.settings'), icon: 'cog' as const })
-  // Add admin custom menu items after settings
+  // Administrator custom links follow settings so the built-in management destinations
+  // keep their established navigation order ahead of configured pages.
   for (const cm of customMenuItemsForAdmin.value) {
-    visibleItems.push({ path: `/custom/${cm.id}`, label: cm.label, icon: null, iconSvg: cm.icon_svg })
+    visibleItems.push({
+      path: `/custom/${cm.id}`,
+      label: cm.label,
+      icon: null,
+      iconSvg: cm.icon_svg,
+    })
   }
   return visibleItems
 })
 
+// closeMobile closes the shared mobile drawer when its overlay is clicked.
 function closeMobile() {
   appStore.setMobileOpen(false)
 }
 
+// handleMenuItemClick closes current-route drawers and advances matching onboarding
+// steps.
+//
+// Other route changes close through the route watcher; supported tour destinations
+// schedule the next step with a delay for the destination to appear.
 function handleMenuItemClick(itemPath: string) {
-  // 点击当前路由不会触发导航（router-link 去重），上面的 route 监听不会命中，这里立即收起。
+  // A click on the current route produces no route change, so close the drawer here when
+  // the watcher cannot observe navigation.
   if (mobileOpen.value && itemPath === route.path) {
     appStore.setMobileOpen(false)
   }
 
-  // Map paths to tour selectors
+  // Tour selectors identify sidebar controls that own navigation steps; only the
+  // currently active matching step advances after the click.
   const pathToSelector: Record<string, string> = {
     '/admin/groups': '#sidebar-group-manage',
     '/admin/providers': '#sidebar-channel-manage',
     '/keys': '[data-tour="sidebar-my-keys"]',
-    '/usage': '[data-tour="sidebar-usage"]'
+    '/usage': '[data-tour="sidebar-usage"]',
   }
 
   const selector = pathToSelector[itemPath]
   if (selector && onboardingStore.isCurrentStep(selector)) {
+    // Give the destination time to render before the scheduled onboarding step resolves
+    // its next target element.
     onboardingStore.nextStep(500)
   }
 }
 
+// isActive matches a destination or one of its slash-delimited descendants.
 function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path + '/')
 }
 
+// isGroupActive reports whether a group contains the current exact route.
+//
+// Groups without children return false; nested descendants do not activate a child
+// unless its configured path matches the route.
 function isGroupActive(item: NavItem): boolean {
   if (!item.children) return false
-  return item.children.some(child => route.path === child.path)
+  return item.children.some((child) => route.path === child.path)
 }
 
+// isGroupExpanded combines local user choice with the current child route to select the
+// effective group state. An absent override lets route activity open its group
+// automatically. A recorded false is distinct from an absent entry: it keeps even the
+// active group closed after a user collapses it.
+//
+// The override map belongs to this sidebar instance and survives route changes during
+// that lifetime. Recreating the component clears those choices and returns unmodified
+// groups to route-driven expansion.
 function isGroupExpanded(item: NavItem): boolean {
   const override = groupExpandOverrides.value.get(item.path)
   if (override !== undefined) return override
   return isGroupActive(item)
 }
 
+// toggleGroup records the opposite of the group's effective expansion state.
+//
+// The local override then takes precedence over route-driven expansion until the sidebar
+// instance is recreated, including when navigation enters that group.
 function toggleGroup(item: NavItem) {
   groupExpandOverrides.value.set(item.path, !isGroupExpanded(item))
 }
 
-// Fetch admin settings (for feature-gated nav items like Ops).
+// Fetch administrator settings as soon as the role is available so gated destinations
+// such as Ops can reflect settings loaded after setup.
 watch(
   isAdmin,
   (v) => {
@@ -449,15 +642,18 @@ watch(
       adminSettingsStore.fetch()
     }
   },
-  { immediate: true }
+  { immediate: true },
 )
 
+// Mount refreshes batch-image eligibility and administrator settings, then restores any
+// saved sidebar scroll position after Vue has rendered the navigation container.
 onMounted(() => {
   void refreshBatchImageAccess()
   if (isAdmin.value) {
     adminSettingsStore.fetch()
   }
-  // 路由切换重新挂载组件后恢复侧边栏滚动位置。
+  // Wait for rendered navigation before restoring the shared scroll position so a
+  // remounted sidebar can recover its previous visible section.
   if (appStore.sidebarScrollTop > 0 && sidebarNavRef.value) {
     void nextTick(() => {
       if (sidebarNavRef.value) {
@@ -467,6 +663,8 @@ onMounted(() => {
   }
 })
 
+// Save the current navigation scroll position before its element is removed so a later
+// sidebar instance can restore the same visible section.
 onBeforeUnmount(() => {
   if (sidebarNavRef.value) {
     appStore.sidebarScrollTop = sidebarNavRef.value.scrollTop
@@ -475,12 +673,20 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/*
+ * Collapsed links remove the label gap and use symmetric padding to place their
+ * icons within the narrow navigation rail.
+ */
 .sidebar-link-collapsed {
   gap: 0;
   padding-left: 0.875rem;
   padding-right: 0.875rem;
 }
 
+/*
+ * Section titles retain their row height while text fades and a separator appears,
+ * keeping navigation positions stable during sidebar collapse.
+ */
 .sidebar-section-title {
   position: relative;
   display: flex;
@@ -526,6 +732,10 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
+/*
+ * Labels animate width alongside opacity and translation so expanding navigation
+ * reveals text while collapsed links release their horizontal space.
+ */
 .sidebar-label {
   display: block;
   min-width: 0;
@@ -553,7 +763,10 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-/* 自定义图标与导航图标同尺寸，保留上传 SVG 自身的颜色。 */
+/*
+ * Custom SVGs use the navigation icon dimensions while retaining colors supplied by
+ * the uploaded SVG, including any inherited currentColor.
+ */
 .sidebar-svg-icon {
   width: 1.125rem;
   height: 1.125rem;

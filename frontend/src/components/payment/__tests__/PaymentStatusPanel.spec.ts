@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
+// Hoisted payment, rendering, and feedback doubles supply controlled order transitions while fake timers advance polling and mobile handoff deadlines.
 const pollOrderStatus = vi.hoisted(() => vi.fn())
 const cancelOrder = vi.hoisted(() => vi.fn())
 const verifyOrder = vi.hoisted(() => vi.fn())
@@ -51,6 +52,16 @@ vi.mock('qrcode', () => ({
 
 import PaymentStatusPanel from '../PaymentStatusPanel.vue'
 
+/**
+ * PaymentStatusPanel.spec.ts checks payment waiting, upstream recovery, cancellation races,
+ * and mobile Alipay presentation through the mounted panel. Controlled gateway replies and
+ * fake timers keep order state transitions deterministic without sending payment or refund
+ * requests.
+ */
+
+/**
+ * orderFactory creates a payment order fixture carrying the requested server status.
+ */
 const orderFactory = (status: string) => ({
   id: 42,
   user_id: 9,
@@ -74,13 +85,18 @@ describe('PaymentStatusPanel', () => {
     verifyOrder.mockReset()
     showError.mockReset()
     toCanvas.mockReset().mockResolvedValue(undefined)
-    formatBalanceAmountMock.mockReset().mockImplementation((amount: number) => `Balance ${amount.toFixed(2)}`)
+    formatBalanceAmountMock
+      .mockReset()
+      .mockImplementation((amount: number) => `Balance ${amount.toFixed(2)}`)
   })
 
   afterEach(() => {
     vi.useRealTimers()
   })
 
+  // Order polling returns RECHARGING while internal fulfillment is still progressing. The
+  // waiting panel must display payment success after polling the order and emit one success
+  // event for the observed response.
   it('treats RECHARGING as a successful terminal state', async () => {
     pollOrderStatus.mockResolvedValue(orderFactory('RECHARGING'))
 
@@ -108,9 +124,13 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.emitted('success')).toHaveLength(1)
   })
 
+  // A recharging balance order reaches the payment-success presentation before fulfillment
+  // completes. The panel must call the account-unit formatter with two fraction digits and
+  // display its returned credited quantity.
   it('uses the shared balance formatter instead of a hard-coded currency symbol', async () => {
     pollOrderStatus.mockResolvedValue(orderFactory('RECHARGING'))
-    // 用自定义格式验证成功态金额展示走的是统一余额格式化逻辑。
+    // The custom formatted value identifies the shared balance formatter in the success panel,
+    // independently of the gateway currency symbol.
     formatBalanceAmountMock.mockReturnValue('Credits 88.00')
 
     const wrapper = mount(PaymentStatusPanel, {
@@ -137,6 +157,8 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.text()).not.toContain('$88.00')
   })
 
+  // The resolved order returns its actual gateway currency after successful polling. The
+  // terminal panel must use that currency when rendering the charged payment amount.
   it('uses resolved order currency for pay amount after successful polling', async () => {
     pollOrderStatus.mockResolvedValue({
       ...orderFactory('COMPLETED'),
@@ -171,6 +193,8 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.text()).not.toContain('¥108.00')
   })
 
+  // A QR-mode order also supplies a payable browser URL. The waiting panel must expose its
+  // reopen action so the user can reach the hosted destination as well.
   it('shows reopen button in QR mode when payUrl is also available', async () => {
     const openSpy = vi.spyOn(window, 'open').mockReturnValue({ closed: false } as Window)
 
@@ -203,6 +227,8 @@ describe('PaymentStatusPanel', () => {
     openSpy.mockRestore()
   })
 
+  // A Stripe order supplies a trade reference for upstream verification. Polling must query that
+  // verification path and apply the returned status to the waiting panel.
   it('actively verifies upstream status when out_trade_no is available', async () => {
     verifyOrder.mockResolvedValue({ data: orderFactory('PAID') })
 
@@ -231,6 +257,8 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.text()).toContain('payment.result.success')
   })
 
+  // A non-Stripe order has a trade reference but is already resolved by local status. Polling
+  // must use the local order path without issuing an unnecessary upstream verification request.
   it('keeps non-stripe payment polling read-only even when out_trade_no is available', async () => {
     pollOrderStatus.mockResolvedValue(orderFactory('RECHARGING'))
     const wrapper = mount(PaymentStatusPanel, {
@@ -258,6 +286,8 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.text()).toContain('payment.result.success')
   })
 
+  // A custom method code contains a built-in wallet name. QR instructions must remain generic
+  // because only exact configured aliases identify the built-in payment flows.
   it('uses generic QR copy for custom methods that contain built-in names', async () => {
     const wrapper = mount(PaymentStatusPanel, {
       props: {
@@ -280,6 +310,8 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.text()).not.toContain('payment.qr.scanAlipay')
   })
 
+  // A WeChat order remains locally pending while its upstream payment succeeds. Bounded recovery
+  // verification must discover that success and settle the waiting panel.
   it('actively verifies a stuck wxpay pending order and settles it when upstream confirms payment', async () => {
     pollOrderStatus.mockResolvedValue(orderFactory('PENDING'))
     verifyOrder.mockResolvedValue({
@@ -312,6 +344,8 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.emitted('success')).toHaveLength(1)
   })
 
+  // Cancellation discovers that the order was already paid. The panel must resolve its current
+  // status and show success instead of replacing a paid order with cancellation.
   it('shows success when cancel discovers the order was already paid', async () => {
     cancelOrder.mockResolvedValue({ data: { message: 'already_paid' } })
     verifyOrder.mockResolvedValue({ data: orderFactory('COMPLETED') })
@@ -342,6 +376,8 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.emitted('success')).toHaveLength(1)
   })
 
+  // Cancellation reports already_paid but upstream verification still returns a pending order.
+  // The panel must retain its waiting instructions, emit no success event, and resume the countdown.
   it('keeps waiting when cancel sees already_paid but local order is not successful yet', async () => {
     vi.setSystemTime(new Date('2099-01-01T12:00:00Z'))
     cancelOrder.mockResolvedValue({ data: { message: 'already_paid' } })
@@ -379,6 +415,8 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.text()).toContain('29:59')
   })
 
+  // The server changes the order to PROCESSING near its local expiry. The panel must stop the
+  // expiry countdown and use slower local status polling while payment settles.
   it('stops expiry countdown and switches to slow local polling while payment is processing', async () => {
     vi.setSystemTime(new Date('2099-01-01T12:00:00Z'))
     verifyOrder.mockResolvedValue({ data: orderFactory('PROCESSING') })
@@ -419,6 +457,8 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.text()).not.toContain('payment.qr.expired')
   })
 
+  // A mobile Alipay precreate order remains locally pending. The panel must perform the eligible
+  // upstream recovery check and apply the payment state returned by the provider.
   it('actively verifies a pending mobile Alipay precreate order', async () => {
     const originalLocation = window.location
     const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden')
@@ -460,6 +500,8 @@ describe('PaymentStatusPanel', () => {
     if (originalHidden) Object.defineProperty(document, 'hidden', originalHidden)
   })
 
+  // A desktop Alipay order remains locally pending with a trade reference. The same bounded
+  // wallet recovery path must verify upstream status before continuing to wait.
   it('actively verifies a pending desktop Alipay order', async () => {
     pollOrderStatus.mockResolvedValue(orderFactory('PENDING'))
     verifyOrder.mockResolvedValue({ data: orderFactory('COMPLETED') })
@@ -488,6 +530,8 @@ describe('PaymentStatusPanel', () => {
     wrapper.unmount()
   })
 
+  // A mobile Alipay application launch leaves the browser visible. QR fallback must stay hidden
+  // during the handoff deadline and appear only after that deadline elapses.
   it('keeps the QR fallback hidden until the Alipay app launch times out', async () => {
     const originalLocation = window.location
     const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden')
@@ -517,7 +561,9 @@ describe('PaymentStatusPanel', () => {
     })
 
     await flushPromises()
-    expect(assign).toHaveBeenCalledWith(expect.stringContaining('alipays://platformapi/startapp?saId=10000007&qrcode='))
+    expect(assign).toHaveBeenCalledWith(
+      expect.stringContaining('alipays://platformapi/startapp?saId=10000007&qrcode='),
+    )
     expect(wrapper.find('[data-test="alipay-qr-fallback"]').exists()).toBe(false)
 
     await vi.advanceTimersByTimeAsync(2200)
@@ -526,13 +572,19 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.find('[data-test="alipay-qr-fallback"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('payment.qr.saveQRCode')
     expect(wrapper.text()).toContain('sub2_20260420abcd1234')
-    expect(toCanvas).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), 'https://qr.alipay.com/dynamic-order-42', expect.any(Object))
+    expect(toCanvas).toHaveBeenCalledWith(
+      expect.any(HTMLCanvasElement),
+      'https://qr.alipay.com/dynamic-order-42',
+      expect.any(Object),
+    )
 
     wrapper.unmount()
     Object.defineProperty(window, 'location', { configurable: true, value: originalLocation })
     if (originalHidden) Object.defineProperty(document, 'hidden', originalHidden)
   })
 
+  // The browser enters the background during mobile Alipay launch. The panel must treat that as
+  // handoff and keep QR fallback hidden after the timer would otherwise expire.
   it('does not show the QR fallback after the page enters the background', async () => {
     const originalLocation = window.location
     const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden')

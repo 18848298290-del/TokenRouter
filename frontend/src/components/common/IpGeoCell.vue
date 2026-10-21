@@ -9,7 +9,14 @@
     </button>
   </div>
 
-  <div v-else-if="entry.status === 'loading'" class="mt-1" role="status" :aria-label="t('common.loading')" aria-busy="true" data-loading-skeleton>
+  <div
+    v-else-if="entry.status === 'loading'"
+    class="mt-1"
+    role="status"
+    :aria-label="t('common.loading')"
+    aria-busy="true"
+    data-loading-skeleton
+  >
     <Skeleton :width="96" :height="12" />
   </div>
 
@@ -54,11 +61,33 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { fetchOne, getEntry } from '@/utils/ipGeoLookup'
 
-const props = defineProps<{ ip: string }>()
+/**
+ * IpGeoCell.vue displays one IP lookup cache entry and exposes fetch, retry, refresh,
+ * and external detail actions. The lookup utility owns request state, so the cell
+ * reads the shared entry reactively and renders private addresses as text.
+ */
+
+/**
+ * props supplies the address used for the shared lookup entry, refresh requests, and
+ * external detail URL.
+ */
+const props = defineProps<{ ip: string /* lookup IP address */ }>()
+/**
+ * The i18n translator resolves this component's message keys using the current
+ * application locale and its configured translation catalog.
+ */
 const { t } = useI18n()
 
+/**
+ * entry reads the shared lookup record for the current IP so all cells observe cache
+ * state changes.
+ */
 const entry = computed(() => getEntry(props.ip))
 
+/**
+ * tooltipText lists available organization, timezone, accuracy, and coordinate details
+ * for the successful lookup label.
+ */
 const tooltipText = computed(() => {
   const detail = entry.value.detail
   if (!detail) return ''
@@ -73,19 +102,30 @@ const tooltipText = computed(() => {
   return lines.join('\n')
 })
 
+/**
+ * handleFetch requests the current IP through the shared lookup utility.
+ */
 const handleFetch = () => {
   void fetchOne(props.ip)
 }
 
+/**
+ * handleRefresh requests the current IP with the force flag enabled.
+ */
 const handleRefresh = () => {
   void fetchOne(props.ip, true)
 }
 
+/**
+ * handleOpenDetail opens the encoded IP in an external lookup page. The new browsing
+ * context receives noopener and noreferrer features so the request detail action is
+ * isolated from this application window.
+ */
 const handleOpenDetail = () => {
   window.open(
     `https://www.iplocation.net/ip-lookup?query=${encodeURIComponent(props.ip)}`,
     '_blank',
-    'noopener,noreferrer'
+    'noopener,noreferrer',
   )
 }
 </script>

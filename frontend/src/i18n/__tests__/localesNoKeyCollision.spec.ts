@@ -21,10 +21,18 @@ import zhDashboard from '../locales/zh/dashboard'
 import zhLanding from '../locales/zh/landing'
 import zhMisc from '../locales/zh/misc'
 
-// locales/{zh,en}/index.ts 与 admin/index.ts 使用对象展开聚合各域模块，
-// 展开模块之间若出现同名顶层键会静默覆盖，测试会将重复键报告为失败。
+// localesNoKeyCollision.spec.ts checks catalog namespace assembly and selected
+// provider translation paths. Object spreads can replace earlier keys silently,
+// so tests detect overlaps and verify that threshold controls and scheduler
+// diagnostics resolve their expected message locations.
+
+// Modules maps catalog fragment names to their exported top-level message
+// entries.
 type Modules = Record<string, Record<string, unknown>>
 
+// collisions reports keys shared by named catalog fragments using the first
+// owning fragment. Results include both fragment names so a failed spread-
+// assembly check identifies which dictionaries would overwrite each other.
 function collisions(modules: Modules): string[] {
   const seen = new Map<string, string>()
   const out: string[] = []
@@ -41,11 +49,15 @@ function collisions(modules: Modules): string[] {
   return out
 }
 
+// roots groups the root catalog fragments checked for overlapping translation
+// namespaces in each supported language.
 const roots: Record<string, Modules> = {
   zh: { landing: zhLanding, common: zhCommon, dashboard: zhDashboard, misc: zhMisc },
-  en: { landing: enLanding, common: enCommon, dashboard: enDashboard, misc: enMisc }
+  en: { landing: enLanding, common: enCommon, dashboard: enDashboard, misc: enMisc },
 }
 
+// admins groups administrator catalog fragments checked for duplicate namespaces
+// before their exported entries are combined.
 const admins: Record<string, Modules> = {
   zh: {
     overview: zhAdminOverview,
@@ -53,7 +65,7 @@ const admins: Record<string, Modules> = {
     providers: zhAdminProviders,
     resources: zhAdminResources,
     ops: zhAdminOps,
-    settings: zhAdminSettings
+    settings: zhAdminSettings,
   },
   en: {
     overview: enAdminOverview,
@@ -61,32 +73,41 @@ const admins: Record<string, Modules> = {
     providers: enAdminProviders,
     resources: enAdminResources,
     ops: enAdminOps,
-    settings: enAdminSettings
-  }
+    settings: enAdminSettings,
+  },
 }
 
 describe.each(Object.keys(roots))('locale %s spread assembly', (locale) => {
+  // Root catalog fragments are merged through object spreads in each language.
+  // Their top-level keys remain disjoint so one fragment cannot silently replace
+  // another fragment during assembly.
   it('root modules have no overlapping top-level keys', () => {
     expect(collisions(roots[locale])).toEqual([])
   })
 
+  // The catalog adds administrator messages through an explicit admin namespace.
+  // Root fragments do not define that namespace, preventing an ordinary spread
+  // from replacing administrator message content.
   it('root modules do not shadow the explicit "admin" namespace', () => {
     for (const [name, mod] of Object.entries(roots[locale])) {
       expect(Object.keys(mod), `module ${name} must not define "admin"`).not.toContain('admin')
     }
   })
 
+  // Administrator catalog fragments are merged through object spreads in each
+  // language. Their top-level keys remain distinct so provider, pricing,
+  // settings, and other sections survive assembly.
   it('admin modules have no overlapping top-level keys', () => {
     expect(collisions(admins[locale])).toEqual([])
   })
 })
-
-// 提供商阈值表单直接读取 admin.providers.*；这些键若误放进 status，
-// vue-i18n 会把键名原样显示在界面上。
 describe('provider scheduling threshold locale hierarchy', () => {
+  // Provider threshold form labels are consumed directly below the providers
+  // namespace. Both catalogs retain those keys outside status so the controls
+  // resolve text at their expected paths.
   it.each([
     ['zh', zhAdminProviders.providers],
-    ['en', enAdminProviders.providers]
+    ['en', enAdminProviders.providers],
   ] as const)('%s keeps threshold form keys outside status', (_locale, messages) => {
     const record = messages as unknown as Record<string, unknown>
     const status = record.status as Record<string, unknown>
@@ -94,7 +115,7 @@ describe('provider scheduling threshold locale hierarchy', () => {
       'providerSchedulingThresholdOverride',
       'providerSchedulingThresholdOverrideHint',
       'providerSchedulingThresholdOverrideValue',
-      'providerSchedulingThresholdOverrideDisabledHint'
+      'providerSchedulingThresholdOverrideDisabledHint',
     ]
 
     for (const key of keys) {
@@ -103,8 +124,6 @@ describe('provider scheduling threshold locale hierarchy', () => {
     }
   })
 })
-
-// 高级调度诊断返回的设置键必须全部有本地化名称，否则界面会直接显示键路径。
 describe('advanced scheduler diagnostic locale keys', () => {
   const settingKeys = [
     'sticky_weighted_enabled',
@@ -123,20 +142,29 @@ describe('advanced scheduler diagnostic locale keys', () => {
     'weight_reset',
     'weight_quota_headroom',
     'weight_previous_response',
-    'weight_session_sticky'
+    'weight_session_sticky',
   ]
 
+  // Scheduler diagnostics identify settings through backend setting names. Both
+  // catalogs provide text for every listed name so those diagnostic rows can
+  // display translated settings labels.
   it.each([
     ['zh', zhAdminProviders.providers],
-    ['en', enAdminProviders.providers]
+    ['en', enAdminProviders.providers],
   ] as const)('%s translates every diagnostic setting', (_locale, messages) => {
-    const settingNames = (messages as unknown as {
-      advancedSchedulerScore: { settingNames: Record<string, unknown> }
-    }).advancedSchedulerScore.settingNames
+    const settingNames = (
+      messages as unknown as {
+        advancedSchedulerScore: { settingNames: Record<string, unknown> }
+      }
+    ).advancedSchedulerScore.settingNames
 
     for (const key of settingKeys) {
-      expect(settingNames[key], `${_locale} missing setting name ${key}`).toEqual(expect.any(String))
-      expect(settingNames[key]).not.toBe(`admin.providers.advancedSchedulerScore.settingNames.${key}`)
+      expect(settingNames[key], `${_locale} missing setting name ${key}`).toEqual(
+        expect.any(String),
+      )
+      expect(settingNames[key]).not.toBe(
+        `admin.providers.advancedSchedulerScore.settingNames.${key}`,
+      )
     }
   })
 })

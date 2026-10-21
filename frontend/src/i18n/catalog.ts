@@ -1,29 +1,57 @@
 import manifest from '../../../backend/internal/pkg/locale/manifest.json'
 
-export type LocaleCode = typeof manifest.locales[number]['code']
+// catalog.ts maps browser language input and vendor widget codes through the
+// shared server manifest. Canonical application codes identify message catalogs,
+// while payment and CAPTCHA integrations receive the smaller language vocabulary
+// supported by their own controls.
 
-// 语言标识和兼容映射与服务端共用同一份目录。
+// LocaleCode represents an application language code from the shared manifest.
+export type LocaleCode = (typeof manifest.locales)[number]['code']
+
+// defaultLocale and availableLocales expose manifest defaults and selector
+// metadata for application language selection.
 export const defaultLocale = manifest.default as LocaleCode
-export const availableLocales = manifest.locales.map(item => ({
+export const availableLocales = manifest.locales.map((item) => ({
   ...item,
   code: item.code as LocaleCode,
   flag: item.code === 'en' ? '🇺🇸' : item.code === 'zh-Hans' ? '🇨🇳' : '🌐',
 }))
 
-// 未支持的语言返回空值，调用方决定使用站点默认语言还是内容原文。
+// normalizeLocale returns the first supported canonical code matching the
+// supplied language. Empty, malformed, overlong, and unsupported values return
+// undefined so callers can select the appropriate interface default or original
+// content.
 export function normalizeLocale(value: string | null | undefined): LocaleCode | undefined {
   const raw = value?.trim().replace(/_/g, '-').toLowerCase()
+  // Limit accepted tags to the shared language catalog validation length.
   if (!raw || raw.length > 35 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(raw)) return undefined
-  return availableLocales.find(item =>
-    item.code.toLowerCase() === raw || raw.startsWith(`${item.code.toLowerCase()}-`) ||
-    item.aliases.some(alias => alias.toLowerCase() === raw),
+  return availableLocales.find(
+    (item) =>
+      item.code.toLowerCase() === raw ||
+      raw.startsWith(`${item.code.toLowerCase()}-`) ||
+      item.aliases.some((alias) => alias.toLowerCase() === raw),
   )?.code
 }
 
-// 外部控件各自声明支持范围，应用语言不使用供应商的代码。
-type VendorLocales = { airwallex: 'zh' | 'en'; tencent: 'zh-cn' | 'en'; aliyun: 'cn' | 'en'; stripe: 'zh' | 'en'; turnstile: 'zh-cn' | 'en' }
+// VendorLocales describes the language codes accepted by each integrated browser
+// widget.
+type VendorLocales = {
+  airwallex: 'zh' | 'en' // Airwallex payment widget language
+  tencent: 'zh-cn' | 'en' // Tencent CAPTCHA widget language
+  aliyun: 'cn' | 'en' // Aliyun CAPTCHA widget language
+  stripe: 'zh' | 'en' // Stripe payment widget language
+  turnstile: 'zh-cn' | 'en' // Cloudflare Turnstile widget language
+}
 
-export function vendorLocale<V extends keyof VendorLocales>(vendor: V, code: string): VendorLocales[V] {
+// vendorLocale converts an application language into the requested vendor widget
+// code. Simplified Chinese uses the vendor-specific Chinese spelling, while
+// every other or unsupported application language selects English.
+export function vendorLocale<V extends keyof VendorLocales>(
+  vendor: V,
+  code: string,
+): VendorLocales[V] {
+  // Widgets support these two choices, so unsupported application languages
+  // select English using the same mapping as supported English.
   const chinese = normalizeLocale(code) === 'zh-Hans'
   const values: VendorLocales = {
     airwallex: chinese ? 'zh' : 'en',

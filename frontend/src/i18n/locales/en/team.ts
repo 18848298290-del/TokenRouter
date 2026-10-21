@@ -1,3 +1,8 @@
+// team.ts supplies English labels for team membership, shared API keys, limits,
+// and usage. Owner and member actions share the team namespace so management
+// dialogs and usage views can display their roles, permissions, and operation
+// results consistently.
+
 export default {
   team: {
     title: 'Team',
@@ -13,7 +18,8 @@ export default {
     detailsTitle: '{name} · Team details',
     statisticsTitle: '{name} · Usage statistics',
     last30DaysStatistics: 'Team usage over the last 30 days',
-    memberCapacityDescription: 'Member capacity excludes the owner. Set it to 0 to prevent adding members.',
+    memberCapacityDescription:
+      'Member capacity excludes the owner. Set it to 0 to prevent adding members.',
     createdAt: 'Created',
     noTeams: 'No teams yet',
     noTeamsDescription: 'Create a team to manage member capacity, status, and usage statistics.',
@@ -80,7 +86,8 @@ export default {
     accept: 'Accept',
     decline: 'Decline',
     transferActionTitle: 'Ownership transfer',
-    transferActionDescription: 'Accepting makes you the owner and changes the current owner to a member.',
+    transferActionDescription:
+      'Accepting makes you the owner and changes the current owner to a member.',
     editLimits: 'Edit limits',
     resetUsage: 'Reset usage',
     remove: 'Remove',
@@ -91,7 +98,8 @@ export default {
     transferMessage: 'The target member must confirm within 24 hours.',
     saveLimits: 'Save limits',
     defaultMemberLimits: 'Default member limits',
-    defaultMemberLimitsDescription: 'New members inherit these limits when they join. Existing custom limits are unchanged; enter 0 for unlimited.',
+    defaultMemberLimitsDescription:
+      'New members inherit these limits when they join. Existing custom limits are unchanged; enter 0 for unlimited.',
     defaultDailyLimit: 'Default daily limit',
     defaultWeeklyLimit: 'Default weekly limit',
     defaultMonthlyLimit: 'Default monthly limit',
@@ -100,7 +108,8 @@ export default {
     resetPeriods: 'Reset selected periods',
     rename: 'Save name',
     teamStatus: 'Team status',
-    teamStatusDescription: 'Pausing immediately stops all team keys. Resuming makes them available again.',
+    teamStatusDescription:
+      'Pausing immediately stops all team keys. Resuming makes them available again.',
     pause: 'Pause team',
     resume: 'Resume team',
     pauseTitle: 'Pause team',
@@ -112,7 +121,8 @@ export default {
     leaveMessage: 'All your team keys will be disabled immediately.',
     dissolve: 'Dissolve team',
     dissolveTitle: 'Dissolve team',
-    dissolveMessage: 'The team, memberships, and all team keys will be disabled. This cannot be undone.',
+    dissolveMessage:
+      'The team, memberships, and all team keys will be disabled. This cannot be undone.',
     statusActive: 'Active',
     statusSuspended: 'Suspended',
     statusInactive: 'Inactive',
@@ -129,6 +139,6 @@ export default {
     noUsage: 'No team usage yet',
     noKeys: 'No team keys yet',
     noMembers: 'No members yet',
-    noInvitations: 'No invitations yet'
-  }
+    noInvitations: 'No invitations yet',
+  },
 }

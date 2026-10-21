@@ -2,20 +2,13 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
-        <!-- Top Toolbar: Left (search + filters) / Right (actions) -->
         <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <!-- Left: Fuzzy user search + filters (wrap to multiple lines) -->
           <div class="flex min-w-0 flex-1 flex-nowrap items-center gap-2">
-            <!-- User Search -->
             <div
               class="input-icon-wrap min-w-0 flex-1 sm:flex-none sm:w-64"
               data-filter-user-search
             >
-              <Icon
-                name="search"
-                size="md"
-                class="input-icon text-gray-400"
-              />
+              <Icon name="search" size="md" class="input-icon text-gray-400" />
               <input
                 v-model="filterUserKeyword"
                 type="text"
@@ -34,10 +27,17 @@
                 <Icon name="x" size="sm" :stroke-width="2" />
               </button>
 
-              <!-- User Dropdown -->
               <MotionTransition name="dropdown-fade">
                 <div
-                  v-if="showFilterUserDropdown && (filterUserResults.length > 0 || filterUserKeyword)" :inert="!(showFilterUserDropdown && (filterUserResults.length > 0 || filterUserKeyword)) || undefined"
+                  v-if="
+                    showFilterUserDropdown && (filterUserResults.length > 0 || filterUserKeyword)
+                  "
+                  :inert="
+                    !(
+                      showFilterUserDropdown &&
+                      (filterUserResults.length > 0 || filterUserKeyword)
+                    ) || undefined
+                  "
                   class="dropdown z-50 mt-1 max-h-menu-sm w-full overflow-auto py-0"
                 >
                   <div
@@ -66,18 +66,30 @@
               </MotionTransition>
             </div>
 
-            <!-- Filters -->
-            <FilterDropdown :active-count="activeFilterCount" :columns="2" @reset="resetSubscriptionFilters">
+            <FilterDropdown
+              :active-count="activeFilterCount"
+              :columns="2"
+              @reset="resetSubscriptionFilters"
+            >
               <FilterField :label="t('admin.subscriptions.columns.status')">
-                <Select v-model="filters.status" :options="statusOptions" :placeholder="t('admin.subscriptions.allStatus')" @change="applyFilters" />
+                <Select
+                  v-model="filters.status"
+                  :options="statusOptions"
+                  :placeholder="t('admin.subscriptions.allStatus')"
+                  @change="applyFilters"
+                />
               </FilterField>
               <FilterField :label="t('admin.subscriptions.form.group')">
-                <Select v-model="filters.plan_id" :options="planOptions" :placeholder="t('admin.announcements.form.selectPackages')" @change="applyFilters" />
+                <Select
+                  v-model="filters.plan_id"
+                  :options="planOptions"
+                  :placeholder="t('admin.announcements.form.selectPackages')"
+                  @change="applyFilters"
+                />
               </FilterField>
             </FilterDropdown>
           </div>
 
-          <!-- Right: Actions -->
           <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
             <button
               @click="loadSubscriptions"
@@ -87,7 +99,7 @@
             >
               <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
             </button>
-            <!-- Column Settings Dropdown -->
+
             <div class="relative" ref="columnDropdownRef">
               <button
                 @click="showColumnDropdown = !showColumnDropdown"
@@ -97,14 +109,14 @@
                 <Icon name="columns" size="sm" class="h-4 w-4" />
                 <span class="hidden">{{ t('admin.users.columnSettings') }}</span>
               </button>
-              <!-- Dropdown menu -->
+
               <MotionTransition name="dropdown-fade">
                 <div
-                  v-if="showColumnDropdown" :inert="!(showColumnDropdown) || undefined"
+                  v-if="showColumnDropdown"
+                  :inert="!showColumnDropdown || undefined"
                   class="dropdown right-0 z-50 mt-2 w-48 origin-top-right py-0"
                 >
                   <div class="p-2">
-                    <!-- User column mode selection -->
                     <div class="mb-2 border-b border-gray-200 pb-2 dark:border-dark-600">
                       <div class="px-3 py-1 text-xs font-medium text-gray-500 dark:text-gray-400">
                         {{ t('admin.subscriptions.columns.user') }}
@@ -136,7 +148,7 @@
                         />
                       </button>
                     </div>
-                    <!-- Other columns toggle -->
+
                     <button
                       v-for="col in toggleableColumns"
                       :key="col.key"
@@ -171,7 +183,6 @@
         </div>
       </template>
 
-      <!-- Subscriptions Table -->
       <template #table>
         <DataTable
           column-order-storage-key="admin-subscriptions-column-order"
@@ -191,11 +202,13 @@
                 :alt="row.user?.email || ''"
                 size-class="h-8 w-8"
               />
-              <!-- 用户名按基线对齐，移动卡片的标签对齐用户名。行高 32px 和头像等高，用户名仍在头像中线上。 -->
+
+              <!-- The 32-pixel line matches the avatar height while the text baseline remains available for mobile-card label alignment. -->
               <span class="self-baseline font-medium leading-8 text-gray-900 dark:text-white">
-                {{ userColumnMode === 'email'
-                  ? (row.user?.email || t('admin.redeem.userPrefix', { id: row.user_id }))
-                  : (row.user?.username || '-')
+                {{
+                  userColumnMode === 'email'
+                    ? row.user?.email || t('admin.redeem.userPrefix', { id: row.user_id })
+                    : row.user?.username || '-'
                 }}
               </span>
             </div>
@@ -213,7 +226,6 @@
 
           <template #cell-usage="{ row }">
             <div class="min-w-[280px] space-y-2">
-              <!-- Daily Usage -->
               <div v-if="row.daily_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.daily') }}</span>
@@ -222,7 +234,7 @@
                       class="h-1.5 rounded-full transition-[width,background-color]"
                       :class="getProgressClass(row.daily_usage_usd, row.daily_limit_usd)"
                       :style="{
-                        width: getProgressWidth(row.daily_usage_usd, row.daily_limit_usd)
+                        width: getProgressWidth(row.daily_usage_usd, row.daily_limit_usd),
                       }"
                     ></div>
                   </div>
@@ -238,7 +250,6 @@
                 </div>
               </div>
 
-              <!-- Weekly Usage -->
               <div v-if="row.weekly_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.weekly') }}</span>
@@ -247,7 +258,7 @@
                       class="h-1.5 rounded-full transition-[width,background-color]"
                       :class="getProgressClass(row.weekly_usage_usd, row.weekly_limit_usd)"
                       :style="{
-                        width: getProgressWidth(row.weekly_usage_usd, row.weekly_limit_usd)
+                        width: getProgressWidth(row.weekly_usage_usd, row.weekly_limit_usd),
                       }"
                     ></div>
                   </div>
@@ -263,7 +274,6 @@
                 </div>
               </div>
 
-              <!-- Monthly Usage -->
               <div v-if="row.monthly_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.monthly') }}</span>
@@ -272,7 +282,7 @@
                       class="h-1.5 rounded-full transition-[width,background-color]"
                       :class="getProgressClass(row.monthly_usage_usd, row.monthly_limit_usd)"
                       :style="{
-                        width: getProgressWidth(row.monthly_usage_usd, row.monthly_limit_usd)
+                        width: getProgressWidth(row.monthly_usage_usd, row.monthly_limit_usd),
                       }"
                     ></div>
                   </div>
@@ -288,13 +298,8 @@
                 </div>
               </div>
 
-              <!-- No Limits - Unlimited badge -->
               <div
-                v-if="
-                  !row.daily_limit_usd &&
-                  !row.weekly_limit_usd &&
-                  !row.monthly_limit_usd
-                "
+                v-if="!row.daily_limit_usd && !row.weekly_limit_usd && !row.monthly_limit_usd"
                 class="flex items-center gap-2 rounded-control bg-gradient-to-r from-emerald-50 to-teal-50 px-3 py-2 dark:from-emerald-900/20 dark:to-teal-900/20"
               >
                 <span class="text-lg text-emerald-600 dark:text-emerald-400">∞</span>
@@ -339,11 +344,11 @@
                   ? 'badge-success'
                   : value === 'pending'
                     ? 'badge-primary'
-                  : value === 'expired'
-                    ? 'badge-warning'
-                    : value === 'suspended'
-                      ? 'badge-danger'
-                      : 'badge-gray'
+                    : value === 'expired'
+                      ? 'badge-warning'
+                      : value === 'suspended'
+                        ? 'badge-danger'
+                        : 'badge-gray',
               ]"
             >
               {{ t(`admin.subscriptions.status.${value}`) }}
@@ -399,20 +404,18 @@
         </DataTable>
       </template>
 
-      <!-- Pagination -->
       <template #pagination>
-      <Pagination
-        v-if="pagination.total > 0"
-        :page="pagination.page"
-        :total="pagination.total"
-        :page-size="pagination.page_size"
-        @update:page="handlePageChange"
-        @update:pageSize="handlePageSizeChange"
-      />
+        <Pagination
+          v-if="pagination.total > 0"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+          @update:pageSize="handlePageSizeChange"
+        />
       </template>
     </TablePageLayout>
 
-    <!-- Assign Subscription Modal -->
     <BaseDialog
       :show="showAssignModal"
       :title="t('admin.subscriptions.assignSubscription')"
@@ -443,10 +446,14 @@
             >
               <Icon name="x" size="sm" :stroke-width="2" />
             </button>
-            <!-- User Dropdown -->
+
             <MotionTransition name="dropdown-fade">
               <div
-                v-if="showUserDropdown && (userSearchResults.length > 0 || userSearchKeyword)" :inert="!(showUserDropdown && (userSearchResults.length > 0 || userSearchKeyword)) || undefined"
+                v-if="showUserDropdown && (userSearchResults.length > 0 || userSearchKeyword)"
+                :inert="
+                  !(showUserDropdown && (userSearchResults.length > 0 || userSearchKeyword)) ||
+                  undefined
+                "
                 class="dropdown z-50 mt-1 max-h-menu-sm w-full overflow-auto py-0"
               >
                 <div
@@ -514,7 +521,6 @@
       </template>
     </BaseDialog>
 
-    <!-- Adjust Subscription Modal -->
     <BaseDialog
       :show="showExtendModal"
       :title="t('admin.subscriptions.adjustSubscription')"
@@ -544,7 +550,10 @@
               }}
             </span>
           </p>
-          <p v-if="extendingSubscription.expires_at" class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+          <p
+            v-if="extendingSubscription.expires_at"
+            class="mt-1 text-sm text-gray-600 dark:text-gray-400"
+          >
             {{ t('admin.subscriptions.remainingDays') }}:
             <span class="font-medium text-gray-900 dark:text-white">
               {{ getDaysRemaining(extendingSubscription.expires_at) ?? 0 }}
@@ -583,7 +592,6 @@
       </template>
     </BaseDialog>
 
-    <!-- Revoke Confirmation Dialog -->
     <ConfirmDialog
       :show="showRevokeDialog"
       :title="revokeDialogTitle"
@@ -595,44 +603,64 @@
       @cancel="showRevokeDialog = false"
     />
 
-    <!-- 恢复确认弹窗 -->
     <ConfirmDialog
       :show="showRestoreDialog"
       :title="t('admin.subscriptions.restoreSubscription')"
-      :message="t('admin.subscriptions.restoreConfirm', { user: restoringSubscription?.user?.email })"
+      :message="
+        t('admin.subscriptions.restoreConfirm', { user: restoringSubscription?.user?.email })
+      "
       :confirm-text="t('admin.subscriptions.restore')"
       :cancel-text="t('common.cancel')"
       @confirm="confirmRestore"
       @cancel="showRestoreDialog = false"
     />
 
-    <!-- Reset Quota Confirmation Dialog -->
     <ConfirmDialog
       :show="showResetQuotaConfirm"
       :title="t('admin.subscriptions.resetQuotaTitle')"
-      :message="t('admin.subscriptions.resetQuotaConfirm', { user: resettingSubscription?.user?.email })"
+      :message="
+        t('admin.subscriptions.resetQuotaConfirm', { user: resettingSubscription?.user?.email })
+      "
       :confirm-text="t('admin.subscriptions.resetQuota')"
       :cancel-text="t('common.cancel')"
       @confirm="confirmResetQuota"
       @cancel="showResetQuotaConfirm = false"
     />
-    <!-- Subscription Guide Modal -->
+
     <teleport to="body">
       <MotionTransition name="modal">
-        <div v-if="showGuideModal" class="fixed inset-0 z-50 flex items-center justify-center p-4" @mousedown.self="showGuideModal = false">
+        <div
+          v-if="showGuideModal"
+          class="fixed inset-0 z-50 flex items-center justify-center p-4"
+          @mousedown.self="showGuideModal = false"
+        >
           <div class="fixed inset-0 bg-[var(--overlay-bg)]" @click="showGuideModal = false"></div>
-          <div class="relative max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-surface bg-white p-6 shadow-2xl dark:bg-dark-900 sm:rounded-dialog">
-            <button type="button" class="absolute right-4 top-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" @click="showGuideModal = false">
+          <div
+            class="relative max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-surface bg-white p-6 shadow-2xl dark:bg-dark-900 sm:rounded-dialog"
+          >
+            <button
+              type="button"
+              class="absolute right-4 top-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              @click="showGuideModal = false"
+            >
               <Icon name="x" size="sm" />
             </button>
 
-            <h2 class="mb-4 text-lg font-bold text-gray-900 dark:text-white">{{ t('admin.subscriptions.guide.title') }}</h2>
-            <p class="mb-5 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.subscriptions.guide.subtitle') }}</p>
+            <h2 class="mb-4 text-lg font-bold text-gray-900 dark:text-white">
+              {{ t('admin.subscriptions.guide.title') }}
+            </h2>
+            <p class="mb-5 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.subscriptions.guide.subtitle') }}
+            </p>
 
-            <!-- Step 1 -->
             <div class="mb-5">
-              <h3 class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-                <span class="flex h-6 w-6 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700 dark:bg-primary-900/40 dark:text-primary-300">1</span>
+              <h3
+                class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white"
+              >
+                <span
+                  class="flex h-6 w-6 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700 dark:bg-primary-900/40 dark:text-primary-300"
+                  >1</span
+                >
                 {{ t('admin.subscriptions.guide.step1.title') }}
               </h3>
               <ol class="ml-8 list-decimal space-y-1 text-sm text-gray-600 dark:text-gray-300">
@@ -652,10 +680,14 @@
               </div>
             </div>
 
-            <!-- Step 2 -->
             <div class="mb-5">
-              <h3 class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-                <span class="flex h-6 w-6 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700 dark:bg-primary-900/40 dark:text-primary-300">2</span>
+              <h3
+                class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white"
+              >
+                <span
+                  class="flex h-6 w-6 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700 dark:bg-primary-900/40 dark:text-primary-300"
+                  >2</span
+                >
                 {{ t('admin.subscriptions.guide.step2.title') }}
               </h3>
               <ol class="ml-8 list-decimal space-y-1 text-sm text-gray-600 dark:text-gray-300">
@@ -665,17 +697,31 @@
               </ol>
             </div>
 
-            <!-- Step 3 -->
             <div class="mb-5">
-              <h3 class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-                <span class="flex h-6 w-6 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700 dark:bg-primary-900/40 dark:text-primary-300">3</span>
+              <h3
+                class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white"
+              >
+                <span
+                  class="flex h-6 w-6 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700 dark:bg-primary-900/40 dark:text-primary-300"
+                  >3</span
+                >
                 {{ t('admin.subscriptions.guide.step3.title') }}
               </h3>
-              <div class="ml-8 overflow-hidden rounded-control border border-gray-200 dark:border-dark-600">
+              <div
+                class="ml-8 overflow-hidden rounded-control border border-gray-200 dark:border-dark-600"
+              >
                 <table class="w-full text-sm">
                   <tbody>
-                    <tr v-for="(row, i) in guideActionRows" :key="i" class="border-b border-gray-100 dark:border-dark-700 last:border-0">
-                      <td class="whitespace-nowrap bg-gray-50 px-3 py-2 font-medium text-gray-700 dark:bg-dark-700 dark:text-gray-300">{{ row.action }}</td>
+                    <tr
+                      v-for="(row, i) in guideActionRows"
+                      :key="i"
+                      class="border-b border-gray-100 dark:border-dark-700 last:border-0"
+                    >
+                      <td
+                        class="whitespace-nowrap bg-gray-50 px-3 py-2 font-medium text-gray-700 dark:bg-dark-700 dark:text-gray-300"
+                      >
+                        {{ row.action }}
+                      </td>
                       <td class="px-3 py-2 text-gray-600 dark:text-gray-400">{{ row.desc }}</td>
                     </tr>
                   </tbody>
@@ -683,13 +729,16 @@
               </div>
             </div>
 
-            <!-- Tip -->
-            <div class="rounded-control bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
+            <div
+              class="rounded-control bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/20 dark:text-blue-300"
+            >
               {{ t('admin.subscriptions.guide.tip') }}
             </div>
 
             <div class="mt-4 text-right">
-              <button type="button" class="btn btn-primary btn-sm" @click="showGuideModal = false">{{ t('common.close') }}</button>
+              <button type="button" class="btn btn-primary btn-sm" @click="showGuideModal = false">
+                {{ t('common.close') }}
+              </button>
             </div>
           </div>
         </div>
@@ -705,15 +754,15 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-import type { UserSubscription } from '@/types'
-import type { SubscriptionPlan } from '@/types/payment'
+import type { UserSubscription } from '@/api/subscriptions.types'
+import type { SubscriptionPlan } from '@/api/payment.types'
 import type { SimpleUser } from '@/api/admin/usage'
-import type { Column } from '@/components/common/types'
+import type { Column } from '@/components/common/table/types'
 import { formatDateTimeToMinute } from '@/utils/format'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
-import DataTable from '@/components/common/DataTable.vue'
+import DataTable from '@/components/common/table/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -727,44 +776,79 @@ import {
   getRemainingDurationParts,
   getRemainingExpiryDuration,
   isOneTimeDailyQuota,
-  type RemainingDurationParts
+  type RemainingDurationParts,
 } from '@/utils/subscriptionQuota'
 
+// SubscriptionsView.vue lists user subscriptions and supports assignment, validity
+// changes, quota reset, revocation, and restoration. User selection belongs either to
+// the toolbar filter or the assignment dialog, with separate search drafts and debounce
+// timers. Column visibility and user-label preferences are stored in browser storage.
+//
+// Quota labels combine subscription expiry with daily, weekly, or fixed thirty-day
+// window lengths. When another complete window cannot fit before expiry, the display
+// shows quota ending at subscription expiry. One-time daily quotas use expiry directly.
+// List replacement checks the current request controller, while the separate plan and
+// user-search requests manage their own results and loading flags.
+
+// Translations, application messages, and balance formatting supply labels and
+// operation feedback across subscription management controls.
 const { t } = useI18n()
 const appStore = useAppStore()
 const { formatBalanceAmount } = useBalanceDisplay()
 
+// PlanOption describes a subscription choice with its numeric identifier and optional
+// description.
 interface PlanOption {
-  value: number
-  label: string
-  description: string | null
+  value: number // selected plan identifier
+  label: string // displayed option label
+  description: string | null // optional plan description
+  // Additional option metadata accepted by the shared select component.
   [key: string]: unknown
 }
 
-// Guide modal state
+// showGuideModal controls the explanatory dialog, and guideActionRows supplies
+// translated descriptions of adjustment, quota reset, and revocation.
 const showGuideModal = ref(false)
 
+// guideActionRows derives administrator action descriptions from the current locale for
+// the subscription management guide dialog.
 const guideActionRows = computed(() => [
-  { action: t('admin.subscriptions.guide.actions.adjust'), desc: t('admin.subscriptions.guide.actions.adjustDesc') },
-  { action: t('admin.subscriptions.guide.actions.resetQuota'), desc: t('admin.subscriptions.guide.actions.resetQuotaDesc') },
-  { action: t('admin.subscriptions.guide.actions.revoke'), desc: t('admin.subscriptions.guide.actions.revokeDesc') }
+  {
+    action: t('admin.subscriptions.guide.actions.adjust'),
+    desc: t('admin.subscriptions.guide.actions.adjustDesc'),
+  },
+  {
+    action: t('admin.subscriptions.guide.actions.resetQuota'),
+    desc: t('admin.subscriptions.guide.actions.resetQuotaDesc'),
+  },
+  {
+    action: t('admin.subscriptions.guide.actions.revoke'),
+    desc: t('admin.subscriptions.guide.actions.revokeDesc'),
+  },
 ])
 
+// formatSubscriptionBalance renders subscription usage with two fractional balance-unit
+// digits.
 const formatSubscriptionBalance = (value: number | null | undefined): string =>
   formatBalanceAmount(value, { fractionDigits: 2 })
 
+// isPendingSubscription reports whether a selected subscription is awaiting activation.
 const isPendingSubscription = (subscription: UserSubscription | null): boolean =>
   subscription?.status === 'pending'
 
+// revokeActionText chooses cancellation wording for pending subscriptions and
+// revocation otherwise.
 const revokeActionText = (subscription: UserSubscription): string =>
   isPendingSubscription(subscription)
     ? t('admin.subscriptions.cancelPending')
     : t('admin.subscriptions.revoke')
 
+// Revocation dialog labels derive from the selected subscription so pending items
+// consistently use cancellation language throughout confirmation.
 const revokeDialogTitle = computed(() =>
   isPendingSubscription(revokingSubscription.value)
     ? t('admin.subscriptions.cancelPendingSubscription')
-    : t('admin.subscriptions.revokeSubscription')
+    : t('admin.subscriptions.revokeSubscription'),
 )
 
 const revokeDialogMessage = computed(() => {
@@ -777,13 +861,17 @@ const revokeDialogMessage = computed(() => {
 const revokeDialogConfirmText = computed(() =>
   isPendingSubscription(revokingSubscription.value)
     ? t('admin.subscriptions.cancelPending')
-    : t('admin.subscriptions.revoke')
+    : t('admin.subscriptions.revoke'),
 )
 
-// User column display mode: 'email' or 'username'
+// The selected user identity label is persisted under USER_COLUMN_MODE_KEY and starts
+// with email when no preference is restored.
 const userColumnMode = ref<'email' | 'username'>('email')
 const USER_COLUMN_MODE_KEY = 'subscription-user-column-mode'
 
+// loadUserColumnMode restores an accepted email or username preference from browser
+// storage. Missing, invalid, or unreadable values leave the current default in place,
+// and storage failures are logged for diagnosis.
 const loadUserColumnMode = () => {
   try {
     const saved = localStorage.getItem(USER_COLUMN_MODE_KEY)
@@ -791,79 +879,97 @@ const loadUserColumnMode = () => {
       userColumnMode.value = saved
     }
   } catch (e) {
+    // Keep the current email/username mode when storage is unreadable so a browser
+    // storage restriction does not prevent table rendering.
     console.error('Failed to load user column mode:', e)
   }
 }
 
+// saveUserColumnMode persists the currently selected user label mode in browser
+// storage. Storage failures are logged while the in-memory preference remains active
+// for rendering the table during the current session.
 const saveUserColumnMode = () => {
   try {
     localStorage.setItem(USER_COLUMN_MODE_KEY, userColumnMode.value)
   } catch (e) {
+    // Keep the selected display mode in memory when storage fails so the current
+    // session can continue using the chosen label.
     console.error('Failed to save user column mode:', e)
   }
 }
 
+// setUserColumnMode updates the displayed user identity and persists the preference.
 const setUserColumnMode = (mode: 'email' | 'username') => {
   userColumnMode.value = mode
   saveUserColumnMode()
 }
 
-// All available columns
+// Column definitions include user identity and actions, which remain visible while
+// other subscription columns can be hidden.
 const allColumns = computed<Column[]>(() => [
   {
     key: 'user',
-    label: userColumnMode.value === 'email'
-      ? t('admin.subscriptions.columns.user')
-      : t('admin.users.columns.username'),
-    sortable: false
+    label:
+      userColumnMode.value === 'email'
+        ? t('admin.subscriptions.columns.user')
+        : t('admin.users.columns.username'),
+    sortable: false,
   },
   { key: 'group', label: t('payment.admin.planName'), sortable: false },
   { key: 'usage', label: t('admin.subscriptions.columns.usage'), sortable: false },
   { key: 'expires_at', label: t('admin.subscriptions.columns.expires'), sortable: true },
   { key: 'status', label: t('admin.subscriptions.columns.status'), sortable: true },
-  { key: 'actions', label: t('admin.subscriptions.columns.actions'), sortable: false }
+  { key: 'actions', label: t('admin.subscriptions.columns.actions'), sortable: false },
 ])
 
-// Columns that can be toggled (exclude user and actions which are always visible)
+// toggleableColumns excludes the fixed user and action columns from the visibility
+// controls shown in the settings menu.
 const toggleableColumns = computed(() =>
-  allColumns.value.filter(col => col.key !== 'user' && col.key !== 'actions')
+  allColumns.value.filter((col) => col.key !== 'user' && col.key !== 'actions'),
 )
 
-// Hidden columns set
+// Hidden keys and their default set control optional column visibility and are
+// persisted under the subscription-specific storage key.
 const hiddenColumns = reactive<Set<string>>(new Set())
 
-// Default hidden columns
 const DEFAULT_HIDDEN_COLUMNS: string[] = []
 
-// localStorage key
 const HIDDEN_COLUMNS_KEY = 'subscription-hidden-columns'
 
-// Load saved column settings
+// loadSavedColumns adds stored hidden keys or the default hidden columns. Storage or
+// parsing failures are logged and apply defaults to the current set so the table can
+// remain usable.
 const loadSavedColumns = () => {
   try {
     const saved = localStorage.getItem(HIDDEN_COLUMNS_KEY)
     if (saved) {
       const parsed = JSON.parse(saved) as string[]
-      parsed.forEach(key => hiddenColumns.add(key))
+      parsed.forEach((key) => hiddenColumns.add(key))
     } else {
-      DEFAULT_HIDDEN_COLUMNS.forEach(key => hiddenColumns.add(key))
+      DEFAULT_HIDDEN_COLUMNS.forEach((key) => hiddenColumns.add(key))
     }
   } catch (e) {
+    // Apply the default hidden-column set after storage or JSON failure so
+    // optional-column settings cannot block rendering the subscription table.
     console.error('Failed to load saved columns:', e)
-    DEFAULT_HIDDEN_COLUMNS.forEach(key => hiddenColumns.add(key))
+    DEFAULT_HIDDEN_COLUMNS.forEach((key) => hiddenColumns.add(key))
   }
 }
 
-// Save column settings to localStorage
+// saveColumnsToStorage serializes the hidden-column set into browser storage for later
+// visits. If writing fails, the current visibility choices remain in memory and the
+// failure is logged for diagnosis.
 const saveColumnsToStorage = () => {
   try {
     localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
   } catch (e) {
+    // Storage failure leaves the in-memory hidden set active, so report the failure
+    // to the console while retaining current column choices.
     console.error('Failed to save columns:', e)
   }
 }
 
-// Toggle column visibility
+// toggleColumn toggles one hidden key and persists the resulting column preferences.
 const toggleColumn = (key: string) => {
   if (hiddenColumns.has(key)) {
     hiddenColumns.delete(key)
@@ -873,36 +979,42 @@ const toggleColumn = (key: string) => {
   saveColumnsToStorage()
 }
 
-// Check if column is visible
+// isColumnVisible reports whether the hidden-column set excludes the requested key.
 const isColumnVisible = (key: string) => !hiddenColumns.has(key)
 
-// Filtered columns for display
+// columns applies the hidden-key set while retaining the user and actions columns for
+// every subscription row.
 const columns = computed<Column[]>(() =>
-  allColumns.value.filter(col =>
-    col.key === 'user' || col.key === 'actions' || !hiddenColumns.has(col.key)
-  )
+  allColumns.value.filter(
+    (col) => col.key === 'user' || col.key === 'actions' || !hiddenColumns.has(col.key),
+  ),
 )
 
-// Column dropdown state
+// Column-settings visibility and its DOM reference support closing the menu when a
+// document click occurs outside it.
 const showColumnDropdown = ref(false)
 const columnDropdownRef = ref<HTMLElement | null>(null)
 
-// Filter options
+// Status choices include an unfiltered option and the supported subscription lifecycle
+// values used by server listing.
 const statusOptions = computed(() => [
   { value: '', label: t('admin.subscriptions.allStatus') },
   { value: 'active', label: t('admin.subscriptions.status.active') },
   { value: 'pending', label: t('admin.subscriptions.status.pending') },
   { value: 'expired', label: t('admin.subscriptions.status.expired') },
   { value: 'suspended', label: t('admin.subscriptions.status.suspended') },
-  { value: 'revoked', label: t('admin.subscriptions.status.revoked') }
+  { value: 'revoked', label: t('admin.subscriptions.status.revoked') },
 ])
 
+// Subscription rows and plan choices load separately; abortController identifies the
+// replaceable main-list request and its loading state.
 const subscriptions = ref<UserSubscription[]>([])
 const plans = ref<SubscriptionPlan[]>([])
 const loading = ref(false)
 let abortController: AbortController | null = null
 
-// Toolbar user filter (fuzzy search -> select user_id)
+// Toolbar user-search drafts, results, loading, selection, and timer remain independent
+// from the assignment dialog user search.
 const filterUserKeyword = ref('')
 const filterUserResults = ref<SimpleUser[]>([])
 const filterUserLoading = ref(false)
@@ -910,7 +1022,8 @@ const showFilterUserDropdown = ref(false)
 const selectedFilterUser = ref<SimpleUser | null>(null)
 let filterUserSearchTimeout: ReturnType<typeof setTimeout> | null = null
 
-// User search state
+// Assignment user-search drafts and suggestions populate assignForm.user_id after
+// selection, with a dedicated debounce timer for input changes.
 const userSearchKeyword = ref('')
 const userSearchResults = ref<SimpleUser[]>([])
 const userSearchLoading = ref(false)
@@ -918,33 +1031,43 @@ const showUserDropdown = ref(false)
 const selectedUser = ref<SimpleUser | null>(null)
 let userSearchTimeout: ReturnType<typeof setTimeout> | null = null
 
+// List conditions default to active status; empty plan/status and a null user
+// identifier represent unselected filters.
 const filters = reactive({
-  status: 'active',
-  plan_id: '',
-  user_id: null as number | null
+  status: 'active', // configured lifecycle status
+  plan_id: '', // selected plan identifier
+  user_id: null as number | null, // selected user identifier
 })
 
+// activeFilterCount counts the status and plan panel conditions while the independent
+// toolbar user selection remains separate.
 const activeFilterCount = computed(() => [filters.status, filters.plan_id].filter(Boolean).length)
 
+// resetSubscriptionFilters clears status and plan filters and reloads page one. The
+// separately selected toolbar user remains active, so panel reset continues to restrict
+// results to that user when selected.
 const resetSubscriptionFilters = () => {
   filters.status = ''
   filters.plan_id = ''
   applyFilters()
 }
 
-// Sorting state
+// Server sort and pagination state travel with every subscription list request and
+// start with newest creation time.
 const sortState = reactive({
-  sort_by: 'created_at',
-  sort_order: 'desc' as 'asc' | 'desc'
+  sort_by: 'created_at', // server sorting field
+  sort_order: 'desc' as 'asc' | 'desc', // server sorting direction
 })
 
 const pagination = reactive({
-  page: 1,
-  page_size: getPersistedPageSize(),
-  total: 0,
-  pages: 0
+  page: 1, // requested page number
+  page_size: getPersistedPageSize(), // requested row count
+  total: 0, // matching row count
+  pages: 0, // matching page count
 })
 
+// Dialog flags and selected subscription records separate assignment, validity
+// adjustment, revocation, restoration, and quota-reset operations.
 const showAssignModal = ref(false)
 const showExtendModal = ref(false)
 const showRevokeDialog = ref(false)
@@ -957,36 +1080,48 @@ const extendingSubscription = ref<UserSubscription | null>(null)
 const revokingSubscription = ref<UserSubscription | null>(null)
 const restoringSubscription = ref<UserSubscription | null>(null)
 
+// Assignment requires user and plan identifiers plus validity days, while the
+// adjustment draft contains its requested duration.
 const assignForm = reactive({
-  user_id: null as number | null,
-  plan_id: null as number | null,
-  validity_days: 30
+  user_id: null as number | null, // selected user identifier
+  plan_id: null as number | null, // selected plan identifier
+  validity_days: 30, // assigned validity days
 })
 
 const extendForm = reactive({
-  days: 30
+  days: 30, // requested validity days
 })
 
+// Plan-filter options use string identifiers, and subscriptionPlanOptions supplies
+// numeric identifiers for the assignment control and its descriptions.
 const planOptions = computed(() => [
   { value: '', label: t('admin.announcements.form.selectPackages') },
-  ...plans.value.map((plan) => ({ value: plan.id.toString(), label: plan.name }))
+  ...plans.value.map((plan) => ({ value: plan.id.toString(), label: plan.name })),
 ])
-
 
 const subscriptionPlanOptions = computed<PlanOption[]>(() =>
   plans.value.map((plan) => ({
     value: plan.id,
     label: plan.name,
-    description: plan.description
-  }))
+    description: plan.description,
+  })),
 )
 
+// applyFilters requests the first subscription page using the current conditions.
 const applyFilters = () => {
   pagination.page = 1
   loadSubscriptions()
 }
 
+// loadSubscriptions requests matching subscriptions after aborting the previous list
+// load. A response publishes rows and pagination only if its signal is active and its
+// controller remains current. Cancellation errors are suppressed, while other request
+// failures display an application error. Cleanup releases loading only for the current
+// controller, so a completed older request cannot clear the indicator belonging to a
+// newer reload.
 const loadSubscriptions = async () => {
+  // Cancel the previous list request before installing a new controller so changed
+  // filters can supersede in-flight subscription results.
   if (abortController) {
     abortController.abort()
   }
@@ -1004,23 +1139,29 @@ const loadSubscriptions = async () => {
         plan_id: filters.plan_id ? parseInt(filters.plan_id) : undefined,
         user_id: filters.user_id || undefined,
         sort_by: sortState.sort_by,
-        sort_order: sortState.sort_order
+        sort_order: sortState.sort_order,
       },
       {
-        signal
-      }
+        signal,
+      },
     )
+    // Publish rows only while this request still owns the list, because a later
+    // reload may have replaced its controller.
     if (signal.aborted || abortController !== requestController) return
     subscriptions.value = response.items
     pagination.total = response.total
     pagination.pages = response.pages
   } catch (error: any) {
+    // Ignore cancellation raised by replacement requests so normal filter changes do
+    // not display a subscription-loading error to the administrator.
     if (signal.aborted || error?.name === 'AbortError' || error?.code === 'ERR_CANCELED') {
       return
     }
     appStore.showError(t('admin.subscriptions.failedToLoad'))
     console.error('Error loading subscriptions:', error)
   } finally {
+    // The current controller owns loading cleanup; earlier finalizers leave the
+    // replacement request visible as pending until it settles.
     if (abortController === requestController) {
       loading.value = false
       abortController = null
@@ -1028,16 +1169,23 @@ const loadSubscriptions = async () => {
   }
 }
 
+// loadPlans populates subscription plan choices from the payment administration
+// endpoint. Failures are logged and retain current choices, allowing the independently
+// loaded subscription table to continue displaying its rows.
 const loadPlans = async () => {
   try {
     const response = await adminAPI.payment.getPlans()
     plans.value = response.data || []
   } catch (error) {
+    // A plan lookup failure leaves the current options available and permits the
+    // independently fetched subscription list to remain usable.
     console.error('Error loading plans:', error)
   }
 }
 
-// Toolbar user filter search with debounce
+// debounceSearchFilterUsers replaces the pending toolbar-user lookup with a delayed
+// search. The component owns this timer and clears it during unmount alongside the
+// independent assignment-user lookup timer when present.
 const debounceSearchFilterUsers = () => {
   if (filterUserSearchTimeout) {
     clearTimeout(filterUserSearchTimeout)
@@ -1045,10 +1193,14 @@ const debounceSearchFilterUsers = () => {
   filterUserSearchTimeout = setTimeout(searchFilterUsers, 300)
 }
 
+// searchFilterUsers resolves the trimmed toolbar keyword into user suggestions. Editing
+// away from a selected email clears its user filter and reloads subscriptions; empty
+// input or request failure clears the suggestion list.
 const searchFilterUsers = async () => {
   const keyword = filterUserKeyword.value.trim()
 
-  // Clear active user filter if user modified the search keyword
+  // Editing the selected email removes the stored user identifier so subsequent list
+  // queries cannot silently retain a different identity than the search text.
   if (selectedFilterUser.value && keyword !== selectedFilterUser.value.email) {
     selectedFilterUser.value = null
     filters.user_id = null
@@ -1064,6 +1216,8 @@ const searchFilterUsers = async () => {
   try {
     filterUserResults.value = await adminAPI.usage.searchUsers(keyword)
   } catch (error) {
+    // Failed user searches clear suggestions so stale results cannot be presented as
+    // matches for the newly entered search keyword.
     console.error('Failed to search users:', error)
     filterUserResults.value = []
   } finally {
@@ -1071,6 +1225,9 @@ const searchFilterUsers = async () => {
   }
 }
 
+// selectFilterUser stores a suggested user's identifier and email in the toolbar
+// filter. It hides suggestions and requests page one so the displayed records
+// correspond to the selected account.
 const selectFilterUser = (user: SimpleUser) => {
   selectedFilterUser.value = user
   filterUserKeyword.value = user.email
@@ -1079,6 +1236,8 @@ const selectFilterUser = (user: SimpleUser) => {
   applyFilters()
 }
 
+// clearFilterUser clears the toolbar user selection and reloads subscriptions without
+// it.
 const clearFilterUser = () => {
   selectedFilterUser.value = null
   filterUserKeyword.value = ''
@@ -1088,7 +1247,9 @@ const clearFilterUser = () => {
   applyFilters()
 }
 
-// User search with debounce
+// debounceSearchUsers replaces the assignment-user lookup timer with a delayed search.
+// The timer is separate from toolbar filtering and is cleared during unmount to prevent
+// queued dialog searches after teardown.
 const debounceSearchUsers = () => {
   if (userSearchTimeout) {
     clearTimeout(userSearchTimeout)
@@ -1096,10 +1257,14 @@ const debounceSearchUsers = () => {
   userSearchTimeout = setTimeout(searchUsers, 300)
 }
 
+// searchUsers resolves the assignment keyword into selectable user suggestions. Editing
+// a selected email clears the assigned user identifier; empty keywords or request
+// failures clear results while leaving the draft available.
 const searchUsers = async () => {
   const keyword = userSearchKeyword.value.trim()
 
-  // Clear selection if user modified the search keyword
+  // Clear the assigned user identifier after the selected email changes so the form
+  // cannot submit an identity hidden by edited search text.
   if (selectedUser.value && keyword !== selectedUser.value.email) {
     selectedUser.value = null
     assignForm.user_id = null
@@ -1114,6 +1279,8 @@ const searchUsers = async () => {
   try {
     userSearchResults.value = await adminAPI.usage.searchUsers(keyword)
   } catch (error) {
+    // Failed user searches clear suggestions so stale results cannot be presented as
+    // matches for the newly entered search keyword.
     console.error('Failed to search users:', error)
     userSearchResults.value = []
   } finally {
@@ -1121,6 +1288,9 @@ const searchUsers = async () => {
   }
 }
 
+// selectUser copies a suggested identifier and email into the assignment draft and
+// closes its suggestion dropdown. This supplies the user_id that assignment
+// validation requires before a request can be submitted.
 const selectUser = (user: SimpleUser) => {
   selectedUser.value = user
   userSearchKeyword.value = user.email
@@ -1128,6 +1298,8 @@ const selectUser = (user: SimpleUser) => {
   assignForm.user_id = user.id
 }
 
+// clearUserSelection clears assignment identity, search text, and current user
+// suggestions.
 const clearUserSelection = () => {
   selectedUser.value = null
   userSearchKeyword.value = ''
@@ -1135,17 +1307,24 @@ const clearUserSelection = () => {
   assignForm.user_id = null
 }
 
+// handlePageChange selects a subscription page and requests its matching rows.
 const handlePageChange = (page: number) => {
   pagination.page = page
   loadSubscriptions()
 }
 
+// handlePageSizeChange stores the selected page size and reloads from page one.
+// Resetting the current page before requesting rows presents the beginning of the
+// newly sized result set.
 const handlePageSizeChange = (pageSize: number) => {
   pagination.page_size = pageSize
   pagination.page = 1
   loadSubscriptions()
 }
 
+// handleSort records the selected server field and direction, then reloads from the
+// first page. The page reset presents the beginning of the reordered records under
+// the current filters.
 const handleSort = (key: string, order: 'asc' | 'desc') => {
   sortState.sort_by = key
   sortState.sort_order = order
@@ -1153,18 +1332,23 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
   loadSubscriptions()
 }
 
+// closeAssignModal hides assignment and restores empty user and plan selections with
+// thirty validity days. It also clears the user-search keyword, results, and
+// dropdown so another opening starts with an unselected account.
 const closeAssignModal = () => {
   showAssignModal.value = false
   assignForm.user_id = null
   assignForm.plan_id = null
   assignForm.validity_days = 30
-  // Clear user search state
   selectedUser.value = null
   userSearchKeyword.value = ''
   userSearchResults.value = []
   showUserDropdown.value = false
 }
 
+// handleAssignSubscription validates a selected user, plan, and positive validity
+// duration. Successful assignment closes and resets the dialog before reloading the
+// list; failures retain the draft and release submission feedback.
 const handleAssignSubscription = async () => {
   if (!assignForm.user_id) {
     appStore.showError(t('admin.subscriptions.pleaseSelectUser'))
@@ -1184,7 +1368,7 @@ const handleAssignSubscription = async () => {
     await adminAPI.subscriptions.assign({
       user_id: assignForm.user_id,
       plan_id: assignForm.plan_id,
-      validity_days: assignForm.validity_days
+      validity_days: assignForm.validity_days,
     })
     appStore.showSuccess(t('admin.subscriptions.subscriptionAssigned'))
     closeAssignModal()
@@ -1197,17 +1381,24 @@ const handleAssignSubscription = async () => {
   }
 }
 
+// handleExtend selects a subscription and opens its validity editor with calculated
+// target days. Future subscriptions use their own start as the duration anchor,
+// while active subscriptions begin from remaining time.
 const handleExtend = (subscription: UserSubscription) => {
   extendingSubscription.value = subscription
   extendForm.days = getTargetValidityDays(subscription)
   showExtendModal.value = true
 }
 
+// closeExtendModal hides validity adjustment and releases the selected subscription.
 const closeExtendModal = () => {
   showExtendModal.value = false
   extendingSubscription.value = null
 }
 
+// handleExtendSubscription submits a finite validity duration of at least one day. It
+// requires a selected subscription; success closes the dialog and reloads, while
+// failure leaves the selected draft available.
 const handleExtendSubscription = async () => {
   if (!extendingSubscription.value) return
 
@@ -1219,7 +1410,7 @@ const handleExtendSubscription = async () => {
   submitting.value = true
   try {
     await adminAPI.subscriptions.extend(extendingSubscription.value.id, {
-      days: extendForm.days
+      days: extendForm.days,
     })
     appStore.showSuccess(t('admin.subscriptions.subscriptionAdjusted'))
     closeExtendModal()
@@ -1232,11 +1423,16 @@ const handleExtendSubscription = async () => {
   }
 }
 
+// handleRevoke selects a subscription and opens its cancellation or revocation
+// confirmation.
 const handleRevoke = (subscription: UserSubscription) => {
   revokingSubscription.value = subscription
   showRevokeDialog.value = true
 }
 
+// confirmRevoke revokes the selected subscription and chooses feedback from its pending
+// status. Success clears the confirmation target and reloads the list; errors retain
+// the target and display the request failure.
 const confirmRevoke = async () => {
   if (!revokingSubscription.value) return
 
@@ -1246,7 +1442,7 @@ const confirmRevoke = async () => {
     appStore.showSuccess(
       pending
         ? t('admin.subscriptions.pendingSubscriptionCancelled')
-        : t('admin.subscriptions.subscriptionRevoked')
+        : t('admin.subscriptions.subscriptionRevoked'),
     )
     showRevokeDialog.value = false
     revokingSubscription.value = null
@@ -1257,11 +1453,16 @@ const confirmRevoke = async () => {
   }
 }
 
+// handleRestore selects the subscription awaiting confirmation of a restoration
+// request.
 const handleRestore = (subscription: UserSubscription) => {
   restoringSubscription.value = subscription
   showRestoreDialog.value = true
 }
 
+// confirmRestore restores the selected subscription and reloads after success. With no
+// selection it returns immediately, while a failed request retains confirmation state
+// and reports the endpoint detail or translated error.
 const confirmRestore = async () => {
   if (!restoringSubscription.value) return
 
@@ -1277,17 +1478,26 @@ const confirmRestore = async () => {
   }
 }
 
+// handleResetQuota selects a subscription and opens its quota-reset confirmation
+// dialog.
 const handleResetQuota = (subscription: UserSubscription) => {
   resettingSubscription.value = subscription
   showResetQuotaConfirm.value = true
 }
 
+// confirmResetQuota resets daily, weekly, and monthly quotas for the selected
+// subscription. Duplicate submissions are ignored while resettingQuota is set; success
+// clears confirmation and awaits a list refresh before releasing that flag.
 const confirmResetQuota = async () => {
   if (!resettingSubscription.value) return
   if (resettingQuota.value) return
   resettingQuota.value = true
   try {
-    await adminAPI.subscriptions.resetQuota(resettingSubscription.value.id, { daily: true, weekly: true, monthly: true })
+    await adminAPI.subscriptions.resetQuota(resettingSubscription.value.id, {
+      daily: true,
+      weekly: true,
+      monthly: true,
+    })
     appStore.showSuccess(t('admin.subscriptions.quotaResetSuccess'))
     showResetQuotaConfirm.value = false
     resettingSubscription.value = null
@@ -1300,16 +1510,21 @@ const confirmResetQuota = async () => {
   }
 }
 
-// Helper functions
+// getDaysRemaining returns whole days rounded upward or null after expiry. The display
+// uses this result for its warning threshold, so any positive partial day still counts
+// as one remaining day.
 const getDaysRemaining = (expiresAt: string): number | null => {
   const now = new Date()
   const expires = new Date(expiresAt)
   const diff = expires.getTime() - now.getTime()
   if (diff < 0) return null
+  // Round a partial remaining day upward for the expiry warning display.
   return Math.ceil(diff / (1000 * 60 * 60 * 24))
 }
 
-// formatRemainingExpiry 根据实际剩余时长选择天或小时/分钟文案。
+// formatRemainingExpiry renders remaining expiry in days, hours/minutes, or minutes. It
+// delegates duration calculation and returns null when that helper finds no remaining
+// duration for the supplied expiry timestamp.
 const formatRemainingExpiry = (expiresAt: string): string | null => {
   const duration = getRemainingExpiryDuration(expiresAt)
   if (!duration) return null
@@ -1319,63 +1534,94 @@ const formatRemainingExpiry = (expiresAt: string): string | null => {
   if (duration.hours) {
     return t('admin.subscriptions.hoursMinutesRemaining', {
       hours: duration.hours,
-      minutes: duration.minutes
+      minutes: duration.minutes,
     })
   }
   return t('admin.subscriptions.minutesRemaining', { minutes: duration.minutes })
 }
 
+// getTargetValidityDays calculates the editor's validity duration from the later of now
+// and subscription start. Future subscriptions therefore use their own start as the
+// anchor, while active subscriptions use remaining time. The result rounds partial days
+// upward and has a minimum of one day. This prevents the adjustment draft from counting
+// the waiting interval before a future subscription begins as part of its active
+// validity.
 const getTargetValidityDays = (subscription: UserSubscription): number => {
   const startsAt = new Date(subscription.starts_at)
   const expiresAt = new Date(subscription.expires_at)
   const now = new Date()
-  // 待生效订阅按它自己的开始时间计算有效期，生效中订阅按当前剩余天数计算。
+  // Future subscriptions measure validity from their start, preventing the waiting
+  // interval from inflating the adjustment dialog duration before activation.
   const anchor = now < startsAt ? startsAt : now
   const diff = expiresAt.getTime() - anchor.getTime()
+  // Round partial days upward and keep the editor duration at least one day.
   return Math.max(1, Math.ceil(diff / (1000 * 60 * 60 * 24)))
 }
 
+// isExpiringSoon reports whether an unexpired subscription has at most seven rounded
+// days.
 const isExpiringSoon = (expiresAt: string): boolean => {
   const days = getDaysRemaining(expiresAt)
+  // The expiry warning covers up to seven rounded remaining days.
   return days !== null && days <= 7
 }
 
+// getProgressWidth returns a percentage width capped at one hundred percent. Missing or
+// zero limits produce zero width, and absent usage counts as zero for the table's quota
+// progress display.
 const getProgressWidth = (used: number | null | undefined, limit: number | null): string => {
   if (!limit || limit === 0) return '0%'
   const usedValue = used ?? 0
+  // Cap bar width at full scale when recorded usage exceeds its configured quota.
   const percentage = Math.min((usedValue / limit) * 100, 100)
   return `${percentage}%`
 }
 
+// getProgressClass colors quota usage by its share of a configured limit. Missing or
+// zero limits use a neutral color, while seventy and ninety percent select warning and
+// danger colors respectively.
 const getProgressClass = (used: number | null | undefined, limit: number | null): string => {
   if (!limit || limit === 0) return 'bg-gray-400'
   const usedValue = used ?? 0
   const percentage = (usedValue / limit) * 100
+  // Use warning colors from seventy percent and danger from ninety percent usage.
   if (percentage >= 90) return 'bg-red-500'
   if (percentage >= 70) return 'bg-orange-500'
   return 'bg-green-500'
 }
 
+// formatResetDuration chooses translated reset text from day, hour, and minute parts.
 const formatResetDuration = (parts: RemainingDurationParts): string => {
   if (parts.days > 0) {
     return t('admin.subscriptions.resetInDaysHours', { days: parts.days, hours: parts.hours })
   }
   if (parts.hours > 0) {
-    return t('admin.subscriptions.resetInHoursMinutes', { hours: parts.hours, minutes: parts.minutes })
+    return t('admin.subscriptions.resetInHoursMinutes', {
+      hours: parts.hours,
+      minutes: parts.minutes,
+    })
   }
   return t('admin.subscriptions.resetInMinutes', { minutes: parts.minutes })
 }
 
+// formatQuotaEndDuration chooses translated expiry text from day, hour, and minute
+// parts.
 const formatQuotaEndDuration = (parts: RemainingDurationParts): string => {
   if (parts.days > 0) {
     return t('admin.subscriptions.quotaEndsInDaysHours', { days: parts.days, hours: parts.hours })
   }
   if (parts.hours > 0) {
-    return t('admin.subscriptions.quotaEndsInHoursMinutes', { hours: parts.hours, minutes: parts.minutes })
+    return t('admin.subscriptions.quotaEndsInHoursMinutes', {
+      hours: parts.hours,
+      minutes: parts.minutes,
+    })
   }
   return t('admin.subscriptions.quotaEndsInMinutes', { minutes: parts.minutes })
 }
 
+// formatDailyUsageWindow shows subscription expiry for a one-time daily quota. Other
+// subscriptions use the daily window formatter, and a missing remaining duration is
+// displayed as an inactive window in the table.
 const formatDailyUsageWindow = (subscription: UserSubscription): string => {
   if (isOneTimeDailyQuota(subscription)) {
     const parts = getRemainingDurationParts(subscription.expires_at)
@@ -1384,10 +1630,13 @@ const formatDailyUsageWindow = (subscription: UserSubscription): string => {
   return formatUsageWindow(subscription, subscription.daily_window_start, 'daily')
 }
 
+// formatUsageWindow selects expiry wording using this view's fixed-duration window
+// heuristic. Otherwise it delegates to the ordinary reset formatter; missing duration
+// for an ending window produces the inactive-window label.
 const formatUsageWindow = (
   subscription: UserSubscription,
   windowStart: string | null,
-  period: 'daily' | 'weekly' | 'monthly'
+  period: 'daily' | 'weekly' | 'monthly',
 ): string => {
   if (isQuotaWindowEndingAtSubscriptionExpiry(subscription, windowStart, period)) {
     const parts = getRemainingDurationParts(subscription.expires_at)
@@ -1396,16 +1645,20 @@ const formatUsageWindow = (
   return formatResetTime(windowStart, period)
 }
 
+// formatResetTime renders time remaining until a fixed daily, weekly, or monthly reset.
+// Monthly means thirty days here; missing starts and elapsed durations display the
+// inactive-window label supplied by the translations.
 const formatResetTime = (
   windowStart: string | null,
-  period: 'daily' | 'weekly' | 'monthly'
+  period: 'daily' | 'weekly' | 'monthly',
 ): string => {
   if (!windowStart) return t('admin.subscriptions.windowNotActive')
 
   const start = new Date(windowStart)
   const now = new Date()
 
-  // 按窗口类型计算重置时间。
+  // Quota windows use fixed elapsed durations: one day, seven days, or thirty days,
+  // including the period labeled monthly in the interface.
   let resetTime: Date
   switch (period) {
     case 'daily':
@@ -1423,10 +1676,17 @@ const formatResetTime = (
   return parts ? formatResetDuration(parts) : t('admin.subscriptions.windowNotActive')
 }
 
+// isQuotaWindowEndingAtSubscriptionExpiry compares subscription expiry with two
+// quota-window lengths after the current start to choose display wording. It returns true
+// when that computed end extends beyond expiry. Missing or invalid timestamps return
+// false. Daily, weekly, and monthly use fixed one-, seven-, and thirty-day durations,
+// with equality treated as a full fit. This display heuristic does not inspect outer
+// quota limits; backend eligibility can permit shorter daily or weekly tails protected
+// by positive outer limits.
 const isQuotaWindowEndingAtSubscriptionExpiry = (
   subscription: UserSubscription,
   windowStart: string | null,
-  period: 'daily' | 'weekly' | 'monthly'
+  period: 'daily' | 'weekly' | 'monthly',
 ): boolean => {
   if (!windowStart) return false
   const start = new Date(windowStart).getTime()
@@ -1436,14 +1696,18 @@ const isQuotaWindowEndingAtSubscriptionExpiry = (
   const windowMsByPeriod = {
     daily: 24 * 60 * 60 * 1000,
     weekly: 7 * 24 * 60 * 60 * 1000,
-    monthly: 30 * 24 * 60 * 60 * 1000
+    monthly: 30 * 24 * 60 * 60 * 1000,
   }
   const windowMs = windowMsByPeriod[period]
+  // Choose expiry wording from timestamps and fixed period lengths here; backend
+  // eligibility also considers outer quota protection that this display omits.
   const nextWindowStart = start + windowMs
   return nextWindowStart + windowMs > expiresAt
 }
 
-// Handle click outside to close dropdowns
+// handleClickOutside closes user-search and column dropdowns when their owning elements
+// exclude the click. It is installed on document during mount and removed during
+// unmount with the same function reference.
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement
   if (!target.closest('[data-assign-user-search]')) showUserDropdown.value = false
@@ -1453,6 +1717,8 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 }
 
+// Restore display preferences before starting the list and plan loads, then install
+// the document listener used to close open dropdowns.
 onMounted(() => {
   loadUserColumnMode()
   loadSavedColumns()
@@ -1461,6 +1727,8 @@ onMounted(() => {
   document.addEventListener('click', handleClickOutside)
 })
 
+// Remove the document click listener and clear both queued user searches so those
+// callbacks do not run after this component unmounts.
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   if (filterUserSearchTimeout) {

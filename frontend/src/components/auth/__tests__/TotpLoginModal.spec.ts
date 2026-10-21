@@ -2,27 +2,45 @@ import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TotpLoginModal from '@/components/auth/TotpLoginModal.vue'
 
+// TotpLoginModal.spec.ts checks segmented OTP input and parent-driven verification
+// errors. Hidden autofill, visible autofill, and change-only events exercise the
+// real component watcher so repeated notifications can be distinguished from
+// distinct verification submissions.
+
+// These fixtures provide controllable dependencies and component handles for the
+// cases below. Each test configures the responses it needs and inspects calls or
+// rendered state at that boundary.
 const { showErrorMock } = vi.hoisted(() => ({
   showErrorMock: vi.fn(),
-}))
+})) // hoisted dependency and routing fixtures
 
 vi.mock('vue-i18n', () => ({
+  // useI18n supplies the translation fixture used by rendered authentication
+  // labels.
   useI18n: () => ({
+    // t returns translation keys directly for stable component text assertions.
     t: (key: string) => key,
   }),
 }))
 
 vi.mock('@/stores', () => ({
+  // useAppStore exposes the toast and settings fixtures consumed by the component.
   useAppStore: () => ({
+    // showError records failure feedback delivered through the app toast service.
     showError: (...args: any[]) => showErrorMock(...args),
   }),
 }))
 
 describe('TotpLoginModal', () => {
+  // Reset the dependency fixtures before each case so request histories and
+  // configured responses belong to the scenario being asserted in that case.
   beforeEach(() => {
     showErrorMock.mockReset()
   })
 
+  // The login parent reports a rejected one-time code through the exposed method.
+  // The modal must show a toast without rendering the message or an inline red
+  // panel.
   it('sends verification errors to toast and does not render inline red text', async () => {
     const wrapper = mount(TotpLoginModal, {
       props: {
@@ -31,7 +49,12 @@ describe('TotpLoginModal', () => {
       },
     })
 
-    ;(wrapper.vm as unknown as { setError: (message: string) => void }).setError('Invalid code')
+    ;(
+      wrapper.vm as unknown as {
+        // setError exposes the modal error reset operation to test callers.
+        setError: (message: string) => void
+      }
+    ).setError('Invalid code')
     await wrapper.vm.$nextTick()
 
     expect(showErrorMock).toHaveBeenCalledWith('Invalid code')
@@ -39,6 +62,9 @@ describe('TotpLoginModal', () => {
     expect(wrapper.find('.bg-red-50').exists()).toBe(false)
   })
 
+  // The hidden browser-autofill input receives a complete one-time code. All six
+  // visible cells must update and the modal must emit the joined verification
+  // value.
   it('fills visible code inputs from hidden one-time-code autofill input', async () => {
     const wrapper = mount(TotpLoginModal, {
       props: {
@@ -52,7 +78,7 @@ describe('TotpLoginModal', () => {
     await wrapper.vm.$nextTick()
 
     const visibleInputs = wrapper.findAll('[data-testid="totp-digit-input"]')
-    expect(visibleInputs.map(input => (input.element as HTMLInputElement).value)).toEqual([
+    expect(visibleInputs.map((input) => (input.element as HTMLInputElement).value)).toEqual([
       '1',
       '2',
       '3',
@@ -63,6 +89,9 @@ describe('TotpLoginModal', () => {
     expect(wrapper.emitted('verify')).toEqual([['123456']])
   })
 
+  // A password manager writes the entire OTP into the first visible cell. The test
+  // checks autofill attributes, all six displayed digits, and the emitted
+  // verification code.
   it('splits a complete autofilled code written to the first visible cell', async () => {
     const wrapper = mount(TotpLoginModal, {
       props: {
@@ -77,7 +106,7 @@ describe('TotpLoginModal', () => {
     await visibleInputs[0].setValue('654321')
     await wrapper.vm.$nextTick()
 
-    expect(visibleInputs.map(input => (input.element as HTMLInputElement).value)).toEqual([
+    expect(visibleInputs.map((input) => (input.element as HTMLInputElement).value)).toEqual([
       '6',
       '5',
       '4',
@@ -88,6 +117,8 @@ describe('TotpLoginModal', () => {
     expect(wrapper.emitted('verify')).toEqual([['654321']])
   })
 
+  // The autofill fixture updates the input through a change event without an input
+  // event. The modal must distribute the complete code and emit verification.
   it('handles an autofill provider that only dispatches change', async () => {
     const wrapper = mount(TotpLoginModal, {
       props: {
@@ -101,7 +132,7 @@ describe('TotpLoginModal', () => {
     await visibleInputs[0].trigger('change')
     await wrapper.vm.$nextTick()
 
-    expect(visibleInputs.map(input => (input.element as HTMLInputElement).value)).toEqual([
+    expect(visibleInputs.map((input) => (input.element as HTMLInputElement).value)).toEqual([
       '2',
       '4',
       '6',
@@ -112,6 +143,8 @@ describe('TotpLoginModal', () => {
     expect(wrapper.emitted('verify')).toEqual([['246810']])
   })
 
+  // Both the hidden autofill input and visible first cell receive the same
+  // complete OTP. The modal must emit only one verification event for that value.
   it('submits once when both autofill targets receive the same code', async () => {
     const wrapper = mount(TotpLoginModal, {
       props: {

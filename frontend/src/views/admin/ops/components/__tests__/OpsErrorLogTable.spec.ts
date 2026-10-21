@@ -6,6 +6,11 @@ import zhLocale from '@/i18n/locales/zh'
 import enLocale from '@/i18n/locales/en'
 import type { OpsErrorLog } from '@/api/admin/ops'
 
+// OpsErrorLogTable.spec.ts checks recorded user, API-key, and provider
+// identities in error rows and verifies required locale keys. Mounted table
+// output exercises deleted-key presentation, while direct locale inspection
+// avoids depending on runtime message compilation in the test environment.
+
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
   return {
@@ -14,9 +19,14 @@ vi.mock('vue-i18n', async (importOriginal) => {
   }
 })
 
+// Tooltip and pagination doubles leave rendered row identities visible while
+// removing unrelated overlay and paging behavior from assertions.
 const TooltipStub = { template: '<div><slot /></div>' }
 const PaginationStub = { template: '<div class="pagination-stub" />' }
 
+// mountTable builds a single error row from fixture defaults and caller
+// overrides. It mounts the table with controlled pagination and stubbed chrome
+// so tests inspect the recorded identities.
 function mountTable(row: Partial<OpsErrorLog>) {
   const base = {
     id: 1,
@@ -46,8 +56,9 @@ function mountTable(row: Partial<OpsErrorLog>) {
 }
 
 describe('OpsErrorLogTable user/api-key/provider columns', () => {
-  // 回归:上游错误行(phase=upstream, owner=provider)以前在单一「用户」列里只显示提供商、
-  // 丢失用户;现在用户/API Key/提供商各占独立列,三者同时可见。
+  // An upstream error row includes caller, API-key, and provider identities.
+  // Rendered content must expose each identity separately so a provider name
+  // cannot replace the recorded caller or key.
   it('renders user, api key and provider in separate columns for an upstream row', () => {
     const wrapper = mountTable({
       user_id: 2,
@@ -59,11 +70,13 @@ describe('OpsErrorLogTable user/api-key/provider columns', () => {
     })
 
     const text = wrapper.text()
-    expect(text).toContain('alice@test.com') // 用户列(上游行也显示用户)
-    expect(text).toContain('my-key') // API Key 列
-    expect(text).toContain('acct-A') // 提供商列
+    expect(text).toContain('alice@test.com') // recorded caller identity
+    expect(text).toContain('my-key') // recorded API-key identity
+    expect(text).toContain('acct-A') // upstream provider identity
   })
 
+  // A recorded API key has been soft deleted after the request. Its retained
+  // name and deleted marker must both remain visible in the error table output.
   it('shows the deleted badge for a soft-deleted api key', () => {
     const wrapper = mountTable({
       api_key_id: 5,
@@ -76,12 +89,17 @@ describe('OpsErrorLogTable user/api-key/provider columns', () => {
   })
 })
 
-// 组件使用 admin.ops.errorLog.* 命名空间，键放错位置时界面会显示路径字符串。
-// Vitest 使用的 vue-i18n 是 runtime-only 版本，缺少消息编译器，t() 会返回 key。
-// 因此直接检查 locale 对象中是否存在这些键。
+// The component reads the admin.ops.errorLog namespace, so misplaced keys can
+// appear as untranslated paths in rendered labels. The test runtime lacks
+// message compilation; direct locale inspection therefore verifies the catalog
+// location independently of rendered translations. Inspect the locale objects at
+// their owning namespace.
 describe('OpsErrorLogTable i18n keys exist in the errorLog namespace', () => {
   const locales: Record<string, any> = { zh: zhLocale, en: enLocale }
   for (const [name, msgs] of Object.entries(locales)) {
+    // The table uses API-key labels under the errorLog locale namespace. Each
+    // tested language must provide both keys so rendering does not fall back to
+    // untranslated paths.
     it(`has apiKey & keyDeletedBadge for ${name}`, () => {
       const errorLog = msgs?.admin?.ops?.errorLog
       expect(errorLog?.apiKey).toBeTruthy()

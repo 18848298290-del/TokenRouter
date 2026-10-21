@@ -1,3 +1,9 @@
+<!--
+GrokFreeIcon.vue draws the compact Grok free plan mark used beside subscription
+tier labels. Both paths inherit the surrounding text color, the fixed three unit
+size matches the badge line, and assistive technology reads the adjacent plan
+text.
+-->
 <template>
   <svg
     class="h-3 w-3 flex-shrink-0"

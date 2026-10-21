@@ -1,11 +1,16 @@
+// common.ts supplies Simplified Chinese messages shared by controls, navigation,
+// authentication, and sensitive-action verification. Common actions and
+// authentication states live in separate namespaces so interface components and
+// sign-in forms can reuse established translation paths across pages.
+
 export default {
-// Common
+  // Common
   common: {
-    submitting: "提交中…",
-    sending: "发送中…",
-    tryAgain: "重试",
-    multiplier: "倍率",
-    rightsReserved: "保留所有权利。",
+    submitting: '提交中…',
+    sending: '发送中…',
+    tryAgain: '重试',
+    multiplier: '倍率',
+    rightsReserved: '保留所有权利。',
 
     ruleIndex: '规则 #{index}',
     retry: '重试',
@@ -57,12 +62,12 @@ export default {
     userMenu: '用户菜单',
     enabled: '已启用',
     disabled: '已禁用',
-	    total: '总计',
-	    balance: '余额',
-	    availableBalance: '可用余额',
-	    frozenBalance: '冻结金额',
-	    totalBalance: '总余额',
-	    available: '可用',
+    total: '总计',
+    balance: '余额',
+    availableBalance: '可用余额',
+    frozenBalance: '冻结金额',
+    totalBalance: '总余额',
+    available: '可用',
     copiedToClipboard: '已复制到剪贴板',
     copied: '已复制',
     copyFailed: '复制失败',
@@ -109,11 +114,11 @@ export default {
         daysHours: '{d}d {h}h',
         hoursMinutes: '{h}h {m}m',
         minutes: '{m}m',
-        withSuffix: '{time} 后解除'
-      }
-    }
+        withSuffix: '{time} 后解除',
+      },
+    },
   },
-// Navigation
+  // Navigation
   nav: {
     dashboard: '仪表盘',
     modelMarketplace: '模型广场',
@@ -163,9 +168,9 @@ export default {
     paymentConfig: '支付配置',
     paymentPlans: '订阅套餐',
     riskControl: '风控中心',
-    auditLogs: '操作日志'
+    auditLogs: '操作日志',
   },
-// Auth
+  // Auth
   auth: {
     welcomeBack: '欢迎回来',
     signInToAccount: '登录您的账户以继续',
@@ -197,7 +202,7 @@ export default {
     passwordMinLength: '密码至少需要 6 个字符',
     loginFailed: '登录失败，请检查您的凭据后重试。',
     errors: {
-      USER_NOT_ACTIVE: '账号已被禁用'
+      USER_NOT_ACTIVE: '账号已被禁用',
     },
     registrationFailed: '注册失败，请重试。',
     emailDomainRegistrationLimit:
@@ -261,11 +266,12 @@ export default {
       callbackHint: '如果页面未自动跳转，请返回登录页重试。',
       callbackMissingToken: '登录信息缺失，请返回重试。',
       backToLogin: '返回登录',
-      invitationRequired: '该 Linux.do 账号尚未注册，站点已开启邀请码注册，请输入邀请码以完成注册。',
+      invitationRequired:
+        '该 Linux.do 账号尚未注册，站点已开启邀请码注册，请输入邀请码以完成注册。',
       invalidPendingToken: '注册凭证已失效，请重新使用 Linux.do 登录。',
       completeRegistration: '完成注册',
       completing: '正在完成注册...',
-      completeRegistrationFailed: '注册失败，请检查邀请码后重试。'
+      completeRegistrationFailed: '注册失败，请检查邀请码后重试。',
     },
     dingtalk: {
       signIn: '钉钉登录',
@@ -280,7 +286,8 @@ export default {
       completing: '正在完成注册...',
       completeRegistrationFailed: '注册失败，请检查邀请码后重试。',
       createAccountTitle: '创建钉钉账户',
-      registrationDisabledRedirectToBind: '当前已禁止注册新账户，请使用已有账户邮箱和密码绑定钉钉登录',
+      registrationDisabledRedirectToBind:
+        '当前已禁止注册新账户，请使用已有账户邮箱和密码绑定钉钉登录',
       error: {
         title: '钉钉登录失败',
         csrf: '登录会话已过期，请重新扫码登录',
@@ -292,11 +299,11 @@ export default {
         invalid_state: '登录状态异常',
         provider_error: '钉钉授权失败',
         session_error: '会话创建失败，请重试',
-        retry: '重新登录'
-      }
+        retry: '重新登录',
+      },
     },
     emailOAuth: {
-      signIn: '使用 {providerName} 登录'
+      signIn: '使用 {providerName} 登录',
     },
     oidc: {
       signIn: '使用 {providerName} 登录',
@@ -305,11 +312,12 @@ export default {
       callbackHint: '如果页面未自动跳转，请返回登录页重试。',
       callbackMissingToken: '登录信息缺失，请返回重试。',
       backToLogin: '返回登录',
-      invitationRequired: '该 {providerName} 账号尚未注册，站点已开启邀请码注册，请输入邀请码以完成注册。',
+      invitationRequired:
+        '该 {providerName} 账号尚未注册，站点已开启邀请码注册，请输入邀请码以完成注册。',
       invalidPendingToken: '注册凭证已失效，请重新登录。',
       completeRegistration: '完成注册',
       completing: '正在完成注册...',
-      completeRegistrationFailed: '注册失败，请检查邀请码后重试。'
+      completeRegistrationFailed: '注册失败，请检查邀请码后重试。',
     },
     oauthFlow: {
       profileDetailsTitle: '使用 {providerName} 资料',
@@ -339,7 +347,7 @@ export default {
       wechatAvailabilityUnknown: '暂时无法确认微信登录可用性，请刷新后重试。',
       wechatSystemBrowserOnly: '当前微信登录流程仅支持在系统浏览器中继续。',
       wechatBrowserOnly: '当前微信登录流程仅支持在微信内置浏览器中继续。',
-      wechatNotConfigured: '微信登录尚未配置。'
+      wechatNotConfigured: '微信登录尚未配置。',
     },
     linuxdoCallbackPageTitle: 'LinuxDo 登录回调',
     dingtalkCallbackPageTitle: '钉钉登录回调',
@@ -352,7 +360,7 @@ export default {
       callbackTitle: '正在恢复微信支付',
       callbackProcessing: '正在恢复微信支付...',
       backToPayment: '返回支付页',
-      callbackMissingResumeToken: '微信支付回调缺少恢复令牌。'
+      callbackMissingResumeToken: '微信支付回调缺少恢复令牌。',
     },
     oauth: {
       callbackTitle: 'OAuth 回调',
@@ -361,9 +369,9 @@ export default {
       invalidCallbackHint: '当前页面缺少有效的授权结果，请返回登录页重新发起快捷登录。',
       code: '授权码',
       state: '状态',
-      fullUrl: '完整URL'
+      fullUrl: '完整URL',
     },
-    // 忘记密码
+    // Forgot password
     forgotPassword: '忘记密码？',
     forgotPasswordTitle: '重置密码',
     forgotPasswordHint: '输入您的邮箱地址，我们将向您发送密码重置链接。',
@@ -375,7 +383,7 @@ export default {
       '如果该邮箱已注册，您将很快收到密码重置链接。请检查您的收件箱和垃圾邮件文件夹。',
     backToLogin: '返回登录',
     rememberedPassword: '想起密码了？',
-    // 重置密码
+    // Reset password
     resetPasswordTitle: '设置新密码',
     resetPasswordHint: '请在下方输入您的新密码。',
     newPassword: '新密码',
@@ -392,14 +400,14 @@ export default {
     invalidResetLink: '无效的重置链接',
     invalidResetLinkHint: '此密码重置链接无效或已过期。请重新请求一个新链接。',
     requestNewResetLink: '请求新的重置链接',
-    invalidOrExpiredToken: '密码重置链接无效或已过期。请重新请求一个新链接。'
+    invalidOrExpiredToken: '密码重置链接无效或已过期。请重新请求一个新链接。',
   },
-  // Step-up（敏感操作二次验证）
+  // Step-up verification for sensitive actions
   stepUp: {
     title: '需要二次验证',
     hint: '请输入身份验证器应用中的 6 位验证码以继续此敏感操作。',
     verifyFailed: '验证失败，请重试',
     notEnabled: '此操作需要开启二次验证，请先在个人资料中启用 TOTP。',
-    adminApiKeyForbidden: '管理 API Key 无法执行此操作，请使用已通过二次验证的管理员会话。'
-  }
+    adminApiKeyForbidden: '管理 API Key 无法执行此操作，请使用已通过二次验证的管理员会话。',
+  },
 }

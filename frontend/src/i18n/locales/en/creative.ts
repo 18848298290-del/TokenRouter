@@ -1,13 +1,19 @@
+// creative.ts supplies English text for image creation, editing, canvas
+// controls, and run history. Prompts, selection guidance, generation parameters,
+// and local-data messages describe the creative workspace states so its controls
+// and validation errors share consistent wording.
+
 export default {
   creative: {
     title: 'Creative Studio',
     description: 'Generate and edit images with AI models; assets stay in this browser only.',
     panel: {
       model: 'Model',
-      // Edit / inpaint prerequisite hint (also shown as the form error when generating without a selection)
+      // Image selection guidance shared with generation validation when no reference image is selected.
       selectImageHint: 'Select an image on the canvas before generating.',
-      // Inpaint hint: select an image and paint the area to redraw with the brush
-      maskHint: 'Select an image on the canvas first, then paint the area to redraw with the brush.',
+      // Inpaint guidance describes selecting an image and painting its redraw area.
+      maskHint:
+        'Select an image on the canvas first, then paint the area to redraw with the brush.',
       imageSize: 'Image size',
       aspectRatio: 'Aspect ratio',
       quality: 'Quality',
@@ -16,9 +22,11 @@ export default {
       estimatedCost: '{cost} / image',
       uploadSource: 'Upload image',
       promptPlaceholder: 'Describe the image you want to create...',
-      // 模型目录为空时的空态提示：区分功能被管理员关闭与分组未配置图片生成。
-      studioDisabled: 'Creative Studio is disabled. Please contact your administrator to enable it.',
-      noModelsAvailable: 'No image generation models are available. Please ask your administrator to configure a group with image generation enabled.',
+      // Separate empty states describe an administrator-disabled studio and groups lacking image generation.
+      studioDisabled:
+        'Creative Studio is disabled. Please contact your administrator to enable it.',
+      noModelsAvailable:
+        'No image generation models are available. Please ask your administrator to configure a group with image generation enabled.',
     },
     composer: {
       send: 'Send',
@@ -36,15 +44,18 @@ export default {
       examples: {
         poster: {
           label: 'Retro travel poster',
-          prompt: 'A 1970s retro travel poster of a seaside town at sunset, warm orange tones, grainy paper texture, large sans-serif title',
+          prompt:
+            'A 1970s retro travel poster of a seaside town at sunset, warm orange tones, grainy paper texture, large sans-serif title',
         },
         product: {
           label: 'Product shot',
-          prompt: 'Studio product shot of a frosted glass perfume bottle on a light gray background, soft side lighting, subtle reflections, simple composition',
+          prompt:
+            'Studio product shot of a frosted glass perfume bottle on a light gray background, soft side lighting, subtle reflections, simple composition',
         },
         illustration: {
           label: 'Flat illustration',
-          prompt: 'An orange cat reading a book by the window, flat illustration style, muted colors, indoor plants, afternoon sunlight',
+          prompt:
+            'An orange cat reading a book by the window, flat illustration style, muted colors, indoor plants, afternoon sunlight',
         },
       },
     },
@@ -65,7 +76,7 @@ export default {
       '16x9': '16:9',
       '9x16': '9:16',
     },
-    // 生图画质档位由模型目录下发；支持时默认选择 medium，始终保持一个选项。
+    // Quality labels correspond to the generation quality values exposed by model settings.
     qualities: {
       low: 'Low',
       medium: 'Medium',
@@ -85,12 +96,13 @@ export default {
       brushSize: 'Brush size',
       shapeRound: 'Round stroke',
       shapeSquare: 'Square stroke',
-      // 框选画布对象：三种创作模式均可开启
+      // Box selection labels identify selection of canvas objects.
       boxSelect: 'Select by dragging a box',
-      // 涂抹开关：暂停涂抹后可平移视角 / 换选图片，再点恢复涂抹
+      // Painting controls distinguish drawing from pausing to pan or select another image.
       paintToggleOn: 'Start painting',
       paintToggleOff: 'Pause painting to pan',
-      // 撤销上一笔涂抹（同 Ctrl/Cmd+Z）
+      // Undo reverses the newest retained mask operation, including clearing
+      // all strokes.
       undoMask: 'Undo last stroke',
       clearMask: 'Clear all paint',
       downloadSelected: 'Download selected image',
@@ -98,11 +110,11 @@ export default {
       reset: 'Clear canvas',
       backToDashboard: 'Back to dashboard',
       settings: 'Settings',
-      // 局部重绘未选中图片时的引导
+      // Inpaint selection guidance appears before an image is selected.
       inpaintPickHint: 'Click an image on the canvas, then paint the area to redraw',
-      // 图生图未选择参考图时的引导（点击单选，或直接拖拽框选多张）
+      // Reference selection guidance describes clicking an image or selecting several with a box.
       editPickHint: 'Tap an image as reference, or drag a box to select multiple images',
-      // 涂抹开始前的引导：紫色笔迹即重绘区域
+      // Mask guidance identifies the painted area sent for redrawing.
       maskPaintHint: 'Paint over the area to redraw. The purple strokes are sent as the mask.',
     },
     result: {
@@ -110,7 +122,7 @@ export default {
       missing: 'Missing',
     },
     history: {
-      noOutputs: "No output images",
+      noOutputs: 'No output images',
       title: 'History',
       elapsed: 'Elapsed {time}',
       toggle: 'Toggle run history',
@@ -120,9 +132,9 @@ export default {
       copyPrompt: 'Copy prompt',
       promptCopied: 'Prompt copied',
       reuseParams: 'Use in composer',
-      // 提示词保存在提交任务的浏览器中
+      // Prompt availability refers to history stored by the submitting browser.
       promptUnavailable: 'This browser has no prompt saved for this run.',
-      // 侧栏参数标签使用短名称
+      // Short parameter labels fit the history sidebar.
       params: {
         group: 'Group',
         size: 'Size',
@@ -162,11 +174,13 @@ export default {
       promptTooLong: 'Prompt exceeds the server limit.',
       assetTooLarge: 'The image exceeds the server size or format limit.',
       sourceRequired: 'Edit and inpaint operations require at least one source image.',
-      maskRequired: 'Inpaint requires a mask. Select an image and paint the area with the brush first.',
+      maskRequired:
+        'Inpaint requires a mask. Select an image and paint the area with the brush first.',
       referenceLimit: 'This model supports at most {max} reference images.',
       submitFailed: 'Failed to submit the creative run. Please retry.',
       historyFailed: 'Failed to load run history. Check this browser storage permission and retry.',
-      workspaceUnavailable: 'This browser workspace is unavailable. Allow local storage for this site and retry.',
+      workspaceUnavailable:
+        'This browser workspace is unavailable. Allow local storage for this site and retry.',
       clearFailed: 'Failed to clear local data.',
       loadImageFailed: 'Failed to load the image.',
       quotaExceeded: 'Local storage is full. Please download your assets before continuing.',

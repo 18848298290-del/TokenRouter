@@ -13,14 +13,20 @@
   >
     <span
       class="flex h-8 w-8 shrink-0 items-center justify-center rounded-control"
-      :class="selected ? platformSolidClass(accent ?? '') : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-400'"
+      :class="
+        selected
+          ? platformSolidClass(accent ?? '')
+          : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-400'
+      "
     >
       <PlatformIcon v-if="platform" :platform="platform" size="sm" />
       <Icon v-else-if="icon" :name="icon" size="sm" :animate-on-hover="false" />
     </span>
     <span class="min-w-0 flex-1">
       <span class="block text-sm font-medium text-primary-900 dark:text-dark-50">{{ title }}</span>
-      <span v-if="description" class="block text-xs text-gray-500 dark:text-gray-400">{{ description }}</span>
+      <span v-if="description" class="block text-xs text-gray-500 dark:text-gray-400">{{
+        description
+      }}</span>
       <slot />
     </span>
     <slot name="aside" />
@@ -31,19 +37,26 @@
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import type { IconName } from '@/components/icons/registry'
-import type { ProviderPlatform } from '@/types'
+import type { ProviderPlatform } from '@/api/admin/providers.types'
 import { platformChoiceSelectedClass, platformSolidClass } from '@/utils/platformColors'
 
-// 账号类型、接入模式等多选一卡片：结构统一，选中态按所属平台取品牌色，便于区分当前平台。
+// ProviderChoiceCard.vue renders a selectable provider option with a title, description,
+// and optional icon. A supplied platform selects its platform mark, while the independent
+// accent value controls selection colors and disabled state prevents the card button from
+// being activated.
 defineProps<{
-  selected: boolean
-  title: string
-  description?: string
-  icon?: IconName
-  /** 传入时显示平台标识，优先于 icon。 */
+  selected: boolean // Current card selection state.
+  title: string // Displayed section title.
+  description?: string // Explanatory text for display.
+  icon?: IconName // Optional general-purpose icon name.
+
+  // When supplied, renders the platform mark before considering the general-purpose icon
+  // prop for this card.
   platform?: ProviderPlatform
-  disabled?: boolean
-  /** 所属平台，决定选中态的品牌色；未传时使用主题色。 */
+  disabled?: boolean // Disables the rendered control.
+
+  // Platform used for selected colors; an omitted value uses the shared theme selection
+  // styling.
   accent?: string
 }>()
 </script>

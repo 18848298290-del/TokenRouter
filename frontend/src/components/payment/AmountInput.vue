@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-4">
-    <!-- 快捷金额：分段标题由父组件提供，这里只保留按钮网格。 -->
+    <!-- Preset amounts use a button grid under the section heading supplied by the parent. -->
     <div class="grid grid-cols-3 gap-2 sm:grid-cols-5">
       <button
         v-for="amt in filteredAmounts"
@@ -19,9 +19,12 @@
       </button>
     </div>
 
-    <!-- 自定义金额 -->
+    <!-- Custom amount entry. -->
     <div>
-      <label for="payment-custom-amount" class="mb-1.5 block text-xs font-medium text-gray-500 dark:text-dark-400">
+      <label
+        for="payment-custom-amount"
+        class="mb-1.5 block text-xs font-medium text-gray-500 dark:text-dark-400"
+      >
         {{ t('payment.customAmount') }}
       </label>
       <div class="input-icon-wrap">
@@ -34,7 +37,10 @@
           inputmode="decimal"
           :value="customText"
           :placeholder="placeholderText"
-          :class="['input input-has-icon tabular-nums', symbol.length === 1 ? 'input-icon-text' : '']"
+          :class="[
+            'input input-has-icon tabular-nums',
+            symbol.length === 1 ? 'input-icon-text' : '',
+          ]"
           @input="handleInput"
         />
       </div>
@@ -45,36 +51,61 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { currencySymbol } from './currency'
+import { currencySymbol } from '@/utils/payment/currency'
 
-const props = withDefaults(defineProps<{
-  amounts?: number[]
-  modelValue: number | null
-  min?: number
-  max?: number
-  /** 支付币种，决定自定义金额输入框的货币符号前缀。 */
-  currency?: string
-}>(), {
-  amounts: () => [10, 20, 50, 100, 200, 500, 1000, 2000, 5000],
-  min: 0,
-  max: 0,
-  currency: '',
-})
+/**
+ * AmountInput.vue edits a recharge amount through presets and a custom decimal field.
+ * Nonpositive limits leave the corresponding range unbounded, while preset buttons are
+ * filtered by the available checkout range supplied by the parent.
+ *
+ * Custom entry retains decimal text separately from its nullable numeric model so a
+ * partially entered amount can stay editable. Valid positive numbers are emitted to
+ * checkout; empty, zero, and unparseable accepted text emit null. Parent updates replace
+ * the text when they contain a different nonnull value, while a null model leaves the
+ * current editing text intact. Input precision is limited to two decimal places by this
+ * control.
+ */
+
+const props = withDefaults(
+  defineProps<{
+    amounts?: number[] // suggested recharge amounts
+    /**
+     * modelValue replaces customText when nonnull and different from its numeric text;
+     * null retains the current partial input for continued editing.
+     */
+    modelValue: number | null
+    min?: number // inclusive minimum, zero unbounded
+    max?: number // inclusive maximum, zero unbounded
+    /** currency selects the input symbol; an empty value uses the shared default payment currency. */
+    currency?: string
+  }>(),
+  {
+    amounts: () => [10, 20, 50, 100, 200, 500, 1000, 2000, 5000],
+    min: 0,
+    max: 0,
+    currency: '',
+  },
+)
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number | null]
+  'update:modelValue': [value: number | null] // validated recharge amount update
 }>()
 
 const { t } = useI18n()
 
+// The editable text retains partial decimal input while the emitted model carries a positive
+// number or null.
 const customText = ref('')
 
-// 金额前缀使用支付币种符号，NZ$、KWD 等多字符符号使用默认留白。
+// The payment symbol can contain several characters, so the input retains enough prefix space
+// for labels such as NZ$ or KWD.
 const symbol = computed(() => currencySymbol(props.currency))
 
 // 0 = no limit
 const filteredAmounts = computed(() =>
-  props.amounts.filter((a) => (props.min <= 0 || a >= props.min) && (props.max <= 0 || a <= props.max))
+  props.amounts.filter(
+    (a) => (props.min <= 0 || a >= props.min) && (props.max <= 0 || a <= props.max),
+  ),
 )
 
 const placeholderText = computed(() => {
@@ -84,13 +115,26 @@ const placeholderText = computed(() => {
   return t('payment.enterAmount')
 })
 
+// Custom entry accepts at most two decimals; currency-specific display precision is applied
+// separately by checkout amount formatting.
 const AMOUNT_PATTERN = /^\d*(\.\d{0,2})?$/
 
+/**
+ * selectAmount copies a preset into the input and emits its numeric value.
+ */
 function selectAmount(amt: number) {
   customText.value = String(amt)
   emit('update:modelValue', amt)
 }
 
+/**
+ * handleInput accepts decimal text with at most two fractional digits and updates the
+ * checkout model. Accepted text stays in customText even when it currently represents no
+ * positive amount, allowing an empty field or partial decimal to remain editable. Empty,
+ * zero, and unparseable accepted values emit null; positive parsed values emit their
+ * number. A pattern mismatch returns before changing either component state or emitted
+ * model, leaving the current value for the next valid input event.
+ */
 function handleInput(e: Event) {
   const val = (e.target as HTMLInputElement).value
   if (!AMOUNT_PATTERN.test(val)) return
@@ -107,9 +151,14 @@ function handleInput(e: Event) {
   }
 }
 
-watch(() => props.modelValue, (v) => {
-  if (v !== null && String(v) !== customText.value) {
-    customText.value = String(v)
-  }
-}, { immediate: true })
+// A nonnull parent update refreshes the editing text, while null keeps the current partial decimal available for the next keystroke.
+watch(
+  () => props.modelValue,
+  (v) => {
+    if (v !== null && String(v) !== customText.value) {
+      customText.value = String(v)
+    }
+  },
+  { immediate: true },
+)
 </script>

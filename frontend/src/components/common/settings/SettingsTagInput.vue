@@ -36,22 +36,44 @@
 <script setup lang="ts">
 import Icon from '@/components/icons/Icon.vue'
 
-// 标签输入框只负责展示和转发事件，分隔符、去重和规范化由调用方处理。
+/**
+ * SettingsTagInput.vue renders removable tags beside a controlled text draft and
+ * forwards editing events. The caller owns delimiter parsing, duplicate handling, and
+ * tag normalization; the component supplies presentation, optional test identifiers,
+ * and accessible removal labels from a callback.
+ */
+
+/**
+ * The tag input props supply committed values and optional input identification,
+ * placeholder, removal labels, and test markers for the rendered controls.
+ */
 defineProps<{
-  tags: string[]
-  id?: string
-  placeholder?: string
-  /** 返回删除按钮的无障碍名称。 */
+  tags: string[] /* committed tag values */
+  id?: string /* input association identifier */
+  placeholder?: string /* empty input hint */
+
+  /**
+   * removeLabel computes the accessible name for each tag removal button; callers
+   * supply wording that identifies the tag being removed.
+   */
   removeLabel?: (tag: string) => string
-  tagTestid?: string
-  inputTestid?: string
+  tagTestid?: string /* tag test identifier */
+  inputTestid?: string /* input test identifier */
 }>()
+/**
+ * draft is the required controlled text model; tag parsing and committed tag updates
+ * remain with the caller.
+ */
 const draft = defineModel<string>('draft', { required: true })
+/**
+ * emit forwards tag removal and native editing events so the parent owns parsing,
+ * keyboard handling, and clipboard processing.
+ */
 const emit = defineEmits<{
-  remove: [tag: string]
-  input: [event: Event]
-  keydown: [event: KeyboardEvent]
-  blur: [event: FocusEvent]
-  paste: [event: ClipboardEvent]
+  remove: [tag: string] /* tag requested for removal */
+  input: [event: Event] /* native input event */
+  keydown: [event: KeyboardEvent] /* native keyboard event */
+  blur: [event: FocusEvent] /* native focus event */
+  paste: [event: ClipboardEvent] /* native clipboard event */
 }>()
 </script>

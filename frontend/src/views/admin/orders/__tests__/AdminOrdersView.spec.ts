@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import type { PaymentOrder } from '@/types/payment'
+import type { PaymentOrder } from '@/api/payment.types'
 import AdminOrdersView from '../AdminOrdersView.vue'
 
+// AdminOrdersView.spec.ts exercises refund force consent and manual expiration through
+// rendered order actions. Controlled API responses reproduce a force requirement and a
+// concurrent status change, while dialog controls and request assertions verify
+// confirmation and refresh behavior.
+
+// Hoisted request replacements are shared with imported module mocks so each test can
+// control API outcomes and inspect calls.
 const {
   mockGetOrders,
   mockRefundOrder,
@@ -44,7 +51,8 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key === 'payment.errors.ORDER_STATUS_CHANGED' ? '订单状态已变更，列表已刷新' : key,
+      t: (key: string) =>
+        key === 'payment.errors.ORDER_STATUS_CHANGED' ? '订单状态已变更，列表已刷新' : key,
     }),
   }
 })
@@ -56,6 +64,8 @@ vi.mock('@/composables/useBalanceDisplay', () => ({
   }),
 }))
 
+// order supplies a completed balance-purchase fixture reused by refund tests and adapted
+// to pending status for force-expiration cases.
 const order: PaymentOrder = {
   id: 42,
   user_id: 7,
@@ -75,11 +85,15 @@ const order: PaymentOrder = {
   refund_amount: 0,
 }
 
+// BaseDialogStub renders dialog content and footer slots so tests can exercise the
+// contained form controls and emitted actions.
 const BaseDialogStub = {
   props: ['show'],
   template: '<div v-if="show"><slot /><slot name="footer" /></div>',
 }
 
+// OrderTableStub exposes order action slots for each supplied row so tests invoke page
+// handlers through their rendered buttons.
 const OrderTableStub = {
   props: ['orders'],
   template: `
@@ -91,6 +105,9 @@ const OrderTableStub = {
   `,
 }
 
+// mountView mounts the order page with dialogs and action slots available to tests. API
+// replacements supply rows so simulated clicks exercise the page refund and force-
+// expiration handlers.
 function mountView() {
   return mount(AdminOrdersView, {
     global: {
@@ -107,6 +124,7 @@ function mountView() {
   })
 }
 
+// findRefundAction locates the rendered administrator refund button in the mounted view.
 function findRefundAction(wrapper: ReturnType<typeof mountView>) {
   return wrapper.findAll('button').find((button) => button.text() === 'payment.admin.refund')
 }
@@ -124,6 +142,9 @@ describe('AdminOrdersView', () => {
     })
   })
 
+  // The refund API requires force consent after the initial submission. The dialog must
+  // retain the warning, require the checkbox before retry, and clear that state when
+  // reopened.
   it('后端要求强制退款时保留弹窗并在显式确认后重试', async () => {
     mockRefundOrder
       .mockResolvedValueOnce({
@@ -156,10 +177,14 @@ describe('AdminOrdersView', () => {
     expect(wrapper.text()).toContain('insufficient balance, use force')
     const forceCheckbox = wrapper.find<HTMLInputElement>('#force-refund')
     expect(forceCheckbox.exists()).toBe(true)
-    expect(wrapper.find<HTMLButtonElement>('button[form="refund-form"]').element.disabled).toBe(true)
+    expect(wrapper.find<HTMLButtonElement>('button[form="refund-form"]').element.disabled).toBe(
+      true,
+    )
 
     await forceCheckbox.setValue(true)
-    expect(wrapper.find<HTMLButtonElement>('button[form="refund-form"]').element.disabled).toBe(false)
+    expect(wrapper.find<HTMLButtonElement>('button[form="refund-form"]').element.disabled).toBe(
+      false,
+    )
     await wrapper.find('#refund-form').trigger('submit')
     await flushPromises()
 
@@ -178,6 +203,8 @@ describe('AdminOrdersView', () => {
     expect(wrapper.text()).not.toContain('insufficient balance, use force')
   })
 
+  // A pending order is selected for manual expiration. The confirmation must require both
+  // a reason and consent before sending the API request and closing after success.
   it('管理员确认并填写原因后才能强制过期待支付订单', async () => {
     const pendingOrder = { ...order, status: 'PENDING' as const }
     mockGetOrders.mockResolvedValue({
@@ -188,7 +215,9 @@ describe('AdminOrdersView', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    const forceAction = wrapper.findAll('button').find((button) => button.text() === 'payment.admin.forceExpire')
+    const forceAction = wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'payment.admin.forceExpire')
     expect(forceAction).toBeDefined()
     await forceAction!.trigger('click')
     await flushPromises()
@@ -196,7 +225,9 @@ describe('AdminOrdersView', () => {
     const submitButton = wrapper.find<HTMLButtonElement>('button[form="force-expire-form"]')
     expect(submitButton.exists()).toBe(true)
     expect(submitButton.element.disabled).toBe(true)
-    await wrapper.find<HTMLTextAreaElement>('#force-expire-reason').setValue('provider endpoint returned HTML')
+    await wrapper
+      .find<HTMLTextAreaElement>('#force-expire-reason')
+      .setValue('provider endpoint returned HTML')
     expect(submitButton.element.disabled).toBe(true)
     await wrapper.find<HTMLInputElement>('#force-expire-confirm').setValue(true)
     expect(submitButton.element.disabled).toBe(false)
@@ -204,11 +235,15 @@ describe('AdminOrdersView', () => {
     await wrapper.find('#force-expire-form').trigger('submit')
     await flushPromises()
 
-    expect(mockForceExpireOrder).toHaveBeenCalledWith(42, { reason: 'provider endpoint returned HTML' })
+    expect(mockForceExpireOrder).toHaveBeenCalledWith(42, {
+      reason: 'provider endpoint returned HTML',
+    })
     expect(mockShowSuccess).toHaveBeenCalledWith('payment.admin.forceExpireSuccess')
     expect(wrapper.find('#force-expire-form').exists()).toBe(false)
   })
 
+  // Payment changes the order status before manual expiration completes. The page must
+  // report the status conflict, close its stale confirmation, and reload the order list.
   it('强制过期与付款完成竞争时刷新订单列表并关闭确认弹窗', async () => {
     const pendingOrder = { ...order, status: 'PENDING' as const }
     mockGetOrders.mockResolvedValue({
@@ -221,9 +256,13 @@ describe('AdminOrdersView', () => {
 
     const wrapper = mountView()
     await flushPromises()
-    const forceAction = wrapper.findAll('button').find((button) => button.text() === 'payment.admin.forceExpire')
+    const forceAction = wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'payment.admin.forceExpire')
     await forceAction!.trigger('click')
-    await wrapper.find<HTMLTextAreaElement>('#force-expire-reason').setValue('provider callback won the race')
+    await wrapper
+      .find<HTMLTextAreaElement>('#force-expire-reason')
+      .setValue('provider callback won the race')
     await wrapper.find<HTMLInputElement>('#force-expire-confirm').setValue(true)
     await wrapper.find('#force-expire-form').trigger('submit')
     await flushPromises()

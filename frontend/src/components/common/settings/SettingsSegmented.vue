@@ -29,28 +29,55 @@ import Icon from '@/components/icons/Icon.vue'
 import type { IconName } from '@/components/icons/registry'
 import { vSegmented } from '@/directives/segmented'
 
+/**
+ * SettingsSegmented.vue presents typed mutually exclusive setting options with a
+ * shared selected background. The parent owns the selected value, individual options
+ * or the whole control can be disabled, and deselectable mode emits null when the
+ * active option is clicked again.
+ */
+
+/**
+ * SettingsSegmentedOption describes one typed choice and its button presentation
+ * metadata.
+ */
 export interface SettingsSegmentedOption<V> {
-  value: V
-  label: string
-  icon?: IconName
-  disabled?: boolean
-  /** 透传到选项按钮，供测试定位。 */
-  testid?: string
+  value: V /* option selection value */
+  label: string /* option display label */
+  icon?: IconName /* optional option glyph */
+  disabled?: boolean /* interaction disabled flag */
+  testid?: string /* button test identifier */
 }
 
-// 设置表单中两到五个互斥选项统一使用分段控件，选中背景由 v-segmented 共享。
+/**
+ * props pairs typed options with the controlled selection and supplies accessibility,
+ * width, disabled, and deselection choices.
+ */
 const props = defineProps<{
-  modelValue: T
-  options: SettingsSegmentedOption<T>[]
-  ariaLabel: string
-  /** 撑满整行并让选项等分宽度。 */
-  block?: boolean
-  disabled?: boolean
-  /** 再次点击已选项时取消选择，回到 null。 */
+  modelValue: T /* parent controlled value */
+  options: SettingsSegmentedOption<T>[] /* ordered selectable choices */
+  ariaLabel: string /* accessible group name */
+  block?: boolean /* equal width layout */
+  disabled?: boolean /* interaction disabled flag */
+
+  /**
+   * deselectable clears the model to null when the selected option is clicked again,
+   * so callers must accept that empty selection.
+   */
   deselectable?: boolean
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: T | null] }>()
+/**
+ * emit publishes a selected option value or the null clearing value when deselection
+ * is enabled for an already selected option.
+ */
+const emit = defineEmits<{
+  'update:modelValue': [value: T | null] /* replacement parent controlled value */
+}>()
 
+/**
+ * select emits the chosen typed value to the parent. When deselectable is enabled and
+ * the same option is already selected, it emits null to clear the controlled
+ * selection.
+ */
 function select(value: T) {
   if (props.deselectable && props.modelValue === value) {
     emit('update:modelValue', null)

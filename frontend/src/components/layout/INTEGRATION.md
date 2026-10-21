@@ -90,7 +90,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin/providers',
     name: 'AdminProviders',
-    component: () => import('@/views/admin/ProvidersView.vue'),
+    component: () => import('@/views/admin/providers/ProvidersView.vue'),
     meta: { requiresAuth: true, requiresAdmin: true, title: 'Providers' }
   },
   {

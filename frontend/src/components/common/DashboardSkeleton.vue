@@ -3,12 +3,28 @@ import { useI18n } from 'vue-i18n'
 import Skeleton from './Skeleton.vue'
 import ChartSkeleton from './ChartSkeleton.vue'
 
+/**
+ * DashboardSkeleton.vue reserves the dashboard statistics, filter controls, and chart
+ * positions during initial loading. Repeated card shapes follow the responsive
+ * dashboard grid, while a single accessible status names the loading region and hides
+ * decorative elements from assistive technology.
+ */
+
+/**
+ * The i18n translator resolves this component's message keys using the current
+ * application locale and its configured translation catalog.
+ */
 const { t } = useI18n()
 </script>
 
 <template>
-  <!-- 首屏骨架为统计卡、筛选控件和图表预留位置。 -->
-  <div class="space-y-4" role="status" :aria-label="t('common.loading')" aria-busy="true" data-testid="dashboard-skeleton">
+  <div
+    class="space-y-4"
+    role="status"
+    :aria-label="t('common.loading')"
+    aria-busy="true"
+    data-testid="dashboard-skeleton"
+  >
     <div class="grid grid-cols-2 gap-4 lg:grid-cols-4" aria-hidden="true">
       <div v-for="card in 8" :key="card" class="card p-4">
         <div class="flex flex-col gap-2 lg:flex-row">

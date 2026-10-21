@@ -276,8 +276,8 @@ Redis 测试通过 `rediscontainer.Run` 启动独立容器，等待监听就绪�
 | 任意文件 | `git diff --check` |
 | `backend/**/*.go` | Go 格式、arch-go，改动包的 golangci-lint（`--new-from-rev`，带 integration 标签）和 `go test` |
 | `backend/go.mod`、`backend/go.sum` | 同上，lint 和测试范围扩大到整个模块 |
-| `frontend/src`、`frontend/public` | 改动文件的 eslint，`check:ui`、`typecheck` 和 `vitest related` |
-| `frontend` 下的其他文件 | 依赖文件改动时先冻结安装，再跑完整 lint、typecheck 和 Vitest |
+| `frontend/src`、`frontend/public` | 全量前端格式、ESLint、注释、依赖、UI token、类型和检查脚本测试；应用测试使用 `vitest related`，删除源文件时运行完整 Vitest |
+| `frontend` 下的其他文件 | 完整前端静态检查、检查脚本测试和 Vitest；package、锁文件或 workspace 配置改动时先冻结安装 |
 | `backend/internal/pkg/locale/*.json` | 引用这些文件的前端测试 |
 | `deploy/`、`tools/goreleaser*` | `make test-scripts` |
 | `tools/*.py`、`tools/declorder/`、`.githooks/` | `make test-tools` |
@@ -290,7 +290,7 @@ Redis 测试通过 `rediscontainer.Run` 启动独立容器，等待监听就绪�
 
 | job | 内容 |
 | --- | --- |
-| go-lint | `make lint-go`、`make test-tools`、`make fmt-check` |
+| go-lint | `make lint-go`、`make test-tools`、`make fmt-go-check` |
 | go-test | `make test-go` |
 | go-integration | 安装 PostgreSQL 18 客户端，再执行 `make test-integration` |
 | frontend | `make lint-frontend`、`make test-frontend` |
@@ -341,7 +341,7 @@ make lint-go
 前端命令：
 
 ```bash
-# ESLint、UI token 检查和类型检查
+# 格式、ESLint、注释、依赖、UI token 和类型检查
 make lint-frontend
 
 # 完整 Vitest
@@ -355,6 +355,8 @@ make build
 
 Vue 的最低版本为 `3.5.42`，该版本修复了 `@vue/server-renderer` 属性名检查中的 XSS 漏洞。`frontend/pnpm-workspace.yaml` 将低于 `1.2.2` 的 `source-map-js` 依赖提升到修复版本，覆盖 Vue 编译器和 i18n 引入的索引偏移 DoS 漏洞。更新这些依赖时同步维护锁文件，并运行前端测试、生产构建和安全扫描。
 
+Axios 的 Node 重定向依赖 `follow-redirects` 通过 workspace override 固定低版本的替换值为 `1.16.1`，修复数组形式请求头和特殊字符敏感请求头在跨域重定向时的剥离问题。对应公告为 [GHSA-q3jh-wrc6-jgq8](https://github.com/advisories/GHSA-q3jh-wrc6-jgq8) 和 [GHSA-8r9p-f939-6h3c](https://github.com/advisories/GHSA-8r9p-f939-6h3c)；安全检查继续使用现有高危例外规则。
+
 管理员用量导出通过动态导入 `xlsx` 生成工作簿，调用 `aoa_to_sheet`、`sheet_add_aoa` 和 `write`。依赖固定为 [SheetJS 官方分发](https://docs.sheetjs.com/docs/getting-started/installation/nodejs/)的 `0.20.3` tarball，锁文件记录下载地址和完整性校验值。该版本包含原型污染和 ReDoS 的修复。升级时验证分页数据追加、工作簿序列化、前端生产构建和安全扫描。
 
 
@@ -362,17 +364,27 @@ Vue 的最低版本为 `3.5.42`，该版本修复了 `@vue/server-renderer` 属�
 
 提交信息遵循 Conventional Commits，例如 `feat(gateway): ...`、`fix(billing): ...`、`docs(project): ...`。一次提交围绕一个可以验证的目的，生成文件、迁移和接口测试，和它们的源码变更一起提交。
 
+### 前端格式化与静态检查
+
+前端固定使用 `frontend/package.json` 声明的 Prettier 版本。`pnpm --dir frontend format` 写入格式，`pnpm --dir frontend format:check` 只检查；对应根命令是 `make fmt-frontend` 和 `make fmt-frontend-check`。两者覆盖全部纳入配置的前端文件，`BASE` 不会缩小前端范围。
+
+格式规则采用两空格、单引号、无分号、100 列、尾逗号和 LF。Vue 的 script/style 保持块内原始缩进层级。普通 HTML 使用 CSS 空白规则；Vue 使用 strict 规则，避免换行改变模板文本两侧的空格。项目的 Prettier HTML 打印插件会格式化 script/style 语法，并关闭块内字符串的继续嵌入格式化；独立脚本直接关闭嵌入格式化。格式化范围包括手写 Vue、TS/JS 及其模块和 JSX 变体、CSS、HTML、JSON、YAML；资源数据、许可证、锁文件、缓存、构建产物和明确的生成文件由 `.prettierignore` 排除。手写 `.d.ts` 和本地适配的图标代码参与检查。
+
+`lint:check` 顺序运行格式检查、ESLint、注释检查、依赖检查和 UI token 检查，`make lint-frontend` 再运行类型检查。`check:comments` 解析 Vue、TS/JS、CSS 和 HTML 中的注释，检查英文说明及手写源码、测试的文件名总览；说明的准确性、职责分档、声明覆盖和长度仍按 `code-comments` 人工复核。`check:imports` 检查 API、组件、页面私有模块的依赖方向，规则与例外集中在检查脚本中。
+
+`test:tools` 通过 Node 测试运行器验证检查脚本，包含格式化幂等、真实注释识别、路径归属及 UI 豁免范围。`make test-frontend` 和推送前检查都会执行它。编辑器使用仓库本地 Prettier 和同一份配置，保存时格式化的结果与 CI 一致。
+
 ### Go 格式化
 
-每次提交代码之前，在仓库根目录运行 `make fmt`，再运行 `make fmt-check`。这两个入口需要 Python 3 和指定版本的 golangci-lint。`tools/format_go.py` 筛选文件后，调用 `golangci-lint fmt --config backend/.golangci.yml`，检查模式加上 `--diff`。配置启用 gofumpt 的默认规则，gci 按标准库、第三方、本仓库的顺序分组 import，并保留 gofmt 的 `interface{}` → `any`、`a[b:len(a)]` → `a[b:]` 两条重写规则；gofumpt 不单独维护版本。
+每次提交代码之前，在仓库根目录运行 `make fmt`，再运行 `make fmt-check`；它们汇总 Go 和前端入口。Go 专用入口为 `make fmt-go` 和 `make fmt-go-check`，需要 Python 3 和指定版本的 golangci-lint。`tools/format_go.py` 筛选文件后，调用 `golangci-lint fmt --config backend/.golangci.yml`，检查模式加上 `--diff`。配置启用 gofumpt 的默认规则，gci 按标准库、第三方、本仓库的顺序分组 import，并保留 gofmt 的 `interface{}` → `any`、`a[b:len(a)]` → `a[b:]` 两条重写规则；gofumpt 不单独维护版本。
 
 命令处理暂存、未暂存和未跟踪的 Go 文件，按整个文件格式化，覆盖后端和仓库的工具模块；删除的文件、符号链接、vendor 和 node_modules，以及带标准生成标记的文件会被跳过。生成标记是 `package` 声明之前的 `// Code generated ... DO NOT EDIT.`，Ent schema 等手写的源文件照常参与格式化。脚本会预先排除生成文件，格式化配置也使用严格的生成文件识别。
 
 格式化之后检查 diff，把属于这次提交的修改重新暂存。部分暂存的文件需要逐块核对，命令不会修改 Git 的暂存区。检查入口发现格式差异或工具执行失败时返回非零状态。推送前快检检查整个待推送区间的格式。
 
-检查已经提交的改动，使用 `make fmt-check BASE=<基准提交>`，它按基准和 HEAD 的差异选择文件，工作区干净时也会检查。CI 的 PR 检出源提交，以目标分支和源提交的共同祖先为基准；普通 push 比较推送前后的提交，新分支第一次推送比较默认分支的共同祖先，默认分支第一次推送比较空树。基准无法解析时检查失败，不会悄悄跳过。
+检查已经提交的 Go 改动，使用 `make fmt-go-check BASE=<基准提交>`，它按基准和 HEAD 的差异选择文件，工作区干净时也会检查。CI 的 PR 检出源提交，以目标分支和源提交的共同祖先为基准；普通 push 比较推送前后的提交，新分支第一次推送比较默认分支的共同祖先，默认分支第一次推送比较空树。基准无法解析时检查失败，不会悄悄跳过。
 
-`make fmt` 先用 `tools/declorder` 重排[文件内的声明顺序](#backend_declaration_order)，再运行 `golangci-lint fmt`。golangci-lint 开始前，入口先校验版本，版本不符时任何文件都不会被改写。
+`make fmt-go` 先用 `tools/declorder` 重排[文件内的声明顺序](#backend_declaration_order)，再运行 `golangci-lint fmt`。golangci-lint 开始前，入口先校验版本，版本不符时任何文件都不会被改写。
 
 `make lint-go` 对全部手写文件运行格式检查、声明顺序检查和静态分析，带 integration 标签覆盖无标签和集成文件，`make test-embed` 检查 embed 文件。除了 errcheck、gosec、govet、staticcheck 这类错误检查，lint 还启用 whitespace、unconvert、copyloopvar、usestdlibvars、intrange 和 nolintlint。nolintlint 要求每条 `//nolint` 写出 linter 名和原因。godot 要求顶层声明的文档注释以句号结尾，中文用“。”，英文用“.”，Project Doc 锚点和路由注释（`// GET /api/...`）除外。revive 检查接收者命名、多余的 import 别名、`TestMain` 里多余的 `os.Exit`，以及可以去掉的 if 和 else。gocritic 只开 assignOp、captLocal、emptyStringTest 等几项有明确改法的检查。modernize 要求使用标准库的新写法，例如 `min`、`max`、`slices.Contains`、`maps.Copy`、`sync.WaitGroup.Go` 和 `errors.AsType`。会改变 JSON 输出、字段类型或测试 context 行为的几项，以及 Go 1.26 以后的新语法，在配置里关闭。
 

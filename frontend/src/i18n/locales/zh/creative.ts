@@ -1,12 +1,17 @@
+// creative.ts supplies Simplified Chinese text for image creation, editing,
+// canvas controls, and run history. Prompts, selection guidance, generation
+// parameters, and local-data messages describe the creative workspace states so
+// its controls and validation errors share consistent wording.
+
 export default {
   creative: {
     title: '创作台',
     description: '使用 AI 模型生成与编辑图片，素材仅保存在当前浏览器。',
     panel: {
       model: '模型',
-      // 图生图 / 局部重绘前置条件提示（未选中图片时点击生成也会作为表单错误提示）
+      // Image selection guidance shared with generation validation when no reference image is selected.
       selectImageHint: '请先在画布中选中一张图片，再开始生成。',
-      // 局部重绘提示：选中图片后用画笔涂抹要重绘的区域
+      // Inpaint guidance describes selecting an image and painting its redraw area.
       maskHint: '请先在画布中选中一张图片，然后用画笔涂抹要重绘的区域。',
       imageSize: '图片尺寸',
       aspectRatio: '画面比例',
@@ -16,7 +21,7 @@ export default {
       estimatedCost: '{cost} / 张',
       uploadSource: '上传图片',
       promptPlaceholder: '描述想要生成的画面...',
-      // 模型目录为空时的空态提示：区分功能被管理员关闭与分组未配置图片生成。
+      // Separate empty states describe an administrator-disabled studio and groups lacking image generation.
       studioDisabled: '创作台功能已关闭，请联系管理员开启。',
       noModelsAvailable: '暂无可用的图片生成模型，请联系管理员配置支持图片生成的分组。',
     },
@@ -27,10 +32,10 @@ export default {
       operation: '操作',
       selectModel: '选择模型',
       selectModelFirst: '请先选择模型。',
-      // 画面比例为 auto 时，参数按钮和比例选项显示的文字
+      // The automatic aspect ratio uses these labels in the parameter button and options.
       autoRatio: '自动比例',
     },
-    // 空画布引导：画布上没有图片时显示，示例提示词点击后填入输入框
+    // Empty-canvas guidance includes example prompts that can populate the prompt input.
     empty: {
       title: '从一句描述开始',
       description: '在下方输入提示词生成图片，或上传图片后做图生图和局部重绘。',
@@ -38,7 +43,8 @@ export default {
       examples: {
         poster: {
           label: '复古旅行海报',
-          prompt: '一张 1970 年代风格的复古旅行海报，海边小镇，暖橙色夕阳，颗粒纸张质感，大号无衬线标题字',
+          prompt:
+            '一张 1970 年代风格的复古旅行海报，海边小镇，暖橙色夕阳，颗粒纸张质感，大号无衬线标题字',
         },
         product: {
           label: '产品棚拍图',
@@ -67,7 +73,7 @@ export default {
       '16x9': '16:9',
       '9x16': '9:16',
     },
-    // 生图画质档位由模型目录下发；支持时默认选择 medium，始终保持一个选项。
+    // Quality labels correspond to the generation quality values exposed by model settings.
     qualities: {
       low: '低',
       medium: '中',
@@ -87,12 +93,13 @@ export default {
       brushSize: '画笔粗细',
       shapeRound: '圆头笔迹',
       shapeSquare: '方头笔迹',
-      // 框选画布对象：三种创作模式均可开启
+      // Box selection labels identify selection of canvas objects.
       boxSelect: '框选画布对象',
-      // 涂抹开关：暂停涂抹后可平移视角 / 换选图片，再点恢复涂抹
+      // Painting controls distinguish drawing from pausing to pan or select another image.
       paintToggleOn: '开始涂抹',
       paintToggleOff: '暂停涂抹，移动视角',
-      // 撤销上一笔涂抹（同 Ctrl/Cmd+Z）
+      // Undo reverses the newest retained mask operation, including clearing
+      // all strokes.
       undoMask: '撤销上一笔',
       clearMask: '清除全部涂抹',
       downloadSelected: '下载选中图片',
@@ -100,11 +107,11 @@ export default {
       reset: '清空画布',
       backToDashboard: '返回仪表盘',
       settings: '设置',
-      // 局部重绘未选中图片时的引导
+      // Inpaint selection guidance appears before an image is selected.
       inpaintPickHint: '点击画布中的一张图片，在其上涂抹要重绘的区域',
-      // 图生图未选择参考图时的引导（点击单选，或直接拖拽框选多张）
+      // Reference selection guidance describes clicking an image or selecting several with a box.
       editPickHint: '点击图片选择参考图，或直接拖拽框选多张',
-      // 涂抹开始前的引导：紫色笔迹即重绘区域
+      // Mask guidance identifies the painted area sent for redrawing.
       maskPaintHint: '在图片上涂抹要重绘的区域，紫色部分会作为 mask 提交',
     },
     result: {
@@ -112,7 +119,7 @@ export default {
       missing: '素材缺失',
     },
     history: {
-      noOutputs: "没有输出图片",
+      noOutputs: '没有输出图片',
       title: '历史记录',
       elapsed: '已用时 {time}',
       toggle: '展开 / 收起历史记录',
@@ -122,9 +129,9 @@ export default {
       copyPrompt: '复制提示词',
       promptCopied: '提示词已复制',
       reuseParams: '填入输入框',
-      // 提示词只保存在提交任务的浏览器里，本机没有记录时显示
+      // Prompt availability refers to history stored by the submitting browser.
       promptUnavailable: '本机没有这次任务的提示词记录。',
-      // 参数标签的短名称，侧栏较窄，用两到三个字
+      // Short parameter labels fit the history sidebar.
       params: {
         group: '分组',
         size: '尺寸',

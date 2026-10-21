@@ -1,3 +1,7 @@
+# ci.yml runs backend, frontend, build, and installer checks for pushes and pull requests.
+# Each job uses the repository Make targets so local acceptance follows the same
+# commands. Go jobs retain independent tool setup, while frontend jobs install the
+# frozen dependency graph and run formatter, parser-policy, and application tests.
 name: CI
 
 on:
@@ -7,13 +11,13 @@ on:
 permissions:
   contents: read
 
-# 同一分支的新提交取消还在运行的旧检查。
+# New commits cancel unfinished checks for the same branch or pull request.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  # CI 每次重新执行测试，测试结果缓存留给本地开发。
+  # CI reruns tests for each commit; local commands may reuse test results.
   GOFLAGS: -count=1
 
 jobs:
@@ -22,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # PR 检查源提交；完整历史用于计算格式检查的基准。
+          # Pull requests check their source commit; full history resolves the format base.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - id: go
@@ -48,16 +52,18 @@ jobs:
           if [ "$EVENT_NAME" = pull_request ]; then
             BASE=$(git merge-base "$PR_BASE" HEAD)
           elif [ -n "$PUSH_BASE" ] && [ "$PUSH_BASE" != 0000000000000000000000000000000000000000 ]; then
-            # 强制推送后旧提交可能不在当前分支历史中，缺失时单独获取。
+            # A forced push can remove the previous commit from branch history. Fetch
+            # that commit separately so formatting still checks the complete push range.
             git cat-file -e "$PUSH_BASE^{commit}" 2>/dev/null || git fetch origin "$PUSH_BASE"
             BASE=$PUSH_BASE
           elif [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
             BASE=$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)
           else
-            # 首次推送默认分支没有旧提交，以空树为基准。
+            # An initial default-branch push has no previous revision. Comparing to
+            # the empty tree includes every source file in that first commit.
             BASE=$(git hash-object -t tree --stdin < /dev/null)
           fi
-          make fmt-check BASE="$BASE"
+          make fmt-go-check BASE="$BASE"
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v5
         with:
@@ -89,13 +95,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      # 与 go-test 共用编译缓存，由 go-test 负责保存。
+      # Integration restores the shared test cache saved by the go-test job.
       - uses: ./.github/actions/setup-go
         with:
           group: test
       - name: Install PostgreSQL 18 client
         run: |
-          # 恢复夹具使用 PostgreSQL 18；pg_dump 不能备份高于自身主版本的服务端。
+          # Restore fixtures run PostgreSQL 18. The matching client can dump its
+          # server data, while an older pg_dump rejects the newer server version.
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl --fail --silent --show-error --location https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
           . /etc/os-release
@@ -121,7 +128,7 @@ jobs:
       - run: make lint-frontend
       - run: make test-frontend
 
-  # 生产前端资源和嵌入资源的发布形态后端。
+  # Build production browser assets and the server variant that embeds them.
   build:
     runs-on: ubuntu-latest
     steps:
@@ -164,7 +171,7 @@ jobs:
       - run: make test-scripts
 
   installer:
-    # Linux 安装器依赖 Bash 4+ 和 sha256sum；macOS 系统 Bash 仅支持 3.2。
+    # Installer fixtures require Bash 4 and sha256sum, so this job uses Linux.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

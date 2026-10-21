@@ -28,16 +28,31 @@ import {
   Title,
   Tooltip,
   Legend,
-  Filler
+  Filler,
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import ChartSkeleton from '@/components/common/ChartSkeleton.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-import { useChartTheme, CHART_SERIES_COLORS, CHART_TICK_FONT_SIZE, CHART_LEGEND_FONT_SIZE } from '@/composables/useChartTheme'
+import {
+  useChartTheme,
+  CHART_SERIES_COLORS,
+  CHART_TICK_FONT_SIZE,
+  CHART_LEGEND_FONT_SIZE,
+} from '@/composables/useChartTheme'
 import { externalTooltipHandler, hideExternalTooltip } from '@/utils/chartExternalTooltip'
-import type { TrendDataPoint } from '@/types'
+import type { TrendDataPoint } from '@/api/usage.types'
 import { formatTokens } from '@/utils/format'
 
+// TokenUsageTrend.vue plots token categories and cache-read percentages across supplied
+// time buckets. The percentage uses input, cache creation, and cache read together as
+// the prompt-side total, while output tokens remain a separate series. A zero prompt
+// total produces zero percent so empty buckets stay displayable.
+//
+// The chart abbreviates date labels according to granularity but retains full source
+// dates for tooltip titles. Dataset positions stay aligned with the supplied trend
+// array, allowing tooltip footers to retrieve the matching bucket's actual and optional
+// standard cost. Theme text and grid colors update independently of the semantic
+// token-series palette.
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -46,49 +61,80 @@ ChartJS.register(
   Title,
   Tooltip,
   Legend,
-  Filler
+  Filler,
 )
 
+// Hide the shared HTML tooltip before this chart unmounts so its bucket details cannot
+// remain above a subsequent page.
 onBeforeUnmount(hideExternalTooltip)
 
+// Translations and balance formatters provide the chart title and tooltip costs using
+// the active language and the configured currency display.
 const { t } = useI18n()
 const { formatBalanceAmount, formatUsdAmount } = useBalanceDisplay()
 
-const props = withDefaults(defineProps<{
-  trendData: TrendDataPoint[]
-  loading?: boolean
-  granularity?: 'day' | 'hour'
-  showStandardCost?: boolean
-}>(), {
-  granularity: 'day',
-  showStandardCost: true,
-})
+// props supplies ordered trend buckets and display choices; daily labels and
+// standard-cost tooltip details are enabled by the component defaults.
+const props = withDefaults(
+  defineProps<{
+    trendData: TrendDataPoint[] // Ordered usage buckets
+    loading?: boolean // Parent loading state
+    // Selects compact daily or hourly axis labels; full bucket dates remain available in
+    // tooltip titles.
+    granularity?: 'day' | 'hour'
+    // Includes standard cost in the tooltip footer by default; disabling it leaves the
+    // actual charge visible.
+    showStandardCost?: boolean
+  }>(),
+  {
+    granularity: 'day',
+    showStandardCost: true,
+  },
+)
 
-// 文字/网格走主题档位,序列色用共享语义色板(数值与迁移前逐项相同)。
+// Theme colors govern text and grid lines, while the shared semantic palette keeps token
+// categories recognizable across theme changes.
 const { colors: themeColors } = useChartTheme()
 const chartColors = computed(() => ({
   text: themeColors.value.text,
   grid: themeColors.value.grid,
-  ...CHART_SERIES_COLORS
+  ...CHART_SERIES_COLORS,
 }))
 
-// 小时粒度只在坐标轴展示时分，完整时间仍由 tooltip 标题保留。
+// formatHourLabel extracts hours and minutes for compact hourly axis labels. Inputs
+// lacking the expected time separator retain their supplied text, while tooltip titles
+// independently read the complete bucket date from trendData.
 const formatHourLabel = (value: string): string => {
   const match = value.match(/(?:T|\s)(\d{2}:\d{2})/)
   return match?.[1] || value
 }
 
-// 日粒度标签显示月日。
+// formatDayLabel extracts a padded month and day for daily axis labels. Inputs that do
+// not match the supported numeric date prefix retain their text; tooltip titles still
+// use the complete date from the matching bucket.
 const formatDayLabel = (value: string): string => {
   const match = value.match(/^(?:\d{4}[-/])?(\d{1,2})[-/](\d{1,2})/)
   if (!match) return value
   return `${match[1].padStart(2, '0')}-${match[2].padStart(2, '0')}`
 }
 
-const chartLabels = computed(() => props.trendData.map((point) => (
-  props.granularity === 'hour' ? formatHourLabel(point.date) : formatDayLabel(point.date)
-)))
+// chartLabels applies the selected abbreviation to every supplied bucket in order,
+// keeping labels aligned with dataset values and tooltip indices.
+const chartLabels = computed(() =>
+  props.trendData.map((point) =>
+    props.granularity === 'hour' ? formatHourLabel(point.date) : formatDayLabel(point.date),
+  ),
+)
 
+// chartData builds token counts and a percentage series from the supplied buckets. An
+// empty list returns null for the template empty state. Cache-read percentage uses the
+// complete prompt-side token count, adding cache creation and cache read to ordinary
+// input tokens.
+//
+// Each dataset maps the same bucket order, while the percentage dataset selects a
+// separate right axis capped at one hundred. Zero prompt-side totals yield zero percent,
+// preventing division by zero and keeping empty time buckets aligned with the other
+// series.
 const chartData = computed(() => {
   if (!props.trendData?.length) return null
 
@@ -101,7 +147,7 @@ const chartData = computed(() => {
         borderColor: chartColors.value.input,
         backgroundColor: `${chartColors.value.input}20`,
         fill: true,
-        tension: 0.3
+        tension: 0.3,
       },
       {
         label: 'Output',
@@ -109,7 +155,7 @@ const chartData = computed(() => {
         borderColor: chartColors.value.output,
         backgroundColor: `${chartColors.value.output}20`,
         fill: true,
-        tension: 0.3
+        tension: 0.3,
       },
       {
         label: 'Cache Creation',
@@ -117,7 +163,7 @@ const chartData = computed(() => {
         borderColor: chartColors.value.cacheCreation,
         backgroundColor: `${chartColors.value.cacheCreation}20`,
         fill: true,
-        tension: 0.3
+        tension: 0.3,
       },
       {
         label: 'Cache Read',
@@ -125,12 +171,13 @@ const chartData = computed(() => {
         borderColor: chartColors.value.cacheRead,
         backgroundColor: `${chartColors.value.cacheRead}20`,
         fill: true,
-        tension: 0.3
+        tension: 0.3,
       },
       {
         label: 'Cached Input %',
         data: props.trendData.map((d) => {
-          // 后端的 input_tokens 已扣除 cache_read，这里用输入侧总 token 作为命中率分母。
+          // Input, cache creation, and cache read represent distinct prompt categories;
+          // include all three so cache hits use the full prompt denominator.
           const inputSideTokens = d.input_tokens + d.cache_creation_tokens + d.cache_read_tokens
           return inputSideTokens > 0 ? (d.cache_read_tokens / inputSideTokens) * 100 : 0
         }),
@@ -138,18 +185,20 @@ const chartData = computed(() => {
         backgroundColor: `${chartColors.value.cacheHitRate}20`,
         fill: false,
         tension: 0.3,
-        yAxisID: 'yPercent'
-      }
-    ]
+        yAxisID: 'yPercent',
+      },
+    ],
   }
 })
 
+// lineOptions combines token and percentage axes with a shared HTML tooltip; tooltip
+// indices retrieve full dates and costs from the supplied trend buckets.
 const lineOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
   interaction: {
     intersect: false,
-    mode: 'index' as const
+    mode: 'index' as const,
   },
   plugins: {
     legend: {
@@ -160,9 +209,9 @@ const lineOptions = computed(() => ({
         pointStyle: 'circle',
         padding: 15,
         font: {
-          size: CHART_LEGEND_FONT_SIZE
-        }
-      }
+          size: CHART_LEGEND_FONT_SIZE,
+        },
+      },
     },
     tooltip: {
       enabled: false,
@@ -187,14 +236,14 @@ const lineOptions = computed(() => ({
             return `Actual: ${actual} | Standard: ${formatUsdAmount(data.cost, { fractionDigits: 4 })}`
           }
           return ''
-        }
-      }
-    }
+        },
+      },
+    },
   },
   scales: {
     x: {
       grid: {
-        color: chartColors.value.grid
+        color: chartColors.value.grid,
       },
       ticks: {
         color: chartColors.value.text,
@@ -202,43 +251,48 @@ const lineOptions = computed(() => ({
         maxRotation: props.granularity === 'hour' ? 0 : 50,
         minRotation: props.granularity === 'hour' ? 0 : 0,
         font: {
-          size: CHART_TICK_FONT_SIZE
-        }
-      }
+          size: CHART_TICK_FONT_SIZE,
+        },
+      },
     },
     y: {
       grid: {
-        color: chartColors.value.grid
+        color: chartColors.value.grid,
       },
       ticks: {
         color: chartColors.value.text,
         font: {
-          size: CHART_TICK_FONT_SIZE
+          size: CHART_TICK_FONT_SIZE,
         },
-        callback: (value: string | number) => formatTokens(Number(value))
-      }
+        callback: (value: string | number) => formatTokens(Number(value)),
+      },
     },
     yPercent: {
       position: 'right' as const,
       min: 0,
       max: 100,
       grid: {
-        drawOnChartArea: false
+        drawOnChartArea: false,
       },
       ticks: {
         color: chartColors.value.cacheHitRate,
         font: {
-          size: CHART_TICK_FONT_SIZE
+          size: CHART_TICK_FONT_SIZE,
         },
-        callback: (value: string | number) => `${value}%`
-      }
-    }
-  }
+        callback: (value: string | number) => `${value}%`,
+      },
+    },
+  },
 }))
 
+// formatPercent displays cache percentages with two fractional digits.
+//
+// Values below one hundred are truncated before formatting so near-complete cache
+// coverage does not round upward to a displayed one hundred percent.
 const formatPercent = (value: number): string => {
+  // Truncate partial coverage before decimal formatting so a value below one hundred
+  // remains visibly below complete cache coverage.
   const displayValue = value < 100 ? Math.floor(value * 100) / 100 : value
   return `${displayValue.toFixed(2)}%`
 }
-
 </script>

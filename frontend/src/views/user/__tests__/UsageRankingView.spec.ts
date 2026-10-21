@@ -3,6 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import UsageRankingView from '../UsageRankingView.vue'
 
+// UsageRankingView.spec.ts tests public ranking metric visibility and desktop
+// alignment. A substituted ranking endpoint controls exposed measurements while the
+// real ranking rows render configured balance amounts and stable width classes for
+// comparison.
+
+// getRanking supplies public ranking metrics and visibility flags while recording the
+// date-range request triggered by page mounting.
 const { getRanking } = vi.hoisted(() => ({
   getRanking: vi.fn(),
 }))
@@ -14,8 +21,12 @@ vi.mock('@/api/usage', () => ({
 vi.mock('@/composables/useBalanceDisplay', () => ({
   useBalanceDisplay: () => ({
     balanceUnitName: { value: 'USD' },
-    formatBalanceAmount: (value: number, options?: { fractionDigits?: number }) =>
-      `$${value.toFixed(options?.fractionDigits ?? 2)}`,
+    formatBalanceAmount: (
+      value: number,
+      options?: {
+        fractionDigits?: number // displayed decimal digit count
+      },
+    ) => `$${value.toFixed(options?.fractionDigits ?? 2)}`,
   }),
 }))
 
@@ -43,8 +54,13 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
+// AppLayoutStub keeps the ranking page content mounted while removing unrelated
+// application layout behavior from metric visibility assertions.
 const AppLayoutStub = { template: '<div><slot /></div>' }
 
+// mountView renders the page with the suite's application and child-component substitutes.
+// Tests keep the page's own request and rendering logic active while controlling external
+// responses and inspecting visible results.
 function mountView() {
   return mount(UsageRankingView, {
     global: {
@@ -62,6 +78,9 @@ describe('UsageRankingView', () => {
     getRanking.mockReset()
   })
 
+  // The ranking response exposes spending while hiding request and token counts. The test
+  // protects formatting the spending metric and keeping the disabled measurements out of
+  // rendered content.
   it('renders only the fields explicitly exposed by the ranking response', async () => {
     getRanking.mockResolvedValue({
       ranking: [
@@ -96,6 +115,9 @@ describe('UsageRankingView', () => {
     expect(wrapper.html()).not.toContain('370')
   })
 
+  // Ranking rows contain metrics with very different text lengths. The test protects
+  // consistent desktop column width classes so request, token, and spending values remain
+  // aligned.
   it('keeps desktop metric columns aligned when values have different lengths', async () => {
     getRanking.mockResolvedValue({
       ranking: [

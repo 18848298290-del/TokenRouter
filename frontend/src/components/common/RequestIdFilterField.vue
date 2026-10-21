@@ -3,25 +3,61 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import FilterField from '@/components/common/FilterField.vue'
 
-// RequestIdFilterField 是 FilterDropdown 面板里的请求 ID 条件。
-// modelValue 是已生效的 ID，输入框里的草稿按回车或失焦后才写回。
+/**
+ * RequestIdFilterField.vue edits a request identifier inside a filter panel using a
+ * local draft. Enter and blur apply a trimmed value only when it differs from the
+ * active filter, and parent resets replace the draft displayed in the input.
+ */
+
+/**
+ * props supplies the applied request identifier; the local input draft is committed by
+ * Enter, blur, or clearing the filter.
+ */
 const props = defineProps<{
-  modelValue?: string | null
+  modelValue?: string | null /* parent controlled value */
 }>()
+/**
+ * emit publishes a changed trimmed identifier before asking the parent to search,
+ * keeping the query synchronized with its filter.
+ */
 const emit = defineEmits<{
+  /**
+   * update:modelValue publishes the edited request identifier to its owning parent.
+   */
   (event: 'update:modelValue', value: string): void
+  /**
+   * search asks the parent to query the currently published request identifier.
+   */
   (event: 'search'): void
 }>()
 
+/**
+ * The i18n translator resolves this component's message keys using the current
+ * application locale and its configured translation catalog.
+ */
 const { t } = useI18n()
+/**
+ * draft holds the editable request identifier while the parent model retains the
+ * currently applied query value.
+ */
 const draft = ref(props.modelValue ?? '')
 
-// 父级重置条件或从链接带入 ID 时，草稿跟着更新。
-watch(() => props.modelValue, (value) => {
-  draft.value = value ?? ''
-})
+/**
+ * Parent filter changes replace the local draft so clearing filters or opening a
+ * request link updates the editable identifier consistently.
+ */
+watch(
+  () => props.modelValue,
+  (value) => {
+    draft.value = value ?? ''
+  },
+)
 
-// apply 在草稿和已生效的 ID 不同时写回并触发查询。
+/**
+ * apply trims and publishes a changed request identifier before requesting search. An
+ * unchanged value emits neither event, so Enter followed by blur does not query twice
+ * after the parent accepts the update.
+ */
 function apply() {
   const value = draft.value.trim()
   draft.value = value
@@ -30,6 +66,9 @@ function apply() {
   emit('search')
 }
 
+/**
+ * clear resets the local draft and applies the empty filter through apply.
+ */
 function clear() {
   draft.value = ''
   apply()

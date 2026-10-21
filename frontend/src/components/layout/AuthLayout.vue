@@ -1,5 +1,7 @@
 <template>
-  <div class="ba-theme-shell relative flex min-h-screen items-center justify-center overflow-hidden p-4">
+  <div
+    class="ba-theme-shell relative flex min-h-screen items-center justify-center overflow-hidden p-4"
+  >
     <!-- Background -->
     <div class="ba-theme-backdrop pointer-events-none fixed inset-0"></div>
     <AuthBackground />
@@ -15,7 +17,7 @@
           >
             <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
           </div>
-          <!-- 品牌标题在浅色和深色主题下保持清晰对比。 -->
+          <!-- Brand headings use the shared page-title colors in light and dark themes. -->
           <h1 class="mb-2 page-title">
             {{ siteName }}
           </h1>
@@ -45,26 +47,49 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-const { t } = useI18n()
 import { vContentReveal } from '@/directives/contentReveal'
 import { useRoute as useMotionRoute } from 'vue-router'
-const motionRoute = useMotionRoute()
-
 import { computed, onMounted } from 'vue'
 import AuthBackground from '@/components/auth/AuthBackground.vue'
 import { useAppStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
 
+// AuthLayout.vue frames authentication forms with site branding, a background, and
+// footer slots. Public settings determine the displayed name, sanitized logo, and
+// optional subtitle override, while mounting requests settings so the branding can
+// appear when available.
+
+// t supplies authentication layout translations using the installed application locale;
+// form content and footer links arrive through the component slots.
+const { t } = useI18n()
+
+// motionRoute supplies the path used to reveal authentication content again when
+// navigation changes between pages that share this layout.
+const motionRoute = useMotionRoute()
+
+// appStore supplies cached public branding and its loading status, allowing the layout
+// to render branding after settings have been obtained.
 const appStore = useAppStore()
 
+// Branding values use configured public settings; the logo passes URL sanitization and
+// the subtitle honors an explicit empty override when one is present.
 const siteName = computed(() => appStore.siteName || 'TokenRouter')
-const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
-const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_text_overrides?.includes('site_subtitle') ? appStore.cachedPublicSettings.site_subtitle || '' : t('home.heroDescription'))
+const siteLogo = computed(() =>
+  sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }),
+)
+const siteSubtitle = computed(() =>
+  appStore.cachedPublicSettings?.site_text_overrides?.includes('site_subtitle')
+    ? appStore.cachedPublicSettings.site_subtitle || ''
+    : t('home.heroDescription'),
+)
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
 
+// currentYear evaluates the local calendar year when the computed value is first read
+// for the copyright line; it has no reactive clock source.
 const currentYear = computed(() => new Date().getFullYear())
 
-
+// Request public settings on mount so the branding block can become visible after the
+// store completes its configured loading process.
 onMounted(() => {
   appStore.fetchPublicSettings()
 })

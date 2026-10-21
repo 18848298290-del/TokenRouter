@@ -1,7 +1,13 @@
+// audit.ts supplies English labels for audit log filtering, inspection, and
+// clearing. Action names, redacted payload descriptions, and confirmation
+// messages share the audit namespace so administrators can read management
+// activity in the selected interface language.
+
 export default {
   audit: {
     title: 'Audit Logs',
-    description: 'Records management-plane operations by admins and users. Header credentials keep only their first/last characters and request bodies are redacted. Entries cannot be deleted individually; clearing all requires two-factor verification.',
+    description:
+      'Records management-plane operations by admins and users. Header credentials keep only their first/last characters and request bodies are redacted. Entries cannot be deleted individually; clearing all requires two-factor verification.',
     clearAll: 'Clear All',
     empty: 'No audit logs yet',
     loadFailed: 'Failed to load audit logs',
@@ -18,7 +24,7 @@ export default {
       resultSuccess: 'Success',
       resultFailure: 'Failure',
       startTime: 'Start Time',
-      endTime: 'End Time'
+      endTime: 'End Time',
     },
     columns: {
       time: 'Time',
@@ -27,7 +33,7 @@ export default {
       method: 'Method',
       result: 'Result',
       clientIp: 'Client IP',
-      detail: 'Detail'
+      detail: 'Detail',
     },
     detail: {
       title: 'Audit Log Detail',
@@ -37,15 +43,16 @@ export default {
       credential: 'Credential (masked)',
       userAgent: 'User-Agent',
       requestBody: 'Request Body (redacted)',
-      extra: 'Extra'
+      extra: 'Extra',
     },
     clearConfirm: {
       title: 'Clear All Audit Logs',
-      message: 'This permanently deletes all audit logs and cannot be undone. The clear action itself is recorded. Continue?',
+      message:
+        'This permanently deletes all audit logs and cannot be undone. The clear action itself is recorded. Continue?',
       totpTitle: 'Enter Two-Factor Code',
       totpHint: 'Clearing audit logs requires a fresh TOTP verification.',
       success: 'Cleared {count} audit log(s)',
-      failed: 'Failed to clear audit logs'
-    }
-  }
+      failed: 'Failed to clear audit logs',
+    },
+  },
 }

@@ -4,8 +4,17 @@ import { nextTick } from 'vue'
 
 import BaseDialog from '../BaseDialog.vue'
 
+// BaseDialog.spec.ts tests responsive dialog widths and content scrolling across
+// reopening. Mounted shells expose their overlay, body, and footer constraints, while
+// the scroll case distinguishes a contained embedded form from the default scrollable
+// body.
+
+// wrappers tracks mounted dialog instances so teardown can unmount them and release
+// their shared lifecycle resources.
 const wrappers: VueWrapper[] = []
 
+// Release the resources retained by this case before the next one, keeping browser
+// state and component lifecycle observations isolated across assertions.
 afterEach(() => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
   document.body.classList.remove('modal-open')
@@ -13,6 +22,9 @@ afterEach(() => {
 })
 
 describe('BaseDialog 移动端视口约束', () => {
+  // A dialog is mounted for each responsive width recipe with body and footer content.
+  // The assertions protect viewport constraints, retained layout classes, and the
+  // shared modal scroll lock.
   it.each([
     ['narrow', 'sm:max-w-md'],
     ['normal', 'sm:max-w-lg'],
@@ -66,7 +78,9 @@ describe('BaseDialog 移动端视口约束', () => {
   })
 })
 
-// 分页表单可关闭外壳滚动，普通弹窗默认由外壳滚动。
+// The dialog switches between body-owned scrolling and a contained form layout before
+// closing and reopening. The assertions protect contained styling and reset the
+// default body scroll position on reopening.
 it('支持由内嵌表单管理滚动，并在重新打开时复位默认内容区', async () => {
   const wrapper = mount(BaseDialog, {
     props: { show: true, title: '设置' },

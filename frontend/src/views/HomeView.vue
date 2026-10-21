@@ -1,32 +1,37 @@
 <template>
-  <GoogleOneTap
-    :enabled="googleOneTapEligible"
-    :client-id="googleOneTapClientID"
-  />
+  <GoogleOneTap :enabled="googleOneTapEligible" :client-id="googleOneTapClientID" />
 
-  <!-- Custom Home Content: Full Page Mode -->
+  <!-- Configured home content replaces the default landing page while retaining the independent One Tap control. -->
   <div v-if="homeContent" class="min-h-screen">
-    <!-- iframe mode -->
+    <!-- HTTP(S) content is embedded directly as the configured full-page destination. -->
     <iframe
       v-if="isHomeContentUrl"
       :src="homeContent.trim()"
       class="h-screen w-full border-0"
       allowfullscreen
     ></iframe>
-    <!-- HTML mode - SECURITY: homeContent is admin-only setting, XSS risk is acceptable -->
+    <!-- Administrator-configured HTML is inserted directly; this rendering path performs no additional HTML sanitization. -->
     <div v-else v-html="homeContent"></div>
   </div>
 
-  <!-- 默认首页 -->
-  <div v-else class="ba-theme-shell relative flex min-h-screen flex-col overflow-hidden pt-[var(--header-h)] text-gray-950 dark:text-white">
+  <!-- The built-in page supplies marketplace summaries when no custom home content is configured. -->
+  <div
+    v-else
+    class="ba-theme-shell relative flex min-h-screen flex-col overflow-hidden pt-[var(--header-h)] text-gray-950 dark:text-white"
+  >
     <div class="ba-theme-backdrop pointer-events-none fixed inset-0"></div>
 
-    <!-- 首页与控制台共用顶栏，外壳为固定顶栏预留高度。 -->
+    <!-- Share the application header while reserving its fixed height in the public page shell. -->
     <AppHeader public-page />
 
-    <main v-content-reveal="motionRoute?.path" class="relative z-10 flex-1 px-4 pb-20 pt-16 sm:px-6 lg:px-8">
+    <main
+      v-content-reveal="motionRoute?.path"
+      class="relative z-10 flex-1 px-4 pb-20 pt-16 sm:px-6 lg:px-8"
+    >
       <section class="mx-auto max-w-5xl text-center">
-        <h1 class="mx-auto max-w-4xl text-4xl font-bold leading-[1.05] tracking-tight text-gray-950 dark:text-white sm:text-5xl md:text-6xl lg:text-7xl">
+        <h1
+          class="mx-auto max-w-4xl text-4xl font-bold leading-[1.05] tracking-tight text-gray-950 dark:text-white sm:text-5xl md:text-6xl lg:text-7xl"
+        >
           {{ homeHeroTitle }}
         </h1>
         <p class="mx-auto mt-6 max-w-2xl text-lg leading-8 text-gray-600 dark:text-dark-300">
@@ -54,7 +59,13 @@
                   :brand="homeMarketplaceButtonBrand"
                   size="18px"
                 />
-                <Icon v-else key="marketplace-fallback" name="sparkles" size="sm" class="text-primary-500" />
+                <Icon
+                  v-else
+                  key="marketplace-fallback"
+                  name="sparkles"
+                  size="sm"
+                  class="text-primary-500"
+                />
               </MotionTransition>
             </span>
           </router-link>
@@ -63,7 +74,9 @@
 
       <section class="mx-auto mt-16 grid max-w-4xl grid-cols-2 gap-x-6 gap-y-8 md:grid-cols-4">
         <div v-for="card in homeStatsCards" :key="card.key" class="text-center">
-          <p class="min-h-[1.1em] text-3xl font-bold tabular-nums tracking-tight text-gray-950 dark:text-white md:text-4xl">
+          <p
+            class="min-h-[1.1em] text-3xl font-bold tabular-nums tracking-tight text-gray-950 dark:text-white md:text-4xl"
+          >
             {{ card.value }}
           </p>
           <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">{{ card.label }}</p>
@@ -73,7 +86,7 @@
         {{ t('home.stats.unavailable') }}
       </p>
 
-      <!-- Provider icon marquee -->
+      <!-- The duplicated decorative brand list supports continuous scrolling without repeated accessible announcements. -->
       <section class="mx-auto mt-14 max-w-5xl" aria-hidden="true">
         <div class="home-marquee relative overflow-hidden">
           <div class="home-marquee-track flex w-max items-center gap-8">
@@ -89,9 +102,15 @@
       </section>
 
       <section class="mx-auto mt-20 grid max-w-7xl gap-5 sm:grid-cols-2 xl:grid-cols-4">
-        <article class="group overflow-hidden rounded-surface border border-gray-200 bg-white shadow-sm ring-1 ring-transparent transition duration-layout hover:-translate-y-1 hover:border-black/20 hover:shadow-[0_12px_32px_rgba(0,0,0,0.1)] focus-within:border-black/20 dark:border-dark-800 dark:bg-dark-900 dark:hover:border-dark-600 dark:hover:shadow-[0_12px_32px_rgba(0,0,0,0.4)]">
-          <div class="relative h-44 overflow-hidden border-b border-gray-200 bg-white dark:border-dark-800 dark:bg-dark-950">
-            <div class="absolute inset-0 transition-transform duration-500 ease-out group-hover:scale-110">
+        <article
+          class="group overflow-hidden rounded-surface border border-gray-200 bg-white shadow-sm ring-1 ring-transparent transition duration-layout hover:-translate-y-1 hover:border-black/20 hover:shadow-[0_12px_32px_rgba(0,0,0,0.1)] focus-within:border-black/20 dark:border-dark-800 dark:bg-dark-900 dark:hover:border-dark-600 dark:hover:shadow-[0_12px_32px_rgba(0,0,0,0.4)]"
+        >
+          <div
+            class="relative h-44 overflow-hidden border-b border-gray-200 bg-white dark:border-dark-800 dark:bg-dark-950"
+          >
+            <div
+              class="absolute inset-0 transition-transform duration-500 ease-out group-hover:scale-110"
+            >
               <span
                 v-for="(icon, index) in homeProviderCloudIcons"
                 :key="`${icon.brand}-${index}`"
@@ -117,17 +136,28 @@
             <p class="mt-2 text-sm leading-6 text-gray-600 dark:text-dark-300">
               {{ t('home.features.unifiedGatewayDesc') }}
             </p>
-            <router-link to="/models" class="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-300">
+            <router-link
+              to="/models"
+              class="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-300"
+            >
               {{ t('home.features.browseAll') }}
               <Icon name="arrowRight" size="xs" />
             </router-link>
           </div>
         </article>
 
-        <article class="group overflow-hidden rounded-surface border border-gray-200 bg-white shadow-sm ring-1 ring-transparent transition duration-layout hover:-translate-y-1 hover:border-black/20 hover:shadow-[0_12px_32px_rgba(0,0,0,0.1)] focus-within:border-black/20 dark:border-dark-800 dark:bg-dark-900 dark:hover:border-dark-600 dark:hover:shadow-[0_12px_32px_rgba(0,0,0,0.4)]">
-          <div class="relative flex h-44 items-center justify-center overflow-hidden border-b border-gray-200 bg-white dark:border-dark-800 dark:bg-dark-950">
-            <div class="relative h-full w-full transition-transform duration-500 ease-out group-hover:scale-110">
-              <div class="absolute left-1/2 top-7 z-10 max-w-[82%] -translate-x-1/2 truncate rounded-control bg-gray-100 px-3.5 py-1.5 text-xs font-medium text-gray-800 shadow-sm dark:bg-dark-900 dark:text-dark-100">
+        <article
+          class="group overflow-hidden rounded-surface border border-gray-200 bg-white shadow-sm ring-1 ring-transparent transition duration-layout hover:-translate-y-1 hover:border-black/20 hover:shadow-[0_12px_32px_rgba(0,0,0,0.1)] focus-within:border-black/20 dark:border-dark-800 dark:bg-dark-900 dark:hover:border-dark-600 dark:hover:shadow-[0_12px_32px_rgba(0,0,0,0.4)]"
+        >
+          <div
+            class="relative flex h-44 items-center justify-center overflow-hidden border-b border-gray-200 bg-white dark:border-dark-800 dark:bg-dark-950"
+          >
+            <div
+              class="relative h-full w-full transition-transform duration-500 ease-out group-hover:scale-110"
+            >
+              <div
+                class="absolute left-1/2 top-7 z-10 max-w-[82%] -translate-x-1/2 truncate rounded-control bg-gray-100 px-3.5 py-1.5 text-xs font-medium text-gray-800 shadow-sm dark:bg-dark-900 dark:text-dark-100"
+              >
                 {{ homeRouteLabel }}
               </div>
               <svg
@@ -149,7 +179,9 @@
                   stroke-linecap="round"
                 />
               </svg>
-              <div class="absolute bottom-6 left-1/2 flex w-[190px] -translate-x-1/2 justify-between">
+              <div
+                class="absolute bottom-6 left-1/2 flex w-[190px] -translate-x-1/2 justify-between"
+              >
                 <span
                   v-for="brand in homeRouteProviderBrands"
                   :key="brand"
@@ -167,17 +199,28 @@
             <p class="mt-2 text-sm leading-6 text-gray-600 dark:text-dark-300">
               {{ t('home.features.multiProviderDesc') }}
             </p>
-            <router-link :to="isAuthenticated ? dashboardPath : '/login'" class="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-300">
+            <router-link
+              :to="isAuthenticated ? dashboardPath : '/login'"
+              class="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-300"
+            >
               {{ t('home.features.learnMore') }}
               <Icon name="arrowRight" size="xs" />
             </router-link>
           </div>
         </article>
 
-        <article class="group overflow-hidden rounded-surface border border-gray-200 bg-white shadow-sm ring-1 ring-transparent transition duration-layout hover:-translate-y-1 hover:border-black/20 hover:shadow-[0_12px_32px_rgba(0,0,0,0.1)] focus-within:border-black/20 dark:border-dark-800 dark:bg-dark-900 dark:hover:border-dark-600 dark:hover:shadow-[0_12px_32px_rgba(0,0,0,0.4)]">
-          <div class="flex h-44 items-center justify-center border-b border-gray-200 bg-gray-50 p-6 dark:border-dark-800 dark:bg-dark-950">
-            <div class="w-full max-w-[200px] rounded-surface border border-gray-200 bg-white p-4 shadow-sm transition-transform duration-500 ease-out group-hover:scale-110 dark:border-dark-700 dark:bg-dark-900">
-              <div class="mb-4 flex items-center justify-between text-xs text-gray-500 dark:text-dark-400">
+        <article
+          class="group overflow-hidden rounded-surface border border-gray-200 bg-white shadow-sm ring-1 ring-transparent transition duration-layout hover:-translate-y-1 hover:border-black/20 hover:shadow-[0_12px_32px_rgba(0,0,0,0.1)] focus-within:border-black/20 dark:border-dark-800 dark:bg-dark-900 dark:hover:border-dark-600 dark:hover:shadow-[0_12px_32px_rgba(0,0,0,0.4)]"
+        >
+          <div
+            class="flex h-44 items-center justify-center border-b border-gray-200 bg-gray-50 p-6 dark:border-dark-800 dark:bg-dark-950"
+          >
+            <div
+              class="w-full max-w-[200px] rounded-surface border border-gray-200 bg-white p-4 shadow-sm transition-transform duration-500 ease-out group-hover:scale-110 dark:border-dark-700 dark:bg-dark-900"
+            >
+              <div
+                class="mb-4 flex items-center justify-between text-xs text-gray-500 dark:text-dark-400"
+              >
                 <span>{{ t('home.features.usageChart') }}</span>
                 <Icon name="chart" size="sm" />
               </div>
@@ -196,18 +239,29 @@
             <p class="mt-2 text-sm leading-6 text-gray-600 dark:text-dark-300">
               {{ t('home.features.balanceQuotaDesc') }}
             </p>
-            <router-link :to="isAuthenticated ? dashboardPath : '/login'" class="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-300">
+            <router-link
+              :to="isAuthenticated ? dashboardPath : '/login'"
+              class="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-300"
+            >
               {{ t('home.features.viewUsage') }}
               <Icon name="arrowRight" size="xs" />
             </router-link>
           </div>
         </article>
 
-        <article class="group overflow-hidden rounded-surface border border-gray-200 bg-white shadow-sm ring-1 ring-transparent transition duration-layout hover:-translate-y-1 hover:border-black/20 hover:shadow-[0_12px_32px_rgba(0,0,0,0.1)] focus-within:border-black/20 dark:border-dark-800 dark:bg-dark-900 dark:hover:border-dark-600 dark:hover:shadow-[0_12px_32px_rgba(0,0,0,0.4)]">
-          <div class="flex h-44 items-center justify-center border-b border-gray-200 bg-gray-50 dark:border-dark-800 dark:bg-dark-950">
-            <div class="relative flex h-24 w-24 items-center justify-center rounded-full border border-gray-200 bg-white shadow-sm transition-transform duration-500 ease-out group-hover:scale-110 dark:border-dark-700 dark:bg-dark-900">
+        <article
+          class="group overflow-hidden rounded-surface border border-gray-200 bg-white shadow-sm ring-1 ring-transparent transition duration-layout hover:-translate-y-1 hover:border-black/20 hover:shadow-[0_12px_32px_rgba(0,0,0,0.1)] focus-within:border-black/20 dark:border-dark-800 dark:bg-dark-900 dark:hover:border-dark-600 dark:hover:shadow-[0_12px_32px_rgba(0,0,0,0.4)]"
+        >
+          <div
+            class="flex h-44 items-center justify-center border-b border-gray-200 bg-gray-50 dark:border-dark-800 dark:bg-dark-950"
+          >
+            <div
+              class="relative flex h-24 w-24 items-center justify-center rounded-full border border-gray-200 bg-white shadow-sm transition-transform duration-500 ease-out group-hover:scale-110 dark:border-dark-700 dark:bg-dark-900"
+            >
               <Icon name="shield" size="xl" class="text-gray-400 dark:text-dark-300" />
-              <span class="absolute -right-1 -top-1 flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300">
+              <span
+                class="absolute -right-1 -top-1 flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300"
+              >
                 <Icon name="check" size="md" :stroke-width="2" :animate-on-hover="false" />
               </span>
             </div>
@@ -236,17 +290,24 @@
       <section class="mx-auto mt-20 max-w-7xl">
         <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <router-link to="/models" class="inline-flex items-center gap-2 text-2xl font-bold text-gray-950 hover:text-primary-600 dark:text-white dark:hover:text-primary-300">
+            <router-link
+              to="/models"
+              class="inline-flex items-center gap-2 text-2xl font-bold text-gray-950 hover:text-primary-600 dark:text-white dark:hover:text-primary-300"
+            >
               {{ t('home.providers.title') }}
               <Icon name="chevronRight" size="md" :animate-on-hover="false" />
             </router-link>
             <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
               {{ formatMarketplaceStat(totalModelCount) }} {{ t('marketplace.modelsStat') }}
               ·
-              {{ formatMarketplaceStat(supportedProviders.length) }} {{ t('home.stats.providerTypes') }}
+              {{ formatMarketplaceStat(supportedProviders.length) }}
+              {{ t('home.stats.providerTypes') }}
             </p>
           </div>
-          <router-link to="/models" class="text-sm font-medium text-gray-500 transition hover:text-primary-600 dark:text-dark-400 dark:hover:text-primary-300">
+          <router-link
+            to="/models"
+            class="text-sm font-medium text-gray-500 transition hover:text-primary-600 dark:text-dark-400 dark:hover:text-primary-300"
+          >
             {{ t('home.viewAll') }}
             <Icon name="arrowRight" size="xs" class="inline-block" />
           </router-link>
@@ -267,7 +328,7 @@
             {{ homeMarketplaceError ? t('home.providers.unavailable') : t('home.providers.empty') }}
           </div>
 
-          <!-- 管理员配置了首页展示模型时，按 OpenRouter Featured Models 风格渲染单模型卡片 -->
+          <!-- Resolved featured-model configuration replaces the fallback provider-category cards in its configured order. -->
           <template v-else-if="featuredModels.length > 0">
             <article
               v-for="featured in featuredModels"
@@ -275,8 +336,10 @@
               class="rounded-surface border border-gray-200 bg-white p-6 shadow-sm ring-1 ring-transparent transition duration-layout hover:-translate-y-1 hover:border-black/20 hover:shadow-[0_12px_32px_rgba(0,0,0,0.1)] focus-within:border-black/20 dark:border-dark-800 dark:bg-dark-900 dark:hover:border-dark-600 dark:hover:shadow-[0_12px_32px_rgba(0,0,0,0.4)]"
             >
               <div class="flex items-start gap-4">
-                <!-- 图标与模型广场保持一致：模型图标体系 + 白底圆角方形 -->
-                <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-surface border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-950">
+                <!-- Use the same model artwork and framed icon treatment as the marketplace cards. -->
+                <span
+                  class="flex h-12 w-12 shrink-0 items-center justify-center rounded-surface border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-950"
+                >
                   <ModelIcon :model="featured.model.id" size="28px" />
                 </span>
                 <div class="min-w-0 flex-1">
@@ -284,12 +347,19 @@
                     {{ featured.model.display_name || featured.model.id }}
                   </h3>
                   <p class="truncate text-sm text-gray-500 dark:text-dark-400">
-                    {{ t('home.featured.byProvider', { provider: homeProviderCategory(featured.group).label }) }}
+                    {{
+                      t('home.featured.byProvider', {
+                        provider: homeProviderCategory(featured.group).label,
+                      })
+                    }}
                   </p>
                 </div>
               </div>
-              <!-- 左下角展示相对官方价的折扣，右下角留空；无折扣数据时整块底部区域不渲染 -->
-              <div v-if="featured.discountOff" class="mt-5 border-t border-gray-200 pt-5 dark:border-dark-800">
+              <!-- Omit the entire discount footer when the group has no valid saving against its official reference price. -->
+              <div
+                v-if="featured.discountOff"
+                class="mt-5 border-t border-gray-200 pt-5 dark:border-dark-800"
+              >
                 <p class="text-sm font-semibold tabular-nums text-gray-950 dark:text-white">
                   {{ featured.discountOff }}
                 </p>
@@ -322,7 +392,9 @@
               <div class="mt-5 border-t border-gray-200 pt-5 dark:border-dark-800">
                 <div class="flex items-end justify-between gap-4">
                   <div>
-                    <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('home.providers.modelCount') }}</p>
+                    <p class="text-sm text-gray-500 dark:text-dark-400">
+                      {{ t('home.providers.modelCount') }}
+                    </p>
                     <p class="mt-1 text-lg font-semibold text-gray-950 dark:text-white">
                       {{ provider.modelCount }}
                     </p>
@@ -345,18 +417,20 @@
 
       <section class="mx-auto mt-16 max-w-7xl px-2 sm:px-0">
         <div class="grid gap-8 md:grid-cols-3">
-          <article
-            v-for="step in homeSteps"
-            :key="step.key"
-            class="flex min-h-[190px] flex-col"
-          >
+          <article v-for="step in homeSteps" :key="step.key" class="flex min-h-[190px] flex-col">
             <div class="flex items-center gap-3">
-              <span class="flex h-8 w-8 items-center justify-center rounded-full bg-primary-50 text-base font-semibold text-primary-600 dark:bg-primary-500/10 dark:text-primary-300">
+              <span
+                class="flex h-8 w-8 items-center justify-center rounded-full bg-primary-50 text-base font-semibold text-primary-600 dark:bg-primary-500/10 dark:text-primary-300"
+              >
                 {{ step.index }}
               </span>
-              <h2 class="text-lg font-semibold tracking-tight text-gray-950 dark:text-white">{{ step.title }}</h2>
+              <h2 class="text-lg font-semibold tracking-tight text-gray-950 dark:text-white">
+                {{ step.title }}
+              </h2>
             </div>
-            <p class="mt-4 max-w-sm text-sm leading-6 text-gray-600 dark:text-dark-300">{{ step.description }}</p>
+            <p class="mt-4 max-w-sm text-sm leading-6 text-gray-600 dark:text-dark-300">
+              {{ step.description }}
+            </p>
 
             <div v-if="step.key === 'signup'" class="mt-8">
               <div class="flex items-center gap-3 text-primary-500">
@@ -367,13 +441,19 @@
                 </div>
               </div>
               <div class="mt-4 grid max-w-[156px] grid-cols-3 gap-3">
-                <span class="flex h-10 w-10 items-center justify-center rounded-control bg-white/90 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:ring-dark-800">
+                <span
+                  class="flex h-10 w-10 items-center justify-center rounded-control bg-white/90 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:ring-dark-800"
+                >
                   <ProviderIcon brand="Google" size="20px" />
                 </span>
-                <span class="flex h-10 w-10 items-center justify-center rounded-control bg-white/90 text-gray-800 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:text-gray-100 dark:ring-dark-800">
+                <span
+                  class="flex h-10 w-10 items-center justify-center rounded-control bg-white/90 text-gray-800 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:text-gray-100 dark:ring-dark-800"
+                >
                   <GitHubMark class="h-5 w-5" />
                 </span>
-                <span class="flex h-10 w-10 items-center justify-center rounded-control bg-white/90 text-primary-500 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:ring-dark-800">
+                <span
+                  class="flex h-10 w-10 items-center justify-center rounded-control bg-white/90 text-primary-500 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:ring-dark-800"
+                >
                   <Icon name="mail" size="md" :stroke-width="1.8" />
                 </span>
               </div>
@@ -390,14 +470,22 @@
                 </div>
               </div>
               <div class="mt-4 space-y-2">
-                <div class="flex items-center gap-2 rounded-control bg-white/90 px-3 py-2 text-gray-700 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:text-dark-200 dark:ring-dark-800">
+                <div
+                  class="flex items-center gap-2 rounded-control bg-white/90 px-3 py-2 text-gray-700 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:text-dark-200 dark:ring-dark-800"
+                >
                   <span class="w-14 text-xs font-medium">Claude</span>
-                  <span class="h-2 flex-1 rounded-full bg-primary-100 dark:bg-primary-400/20"></span>
+                  <span
+                    class="h-2 flex-1 rounded-full bg-primary-100 dark:bg-primary-400/20"
+                  ></span>
                   <span class="h-2 w-12 rounded-full bg-primary-100 dark:bg-primary-400/20"></span>
                 </div>
-                <div class="flex items-center gap-2 rounded-control bg-white/90 px-3 py-2 text-gray-700 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:text-dark-200 dark:ring-dark-800">
+                <div
+                  class="flex items-center gap-2 rounded-control bg-white/90 px-3 py-2 text-gray-700 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:text-dark-200 dark:ring-dark-800"
+                >
                   <span class="w-14 text-xs font-medium">GPT</span>
-                  <span class="h-2 flex-1 rounded-full bg-primary-100 dark:bg-primary-400/20"></span>
+                  <span
+                    class="h-2 flex-1 rounded-full bg-primary-100 dark:bg-primary-400/20"
+                  ></span>
                   <span class="h-2 w-12 rounded-full bg-primary-100 dark:bg-primary-400/20"></span>
                 </div>
               </div>
@@ -406,11 +494,15 @@
             <div v-else class="mt-8 max-w-[270px]">
               <div class="flex items-center gap-3 text-primary-500">
                 <Icon name="key" size="md" :stroke-width="1.8" />
-                <div class="flex-1 rounded-control bg-white/90 px-3 py-2 font-mono text-xs text-gray-600 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:text-dark-300 dark:ring-dark-800">
+                <div
+                  class="flex-1 rounded-control bg-white/90 px-3 py-2 font-mono text-xs text-gray-600 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:text-dark-300 dark:ring-dark-800"
+                >
                   TOKENFLUX_API_KEY
                 </div>
               </div>
-              <div class="mt-3 rounded-control bg-white/90 px-3 py-2 font-mono text-sm tracking-[0.2em] text-gray-950 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:text-white dark:ring-dark-800">
+              <div
+                class="mt-3 rounded-control bg-white/90 px-3 py-2 font-mono text-sm tracking-[0.2em] text-gray-950 shadow-sm ring-1 ring-gray-100 dark:bg-dark-950 dark:text-white dark:ring-dark-800"
+              >
                 ••••••••••••••••
               </div>
             </div>
@@ -418,7 +510,6 @@
         </div>
       </section>
 
-      <!-- CTA -->
       <section class="mx-auto mt-24 max-w-3xl text-center">
         <h2 class="text-3xl font-bold tracking-tight text-gray-950 dark:text-white sm:text-4xl">
           {{ t('home.cta.title') }}
@@ -438,16 +529,25 @@
       </section>
     </main>
 
-    <footer class="relative z-10 border-t border-gray-200 bg-white/90 px-6 py-12 backdrop-blur dark:border-dark-800 dark:bg-dark-950/90">
+    <footer
+      class="relative z-10 border-t border-gray-200 bg-white/90 px-6 py-12 backdrop-blur dark:border-dark-800 dark:bg-dark-950/90"
+    >
       <div class="mx-auto max-w-7xl">
-        <div class="grid grid-cols-2 gap-x-8 gap-y-10 sm:grid-cols-3 lg:flex lg:justify-between lg:gap-8">
-          <!-- Brand -->
+        <div
+          class="grid grid-cols-2 gap-x-8 gap-y-10 sm:grid-cols-3 lg:flex lg:justify-between lg:gap-8"
+        >
           <div class="col-span-2 sm:col-span-3 lg:col-auto lg:max-w-[240px] lg:shrink-0">
             <div class="flex items-center gap-2.5">
               <span class="h-8 w-8 shrink-0 overflow-hidden rounded-control shadow-sm">
-                <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
+                <img
+                  :src="siteLogo || '/logo.svg'"
+                  alt="Logo"
+                  class="h-full w-full object-contain"
+                />
               </span>
-              <span class="text-sm font-semibold text-gray-950 dark:text-white">{{ siteName }}</span>
+              <span class="text-sm font-semibold text-gray-950 dark:text-white">{{
+                siteName
+              }}</span>
             </div>
             <p class="mt-4 text-sm text-gray-500 dark:text-dark-400">
               &copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}
@@ -461,7 +561,6 @@
             </p>
           </div>
 
-          <!-- Link columns -->
           <div v-for="column in footerColumns" :key="column.title" class="lg:min-w-[140px]">
             <h3 class="text-sm font-semibold text-gray-950 dark:text-white">{{ column.title }}</h3>
             <ul class="mt-4 space-y-2.5">
@@ -495,7 +594,6 @@
 import { useLocaleRefresh } from '@/composables/useLocaleRefresh'
 import { vContentReveal } from '@/directives/contentReveal'
 import { useRoute as useMotionRoute } from 'vue-router'
-const motionRoute = useMotionRoute()
 
 import MotionTransition from '@/components/common/MotionTransition.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -508,7 +606,7 @@ import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { getMarketplaceModels, getMarketplaceStats } from '@/api/marketplace'
-import type { MarketplaceGroup, MarketplaceModel, MarketplaceStats } from '@/types'
+import type { MarketplaceGroup, MarketplaceModel, MarketplaceStats } from '@/api/marketplace.types'
 import { sanitizeUrl } from '@/utils/url'
 import { hasAcceptedLoginAgreement } from '@/utils/loginAgreement'
 import { isGoogleOneTapEligible, isGoogleOneTapOriginSupported } from '@/utils/googleIdentity'
@@ -519,84 +617,136 @@ import {
   resolveProviderBrandKey,
 } from '@/utils/providerBrand'
 
+// HomeView.vue combines public branding, optional custom home content, and the
+// built-in marketplace landing page. Configured HTTP(S) content uses an iframe,
+// while configured HTML is inserted directly. The default page groups public
+// models by provider brand, resolves configured featured aliases, and displays
+// independently loaded usage totals with one initial animation per statistic.
+//
+// Page setup retains shared account and public-settings initialization. The
+// initial marketplace and statistics reads run together only for the default
+// page; locale changes separately refresh marketplace records. A tracked interval
+// rotates the marketplace action's brand icon, and tracked animation frames update
+// statistics. Teardown clears those handles while in-flight API requests retain
+// their existing independent completion paths without cancellation or identity guards.
+
+// motionRoute supplies the path used to replay the default page's reveal animation.
+const motionRoute = useMotionRoute()
+
+// HomeStatsKey identifies one independently animated statistic in the public landing page.
 type HomeStatsKey = 'today-tokens' | 'total-tokens' | 'total-users' | 'supported-models'
+// HomeStatsIcon restricts configured statistic icon metadata to the supported icon names.
 type HomeStatsIcon = 'bolt' | 'database' | 'users' | 'grid'
+// HomeStepIcon identifies the configured icon for a public onboarding step.
 type HomeStepIcon = 'userPlus' | 'grid' | 'key'
+// HomeStatFormat chooses compact notation or whole-number formatting for animated totals.
 type HomeStatFormat = 'compact' | 'number'
 
+// HomeProviderCategory groups marketplace records under one displayed provider identity.
 interface HomeProviderCategory {
-  key: string
-  label: string
-  iconBrand: string
+  key: string // Normalized category identity.
+  label: string // Displayed provider category.
+  iconBrand: string // Shared artwork brand identifier.
 }
 
+// HomeProviderSummary aggregates model entries and display ordering for a provider category.
 interface HomeProviderSummary extends HomeProviderCategory {
-  modelCount: number
-  groupCount: number
+  modelCount: number // Model entries across contributing groups.
+  groupCount: number // Contributing group record count.
+  // officialPriceRatio is the smallest valid positive group ratio; omission means
+  // no usable official-price comparison was reported for this provider category.
   officialPriceRatio?: number
-  sortOrder: number
-  firstIndex: number
+  sortOrder: number // Minimum configured group order.
+  firstIndex: number // First sorted group position.
 }
 
+// HomeStatsCard carries the configured label, formatted value, and statistic icon metadata.
 interface HomeStatsCard {
-  key: HomeStatsKey
-  label: string
+  key: HomeStatsKey // Animated statistic identity.
+  label: string // Translated statistic caption.
+  // value contains formatted statistic text, with loading or missing placeholders
+  // displayed until the corresponding animated numeric value becomes available.
   value: string
-  icon: HomeStatsIcon
-  iconWrapClass: string
-  iconClass: string
+  icon: HomeStatsIcon // Configured statistic icon identifier.
+  iconWrapClass: string // Configured icon wrapper classes.
+  iconClass: string // Configured icon foreground classes.
 }
 
+// HomeStep describes one numbered instruction in the landing page's introductory sequence.
 interface HomeStep {
-  key: string
-  index: number
-  title: string
-  description: string
-  icon: HomeStepIcon
+  key: string // Stable instruction identity.
+  index: number // Displayed one-based step number.
+  title: string // Translated instruction heading.
+  description: string // Translated instruction description.
+  icon: HomeStepIcon // Configured instruction icon name.
 }
 
+// HomeProviderCloudIcon positions one decorative brand mark in the gateway illustration.
 interface HomeProviderCloudIcon {
-  brand: string
-  left: string
-  top: string
-  opacity: number
-  scale: number
+  brand: string // Shared artwork brand identifier.
+  left: string // Horizontal CSS percentage position.
+  top: string // Vertical CSS percentage position.
+  opacity: number // Icon opacity fraction.
+  scale: number // Relative icon scale.
 }
 
-// 首页精选卡片：单个模型及其所属分组（分组提供品牌与折扣上下文）
+// HomeFeaturedModel pairs a public model with its first resolved group and discount.
 interface HomeFeaturedModel {
-  model: MarketplaceModel
-  group: MarketplaceGroup
-  // 相对官方价的折扣文案（如 "95.6% off"），分组无有效折扣时为 null
+  model: MarketplaceModel // Selected public model record.
+  group: MarketplaceGroup // Owning brand and pricing group.
+  // Translated savings against the official price; null hides the footer when the ratio is unusable or undiscounted.
   discountOff: string | null
 }
 
+// Shared services provide language, account role, and cached public settings for
+// the page's branding, navigation destinations, and optional authentication prompt.
 const { t, locale } = useI18n()
 
 const authStore = useAuthStore()
 const appStore = useAppStore()
 
-// 站点设置直接读取已注入或已缓存的公开配置。
+// Branding reads injected or cached public settings, filtering logo and documentation
+// URLs while retaining explicitly configured title and subtitle overrides, including empty text.
 const siteName = computed(() => appStore.siteName || 'TokenRouter')
-const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
-const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))
+const siteLogo = computed(() =>
+  sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', {
+    allowRelative: true,
+    allowDataUrl: true,
+  }),
+)
+const docUrl = computed(() =>
+  sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''),
+)
 const homeContent = computed(() => appStore.cachedPublicSettings?.home_content || '')
 const numberLocale = computed(() => locale.value)
-const homeHeroTitle = computed(() => appStore.cachedPublicSettings?.site_text_overrides?.includes('site_title') ? appStore.cachedPublicSettings.site_title || '' : t('home.heroTitle'))
-const homeHeroSubtitle = computed(() => appStore.cachedPublicSettings?.site_text_overrides?.includes('site_subtitle') ? appStore.cachedPublicSettings.site_subtitle || '' : t('home.heroDescription'))
+const homeHeroTitle = computed(() =>
+  appStore.cachedPublicSettings?.site_text_overrides?.includes('site_title')
+    ? appStore.cachedPublicSettings.site_title || ''
+    : t('home.heroTitle'),
+)
+const homeHeroSubtitle = computed(() =>
+  appStore.cachedPublicSettings?.site_text_overrides?.includes('site_subtitle')
+    ? appStore.cachedPublicSettings.site_subtitle || ''
+    : t('home.heroDescription'),
+)
 
-// 自定义首页支持 URL iframe 和 HTML 两种模式。
+// Custom content uses the existing HTTP(S)-prefix decision to choose an iframe;
+// every other nonempty value follows the administrator-configured HTML rendering path.
 const isHomeContentUrl = computed(() => {
   const content = homeContent.value.trim()
   return content.startsWith('http://') || content.startsWith('https://')
 })
 
+// Authentication and role select the primary navigation destination without
+// changing the independently evaluated eligibility for the Google One Tap prompt.
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 const isAdmin = computed(() => authStore.isAdmin)
-const dashboardPath = computed(() => isAdmin.value ? '/admin/dashboard' : '/dashboard')
+const dashboardPath = computed(() => (isAdmin.value ? '/admin/dashboard' : '/dashboard'))
 
+// One Tap eligibility combines loaded public flags, account state, consent for
+// the current agreement revision, captcha policy, client identity, and origin support.
 const googleOneTapClientID = computed(
-  () => appStore.cachedPublicSettings?.google_oauth_client_id || ''
+  () => appStore.cachedPublicSettings?.google_oauth_client_id || '',
 )
 const googleOneTapEligible = computed(() => {
   const settings = appStore.cachedPublicSettings
@@ -611,34 +761,45 @@ const googleOneTapEligible = computed(() => {
     tencentCaptchaEnabled: settings.tencent_captcha_enabled === true,
     aliyunCaptchaEnabled: settings.aliyun_captcha_enabled === true,
     loginAgreementEnabled: agreementEnabled,
-    loginAgreementAccepted: !agreementEnabled || hasAcceptedLoginAgreement(settings.login_agreement_revision || ''),
-    originSupported: isGoogleOneTapOriginSupported()
+    loginAgreementAccepted:
+      !agreementEnabled || hasAcceptedLoginAgreement(settings.login_agreement_revision || ''),
+    originSupported: isGoogleOneTapOriginSupported(),
   })
 })
 
+// Copyright text uses a lazily evaluated year snapshot; no clock dependency
+// forces it to recompute while this page remains mounted across a year boundary.
 const currentYear = computed(() => new Date().getFullYear())
 
-// 底栏:管理员配置的链接分组 + 内置"快速链接"列;附加文本按行渲染
+// Footer text discards empty trimmed lines, and link columns prefer nonempty
+// configured groups over the built-in quick links. Configured URLs remain unchanged.
 const footerTextLines = computed<string[]>(() => {
   const raw = appStore.cachedPublicSettings?.footer_text || ''
-  return raw.split('\n').map(line => line.trim()).filter(Boolean)
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
 })
 
 const footerColumns = computed(() => {
   const configured = (appStore.cachedPublicSettings?.footer_links || [])
-    .filter(group => group.title && Array.isArray(group.links) && group.links.length > 0)
-    .map(group => ({
+    .filter((group) => group.title && Array.isArray(group.links) && group.links.length > 0)
+    .map((group) => ({
       title: group.title,
-      links: group.links.filter(link => link.label && link.url),
+      links: group.links.filter((link) => link.label && link.url),
     }))
-    .filter(group => group.links.length > 0)
+    .filter((group) => group.links.length > 0)
 
-  // 管理员已配置分组时以配置为准;未配置时回退到内置"快速链接"列
+  // A usable configured group replaces the built-in quick-link column; incomplete
+  // groups and links are filtered before this decision uses their remaining count.
   if (configured.length > 0) {
     return configured
   }
 
-  const quickLinks: Array<{ label: string; url: string }> = [
+  const quickLinks: Array<{
+    label: string // Translated quick-link label.
+    url: string // Internal or filtered documentation URL.
+  }> = [
     { label: t('home.nav.models'), url: '/models' },
     { label: t('keyUsage.title'), url: '/key-usage' },
   ]
@@ -649,20 +810,27 @@ const footerColumns = computed(() => {
   return [{ title: t('home.footer.quickLinks'), links: quickLinks }]
 })
 
-// 服务商图标滚动条复制一份列表，首尾衔接循环。
+// homeMarqueeBrands duplicates the first twenty resolved visual brands so the
+// decorative track can translate halfway through its contents and repeat continuously.
 const homeMarqueeBrands = computed(() => {
   const brands = homeProviderVisuals.value.slice(0, 20)
   return [...brands, ...brands]
 })
 
+// Marketplace and aggregate statistics keep independent loading/error states so
+// one failed read can clear its content without discarding the other's result.
 const marketplaceGroups = ref<MarketplaceGroup[]>([])
 const homeStats = ref<MarketplaceStats | null>(null)
 const homeMarketplaceLoading = ref(true)
 const homeStatsLoading = ref(true)
 const homeMarketplaceError = ref(false)
 const homeStatsError = ref(false)
+// The marketplace action cycles through loaded provider brands using one tracked
+// interval and a bounded display index; empty lists use the template fallback icon.
 const homeMarketplaceButtonIconIndex = ref(0)
 let homeMarketplaceButtonIconTimer: number | null = null
+// Statistic values, started keys, and active frame handles coordinate one initial
+// count-up per key; teardown cancels frames still present in the handle map.
 const homeAnimatedStats = ref<Record<HomeStatsKey, number>>({
   'today-tokens': 0,
   'total-tokens': 0,
@@ -673,6 +841,8 @@ const homeAnimatedStatKeys = new Set<HomeStatsKey>()
 const homeStatAnimationFrames = new Map<HomeStatsKey, number>()
 const homeStatAnimationDurationMs = 3200
 
+// Fallback brands keep decorative layouts populated before data arrives and after
+// failed marketplace loads; the merge retains loaded brand names before these entries.
 const providerVisualFallbacks = [
   'Google',
   'Meta',
@@ -696,6 +866,8 @@ const providerVisualFallbacks = [
   'OpenRouter',
 ]
 
+// Decorative cloud positions and opacity/scale values define the fixed illustration
+// geometry; resolved brand marks cycle through these slots without changing their placement.
 const providerCloudLayout = [
   { left: '7%', top: '13%', opacity: 0.72, scale: 0.94 },
   { left: '25%', top: '13%', opacity: 0.8, scale: 0.94 },
@@ -725,22 +897,26 @@ const providerCloudLayout = [
   { left: '99%', top: '98%', opacity: 0.48, scale: 0.86 },
 ] as const
 
+// totalModelCount counts model entries across groups, including aliases repeated
+// in separate groups; it supplies both the summary and supported-model animation target.
 const totalModelCount = computed(() =>
-  marketplaceGroups.value.reduce((total, group) => total + group.models.length, 0)
+  marketplaceGroups.value.reduce((total, group) => total + group.models.length, 0),
 )
 
-// 管理员在「系统设置 - 通用设置 - 首页模型展示」配置的模型 ID 列表（公开设置注入或接口返回）
+// homeFeaturedModelIds reads the configured display order from public settings;
+// an absent or non-array value leaves the page using provider-category cards.
 const homeFeaturedModelIds = computed<string[]>(() => {
   const configured = appStore.cachedPublicSettings?.home_featured_models
   return Array.isArray(configured) ? configured : []
 })
 
-// 按配置顺序在市场分组中解析模型，解析不到的 ID 直接跳过
+// featuredModels resolves configured aliases in order and takes the first matching
+// marketplace group for each alias. Unresolved identifiers contribute no featured card.
 const featuredModels = computed<HomeFeaturedModel[]>(() => {
   const resolved: HomeFeaturedModel[] = []
   for (const modelId of homeFeaturedModelIds.value) {
     for (const group of marketplaceGroups.value) {
-      const model = group.models.find(item => item.id === modelId)
+      const model = group.models.find((item) => item.id === modelId)
       if (model) {
         resolved.push({
           model,
@@ -754,13 +930,26 @@ const featuredModels = computed<HomeFeaturedModel[]>(() => {
   return resolved
 })
 
+// Animation targets remain null during their owning load and normalize invalid
+// values afterward; the watcher starts each valid key only once per mounted page.
 const homeStatAnimationTargets = computed<Record<HomeStatsKey, number | null>>(() => ({
-  'today-tokens': homeStatsLoading.value ? null : normalizedHomeStatTarget(homeStats.value?.today_tokens),
-  'total-tokens': homeStatsLoading.value ? null : normalizedHomeStatTarget(homeStats.value?.total_tokens),
-  'total-users': homeStatsLoading.value ? null : normalizedHomeStatTarget(homeStats.value?.total_users),
-  'supported-models': homeMarketplaceLoading.value ? null : normalizedHomeStatTarget(totalModelCount.value),
+  'today-tokens': homeStatsLoading.value
+    ? null
+    : normalizedHomeStatTarget(homeStats.value?.today_tokens),
+  'total-tokens': homeStatsLoading.value
+    ? null
+    : normalizedHomeStatTarget(homeStats.value?.total_tokens),
+  'total-users': homeStatsLoading.value
+    ? null
+    : normalizedHomeStatTarget(homeStats.value?.total_users),
+  'supported-models': homeMarketplaceLoading.value
+    ? null
+    : normalizedHomeStatTarget(totalModelCount.value),
 }))
 
+// supportedProviders groups nonempty marketplace records by resolved brand category.
+// It preserves the smallest positive official ratio and earliest configured position,
+// then applies category priority before group ordering for the resulting public cards.
 const supportedProviders = computed<HomeProviderSummary[]>(() => {
   const summaries = new Map<string, HomeProviderSummary>()
   const sortedGroups = [...marketplaceGroups.value].sort((left, right) => {
@@ -814,11 +1003,17 @@ const supportedProviders = computed<HomeProviderSummary[]>(() => {
   })
 })
 
+// Statistic cards combine translated captions and animated values with their
+// existing icon metadata, using whole-number formatting for users and supported model entries.
 const homeStatsCards = computed<HomeStatsCard[]>(() => [
   {
     key: 'today-tokens',
     label: t('home.stats.todayTokens'),
-    value: formatAnimatedHomeStat('today-tokens', homeStatAnimationTargets.value['today-tokens'], homeStatsLoading.value),
+    value: formatAnimatedHomeStat(
+      'today-tokens',
+      homeStatAnimationTargets.value['today-tokens'],
+      homeStatsLoading.value,
+    ),
     icon: 'bolt',
     iconWrapClass: 'bg-sky-100 dark:bg-sky-500/15',
     iconClass: 'text-sky-600 dark:text-sky-300',
@@ -826,7 +1021,11 @@ const homeStatsCards = computed<HomeStatsCard[]>(() => [
   {
     key: 'total-tokens',
     label: t('home.stats.totalTokens'),
-    value: formatAnimatedHomeStat('total-tokens', homeStatAnimationTargets.value['total-tokens'], homeStatsLoading.value),
+    value: formatAnimatedHomeStat(
+      'total-tokens',
+      homeStatAnimationTargets.value['total-tokens'],
+      homeStatsLoading.value,
+    ),
     icon: 'database',
     iconWrapClass: 'bg-emerald-100 dark:bg-emerald-500/15',
     iconClass: 'text-emerald-600 dark:text-emerald-300',
@@ -834,7 +1033,12 @@ const homeStatsCards = computed<HomeStatsCard[]>(() => [
   {
     key: 'total-users',
     label: t('home.stats.totalUsers'),
-    value: formatAnimatedHomeStat('total-users', homeStatAnimationTargets.value['total-users'], homeStatsLoading.value, 'number'),
+    value: formatAnimatedHomeStat(
+      'total-users',
+      homeStatAnimationTargets.value['total-users'],
+      homeStatsLoading.value,
+      'number',
+    ),
     icon: 'users',
     iconWrapClass: 'bg-violet-100 dark:bg-violet-500/15',
     iconClass: 'text-violet-600 dark:text-violet-300',
@@ -842,19 +1046,28 @@ const homeStatsCards = computed<HomeStatsCard[]>(() => [
   {
     key: 'supported-models',
     label: t('home.stats.supportedModels'),
-    value: formatAnimatedHomeStat('supported-models', homeStatAnimationTargets.value['supported-models'], homeMarketplaceLoading.value, 'number'),
+    value: formatAnimatedHomeStat(
+      'supported-models',
+      homeStatAnimationTargets.value['supported-models'],
+      homeMarketplaceLoading.value,
+      'number',
+    ),
     icon: 'grid',
     iconWrapClass: 'bg-primary-100 dark:bg-primary-500/15',
     iconClass: 'text-primary-600 dark:text-primary-300',
   },
 ])
 
+// Decorative provider displays reuse the resolved brands and stable fallbacks;
+// the rotating action only cycles through categories actually present in the catalog.
 const homeProviderVisuals = computed(() => {
-  const brands = supportedProviders.value.map(provider => provider.iconBrand)
+  const brands = supportedProviders.value.map((provider) => provider.iconBrand)
   return mergeProviderVisualBrands(brands)
 })
 
-const homeMarketplaceButtonBrands = computed(() => supportedProviders.value.map(provider => provider.iconBrand))
+const homeMarketplaceButtonBrands = computed(() =>
+  supportedProviders.value.map((provider) => provider.iconBrand),
+)
 
 const homeMarketplaceButtonBrand = computed(() => {
   const brands = homeMarketplaceButtonBrands.value
@@ -874,10 +1087,14 @@ const homeProviderCloudIcons = computed<HomeProviderCloudIcon[]>(() => {
 
 const homeRouteProviderBrands = computed(() => homeProviderVisuals.value.slice(0, 3))
 
+// The routing illustration uses a fixed example model label rather than a live
+// route result, independently of the decorative provider marks beside it.
 const homeRouteLabel = computed(() => {
   return 'OpenAI/GPT-5.4'
 })
 
+// Introductory steps keep their fixed signup, browsing, and API-key sequence while
+// translating each heading and description for the active interface language.
 const homeSteps = computed<HomeStep[]>(() => [
   {
     key: 'signup',
@@ -902,6 +1119,9 @@ const homeSteps = computed<HomeStep[]>(() => [
   },
 ])
 
+// homeProviderCategory chooses an explicit display brand before the trimmed group name.
+// Known brands use the shared category mapping. Unknown brands retain their selected
+// label and derive a filter key without discarding the group's visible identity.
 function homeProviderCategory(group: MarketplaceGroup): HomeProviderCategory {
   const brandSource = group.display_brand?.trim() || group.name.trim()
   const brandKey = resolveProviderBrandKey(brandSource)
@@ -917,6 +1137,9 @@ function homeProviderCategory(group: MarketplaceGroup): HomeProviderCategory {
   }
 }
 
+// homeProviderCategoryFromBrand maps core provider brands to localized home categories.
+// Other recognized brands retain the shared display name and brand key, allowing
+// the same aggregation path to cover providers outside the three core categories.
 function homeProviderCategoryFromBrand(brandKey: string, source: string): HomeProviderCategory {
   switch (brandKey) {
     case 'anthropic':
@@ -932,16 +1155,21 @@ function homeProviderCategoryFromBrand(brandKey: string, source: string): HomePr
   }
 }
 
+// homeProviderPriority ranks preferred categories before all remaining provider identities.
 function homeProviderPriority(key: string): number {
   const priorities = ['claude', 'gpt', 'deepseek', 'gemini', 'antigravity']
   const index = priorities.indexOf(key)
   return index === -1 ? priorities.length : index
 }
 
+// validOfficialPriceRatio returns a finite positive ratio for official-price comparisons.
+// Missing, nonnumeric, nonfinite, and nonpositive values return null, allowing
+// provider summaries and featured cards to omit unusable comparisons.
 function validOfficialPriceRatio(value?: number): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
 }
 
+// formatOfficialPriceRatio translates the ratio expressed on the existing ten-point scale.
 function formatOfficialPriceRatio(ratio: number): string {
   const discount = new Intl.NumberFormat(undefined, {
     minimumFractionDigits: 0,
@@ -951,8 +1179,9 @@ function formatOfficialPriceRatio(ratio: number): string {
   return t('marketplace.officialPriceDiscount', { discount })
 }
 
-// 相对官方价的折扣百分比（分组级），如 0.044 返回 "95.6% off"；
-// 无有效倍率或价格不低于官方价时返回 null，卡片底部整块不渲染
+// formatFeaturedDiscountOff formats savings only for a positive ratio below one.
+// Invalid or undiscounted comparisons return null so the feature card omits its
+// discount footer. Percentage formatting uses the browser's default number locale.
 function formatFeaturedDiscountOff(ratio?: number): string | null {
   const valid = validOfficialPriceRatio(ratio)
   if (valid === null || valid >= 1) {
@@ -964,11 +1193,14 @@ function formatFeaturedDiscountOff(ratio?: number): string | null {
   return t('home.featured.discountOff', { percent })
 }
 
+// formatAnimatedHomeStat formats the current animated value for a prepared target.
+// Loading and invalid targets produce distinct placeholders. Available targets use
+// compact or whole-number output and retain the existing trailing plus marker.
 function formatAnimatedHomeStat(
   key: HomeStatsKey,
   target: number | null,
   loading: boolean,
-  format: HomeStatFormat = 'compact'
+  format: HomeStatFormat = 'compact',
 ): string {
   if (loading) {
     return '...'
@@ -978,12 +1210,14 @@ function formatAnimatedHomeStat(
   }
 
   const value = homeAnimatedStats.value[key]
-  const formatted = format === 'compact'
-    ? formatAnimatedCompactNumber(value, target)
-    : formatWholeNumber(value)
+  const formatted =
+    format === 'compact' ? formatAnimatedCompactNumber(value, target) : formatWholeNumber(value)
   return `${formatted}+`
 }
 
+// formatMarketplaceStat formats a marketplace count using the active number locale.
+// While the marketplace request is loading, it returns the three-dot placeholder
+// regardless of the supplied count.
 function formatMarketplaceStat(value: number): string {
   if (homeMarketplaceLoading.value) {
     return '...'
@@ -991,14 +1225,21 @@ function formatMarketplaceStat(value: number): string {
   return new Intl.NumberFormat(numberLocale.value).format(value)
 }
 
+// formatAnimatedCompactNumber formats an animation value using its target's compact
+// suffix and precision. The caller supplies the final target alongside the current
+// frame value so crossing a compact-number threshold does not change the suffix
+// during the count-up. A target containing a compact suffix delegates scaling to
+// scaleCompactValue; otherwise the frame value stays unscaled. Fractional digits
+// appear only when that compact target has a fractional part, keeping the displayed
+// precision consistent throughout the animation.
 function formatAnimatedCompactNumber(value: number, target: number): string {
   const targetParts = new Intl.NumberFormat(numberLocale.value, {
     notation: 'compact',
     maximumFractionDigits: 1,
   }).formatToParts(target)
-  const compactPart = targetParts.find(part => part.type === 'compact')?.value ?? ''
+  const compactPart = targetParts.find((part) => part.type === 'compact')?.value ?? ''
   const scaledValue = compactPart ? scaleCompactValue(value, target) : value
-  const decimalDigits = compactPart && targetParts.some(part => part.type === 'fraction') ? 1 : 0
+  const decimalDigits = compactPart && targetParts.some((part) => part.type === 'fraction') ? 1 : 0
   const numberText = new Intl.NumberFormat(numberLocale.value, {
     minimumFractionDigits: decimalDigits,
     maximumFractionDigits: decimalDigits,
@@ -1008,14 +1249,22 @@ function formatAnimatedCompactNumber(value: number, target: number): string {
   return `${numberText}${compactPart}`
 }
 
+// scaleCompactValue derives a scale from the target's compact numeric parts.
+// The existing conversion uses Number on concatenated locale parts. Nonfinite or
+// nonpositive parsed targets return the original value instead of applying a scale.
 function scaleCompactValue(value: number, target: number): number {
-  const compactTargetNumber = Number(new Intl.NumberFormat(numberLocale.value, {
-    notation: 'compact',
-    maximumFractionDigits: 1,
-  }).formatToParts(target)
-    .filter(part => part.type === 'integer' || part.type === 'decimal' || part.type === 'fraction')
-    .map(part => part.value)
-    .join(''))
+  const compactTargetNumber = Number(
+    new Intl.NumberFormat(numberLocale.value, {
+      notation: 'compact',
+      maximumFractionDigits: 1,
+    })
+      .formatToParts(target)
+      .filter(
+        (part) => part.type === 'integer' || part.type === 'decimal' || part.type === 'fraction',
+      )
+      .map((part) => part.value)
+      .join(''),
+  )
   if (!Number.isFinite(compactTargetNumber) || compactTargetNumber <= 0) {
     return value
   }
@@ -1023,6 +1272,7 @@ function scaleCompactValue(value: number, target: number): number {
   return value / (target / compactTargetNumber)
 }
 
+// formatWholeNumber rounds the animated value and formats it without grouping separators.
 function formatWholeNumber(value: number): string {
   return new Intl.NumberFormat(numberLocale.value, {
     maximumFractionDigits: 0,
@@ -1030,10 +1280,23 @@ function formatWholeNumber(value: number): string {
   }).format(Math.round(value))
 }
 
+// normalizedHomeStatTarget converts finite values into nonnegative animation targets.
+// Negative numbers become zero; missing, nonnumeric, and nonfinite values return
+// null so their counters retain the existing unavailable-value display.
 function normalizedHomeStatTarget(value?: number): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : null
 }
 
+// startHomeStatAnimation starts or replaces the tracked count-up for one statistic.
+// The key is marked started before any frame is scheduled, and a previous frame
+// for that key is cancelled. Reduced-motion preferences and a zero target publish
+// the final value immediately without creating another animation-frame handle.
+//
+// Otherwise each frame applies the configured easing from zero toward the captured
+// target and replaces its own map entry while more frames are needed. Completion
+// publishes the exact target and removes that entry. The target watcher admits
+// only keys that have not started, and component teardown cancels the remaining
+// registered handles without resetting the started-key set.
 function startHomeStatAnimation(key: HomeStatsKey, target: number) {
   homeAnimatedStatKeys.add(key)
   if (homeStatAnimationFrames.has(key)) {
@@ -1048,9 +1311,13 @@ function startHomeStatAnimation(key: HomeStatsKey, target: number) {
   }
 
   const startTime = performance.now()
+  // tick updates one statistic against the captured start time and target.
+  // It records the next frame handle until progress reaches one, then publishes
+  // the exact target and removes its handle from teardown ownership.
   const tick = (now: number) => {
     const progress = Math.min((now - startTime) / homeStatAnimationDurationMs, 1)
-    // 四次缓出配合更长时长，让计数器前段启动快，尾段明显慢下来。
+    // Quartic easing advances quickly at first and slows near the target,
+    // while the shared duration keeps all admitted statistics on the same timing scale.
     const easedProgress = 1 - Math.pow(1 - progress, 4)
     homeAnimatedStats.value = {
       ...homeAnimatedStats.value,
@@ -1069,6 +1336,8 @@ function startHomeStatAnimation(key: HomeStatsKey, target: number) {
   homeStatAnimationFrames.set(key, requestAnimationFrame(tick))
 }
 
+// Admit each statistic once when its first valid target arrives; later target
+// changes retain the existing started-key behavior instead of restarting its count-up.
 watch(
   homeStatAnimationTargets,
   (targets) => {
@@ -1080,9 +1349,11 @@ watch(
       startHomeStatAnimation(key, target)
     })
   },
-  { immediate: true }
+  { immediate: true },
 )
 
+// Keep the rotating action index valid as available brands change, resetting it
+// when no catalog brands remain and otherwise reducing it to the current list length.
 watch(
   homeMarketplaceButtonBrands,
   (brands) => {
@@ -1092,9 +1363,12 @@ watch(
     }
     homeMarketplaceButtonIconIndex.value %= brands.length
   },
-  { immediate: true }
+  { immediate: true },
 )
 
+// mergeProviderVisualBrands appends fallback brands after the supplied catalog names.
+// It trims names and removes exact repeated strings while retaining first occurrence
+// order; aliases or names differing only by case remain separate entries.
 function mergeProviderVisualBrands(brands: string[]): string[] {
   const seen = new Set<string>()
   const merged: string[] = []
@@ -1111,6 +1385,7 @@ function mergeProviderVisualBrands(brands: string[]): string[] {
   return merged
 }
 
+// providerIconWrapClass applies the home-specific Antigravity palette before shared brand styling.
 function providerIconWrapClass(provider: Pick<HomeProviderSummary, 'key' | 'iconBrand'>): string {
   if (provider.key === 'antigravity') {
     return 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-200 dark:ring-rose-400/30'
@@ -1118,6 +1393,9 @@ function providerIconWrapClass(provider: Pick<HomeProviderSummary, 'key' | 'icon
   return resolveProviderBrand(provider.iconBrand).iconWrapClass
 }
 
+// fetchHomeMarketplace replaces public groups and reports its own loading outcome.
+// Failure clears the previous groups and exposes the unavailable state. Concurrent
+// calls retain completion-order publication without a generation guard or cancellation signal.
 async function fetchHomeMarketplace() {
   homeMarketplaceLoading.value = true
   homeMarketplaceError.value = false
@@ -1125,6 +1403,8 @@ async function fetchHomeMarketplace() {
   try {
     marketplaceGroups.value = await getMarketplaceModels()
   } catch (error) {
+    // Clear stale groups and mark this source unavailable so provider cards and
+    // model totals reflect the failed refresh while independently loaded statistics remain.
     console.error('Failed to load home marketplace models:', error)
     marketplaceGroups.value = []
     homeMarketplaceError.value = true
@@ -1133,6 +1413,9 @@ async function fetchHomeMarketplace() {
   }
 }
 
+// fetchHomeStats loads aggregate public counters independently from marketplace groups.
+// Failure clears the prior statistics and marks their unavailable state. The
+// loading flag is released by each request's completion without coordinating overlapping calls.
 async function fetchHomeStats() {
   homeStatsLoading.value = true
   homeStatsError.value = false
@@ -1140,6 +1423,8 @@ async function fetchHomeStats() {
   try {
     homeStats.value = await getMarketplaceStats()
   } catch (error) {
+    // Clear stale totals and mark statistics unavailable so the cards show their
+    // error state while a successful marketplace response can still populate provider data.
     console.error('Failed to load home marketplace stats:', error)
     homeStats.value = null
     homeStatsError.value = true
@@ -1148,6 +1433,8 @@ async function fetchHomeStats() {
   }
 }
 
+// Start the tracked icon rotation before awaiting public settings, then request
+// both default-page data sources together only when custom home content is absent.
 onMounted(async () => {
   authStore.checkAuth()
   homeMarketplaceButtonIconTimer = window.setInterval(() => {
@@ -1161,6 +1448,8 @@ onMounted(async () => {
     try {
       await appStore.fetchPublicSettings()
     } catch (error) {
+      // Continue with the settings already available after reporting the failed
+      // refresh, allowing the default page's independent data requests to proceed.
       console.error('Failed to load public settings:', error)
     }
   }
@@ -1170,21 +1459,27 @@ onMounted(async () => {
   }
 })
 
+// Cancel every tracked count-up frame and the icon interval using their current
+// handles; API requests retain their independent completion behavior after teardown.
 onUnmounted(() => {
-  homeStatAnimationFrames.forEach(frameId => cancelAnimationFrame(frameId))
+  homeStatAnimationFrames.forEach((frameId) => cancelAnimationFrame(frameId))
   homeStatAnimationFrames.clear()
   if (homeMarketplaceButtonIconTimer) {
     window.clearInterval(homeMarketplaceButtonIconTimer)
     homeMarketplaceButtonIconTimer = null
   }
 })
+// Locale refresh reloads public model descriptions through the shared subscription;
+// this callback retains its existing independence from the custom-home-content decision.
 useLocaleRefresh(fetchHomeMarketplace)
 </script>
 
 <style scoped>
 .home-marketplace-icon-enter-active,
 .home-marketplace-icon-leave-active {
-  transition: opacity var(--motion-layout) var(--motion-ease), transform var(--motion-layout) var(--motion-ease);
+  transition:
+    opacity var(--motion-layout) var(--motion-ease),
+    transform var(--motion-layout) var(--motion-ease);
 }
 
 .home-marketplace-icon-enter-from {
@@ -1197,7 +1492,8 @@ useLocaleRefresh(fetchHomeMarketplace)
   transform: translateY(70%);
 }
 
-/* 服务商图标循环滚动条，两端使用渐隐遮罩。 */
+/* Fade the decorative marquee edges while its duplicated track translates through
+   half its width; hovering pauses the animation and reduced motion disables it. */
 .home-marquee {
   -webkit-mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
   mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);

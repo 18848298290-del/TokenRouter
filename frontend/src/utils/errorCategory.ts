@@ -1,7 +1,14 @@
 /**
- * mapErrorCategory 按错误阶段和类型返回用户侧分类码。
- * 后端对应实现是 `backend/internal/ops/user_error.go` 中的 `ops.MapUserErrorCategory`。
- * 修改分类时同步两处实现，展示文案使用 i18n `usage.errors.categories.*`。
+ * errorCategory.ts assigns user-facing error categories from recorded failure phases
+ * and types. Phase comparison is case insensitive, request failures use a narrower type
+ * mapping, and unrecognized combinations receive the other category for translation by
+ * consumers.
+ */
+
+/**
+ * mapErrorCategory returns the display category for a failure phase and type. Both
+ * strings are lowercased without trimming; only request-phase failures inspect the
+ * type, and unmatched combinations return other.
  */
 export function mapErrorCategory(phase?: string | null, errType?: string | null): string {
   switch ((phase || '').toLowerCase()) {

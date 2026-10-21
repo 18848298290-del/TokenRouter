@@ -1,61 +1,63 @@
-/**
- * API Keys management endpoints
- * Handles CRUD operations for user API keys
- */
-
 import { apiClient } from './client'
 import type {
   ApiKey,
   ApiKeyBillingSubscriptionOption,
   CreateApiKeyRequest,
   UpdateApiKeyRequest,
-  PaginatedResponse
-} from '@/types'
+} from '@/api/keys.types'
+import type { PaginatedResponse } from '@/api/common.types'
 
 /**
- * List all API keys for current user
- * @param page - Page number (default: 1)
- * @param pageSize - Items per page (default: 10)
- * @param filters - Optional filter parameters
- * @param options - Optional request options
- * @returns Paginated list of API keys
+ * keys.ts sends personal and team API-key management requests. List queries
+ * carry scope, filters and cancellation, while billing options identify
+ * selectable subscriptions; credential rotation targets the existing key
+ * identifier and returns its updated record to callers.
+ */
+
+/**
+ * list lists all API keys for current user. Page defaults to 1, pageSize
+ * defaults to 10; the caller may cancel through the supplied AbortSignal. The
+ * function returns the data portion of the completed response.
  */
 export async function list(
   page: number = 1,
   pageSize: number = 10,
   filters?: {
-    search?: string
-    status?: string
-    group_id?: number | string
-    sort_by?: string
-    sort_order?: 'asc' | 'desc'
-    scope?: 'personal' | 'team'
+    search?: string // Free-text search query.
+    status?: string // Current server-reported status.
+    group_id?: number | string // Group record identifier.
+    sort_by?: string // Requested sort column.
+    sort_order?: 'asc' | 'desc' // Requested ordering direction.
+    scope?: 'personal' | 'team' // Requested access scope.
   },
   options?: {
-    signal?: AbortSignal
-  }
+    signal?: AbortSignal // Caller-owned cancellation signal.
+  },
 ): Promise<PaginatedResponse<ApiKey>> {
   const { data } = await apiClient.get<PaginatedResponse<ApiKey>>('/keys', {
     params: { page, page_size: pageSize, ...filters },
-    signal: options?.signal
+    signal: options?.signal,
   })
   return data
 }
 
 /**
- * 获取当前作用域可锁定使用的有效订阅。
+ * getBillingOptions retrieves active subscriptions that can be locked to a key
+ * in the current scope. Scope defaults to 'personal'. The function returns the
+ * data portion of the completed response.
  */
 export async function getBillingOptions(
-  scope: 'personal' | 'team' = 'personal'
+  scope: 'personal' | 'team' = 'personal',
 ): Promise<ApiKeyBillingSubscriptionOption[]> {
   const { data } = await apiClient.get<ApiKeyBillingSubscriptionOption[]>('/keys/billing-options', {
-    params: { scope }
+    params: { scope },
   })
   return data
 }
 
 /**
- * 使用已组装好的请求体创建 API Key。
+ * createWithPayload submits the caller's assembled API-key creation payload and
+ * returns the created key.
  */
 export async function createWithPayload(payload: CreateApiKeyRequest): Promise<ApiKey> {
   const { data } = await apiClient.post<ApiKey>('/keys', payload)
@@ -63,42 +65,45 @@ export async function createWithPayload(payload: CreateApiKeyRequest): Promise<A
 }
 
 /**
- * Update API key
- * @param id - API key ID
- * @param updates - Fields to update
- * @returns Updated API key
+ * update updates API key and returns the server result.
  */
 export async function update(id: number, updates: UpdateApiKeyRequest): Promise<ApiKey> {
   const { data } = await apiClient.put<ApiKey>(`/keys/${id}`, updates)
   return data
 }
 
-// 原地轮换凭据，保留 Key 的配置与用量。
+/**
+ * rotate submits rotate and returns the server response data.
+ */
 export async function rotate(id: number): Promise<ApiKey> {
   const { data } = await apiClient.post<ApiKey>(`/keys/${id}/rotate`)
   return data
 }
 
 /**
- * Delete API key
- * @param id - API key ID
- * @returns Success confirmation
+ * deleteKey deletes API key and returns the server result.
  */
-export async function deleteKey(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>(`/keys/${id}`)
+export async function deleteKey(id: number): Promise<{
+  message: string // Server-provided result message.
+}> {
+  const { data } = await apiClient.delete<{
+    message: string // Server-provided result message.
+  }>(`/keys/${id}`)
   return data
 }
 
 /**
- * Toggle API key status (active/inactive)
- * @param id - API key ID
- * @param status - New status
- * @returns Updated API key
+ * toggleStatus sets API key status (active/inactive) and returns the server
+ * result.
  */
 export async function toggleStatus(id: number, status: 'active' | 'inactive'): Promise<ApiKey> {
   return update(id, { status })
 }
 
+/**
+ * keysAPI groups personal and team API-key operations for callers using the
+ * module's named or default API object.
+ */
 export const keysAPI = {
   list,
   getBillingOptions,
@@ -106,7 +111,7 @@ export const keysAPI = {
   update,
   rotate,
   delete: deleteKey,
-  toggleStatus
+  toggleStatus,
 }
 
 export default keysAPI

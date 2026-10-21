@@ -1,20 +1,23 @@
 <template>
   <div class="table-page-layout" :class="{ 'mobile-mode': isMobile }">
-    <!-- 固定区域：操作按钮 -->
+    <!-- Action controls stay above the table scroll area. -->
     <div v-if="$slots.actions" class="layout-section-fixed">
       <slot name="actions" />
     </div>
 
-    <!-- 固定区域：搜索和过滤器 -->
+    <!-- Search and filters stay above the table scroll area. -->
     <div v-if="$slots.filters" class="layout-section-fixed">
       <slot name="filters" />
     </div>
 
-    <!-- 滚动区域：表格 -->
+    <!-- The table owns the scrollable content area. -->
     <div class="layout-section-scrollable">
       <div class="card table-scroll-container">
         <slot name="table" />
-        <!-- 桌面端分页器固定在表格外框内，表体独立滚动。 -->
+        <!--
+          Desktop pagination stays inside the card frame while the table body scrolls
+          independently.
+        -->
         <div v-if="$slots.pagination" class="table-pagination-footer">
           <slot name="pagination" />
         </div>
@@ -27,25 +30,42 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { TABLE_DESKTOP_MIN_WIDTH } from '@/constants/layout'
 
+// TablePageLayout.vue arranges action and filter slots above a table card with an
+// optional pagination footer. Desktop layout receives remaining height through the
+// AppLayout flex chain and scrolls table content, while mobile layout lets the page grow
+// with its contents.
+
+// isMobile records whether the browser width falls below the shared table breakpoint,
+// selecting document scrolling or the desktop table card layout.
 const isMobile = ref(false)
 
+// checkMobile updates mobile layout from the current browser width.
+//
+// It requires window and runs on mount and resize; the matching listener is removed when
+// this table page layout unmounts.
 const checkMobile = () => {
   isMobile.value = window.innerWidth < TABLE_DESKTOP_MIN_WIDTH
 }
 
+// Read the current width before subscribing to resize so the mounted table receives the
+// appropriate scrolling layout immediately and on later viewport changes.
 onMounted(() => {
   checkMobile()
   window.addEventListener('resize', checkMobile)
 })
 
+// Remove the resize callback when the layout unmounts so later viewport changes cannot
+// update a detached table layout instance.
 onUnmounted(() => {
   window.removeEventListener('resize', checkMobile)
 })
 </script>
 
 <style scoped>
-/* 桌面端：Flexbox 布局。高度由 AppLayout 的 flex 链分配(flex-1 占满主区剩余空间),
-   不再自行计算视口高度;移动端恢复自然高度。 */
+/*
+ * Desktop height comes from the AppLayout flex chain, allowing the table to fill
+ * remaining space; mobile rules restore natural content height.
+ */
 .table-page-layout {
   @apply flex flex-1 flex-col min-h-0;
 }
@@ -54,7 +74,10 @@ onUnmounted(() => {
   @apply flex-shrink-0;
 }
 
-/* 工具组之间保持 8px，最后一组工具到表格卡片使用 16px。 */
+/*
+ * Adjacent tool groups use eight pixels of spacing; the final tool group leaves
+ * sixteen pixels before the table card.
+ */
 .layout-section-fixed + .layout-section-fixed {
   @apply mt-2;
 }
@@ -67,34 +90,46 @@ onUnmounted(() => {
   @apply flex-1 min-h-0 flex flex-col;
 }
 
-/* 表格滚动容器 - 增强版表体滚动方案 */
+/*
+ * The card holds a flexible scroll area and a fixed pagination footer within one
+ * clipped frame on desktop.
+ */
 .table-scroll-container {
   @apply flex flex-col overflow-hidden h-full bg-white dark:bg-dark-900 rounded-surface border border-gray-200 dark:border-dark-600 shadow-none;
 }
 
 .table-scroll-container :deep(.table-wrapper) {
   @apply flex-1 overflow-x-auto overflow-y-auto;
-  /* 横向滚动条位于容器底部。 */
+  /*
+   * Reserve the vertical scrollbar gutter so column positions remain stable as rows
+   * begin or stop requiring vertical scrolling.
+   */
   scrollbar-gutter: stable;
 }
 
 .table-scroll-container :deep(table) {
   @apply w-full;
-  min-width: max-content; /* 表格按内容撑宽，超出容器时横向滚动。 */
-  display: table; /* 使用标准 table 布局以支持 sticky 列 */
+  min-width: max-content; /* Content width can exceed the card and scroll horizontally. */
+  display: table; /* Table display keeps header and body columns in the same layout. */
 }
 
 .table-scroll-container :deep(thead) {
-  /* sticky 表头使用不透明底色，使合成层中的文字边缘清晰。 */
+  /*
+   * An opaque header background covers scrolled rows and keeps sticky header text
+   * readable against the moving table body.
+   */
   @apply bg-gray-50 dark:bg-dark-900;
 }
 
 .table-scroll-container :deep(tbody) {
-  /* 保持默认 table-row-group 显示，不使用 block */
+  /* The body retains its browser table-row-group display. */
 }
 
 .table-scroll-container :deep(th) {
-  /* 表头与 DataTable、.table 保持同一密度:py-2 + text-xs,给数据行留出可视空间。 */
+  /*
+   * Header density matches DataTable and the shared table class, leaving more
+   * vertical room for data rows in the card.
+   */
   @apply px-4 py-2 text-left text-xs font-medium tracking-wider text-gray-500 dark:text-dark-300 border-b border-gray-200 dark:border-dark-700;
 }
 
@@ -102,7 +137,10 @@ onUnmounted(() => {
   @apply px-4 py-3 text-sm text-gray-700 dark:text-dark-100 border-b border-gray-100 dark:border-dark-700;
 }
 
-/* 桌面分页器与表头共用同一外框，表体滚动时保持固定。 */
+/*
+ * The desktop footer stays in the table frame while its sibling body region consumes
+ * the available scrolling height.
+ */
 .table-pagination-footer {
   @apply flex-shrink-0;
 }
@@ -115,7 +153,10 @@ onUnmounted(() => {
   @apply border-t border-gray-200 bg-gray-50/80 dark:border-dark-700 dark:bg-dark-900;
 }
 
-/* 页脚内的分页器去掉自带边框与底色,与表格外框融为一体;控件保持全站 36px 基线。 */
+/*
+ * Pagination inherits the card frame and footer background; remove its own outer
+ * border and background while retaining shared control sizing.
+ */
 .table-page-layout:not(.mobile-mode) .table-pagination-footer :deep(.pagination-root),
 .table-page-layout:not(.mobile-mode) .table-pagination-footer :deep(.batch-pagination-root) {
   border-top: 0;
@@ -124,9 +165,12 @@ onUnmounted(() => {
   padding-bottom: 0.5rem;
 }
 
-/* 移动端：恢复正常滚动 */
+/* Mobile pages grow with table content. */
 .table-page-layout.mobile-mode {
-  /* 移动端表格卡片按内容撑高，后续区域排列在卡片下方。 */
+  /*
+   * Natural card height lets subsequent mobile sections follow the table, with
+   * document scrolling handling the accumulated page height.
+   */
   @apply h-auto flex-none;
 }
 

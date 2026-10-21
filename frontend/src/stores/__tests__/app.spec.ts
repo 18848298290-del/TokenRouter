@@ -2,9 +2,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useAppStore } from '@/stores/app'
 import { getPublicSettings } from '@/api/auth'
-import type { PublicSettings } from '@/types'
+import type { PublicSettings } from '@/api/settings.types'
 import { i18n } from '@/i18n'
 
+// app.spec.ts verifies shared notifications, sidebar state, loading ownership, and
+// locale-aware public settings caching. Fake timers drive toast dismissal and deferred
+// promises expose overlapping settings requests. Fixtures vary language and browser
+// injection independently to protect the settings cache decisions made before mounting.
+
+// createDeferred exposes a promise and its completion controls for settings concurrency
+// tests. The test resolves or rejects it after asserting that all overlapping callers
+// are still waiting.
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
   let reject!: (reason?: unknown) => void
@@ -16,6 +24,10 @@ function createDeferred<T>() {
   return { promise, resolve, reject }
 }
 
+// createPublicSettings builds a complete public configuration fixture with caller-
+// supplied overrides applied last. Each call creates fresh default arrays, while
+// overrides are assigned shallowly and retain caller-supplied array or object identity.
+// Tests reusing mutable overrides share those values across fixtures.
 function createPublicSettings(overrides: Partial<PublicSettings> = {}): PublicSettings {
   return {
     locale: 'en',
@@ -62,8 +74,6 @@ function createPublicSettings(overrides: Partial<PublicSettings> = {}): PublicSe
     ...overrides,
   }
 }
-
-// Mock API 模块
 vi.mock('@/api/admin/system', () => ({
   checkUpdates: vi.fn(),
 }))
@@ -79,7 +89,8 @@ describe('useAppStore', () => {
     vi.useFakeTimers()
     localStorage.clear()
     vi.mocked(getPublicSettings).mockReset()
-    // 清除 window.__APP_CONFIG__
+    // Remove prior injected configuration before each case so a cached browser value
+    // cannot bypass the request behavior under test.
     delete (window as any).__APP_CONFIG__
   })
 
@@ -88,9 +99,9 @@ describe('useAppStore', () => {
     localStorage.clear()
   })
 
-  // --- Toast 消息管理 ---
-
   describe('Toast 消息管理', () => {
+    // A success notification is added through the convenience action. The stored record
+    // keeps its success type and original message, and returns a dismissal identifier.
     it('showSuccess 创建 success 类型 toast', () => {
       const store = useAppStore()
       const id = store.showSuccess('操作成功')
@@ -101,6 +112,8 @@ describe('useAppStore', () => {
       expect(store.toasts[0].message).toBe('操作成功')
     })
 
+    // An error notification is added through the convenience action. The stored record
+    // retains the error type and supplied message for the global toast renderer.
     it('showError 创建 error 类型 toast', () => {
       const store = useAppStore()
       store.showError('出错了')
@@ -110,6 +123,9 @@ describe('useAppStore', () => {
       expect(store.toasts[0].message).toBe('出错了')
     })
 
+    // A warning notification is added through the convenience action. The shared toast
+    // list contains one warning record, protecting the helper's mapping to presentation
+    // type.
     it('showWarning 创建 warning 类型 toast', () => {
       const store = useAppStore()
       store.showWarning('警告信息')
@@ -118,6 +134,9 @@ describe('useAppStore', () => {
       expect(store.toasts[0].type).toBe('warning')
     })
 
+    // An information notification is added through the convenience action. The shared
+    // toast list contains one information record, protecting the helper's mapping to
+    // presentation type.
     it('showInfo 创建 info 类型 toast', () => {
       const store = useAppStore()
       store.showInfo('提示信息')
@@ -126,6 +145,8 @@ describe('useAppStore', () => {
       expect(store.toasts[0].type).toBe('info')
     })
 
+    // A notification is created with an explicit three-second duration. Advancing the
+    // fake clock to that deadline removes it from the shared toast list.
     it('toast 在指定 duration 后自动消失', () => {
       const store = useAppStore()
       store.showSuccess('临时消息', 3000)
@@ -137,6 +158,9 @@ describe('useAppStore', () => {
       expect(store.toasts).toHaveLength(0)
     })
 
+    // Two different notifications are active and one identifier is dismissed. The
+    // matching record is removed while the other notification remains available to the
+    // renderer.
     it('hideToast 移除指定 toast', () => {
       const store = useAppStore()
       const id = store.showSuccess('消息1')
@@ -150,6 +174,9 @@ describe('useAppStore', () => {
       expect(store.toasts[0].type).toBe('error')
     })
 
+    // The store contains several notifications with different presentation types.
+    // Clearing all notifications empties the shared list regardless of each record's
+    // type or dismissal timer.
     it('clearAllToasts 清除所有 toast', () => {
       const store = useAppStore()
       store.showSuccess('消息1')
@@ -163,6 +190,9 @@ describe('useAppStore', () => {
       expect(store.toasts).toHaveLength(0)
     })
 
+    // The toast list starts empty, receives a notification, and is cleared. The active-
+    // toast selector follows those transitions so consumers observe current notification
+    // presence.
     it('hasActiveToasts 正确反映 toast 状态', () => {
       const store = useAppStore()
       expect(store.hasActiveToasts).toBe(false)
@@ -174,6 +204,9 @@ describe('useAppStore', () => {
       expect(store.hasActiveToasts).toBe(false)
     })
 
+    // Several notifications are created consecutively in one store instance. Their
+    // returned identifiers differ, allowing later dismissal callbacks to address the
+    // intended notification record.
     it('多个 toast 的 ID 唯一', () => {
       const store = useAppStore()
       const id1 = store.showSuccess('消息1')
@@ -185,9 +218,9 @@ describe('useAppStore', () => {
     })
   })
 
-  // --- 侧边栏 ---
-
   describe('侧边栏管理', () => {
+    // The desktop sidebar starts expanded and is toggled twice. The shared collapsed
+    // state follows both transitions and returns to its initial expanded value.
     it('toggleSidebar 切换折叠状态', () => {
       const store = useAppStore()
       expect(store.sidebarCollapsed).toBe(false)
@@ -199,6 +232,8 @@ describe('useAppStore', () => {
       expect(store.sidebarCollapsed).toBe(false)
     })
 
+    // Callers assign the desktop sidebar collapse state directly. Both true and false
+    // values are reflected by the store so layout consumers receive the supplied choice.
     it('setSidebarCollapsed 直接设置状态', () => {
       const store = useAppStore()
 
@@ -209,6 +244,8 @@ describe('useAppStore', () => {
       expect(store.sidebarCollapsed).toBe(false)
     })
 
+    // The shared sidebar scroll position starts at zero. Consumers can write a
+    // remembered offset and later reset it, preserving the writable restoration state.
     it('sidebarScrollTop 默认为 0 且可读写', () => {
       const store = useAppStore()
       expect(store.sidebarScrollTop).toBe(0)
@@ -220,6 +257,8 @@ describe('useAppStore', () => {
       expect(store.sidebarScrollTop).toBe(0)
     })
 
+    // The mobile sidebar starts closed and is toggled twice. Shared visibility opens on
+    // the first toggle and closes on the second toggle for layout consumers.
     it('toggleMobileSidebar 切换移动端状态', () => {
       const store = useAppStore()
       expect(store.mobileOpen).toBe(false)
@@ -232,9 +271,10 @@ describe('useAppStore', () => {
     })
   })
 
-  // --- Loading 状态 ---
-
   describe('Loading 状态管理', () => {
+    // Two overlapping operations acquire the global loading indicator. Releasing one
+    // contribution keeps loading visible until the second operation releases its
+    // remaining contribution.
     it('setLoading 管理引用计数', () => {
       const store = useAppStore()
       expect(store.loading).toBe(false)
@@ -242,16 +282,19 @@ describe('useAppStore', () => {
       store.setLoading(true)
       expect(store.loading).toBe(true)
 
-      store.setLoading(true) // 两次 true
+      store.setLoading(true)
       expect(store.loading).toBe(true)
 
-      store.setLoading(false) // 第一次 false，计数还是 1
+      store.setLoading(false)
       expect(store.loading).toBe(true)
 
-      store.setLoading(false) // 第二次 false，计数为 0
+      store.setLoading(false)
       expect(store.loading).toBe(false)
     })
 
+    // Loading receives more releases than prior acquisitions. The counter stays
+    // nonnegative, and a subsequent balanced acquire and release still updates the
+    // indicator correctly.
     it('setLoading(false) 不会使计数为负', () => {
       const store = useAppStore()
 
@@ -266,6 +309,9 @@ describe('useAppStore', () => {
       expect(store.loading).toBe(false)
     })
 
+    // An asynchronous operation runs through the loading wrapper and succeeds. Loading
+    // is visible inside the operation, its result reaches the caller, and completion
+    // clears loading.
     it('withLoading 自动管理 loading 状态', async () => {
       const store = useAppStore()
 
@@ -278,18 +324,24 @@ describe('useAppStore', () => {
       expect(store.loading).toBe(false)
     })
 
+    // An asynchronous operation rejects inside the loading wrapper. The wrapper
+    // propagates its error and still releases the loading contribution so the indicator
+    // does not remain active.
     it('withLoading 错误时也恢复 loading 状态', async () => {
       const store = useAppStore()
 
       await expect(
         store.withLoading(async () => {
           throw new Error('操作失败')
-        })
+        }),
       ).rejects.toThrow('操作失败')
 
       expect(store.loading).toBe(false)
     })
 
+    // An asynchronous operation rejects inside the toast-reporting loading wrapper. The
+    // caller receives null, loading clears, and an error notification is added to shared
+    // state.
     it('withLoadingAndError 错误时显示 toast 并返回 null', async () => {
       const store = useAppStore()
 
@@ -304,9 +356,10 @@ describe('useAppStore', () => {
     })
   })
 
-  // --- reset ---
-
   describe('reset', () => {
+    // The sidebar, loading indicator, and toast list contain changed presentation state.
+    // Reset restores the checked defaults and removes notifications from the shared
+    // application store.
     it('重置所有 UI 状态', () => {
       const store = useAppStore()
 
@@ -322,9 +375,10 @@ describe('useAppStore', () => {
     })
   })
 
-  // --- 公开设置 ---
-
   describe('公开设置加载', () => {
+    // Ordinary and forced settings calls overlap one unresolved API request. All callers
+    // wait for one response, which publishes feature availability and marks settings
+    // loaded.
     it('并发调用复用并等待同一个请求，包括 force 调用', async () => {
       const deferred = createDeferred<PublicSettings>()
       vi.mocked(getPublicSettings).mockReturnValue(deferred.promise)
@@ -354,6 +408,9 @@ describe('useAppStore', () => {
       expect(store.cachedPublicSettings?.payment_enabled).toBe(true)
     })
 
+    // A forced settings refresh starts after initial settings have been cached. An
+    // ordinary concurrent caller awaits the refresh result, and subsequent reads reuse
+    // the replacement.
     it('force 在无活动请求时绕过缓存，刷新期间的普通调用等待刷新结果', async () => {
       const initial = createPublicSettings({ site_name: 'Initial Site' })
       vi.mocked(getPublicSettings).mockResolvedValueOnce(initial)
@@ -377,6 +434,8 @@ describe('useAppStore', () => {
       expect(getPublicSettings).toHaveBeenCalledTimes(2)
     })
 
+    // Two settings callers share an API request that rejects. Both resolve to null, and
+    // the store keeps settings unloaded with no cached public configuration.
     it('并发请求失败时所有调用得到 null，且不会标记设置已加载', async () => {
       const deferred = createDeferred<PublicSettings>()
       vi.mocked(getPublicSettings).mockReturnValue(deferred.promise)
@@ -394,12 +453,13 @@ describe('useAppStore', () => {
       consoleError.mockRestore()
     })
 
+    // Account restoration changes language after injected settings were applied. The
+    // next read fetches translated configuration, updates branding and injection, then
+    // reuses the matching cache.
     it('账户语言在组件挂载前恢复时，重新读取首屏配置', async () => {
       window.__APP_CONFIG__ = createPublicSettings({ locale: 'en', site_name: 'English site' })
       const store = useAppStore()
       store.initFromInjectedConfig()
-
-      // 账户恢复先于组件监听器，缓存读取需要自行检查语言。
       i18n.global.locale.value = 'zh-Hans'
       const translated = createPublicSettings({ locale: 'zh-Hans', site_name: '中文站点' })
       vi.mocked(getPublicSettings).mockResolvedValue(translated)
@@ -411,6 +471,9 @@ describe('useAppStore', () => {
       expect(getPublicSettings).toHaveBeenCalledTimes(1)
     })
 
+    // Injected configuration has a different language from the current locale. The first
+    // read requests current-language settings and publishes their site name instead of
+    // using the injection.
     it('首次读取时跳过语言不匹配的注入配置', async () => {
       window.__APP_CONFIG__ = createPublicSettings({ locale: 'zh-Hans', site_name: '中文站点' })
       const english = createPublicSettings({ locale: 'en', site_name: 'English site' })
@@ -422,6 +485,9 @@ describe('useAppStore', () => {
       expect(store.siteName).toBe('English site')
     })
 
+    // Injected configuration already matches the active locale before the first read.
+    // The store returns that configuration directly and avoids issuing a public-settings
+    // API request.
     it('复用当前语言的注入配置', async () => {
       const settings = createPublicSettings()
       window.__APP_CONFIG__ = settings
@@ -431,6 +497,9 @@ describe('useAppStore', () => {
       expect(getPublicSettings).not.toHaveBeenCalled()
     })
 
+    // Browser-injected branding exists before store initialization. Synchronous
+    // initialization publishes its name, logo, and version, returns true, and marks
+    // public settings loaded for consumers.
     it('从 window.__APP_CONFIG__ 初始化', () => {
       const windowAny = window as any
       windowAny.__APP_CONFIG__ = {
@@ -452,6 +521,9 @@ describe('useAppStore', () => {
       expect(store.publicSettingsLoaded).toBe(true)
     })
 
+    // No browser-injected configuration exists during startup. Synchronous
+    // initialization returns false and leaves the public-settings loaded marker unset so
+    // normal loading can proceed.
     it('无注入配置时返回 false', () => {
       const store = useAppStore()
       const result = store.initFromInjectedConfig()
@@ -460,6 +532,9 @@ describe('useAppStore', () => {
       expect(store.publicSettingsLoaded).toBe(false)
     })
 
+    // Public settings have been initialized from browser injection. Clearing the cache
+    // removes the reactive record and loaded marker, exposing an unloaded state to
+    // consumers.
     it('clearPublicSettingsCache 清除缓存', () => {
       const windowAny = window as any
       windowAny.__APP_CONFIG__ = { site_name: 'Test' }
@@ -474,6 +549,9 @@ describe('useAppStore', () => {
       expect(store.cachedPublicSettings).toBeNull()
     })
 
+    // A forced settings read returns updated table defaults and choices. The browser
+    // injection receives those values while table preference storage keys remain
+    // untouched by this settings operation.
     it('fetchPublicSettings(force) 会同步更新运行时注入配置', async () => {
       vi.mocked(getPublicSettings).mockResolvedValue({
         registration_enabled: false,
@@ -500,7 +578,7 @@ describe('useAppStore', () => {
         custom_endpoints: [],
         linuxdo_oauth_enabled: false,
         backend_mode_enabled: false,
-        version: '1.0.0'
+        version: '1.0.0',
       })
 
       const store = useAppStore()

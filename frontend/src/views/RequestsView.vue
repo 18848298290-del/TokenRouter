@@ -12,10 +12,27 @@ import OpsErrorDetailModal from '@/views/admin/ops/components/OpsErrorDetailModa
 import Icon from '@/components/icons/Icon.vue'
 import { findRequests, type RequestDetail } from '@/api/requests'
 
+// RequestsView.vue looks up administrator request details from the request_id route query.
+// Search submission writes the trimmed identifier into the route, and submitting the same
+// identifier reloads it directly. Each response can contain several requests sharing an
+// external alias.
+//
+// A new lookup aborts the previous controller before clearing results. Response and error
+// handlers check their own signal, while finalization checks controller identity, so a
+// superseded lookup cannot publish records or stop the current loading indicator. Unmount
+// aborts the active request. The selected error record opens a separate administrator
+// detail modal.
+
+// Route and router bindings keep the search input synchronized with the administrator
+// request lookup URL.
 const route = useRoute()
 const router = useRouter()
+// The translation binding supplies empty-state, failure, and search labels for
+// administrator request lookup results.
 const { t } = useI18n()
 
+// Search state separates input, retrieval progress, completed-search status, failure text,
+// and matched request records for the current route.
 const requestId = ref('')
 const searchInput = ref<InstanceType<typeof RequestIdSearch> | null>(null)
 const loading = ref(false)
@@ -23,12 +40,25 @@ const searched = ref(false)
 const error = ref('')
 const items = ref<RequestDetail[]>([])
 const hasMore = ref(false)
+// Error detail state retains the clicked error identifier while the nested administrator
+// modal is open.
 const selectedError = ref<number | null>(null)
 const showError = ref(false)
+// controller owns the active lookup cancellation signal and identifies which request may
+// finish the loading state.
 let controller: AbortController | undefined
 
-// load 按地址栏里的 ID 查询，新的查询会取消还没返回的旧查询。
+// load cancels the previous lookup and searches the trimmed input identifier. An empty
+// identifier clears results and returns to the unsearched state without sending an API
+// request.
+//
+// Each request captures its own controller and checks its signal before publishing results
+// or failure text. The finally block clears loading only when that controller still owns
+// the active lookup. Aborted older requests therefore cannot replace a newer result or hide
+// its loading state, even when their promises settle late.
 async function load() {
+  // Abort the previous list owner before installing the new controller so late completion
+  // can identify that it no longer owns publication.
   controller?.abort()
   const current = new AbortController()
   controller = current
@@ -49,15 +79,23 @@ async function load() {
     hasMore.value = response.has_more
     searched.value = true
   } catch (cause: unknown) {
+    // Ignore failures from an aborted lookup before selecting its message, preventing
+    // superseded requests from replacing the current search feedback.
     if (current.signal.aborted) return
-    const message = (cause as { message?: unknown })?.message
+    const message = (
+      cause as {
+        message?: unknown // optional request failure message
+      }
+    )?.message
     error.value = typeof message === 'string' && message ? message : t('requests.loadFailed')
   } finally {
     if (controller === current) loading.value = false
   }
 }
 
-// search 把 ID 写进地址栏，同一个 ID 再次搜索时直接重新查询。
+// search trims the input and writes it to the request_id query parameter. When the route
+// already contains that identifier, it reloads directly because the route watcher would see
+// no change.
 async function search() {
   const id = requestId.value.trim()
   if (id === (route.query.request_id ?? '')) {
@@ -67,32 +105,54 @@ async function search() {
   await router.replace({ query: { request_id: id || undefined } })
 }
 
+// openError records the selected error identifier and opens its administrator detail modal.
 function openError(id: number) {
   selectedError.value = id
   showError.value = true
 }
 
-watch(() => [route.path, route.query.request_id], () => {
-  requestId.value = typeof route.query.request_id === 'string' ? route.query.request_id : ''
-  void load()
-}, { immediate: true })
+watch(
+  () => [route.path, route.query.request_id],
+  () => {
+    requestId.value = typeof route.query.request_id === 'string' ? route.query.request_id : ''
+    void load()
+  },
+  { immediate: true },
+)
 onBeforeUnmount(() => controller?.abort())
 </script>
 
 <template>
   <AppLayout>
     <div class="space-y-4">
-      <!-- 搜索栏 -->
+      <!-- Search controls -->
       <div class="flex flex-wrap items-center gap-2">
-        <RequestIdSearch ref="searchInput" v-model="requestId" class="flex-1 sm:w-64 sm:flex-none" @search="search" />
-        <button type="button" class="btn btn-primary" :disabled="loading" @click="searchInput?.apply()">
+        <RequestIdSearch
+          ref="searchInput"
+          v-model="requestId"
+          class="flex-1 sm:w-64 sm:flex-none"
+          @search="search"
+        />
+        <button
+          type="button"
+          class="btn btn-primary"
+          :disabled="loading"
+          @click="searchInput?.apply()"
+        >
           {{ t('common.search') }}
         </button>
       </div>
 
-      <!-- 加载中：按详情卡片的结构占位 -->
-      <div v-if="loading" class="card overflow-hidden" aria-busy="true" :aria-label="t('common.loading')">
-        <div class="flex items-center gap-2 border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+      <!-- Loading placeholders follow the detail card sections. -->
+      <div
+        v-if="loading"
+        class="card overflow-hidden"
+        aria-busy="true"
+        :aria-label="t('common.loading')"
+      >
+        <div
+          class="flex items-center gap-2 border-b border-gray-100 px-6 py-4 dark:border-dark-700"
+        >
           <Skeleton width="4rem" height="1.25rem" />
           <Skeleton width="16rem" height="1.25rem" />
         </div>
@@ -107,19 +167,21 @@ onBeforeUnmount(() => controller?.abort())
         </div>
       </div>
 
-      <!-- 查询失败 -->
+      <!-- Lookup failure -->
       <div v-else-if="error" class="card" role="alert">
         <EmptyState :title="t('requests.loadFailed')" :description="error">
           <template #icon>
             <Icon name="exclamationTriangle" class="empty-state-icon h-10 w-10" />
           </template>
           <template #action>
-            <button type="button" class="btn btn-secondary" @click="load">{{ t('common.retry') }}</button>
+            <button type="button" class="btn btn-secondary" @click="load">
+              {{ t('common.retry') }}
+            </button>
           </template>
         </EmptyState>
       </div>
 
-      <!-- 还没输入 ID -->
+      <!-- No identifier selected -->
       <div v-else-if="!searched" class="card">
         <EmptyState :title="t('requests.emptyTitle')" :description="t('requests.emptyDescription')">
           <template #icon>
@@ -128,7 +190,7 @@ onBeforeUnmount(() => controller?.abort())
         </EmptyState>
       </div>
 
-      <!-- 没有找到 -->
+      <!-- No matching request -->
       <div v-else-if="!items.length" class="card">
         <EmptyState :title="t('requests.notFoundTitle')" :description="t('requests.notFound')" />
       </div>

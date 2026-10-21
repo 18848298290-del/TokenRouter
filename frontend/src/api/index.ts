@@ -1,9 +1,10 @@
 /**
- * API Client for TokenRouter Backend
- * Central export point for all API modules
+ * index.ts exports browser API modules and shared URL builders from one entry
+ * point. Domain API objects retain their runtime exports, selected local types
+ * remain available alongside them, and the shared HTTP client is also the
+ * default export.
  */
 
-// Re-export the HTTP client
 export { apiClient, buildApiUrl, buildGatewayUrl } from './client'
 
 // Auth API

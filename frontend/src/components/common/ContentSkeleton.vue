@@ -2,16 +2,34 @@
 import { useI18n } from 'vue-i18n'
 import Skeleton from './Skeleton.vue'
 
-// @project-doc docs/architecture/frontend_ui_conventions.md#loading_feedback
-// 组件展示内容占位，请求状态和外层卡片由调用方维护。
-withDefaults(defineProps<{
-  variant?: 'list' | 'form' | 'detail' | 'article'
-  rows?: number
-}>(), {
-  variant: 'list',
-  rows: 3
-})
+/**
+ * ContentSkeleton.vue renders loading placeholders for lists, forms, details, and
+ * articles. Callers select the content shape and row count and own the surrounding
+ * card and request state; decorative skeleton elements sit under one accessible
+ * loading status.
+ */
 
+// @project-doc docs/architecture/frontend_ui_conventions.md#loading_feedback
+
+/**
+ * The content props choose the placeholder structure and repetition count; the
+ * parent mounts this region while its content is loading.
+ */
+withDefaults(
+  defineProps<{
+    variant?: 'list' | 'form' | 'detail' | 'article' /* visual presentation variant */
+    rows?: number /* placeholder row count */
+  }>(),
+  {
+    variant: 'list',
+    rows: 3,
+  },
+)
+
+/**
+ * The i18n translator resolves this component's message keys using the current
+ * application locale and its configured translation catalog.
+ */
 const { t } = useI18n()
 </script>
 
@@ -23,7 +41,11 @@ const { t } = useI18n()
         <Skeleton :height="36" class="sm:col-span-2" />
       </div>
     </div>
-    <div v-else-if="variant === 'detail'" class="grid gap-x-6 gap-y-5 sm:grid-cols-2" aria-hidden="true">
+    <div
+      v-else-if="variant === 'detail'"
+      class="grid gap-x-6 gap-y-5 sm:grid-cols-2"
+      aria-hidden="true"
+    >
       <div v-for="row in rows" :key="row" class="min-w-0 space-y-3">
         <Skeleton width="40%" :height="12" />
         <Skeleton width="75%" :height="20" />

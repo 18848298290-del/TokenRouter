@@ -1,68 +1,98 @@
-/**
- * Admin Antigravity API endpoints
- * Handles Antigravity (Google Cloud AI Companion) OAuth flows for administrators
- */
-
 import { apiClient } from '../client'
 
+/**
+ * antigravity.ts sends administrator Antigravity authorization requests and
+ * returns token information. Authorization URL creation and code exchange
+ * forward their typed session data, while refresh includes a proxy identifier
+ * only when the supplied value is truthy.
+ */
+
+/**
+ * AntigravityAuthUrlResponse pairs an authorization URL with the session and
+ * state needed for code exchange.
+ */
 export interface AntigravityAuthUrlResponse {
-  auth_url: string
-  session_id: string
-  state: string
+  auth_url: string // Authorization navigation URL.
+  session_id: string // Authorization session identifier.
+  state: string // OAuth correlation state.
 }
 
+/**
+ * AntigravityAuthUrlRequest selects an optional proxy for starting Antigravity
+ * authorization through the server.
+ */
 export interface AntigravityAuthUrlRequest {
-  proxy_id?: number
+  proxy_id?: number // Selected proxy identifier.
 }
 
+/**
+ * AntigravityExchangeCodeRequest submits the authorization code with its
+ * matching session, state and optional proxy.
+ */
 export interface AntigravityExchangeCodeRequest {
-  session_id: string
-  state: string
-  code: string
-  proxy_id?: number
+  session_id: string // Authorization session identifier.
+  state: string // OAuth correlation state.
+  code: string // OAuth authorization code.
+  proxy_id?: number // Selected proxy identifier.
 }
 
+/**
+ * AntigravityTokenInfo carries returned OAuth credentials and account metadata
+ * while accepting additional provider fields.
+ */
 export interface AntigravityTokenInfo {
-  access_token?: string
-  refresh_token?: string
-  token_type?: string
-  expires_at?: number | string
-  expires_in?: number
-  project_id?: string
-  email?: string
-  [key: string]: unknown
+  access_token?: string // Bearer access token.
+  refresh_token?: string // Session rotation token.
+  token_type?: string // Authorization scheme name.
+  expires_at?: number | string // Recorded expiration timestamp.
+  expires_in?: number // Lifetime in seconds.
+  project_id?: string // Recorded project id.
+  email?: string // Account email address.
+  [key: string]: unknown // Additional token response fields.
 }
 
+/**
+ * generateAuthUrl submits generate auth url and returns the server response
+ * data.
+ */
 export async function generateAuthUrl(
-  payload: AntigravityAuthUrlRequest
+  payload: AntigravityAuthUrlRequest,
 ): Promise<AntigravityAuthUrlResponse> {
   const { data } = await apiClient.post<AntigravityAuthUrlResponse>(
     '/admin/antigravity/oauth/auth-url',
-    payload
+    payload,
   )
   return data
 }
 
+/**
+ * exchangeCode submits exchange code and returns the server response data.
+ */
 export async function exchangeCode(
-  payload: AntigravityExchangeCodeRequest
+  payload: AntigravityExchangeCodeRequest,
 ): Promise<AntigravityTokenInfo> {
   const { data } = await apiClient.post<AntigravityTokenInfo>(
     '/admin/antigravity/oauth/exchange-code',
-    payload
+    payload,
   )
   return data
 }
 
+/**
+ * refreshAntigravityToken exchanges the supplied refresh token for token metadata.
+ * A truthy proxy identifier is forwarded; zero, null, and omission leave it out
+ * of the request. The completed response data is returned without reshaping it.
+ */
 export async function refreshAntigravityToken(
   refreshToken: string,
-  proxyId?: number | null
+  proxyId?: number | null,
 ): Promise<AntigravityTokenInfo> {
   const payload: Record<string, any> = { refresh_token: refreshToken }
   if (proxyId) payload.proxy_id = proxyId
-  
+
   const { data } = await apiClient.post<AntigravityTokenInfo>(
     '/admin/antigravity/oauth/refresh-token',
-    payload
+    payload,
   )
   return data
 }

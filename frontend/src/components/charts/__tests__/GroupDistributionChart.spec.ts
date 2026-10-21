@@ -3,6 +3,13 @@ import { mount } from '@vue/test-utils'
 
 import GroupDistributionChart from '../GroupDistributionChart.vue'
 
+// GroupDistributionChart.spec.ts checks grouped usage ordering, chart proportions,
+// optional cost columns, and ungrouped labels. Mounted chart substitutes expose raw
+// datasets and tooltip options, including the horizontal bar scale and abbreviated
+// category labels.
+
+// messages supplies stable English labels for rendered assertions, with unknown keys
+// passed through by the local translation substitute during each component test.
 const messages: Record<string, string> = {
   'admin.dashboard.groupDistribution': 'Group Distribution',
   'admin.dashboard.group': 'Group',
@@ -39,6 +46,8 @@ vi.mock('vue-chartjs', () => ({
 }))
 
 describe('GroupDistributionChart', () => {
+  // Shared aggregate fixtures give token and spending metrics different sort orders so
+  // each test can observe which metric controls the chart and table.
   const groupStats = [
     {
       group_id: 1,
@@ -58,6 +67,8 @@ describe('GroupDistributionChart', () => {
     },
   ]
 
+  // Default props receive two groups with opposing token and cost order. Chart values,
+  // table rows, desktop alignment, and tooltip percentages must follow token usage.
   it('uses total_tokens and token ordering by default', () => {
     const wrapper = mount(GroupDistributionChart, {
       props: {
@@ -91,6 +102,9 @@ describe('GroupDistributionChart', () => {
     expect(label).toBe('group-a: 1.20K (66.7%)')
   })
 
+  // Actual-cost mode receives groups whose token ranking differs from spending. Both
+  // rows and doughnut values must reorder together, and the tooltip must display the
+  // spending share.
   it('uses actual_cost and reorders rows in actual cost mode', () => {
     const wrapper = mount(GroupDistributionChart, {
       props: {
@@ -120,6 +134,8 @@ describe('GroupDistributionChart', () => {
     expect(label).toBe('group-b: $0.900 (90.0%)')
   })
 
+  // User usage records omit provider charges and disable their display column. Header
+  // and body column counts must agree, and provider-cost text must be absent.
   it('can hide provider cost for user usage stats without provider_cost', () => {
     const wrapper = mount(GroupDistributionChart, {
       props: {
@@ -138,6 +154,9 @@ describe('GroupDistributionChart', () => {
     expect(wrapper.findAll('tbody tr')[0].findAll('td')).toHaveLength(5)
   })
 
+  // Bar mode receives group aggregates and a long category label. The chart must use a
+  // horizontal zero-based linear axis, truncate labels, and retain metric tooltip
+  // values.
   it('renders a horizontal linear-scale bar chart starting at zero instead of doughnut when chartType is bar', () => {
     const wrapper = mount(GroupDistributionChart, {
       props: {
@@ -167,7 +186,9 @@ describe('GroupDistributionChart', () => {
 
     const truncate = options.scales.y.ticks.callback
     expect(truncate.call({ getLabelForValue: () => 'group-a' }, 0)).toBe('group-a')
-    expect(truncate.call({ getLabelForValue: () => 'a-very-long-group-name' }, 0)).toBe('a-very-long-…')
+    expect(truncate.call({ getLabelForValue: () => 'a-very-long-group-name' }, 0)).toBe(
+      'a-very-long-…',
+    )
 
     const label = options.plugins.tooltip.callbacks.label({
       label: 'group-a',
@@ -176,12 +197,29 @@ describe('GroupDistributionChart', () => {
     expect(label).toBe('group-a: 1.20K (66.7%)')
   })
 
+  // Group token totals differ by several orders of magnitude. Doughnut inputs must
+  // retain the raw values while the tooltip rounds the small category percentage for
+  // display.
   it('keeps doughnut slices proportional to raw values even with large differences', () => {
     const wrapper = mount(GroupDistributionChart, {
       props: {
         groupStats: [
-          { group_id: 1, group_name: 'big', requests: 1, total_tokens: 1_000_000, cost: 1, actual_cost: 1 },
-          { group_id: 2, group_name: 'small', requests: 1, total_tokens: 100, cost: 1, actual_cost: 1 },
+          {
+            group_id: 1,
+            group_name: 'big',
+            requests: 1,
+            total_tokens: 1_000_000,
+            cost: 1,
+            actual_cost: 1,
+          },
+          {
+            group_id: 2,
+            group_name: 'small',
+            requests: 1,
+            total_tokens: 100,
+            cost: 1,
+            actual_cost: 1,
+          },
         ],
       },
       global: {
@@ -193,7 +231,8 @@ describe('GroupDistributionChart', () => {
 
     const chartData = JSON.parse(wrapper.find('.chart-data').text())
     expect(chartData.labels).toEqual(['big', 'small'])
-    // 数量级差异较大时，扇区仍按真实用量比例绘制。
+    // Raw dataset magnitudes protect proportional slices even when their ratio makes the
+    // smaller displayed percentage round to zero.
     expect(chartData.datasets[0].data).toEqual([1_000_000, 100])
 
     const options = (wrapper.vm as any).$?.setupState.doughnutOptions
@@ -204,12 +243,21 @@ describe('GroupDistributionChart', () => {
     expect(label).toBe('small: 100 (0.0%)')
   })
 
+  // An unnamed zero-ID group appears alongside a named group. The chart must label the
+  // zero-ID entry with the translated ungrouped name after token sorting.
   it('labels entries without a group as No Group instead of 0', () => {
     const wrapper = mount(GroupDistributionChart, {
       props: {
         groupStats: [
           { group_id: 0, group_name: '', requests: 1, total_tokens: 10, cost: 0, actual_cost: 0 },
-          { group_id: 1, group_name: 'group-a', requests: 1, total_tokens: 20, cost: 0, actual_cost: 0 },
+          {
+            group_id: 1,
+            group_name: 'group-a',
+            requests: 1,
+            total_tokens: 20,
+            cost: 0,
+            actual_cost: 0,
+          },
         ],
       },
       global: {

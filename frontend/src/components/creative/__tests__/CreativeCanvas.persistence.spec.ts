@@ -3,12 +3,30 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CreativeCanvas from '@/components/creative/CreativeCanvas.vue'
 import { outputAssetKey, type LocalAsset } from '@/utils/creativeLocalStore'
 
+/**
+ * CreativeCanvas.persistence.spec.ts exercises scene recovery and snapshot
+ * writes through the mounted canvas component with controlled storage promises.
+ * A lightweight Fabric substitute records loadFromJSON input and inserted
+ * images, allowing the suite to check restore-versus-placement ordering, image
+ * placeholder resolution, and cleanup of temporary preview URLs. It also
+ * verifies that incomplete or missing-asset recovery does not overwrite saved
+ * data.
+ */
+
+/**
+ * fabricState retains mock canvas instances and decoded images so recovery
+ * ordering and passed snapshot metadata remain observable.
+ */
 const fabricState = vi.hoisted(() => ({
   main: null as any,
   mask: null as any,
   images: [] as any[],
 }))
 
+/**
+ * storeMocks supplies delayed scene reads and records writes, separating
+ * lifecycle assertions from browser IndexedDB implementation details.
+ */
 const storeMocks = vi.hoisted(() => ({
   saveAsset: vi.fn(),
   loadAsset: vi.fn(),
@@ -21,6 +39,10 @@ vi.mock('vue-i18n', () => ({
 }))
 
 vi.mock('@/utils/creativeLocalStore', () => ({
+  /**
+   * LocalStoreQuotaError supplies the storage error identity used by the canvas
+   * fixture.
+   */
   LocalStoreQuotaError: class LocalStoreQuotaError extends Error {},
   loadAsset: storeMocks.loadAsset,
   loadSceneJson: storeMocks.loadSceneJson,
@@ -31,26 +53,46 @@ vi.mock('@/utils/creativeLocalStore', () => ({
 }))
 
 vi.mock('fabric', () => {
+  /**
+   * MockObject provides mutable scene geometry for the component's Fabric
+   * interactions.
+   */
   class MockObject {
-    left = 0
-    top = 0
-    width = 0
-    height = 0
-    scaleX = 1
-    scaleY = 1
-    angle = 0
-    data?: Record<string, unknown>
-    selectable = true
-    evented = true
+    left = 0 // left scene coordinate
+    top = 0 // top scene coordinate
+    width = 0 // horizontal dimension pixels
+    height = 0 // vertical dimension pixels
+    scaleX = 1 // horizontal display scale
+    scaleY = 1 // vertical display scale
+    angle = 0 // object rotation degrees
+    data?: Record<string, unknown> // custom scene object metadata
+    selectable = true // object selection eligibility
+    evented = true // object event eligibility
 
+    /**
+     * set applies fixture properties to this object and returns the same instance.
+     */
     set(values: Record<string, unknown>): this {
       Object.assign(this, values)
       return this
     }
 
+    /**
+     * setCoords supplies a no-op coordinate refresh for the simplified Fabric
+     * fixture.
+     */
     setCoords(): void {}
 
-    getBoundingRect(): { left: number; top: number; width: number; height: number } {
+    /**
+     * getBoundingRect returns translated dimensions scaled by the fixture's
+     * horizontal and vertical factors.
+     */
+    getBoundingRect(): {
+      left: number // left scene coordinate
+      top: number // top scene coordinate
+      width: number // horizontal dimension pixels
+      height: number // vertical dimension pixels
+    } {
       return {
         left: this.left,
         top: this.top,
@@ -60,14 +102,27 @@ vi.mock('fabric', () => {
     }
   }
 
+  /**
+   * MockImage supplies fixed image dimensions and records simulated decoding
+   * results.
+   */
   class MockImage extends MockObject {
-    width = 400
-    height = 200
+    width = 400 // horizontal dimension pixels
+    height = 200 // vertical dimension pixels
 
+    /**
+     * getElement supplies fixed natural image dimensions for resolution and
+     * placement assertions.
+     */
     getElement(): Partial<HTMLImageElement> {
       return { naturalWidth: 400, naturalHeight: 200, width: 400, height: 200 }
     }
 
+    /**
+     * fromURL creates a decoded image fixture and records it for placement
+     * assertions. URL bytes are not decoded in this substitute, keeping the test
+     * focused on component ordering and metadata.
+     */
     static async fromURL(): Promise<MockImage> {
       const image = new MockImage()
       fabricState.images.push(image)
@@ -75,42 +130,134 @@ vi.mock('fabric', () => {
     }
   }
 
+  /**
+   * MockCanvas provides the scene and viewport operations exercised by mounted
+   * canvas tests.
+   */
   class MockCanvas {
-    viewportTransform: [number, number, number, number, number, number] = [1, 0, 0, 1, 0, 0]
-    width = 800
-    height = 600
-    backgroundColor = ''
-    objects: MockObject[] = []
-    active: MockObject | null = null
-    loadedJSON: Record<string, unknown> | null = null
+    viewportTransform: [number, number, number, number, number, number] = [1, 0, 0, 1, 0, 0] // current affine viewport transform
+    width = 800 // horizontal dimension pixels
+    height = 600 // vertical dimension pixels
+    backgroundColor = '' // canvas background color
+    objects: MockObject[] = [] // ordered shared scene objects
+    active: MockObject | null = null // currently selected fixture object
+    loadedJSON: Record<string, unknown> | null = null // last supplied scene snapshot
 
+    /**
+     * constructor registers this fixture as the main canvas or its mask overlay.
+     * The first instance occupies the main slot, and the next instance lets tests
+     * inspect overlay behavior separately.
+     */
     constructor() {
       if (!fabricState.main) fabricState.main = this
       else fabricState.mask = this
     }
 
+    /**
+     * on accepts event registration without emitting callbacks in this
+     * persistence-focused fixture.
+     */
     on(): void {}
-    getWidth(): number { return this.width }
-    getHeight(): number { return this.height }
-    getZoom(): number { return this.viewportTransform[0] }
+    /**
+     * getWidth returns the fixture viewport width used by canvas placement.
+     */
+    getWidth(): number {
+      return this.width
+    }
+    /**
+     * getHeight returns the fixture viewport height used by canvas placement.
+     */
+    getHeight(): number {
+      return this.height
+    }
+    /**
+     * getZoom reads the horizontal scale from the fixture viewport transform.
+     */
+    getZoom(): number {
+      return this.viewportTransform[0]
+    }
+    /**
+     * setViewportTransform stores the supplied transform tuple as the fixture
+     * viewport state. The tuple remains shared, matching the direct mutations
+     * inspected by these tests rather than creating an independent copy.
+     */
     setViewportTransform(value: [number, number, number, number, number, number]): void {
       this.viewportTransform = value
     }
-    setDimensions(value: { width: number; height: number }): void {
+    /**
+     * setDimensions updates the fixture viewport size from the supplied width and
+     * height.
+     */
+    setDimensions(value: {
+      width: number // horizontal dimension pixels
+      height: number // vertical dimension pixels
+    }): void {
       this.width = value.width
       this.height = value.height
     }
+    /**
+     * requestRenderAll accepts render requests without drawing pixels in the
+     * fixture.
+     */
     requestRenderAll(): void {}
-    add(...objects: MockObject[]): void { this.objects.push(...objects) }
+    /**
+     * add appends shared scene objects to the fixture's ordered object list.
+     */
+    add(...objects: MockObject[]): void {
+      this.objects.push(...objects)
+    }
+    /**
+     * remove filters specified object identities from the fixture scene list.
+     */
     remove(...objects: MockObject[]): void {
       this.objects = this.objects.filter((object) => !objects.includes(object))
     }
-    setActiveObject(object: MockObject): void { this.active = object }
-    getActiveObject(): MockObject | null { return this.active }
-    getActiveObjects(): MockObject[] { return this.active ? [this.active] : [] }
-    discardActiveObject(): void { this.active = null }
-    getObjects(): MockObject[] { return this.objects }
-    toObject(): { objects: Array<Record<string, unknown>> } {
+    /**
+     * setActiveObject stores one fixture object as the current canvas selection.
+     */
+    setActiveObject(object: MockObject): void {
+      this.active = object
+    }
+    /**
+     * getActiveObject returns the shared selected object or null when selection is
+     * empty. The component can inspect its identity and metadata; clearing
+     * selection leaves the object in the scene list.
+     */
+    getActiveObject(): MockObject | null {
+      return this.active
+    }
+    /**
+     * getActiveObjects wraps the selected fixture object in a new array when
+     * present. An empty selection returns an empty array, while contained object
+     * identities remain shared with the scene.
+     */
+    getActiveObjects(): MockObject[] {
+      return this.active ? [this.active] : []
+    }
+    /**
+     * discardActiveObject clears the fixture selection while retaining all scene
+     * objects.
+     */
+    discardActiveObject(): void {
+      this.active = null
+    }
+    /**
+     * getObjects returns the fixture's shared array of current scene objects. The
+     * component reads and filters these identities directly, so callers needing an
+     * isolated list must create their own copy.
+     */
+    getObjects(): MockObject[] {
+      return this.objects
+    }
+    /**
+     * toObject serializes fixture image positions, scales, and custom metadata into
+     * a scene object. Nested metadata remains shared in this temporary
+     * representation, and production snapshot serialization converts it to JSON
+     * text.
+     */
+    toObject(): {
+      objects: Array<Record<string, unknown>> // ordered shared scene objects
+    } {
       return {
         objects: this.objects.map((object) => ({
           type: 'Image',
@@ -122,22 +269,49 @@ vi.mock('fabric', () => {
         })),
       }
     }
+    /**
+     * loadFromJSON records the restored snapshot and clears the fixture object
+     * list. The substitute resolves immediately, allowing tests to observe ordering
+     * around the separate delayed storage read.
+     */
     async loadFromJSON(json: Record<string, unknown>): Promise<this> {
       this.loadedJSON = json
       this.objects = []
       return this
     }
-    clear(): void { this.objects = [] }
+    /**
+     * clear empties the fixture scene list for reset and restoration assertions.
+     */
+    clear(): void {
+      this.objects = []
+    }
+    /**
+     * dispose accepts component cleanup without allocating browser drawing
+     * resources in the fixture.
+     */
     dispose(): void {}
   }
 
+  /**
+   * MockBrush stores drawing properties used when the component enables painting.
+   */
   class MockBrush {
-    color = ''
-    width = 0
+    color = '' // configured brush color
+    width = 0 // horizontal dimension pixels
   }
 
+  /**
+   * MockPoint carries viewport coordinates passed to the Fabric zoom substitute.
+   */
   class MockPoint {
-    constructor(public x: number, public y: number) {}
+    /**
+     * constructor stores the horizontal and vertical coordinates of a fixture
+     * point.
+     */
+    constructor(
+      public x: number, // horizontal point coordinate
+      public y: number, // vertical point coordinate
+    ) {}
   }
 
   return {
@@ -148,8 +322,15 @@ vi.mock('fabric', () => {
     Point: MockPoint,
     Rect: MockObject,
     StaticCanvas: MockCanvas,
+    /**
+     * MockText represents runtime resolution labels within the lightweight Fabric
+     * fixture.
+     */
     Text: class MockText extends MockObject {
-      text: string
+      text: string // displayed fixture label text
+      /**
+       * constructor records label text on the lightweight runtime tag fixture.
+       */
       constructor(text: string) {
         super()
         this.text = text
@@ -158,7 +339,15 @@ vi.mock('fabric', () => {
   }
 })
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+/**
+ * deferred creates a manually resolved promise for controlling an asynchronous
+ * test interleaving. The test owns its resolver and releases the pending
+ * operation after asserting the intermediate state.
+ */
+function deferred<T>(): {
+  promise: Promise<T> // controlled asynchronous test result
+  resolve: (value: T) => void // test-owned promise completion callback
+} {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((resolvePromise) => {
     resolve = resolvePromise
@@ -166,6 +355,11 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve }
 }
 
+/**
+ * mountCanvas mounts the real canvas component with crop and icon children
+ * stubbed. It uses generation mode by default; the caller owns unmounting to
+ * exercise listener and resource cleanup.
+ */
 function mountCanvas() {
   return mount(CreativeCanvas, {
     props: { operation: 'generate' },
@@ -190,13 +384,21 @@ describe('CreativeCanvas 本地恢复与快照持久化', () => {
       configurable: true,
       value: vi.fn(),
     })
-    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({
-      width: 400,
-      height: 200,
-      close: vi.fn(),
-    })))
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => ({
+        width: 400,
+        height: 200,
+        close: vi.fn(),
+      })),
+    )
   })
 
+  /**
+   * A scene read remains unresolved when the component unmounts. Neither teardown
+   * nor its later completion may save the temporarily empty canvas over the
+   * existing snapshot.
+   */
   it('恢复未完成时卸载不会用空画布覆盖已有快照', async () => {
     const pending = deferred<string | null>()
     storeMocks.loadSceneJson.mockReturnValue(pending.promise)
@@ -210,6 +412,11 @@ describe('CreativeCanvas 本地恢复与快照持久化', () => {
     expect(storeMocks.saveSceneJson).not.toHaveBeenCalled()
   })
 
+  /**
+   * An output arrives while the initial scene read is still pending. Its
+   * placement must wait until restoration completes so the loaded scene cannot
+   * erase that insertion.
+   */
   it('恢复期间上板会等待 loadFromJSON 完成，最终对象不会被清掉', async () => {
     const pending = deferred<string | null>()
     storeMocks.loadSceneJson.mockReturnValue(pending.promise)
@@ -230,6 +437,11 @@ describe('CreativeCanvas 本地恢复与快照持久化', () => {
     wrapper.unmount()
   })
 
+  /**
+   * A stored scene contains an asset placeholder and viewport metadata. Recovery
+   * must supply a temporary image URL to Fabric, retain that metadata, and revoke
+   * the URL.
+   */
   it('从 IndexedDB 恢复图片占位符并保留画布变换', async () => {
     const assetKey = outputAssetKey('crun_0123456789abcdef', 0)
     const asset: LocalAsset = {
@@ -240,17 +452,21 @@ describe('CreativeCanvas 本地恢复与快照持久化', () => {
       outputIndex: 0,
       createdAt: 1,
     }
-    storeMocks.loadSceneJson.mockResolvedValue(JSON.stringify({
-      viewportTransform: [1.25, 0, 0, 1.25, 32, 48],
-      objects: [{ type: 'image', src: `asset://${assetKey}`, data: { kind: 'image', assetKey } }],
-    }))
+    storeMocks.loadSceneJson.mockResolvedValue(
+      JSON.stringify({
+        viewportTransform: [1.25, 0, 0, 1.25, 32, 48],
+        objects: [{ type: 'image', src: `asset://${assetKey}`, data: { kind: 'image', assetKey } }],
+      }),
+    )
     storeMocks.loadAsset.mockResolvedValue(asset)
     const wrapper = mountCanvas()
     await flushPromises()
 
-    expect(fabricState.main.loadedJSON).toEqual(expect.objectContaining({
-      viewportTransform: [1.25, 0, 0, 1.25, 32, 48],
-    }))
+    expect(fabricState.main.loadedJSON).toEqual(
+      expect.objectContaining({
+        viewportTransform: [1.25, 0, 0, 1.25, 32, 48],
+      }),
+    )
     expect((fabricState.main.loadedJSON?.objects as Array<Record<string, unknown>>)[0].src).toBe(
       'blob:creative-persistence-test',
     )
@@ -258,6 +474,11 @@ describe('CreativeCanvas 本地恢复与快照持久化', () => {
     wrapper.unmount()
   })
 
+  /**
+   * A source image is added before the page-hide event is dispatched. The
+   * persisted scene must reference its local asset key when pending changes are
+   * flushed.
+   */
   it('页面隐藏时刷新有变更的快照', async () => {
     const wrapper = mountCanvas()
     await flushPromises()
@@ -272,11 +493,18 @@ describe('CreativeCanvas 本地恢复与快照持久化', () => {
     wrapper.unmount()
   })
 
+  /**
+   * A stored image references bytes absent from the local asset store. Recovery
+   * must skip the image without saving a newly emptied snapshot over the existing
+   * record.
+   */
   it('本地素材缺失时只跳过图片，不保存被裁剪的空快照', async () => {
     const assetKey = outputAssetKey('crun_0123456789abcdef', 0)
-    storeMocks.loadSceneJson.mockResolvedValue(JSON.stringify({
-      objects: [{ type: 'image', src: `asset://${assetKey}`, data: { kind: 'image', assetKey } }],
-    }))
+    storeMocks.loadSceneJson.mockResolvedValue(
+      JSON.stringify({
+        objects: [{ type: 'image', src: `asset://${assetKey}`, data: { kind: 'image', assetKey } }],
+      }),
+    )
     storeMocks.loadAsset.mockResolvedValue(null)
     const wrapper = mountCanvas()
     await flushPromises()

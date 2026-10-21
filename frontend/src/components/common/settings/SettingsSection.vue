@@ -14,12 +14,27 @@
 </template>
 
 <script setup lang="ts">
-// 分区只提供标题和间距，复杂规则的边框与背景由内部编辑器或子面板负责。
-defineProps<{ title?: string; hint?: string }>()
+/**
+ * SettingsSection.vue groups settings under an optional title and hint with an actions
+ * slot. Adjacent sections receive a shared top divider through an unscoped class rule,
+ * allowing custom caller sections to participate in the same spacing scheme.
+ */
+
+/**
+ * The section props supply an optional heading and hint; a missing heading also
+ * leaves the actions header unrendered in this section.
+ */
+defineProps<{
+  title?: string // displayed heading text
+  hint?: string /* inline explanation text */
+}>()
 </script>
 
 <style>
-/* 不加 scoped：调用方用同名类包裹的自定义分区也参与分隔线规则。 */
+/*
+ * This rule is unscoped so caller supplied sections using the same class
+ * participate in the adjacent section spacing and divider pattern.
+ */
 .settings-section + .settings-section {
   @apply border-t border-gray-200 pt-6 dark:border-dark-600;
 }

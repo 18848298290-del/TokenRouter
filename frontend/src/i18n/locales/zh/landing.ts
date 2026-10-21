@@ -1,9 +1,14 @@
+// landing.ts supplies Simplified Chinese text for the public homepage, key usage
+// lookup, and setup wizard. Public navigation and introductory sections share
+// this dictionary with setup progress and usage details so these entry pages
+// resolve messages through the root catalog.
+
 export default {
-batchImageGuide: {
+  batchImageGuide: {
     title: '图片批量生成',
-    description: '一次提交多条提示词，任务完成后可统一下载图片结果'
+    description: '一次提交多条提示词，任务完成后可统一下载图片结果',
   },
-// Home Page
+  // Home Page
   home: {
     viewOnGithub: '在 GitHub 上查看',
     viewDocs: '查看文档',
@@ -18,9 +23,9 @@ batchImageGuide: {
     viewAll: '查看全部',
     nav: {
       searchModels: '搜索模型、服务商和能力',
-      models: '模型'
+      models: '模型',
     },
-    // 新增：面向用户的价值主张
+    // User benefits section
     heroBadge: '统一接入、智能路由、按量计费',
     heroTitle: '统一的大模型接口',
     heroSubtitle: '一个密钥，畅用多个 AI 模型',
@@ -28,34 +33,34 @@ batchImageGuide: {
     tags: {
       subscriptionToApi: '订阅转 API',
       stickySession: '会话保持',
-      realtimeBilling: '按量计费'
+      realtimeBilling: '按量计费',
     },
-    // 用户痛点区块
+    // User problems section
     painPoints: {
       title: '你是否也遇到这些问题？',
       items: {
         expensive: {
           title: '订阅费用高',
-          desc: '每个 AI 服务都要单独订阅，每月支出越来越多'
+          desc: '每个 AI 服务都要单独订阅，每月支出越来越多',
         },
         complex: {
           title: '多提供商难管理',
-          desc: '不同平台的提供商、密钥分散各处，管理起来很麻烦'
+          desc: '不同平台的提供商、密钥分散各处，管理起来很麻烦',
         },
         unstable: {
           title: '服务不稳定',
-          desc: '单一提供商容易触发限制，影响正常使用'
+          desc: '单一提供商容易触发限制，影响正常使用',
         },
         noControl: {
           title: '用量无法控制',
-          desc: '不知道钱花在哪了，也无法限制团队成员的使用'
-        }
-      }
+          desc: '不知道钱花在哪了，也无法限制团队成员的使用',
+        },
+      },
     },
-    // 解决方案区块
+    // Solutions section
     solutions: {
       title: '我们帮你解决',
-      subtitle: '简单三步，开始省心使用 AI'
+      subtitle: '简单三步，开始省心使用 AI',
     },
     features: {
       unifiedGateway: '一键接入',
@@ -69,43 +74,43 @@ batchImageGuide: {
       browseAll: '浏览全部',
       learnMore: '了解更多',
       viewUsage: '查看用量',
-      usageChart: '用量趋势'
+      usageChart: '用量趋势',
     },
-    // 优势对比
+    // Comparison section
     comparison: {
       title: '为什么选择我们？',
       headers: {
         feature: '对比项',
         official: '官方订阅',
-        us: '本平台'
+        us: '本平台',
       },
       items: {
         pricing: {
           feature: '付费方式',
           official: '固定月费，用不完也付',
-          us: '按量付费，用多少付多少'
+          us: '按量付费，用多少付多少',
         },
         models: {
           feature: '模型选择',
           official: '单一服务商',
-          us: '多模型随意切换'
+          us: '多模型随意切换',
         },
         management: {
           feature: '提供商管理',
           official: '每个服务单独管理',
-          us: '统一密钥，一站管理'
+          us: '统一密钥，一站管理',
         },
         stability: {
           feature: '服务稳定性',
           official: '单提供商易触发限制',
-          us: '多提供商池，自动切换'
+          us: '多提供商池，自动切换',
         },
         control: {
           feature: '用量控制',
           official: '无法限制',
-          us: '可设配额、查明细'
-        }
-      }
+          us: '可设配额、查明细',
+        },
+      },
     },
     providers: {
       title: '已支持的 AI 模型',
@@ -120,11 +125,11 @@ batchImageGuide: {
       empty: '暂无可展示的模型',
       unavailable: '模型数据暂不可用',
       groups: '个服务组',
-      modelCount: '模型'
+      modelCount: '模型',
     },
     featured: {
       byProvider: 'by {provider}',
-      discountOff: '最高优惠{percent}%'
+      discountOff: '最高优惠{percent}%',
     },
     stats: {
       todayTokens: '今日总 Token 量',
@@ -132,34 +137,35 @@ batchImageGuide: {
       totalUsers: '总注册用户量',
       supportedModels: '已接入模型',
       providerTypes: '类模型',
-      unavailable: '统计数据暂不可用'
+      unavailable: '统计数据暂不可用',
     },
     steps: {
       signup: {
         title: '注册账号',
-        description: '登录后即可创建密钥，团队空间和额度配置可以后续再完善。'
+        description: '登录后即可创建密钥，团队空间和额度配置可以后续再完善。',
       },
       browse: {
         title: '选择模型',
-        description: '在模型广场查看已支持模型、服务类型和相对官方价格。'
+        description: '在模型广场查看已支持模型、服务类型和相对官方价格。',
       },
       apiKey: {
         title: '获取 API Key',
-        description: '支持 OpenAI 兼容、OpenAI Responses 和 Anthropic 格式请求，按实际 Token 用量结算。'
-      }
+        description:
+          '支持 OpenAI 兼容、OpenAI Responses 和 Anthropic 格式请求，按实际 Token 用量结算。',
+      },
     },
-    // CTA 区块
+    // Call-to-action section
     cta: {
       title: '准备好开始了吗？',
       description: '注册即可获得免费试用额度，体验一站式 AI 服务',
-      button: '免费注册'
+      button: '免费注册',
     },
     footer: {
       allRightsReserved: '保留所有权利。',
-      quickLinks: '快速链接'
-    }
+      quickLinks: '快速链接',
+    },
   },
-// Key Usage Query Page
+  // Key Usage Query Page
   keyUsage: {
     title: 'API Key 用量查询',
     subtitle: '输入您的 API Key 以查看实时消费金额与使用状态',
@@ -200,11 +206,11 @@ batchImageGuide: {
     billingModes: {
       auto: '自动选择',
       subscription: '指定订阅',
-      balance: '仅使用余额'
+      balance: '仅使用余额',
     },
     billingSources: {
       subscription: '订阅',
-      balance: '余额'
+      balance: '余额',
     },
     // Ring card titles
     totalQuota: '总额度',
@@ -246,7 +252,7 @@ batchImageGuide: {
     queryFailedRetry: '查询失败，请稍后重试',
     noDailyUsage: '暂无按日用量数据',
   },
-// Setup Wizard
+  // Setup Wizard
   setup: {
     title: 'TokenRouter 安装向导',
     description: '配置您的 TokenRouter 实例',
@@ -264,8 +270,8 @@ batchImageGuide: {
         disable: '禁用',
         require: '要求',
         verifyCa: '验证 CA',
-        verifyFull: '完全验证'
-      }
+        verifyFull: '完全验证',
+      },
     },
     redis: {
       title: 'Redis 配置',
@@ -278,7 +284,7 @@ batchImageGuide: {
       usernamePlaceholder: '默认用户留空',
       passwordPlaceholder: '密码',
       enableTls: '启用 TLS',
-      enableTlsHint: '连接 Redis 时使用 TLS（公共 CA 证书）'
+      enableTlsHint: '连接 Redis 时使用 TLS（公共 CA 证书）',
     },
     admin: {
       title: '管理员账户',
@@ -288,14 +294,14 @@ batchImageGuide: {
       confirmPassword: '确认密码',
       passwordPlaceholder: '至少 8 个字符',
       confirmPasswordPlaceholder: '确认密码',
-      passwordMismatch: '密码不匹配'
+      passwordMismatch: '密码不匹配',
     },
     ready: {
       title: '准备安装',
       description: '检查您的配置并完成安装',
       database: '数据库',
       redis: 'Redis',
-      adminEmail: '管理员邮箱'
+      adminEmail: '管理员邮箱',
     },
     status: {
       testing: '测试中...',
@@ -306,7 +312,7 @@ batchImageGuide: {
       completed: '安装完成！',
       redirecting: '正在跳转到登录页面...',
       restarting: '服务正在重启，请稍候...',
-      timeout: '服务重启时间超出预期，请手动刷新页面。'
-    }
+      timeout: '服务重启时间超出预期，请手动刷新页面。',
+    },
   },
 }

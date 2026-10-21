@@ -2,12 +2,20 @@ import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TeamMemberUsageCharts from '../TeamMemberUsageCharts.vue'
 
+// TeamMemberUsageCharts.spec.ts checks how member summaries become daily and total-
+// spending chart inputs. Hoisted chart spies capture props from mounted substitutes,
+// allowing assertions to compare shared dates, missing-date zeroes, member order, and
+// actual-cost totals.
+
+// lineProps and barProps capture the inputs passed to chart substitutes, allowing tests
+// to inspect generated datasets while the substitutes render no canvas.
 const lineProps = vi.hoisted(() => vi.fn())
 const barProps = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-chartjs', () => ({
   Line: {
     props: ['data', 'options'],
+    // setup records chart inputs and returns an empty render function.
     setup(props: any) {
       lineProps(props)
       return () => null
@@ -15,6 +23,7 @@ vi.mock('vue-chartjs', () => ({
   },
   Bar: {
     props: ['data', 'options'],
+    // setup records chart inputs and returns an empty render function.
     setup(props: any) {
       barProps(props)
       return () => null
@@ -34,6 +43,9 @@ describe('TeamMemberUsageCharts', () => {
     barProps.mockClear()
   })
 
+  // Two member summaries cover different sets of daily dates. The line chart must insert
+  // zero for a missing date, while the comparison chart retains each member's total
+  // spending.
   it('aligns member daily costs and builds the spending share chart', () => {
     mount(TeamMemberUsageCharts, {
       props: {

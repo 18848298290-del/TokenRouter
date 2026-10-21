@@ -1,10 +1,14 @@
 import { nextMotionFrame } from '@/__tests__/helpers/motion'
+// ipGeoMocks controls per-address cache state and batch results so table cases can
+// assert lookup payloads and failure events.
 const ipGeoMocks = vi.hoisted(() => ({
   getEntry: vi.fn(() => ({ status: 'idle' as const })),
   fetchOne: vi.fn(),
   fetchBatch: vi.fn(),
 }))
 
+// clipboardMocks records copied identifiers and returns controlled success values for
+// request and upstream-ID feedback assertions.
 const clipboardMocks = vi.hoisted(() => ({
   copyToClipboard: vi.fn(),
 }))
@@ -29,6 +33,13 @@ import { nextTick } from 'vue'
 
 import UsageTable from '../UsageTable.vue'
 
+// UsageTable.spec.ts tests billing, identity, tooltip positioning, and IP lookup
+// behavior in usage rows. Table-slot stubs expose actual cell content, while clipboard
+// and location substitutes record effects for assertions against representative
+// historical and current records.
+
+// messages supplies billing, image provenance, identity, and copy labels inspected
+// inside actual usage-cell slots and floating panels.
 const messages: Record<string, string> = {
   'admin.usage.userDeletedBadge': 'Deleted',
   'usage.costDetails': 'Cost Breakdown',
@@ -93,8 +104,12 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
+// DataTableStub renders the usage cell slots for each fixture row so tests inspect the
+// real cell and tooltip implementations.
 const DataTableStub = {
-  props: ['data'],
+  props: [
+    'data', // supplied usage row records
+  ],
   template: `
     <div>
       <div v-for="row in data" :key="row.request_id">
@@ -111,6 +126,8 @@ const DataTableStub = {
   `,
 }
 
+// baseImageRow supplies representative usage measurements reused by rendering cases, with
+// each test overriding the fields relevant to its scenario.
 const baseImageRow = {
   request_id: 'req-admin-image',
   model: 'gpt-image-2',
@@ -139,11 +156,18 @@ const baseImageRow = {
   image_size_breakdown: null,
 }
 
+// Usage rows include translated and legacy group names. The test protects display-name
+// precedence, business-name recovery, and updating the group badge when its display name
+// changes.
 it('用量分组徽章优先显示译文，缺少展示名称时使用业务名称', async () => {
   const wrapper = mount(UsageTable, {
     props: {
       data: [
-        { ...baseImageRow, request_id: 'translated', group: { id: 1, name: 'business-name', display_name: 'English group' } },
+        {
+          ...baseImageRow,
+          request_id: 'translated',
+          group: { id: 1, name: 'business-name', display_name: 'English group' },
+        },
         { ...baseImageRow, request_id: 'original', group: { id: 2, name: 'Original group' } },
       ],
       loading: false,
@@ -152,16 +176,31 @@ it('用量分组徽章优先显示译文，缺少展示名称时使用业务名�
     },
     global: {
       stubs: {
-        DataTable: { props: ['data'], template: '<div><slot v-for="row in data" name="cell-group" :row="row" /></div>' },
-        GroupBadge: { props: ['name'], template: '<span data-test="group-name">{{ name }}</span>' },
+        DataTable: {
+          props: [
+            'data', // supplied usage row records
+          ],
+          template: '<div><slot v-for="row in data" name="cell-group" :row="row" /></div>',
+        },
+        GroupBadge: {
+          props: [
+            'name', // displayed usage group name
+          ],
+          template: '<span data-test="group-name">{{ name }}</span>',
+        },
         EmptyState: true,
         Icon: true,
         Teleport: true,
       },
     },
   })
-  expect(wrapper.findAll('[data-test="group-name"]').map(item => item.text())).toEqual(['English group', 'Original group'])
-  await wrapper.setProps({ data: [{ ...baseImageRow, group: { id: 1, name: 'business-name', display_name: '中文分组' } }] })
+  expect(wrapper.findAll('[data-test="group-name"]').map((item) => item.text())).toEqual([
+    'English group',
+    'Original group',
+  ])
+  await wrapper.setProps({
+    data: [{ ...baseImageRow, group: { id: 1, name: 'business-name', display_name: '中文分组' } }],
+  })
   expect(wrapper.get('[data-test="group-name"]').text()).toBe('中文分组')
   wrapper.unmount()
 })
@@ -171,6 +210,8 @@ describe('admin UsageTable request ID column', () => {
     clipboardMocks.copyToClipboard.mockReset().mockResolvedValue(true)
   })
 
+  // A complete request identifier appears in a rendered usage row. The test protects the
+  // clipboard payload and the copied feedback shown after clicking its action.
   it('renders and copies the complete request ID', async () => {
     const wrapper = mount(UsageTable, {
       props: {
@@ -186,19 +227,44 @@ describe('admin UsageTable request ID column', () => {
     expect(wrapper.text()).toContain('req-admin-visible-id')
     await wrapper.get('button[title="Copy request ID"]').trigger('click')
 
-    expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith('req-admin-visible-id', 'Request ID copied')
+    expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith(
+      'req-admin-visible-id',
+      'Request ID copied',
+    )
     expect(wrapper.get('button').attributes('title')).toBe('Copied')
   })
 })
 
 describe('使用记录 TPS 列', () => {
+  // Usage rows include server TPS estimates and an unavailable estimate. The test protects
+  // numeric text, the shared formula hint, and the placeholder for missing estimates.
   it('展示 TPS 和公式提示，没有服务端估算时显示占位符', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [
-          { ...baseImageRow, request_id: 'valid', output_tokens: 100, duration_ms: 5000, ttft_ms: 1000, tps: 25 },
-          { ...baseImageRow, request_id: 'missing', output_tokens: 100, duration_ms: 5000, ttft_ms: null },
-          { ...baseImageRow, request_id: 'rounding', output_tokens: 23, duration_ms: 21000, ttft_ms: 1000, tps: 1.2 },
+          {
+            ...baseImageRow,
+            request_id: 'valid',
+            output_tokens: 100,
+            duration_ms: 5000,
+            ttft_ms: 1000,
+            tps: 25,
+          },
+          {
+            ...baseImageRow,
+            request_id: 'missing',
+            output_tokens: 100,
+            duration_ms: 5000,
+            ttft_ms: null,
+          },
+          {
+            ...baseImageRow,
+            request_id: 'rounding',
+            output_tokens: 23,
+            duration_ms: 21000,
+            ttft_ms: 1000,
+            tps: 1.2,
+          },
         ],
         columns: [{ key: 'tps', label: 'TPS' }],
       },
@@ -206,31 +272,40 @@ describe('使用记录 TPS 列', () => {
         stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
       },
     })
-    expect(wrapper.findAll('.tps-cell').map(cell => cell.text())).toEqual(['25.0 tok/s', '-', '1.2 tok/s'])
+    expect(wrapper.findAll('.tps-cell').map((cell) => cell.text())).toEqual([
+      '25.0 tok/s',
+      '-',
+      '1.2 tok/s',
+    ])
     expect(wrapper.get('.tps-cell span').attributes('title')).toBe('usage.tpsHint')
     wrapper.unmount()
   })
 })
 
 describe('admin UsageTable detailed timing tooltip', () => {
+  // A usage row carries detailed request stages and request-size observations. The test
+  // protects opening timing details and rendering those recorded values with their
+  // corresponding units.
   it('renders the request stage timings from the latency info button', async () => {
     const wrapper = mount(UsageTable, {
       props: {
-        data: [{
-          ...baseImageRow,
-          detailed_timing: {
-            request_content_length: 8360000,
-            provider_slot_acquired_ms: 120,
-            upstream_got_conn_ms: 200,
-            upstream_get_conn_ms: 180,
-            upstream_wrote_request_ms: 420,
-            upstream_first_response_byte_ms: 980,
-            upstream_first_event_ms: 1020,
-            first_visible_output_ms: 1060,
-            first_downstream_flush_ms: 1080,
-            upstream_attempt_count: 2,
+        data: [
+          {
+            ...baseImageRow,
+            detailed_timing: {
+              request_content_length: 8360000,
+              provider_slot_acquired_ms: 120,
+              upstream_got_conn_ms: 200,
+              upstream_get_conn_ms: 180,
+              upstream_wrote_request_ms: 420,
+              upstream_first_response_byte_ms: 980,
+              upstream_first_event_ms: 1020,
+              first_visible_output_ms: 1060,
+              first_downstream_flush_ms: 1080,
+              upstream_attempt_count: 2,
+            },
           },
-        }],
+        ],
         loading: false,
         columns: [{ key: 'latency', label: 'Latency' }],
       },
@@ -252,13 +327,17 @@ describe('admin UsageTable detailed timing tooltip', () => {
     expect(wrapper.text()).toContain('2')
   })
 
+  // A timing panel is opened by a touch-style click. The test protects keeping it visible
+  // after pointer exit and closing it on the next toggle.
   it('keeps the timing tooltip open after a mobile-style click until toggled again', async () => {
     const wrapper = mount(UsageTable, {
       props: {
-        data: [{
-          ...baseImageRow,
-          detailed_timing: { provider_slot_acquired_ms: 120 },
-        }],
+        data: [
+          {
+            ...baseImageRow,
+            detailed_timing: { provider_slot_acquired_ms: 120 },
+          },
+        ],
         loading: false,
         columns: [{ key: 'latency', label: 'Latency' }],
       },
@@ -297,6 +376,8 @@ describe('admin UsageTable tooltip', () => {
     } as DOMRect)
   })
 
+  // Only one fixture row reports that long-context billing was applied. The test protects
+  // rendering the long-context marker on that row alone within the table.
   it('marks only usage rows that actually applied long-context billing', () => {
     const wrapper = mount(UsageTable, {
       props: {
@@ -329,6 +410,8 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.get('[data-testid="long-context-billing-marker"]').text()).toBe('L')
   })
 
+  // A usage record contains service tier, user costs, and provider pricing. The test
+  // protects the cost tooltip labels and separately formatted user and provider amounts.
   it('shows service tier and billing breakdown in cost tooltip', async () => {
     const row = {
       request_id: 'req-admin-1',
@@ -379,117 +462,158 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('$0.069568')
   })
 
+  // Floating detail panels open near the edge of a narrow viewport. The test protects their
+  // horizontal coordinates staying within padding and their ready state becoming visible.
   it.each([
-    { triggerIndex: 0, tooltipTestId: 'token-detail-tooltip', tooltipWidth: 260, tooltipHeight: 180 },
-    { triggerIndex: 1, tooltipTestId: 'cost-detail-tooltip', tooltipWidth: 296, tooltipHeight: 340 },
-  ])('keeps $tooltipTestId inside a narrow viewport', async ({ triggerIndex, tooltipTestId, tooltipWidth, tooltipHeight }) => {
-    const viewportWidthSpy = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(320)
-    const viewportHeightSpy = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(640)
-    const rectSpy = vi.mocked(HTMLElement.prototype.getBoundingClientRect)
-    rectSpy.mockImplementation(function (this: HTMLElement) {
-      if (this.dataset.testid === tooltipTestId) {
+    {
+      triggerIndex: 0,
+      tooltipTestId: 'token-detail-tooltip',
+      tooltipWidth: 260,
+      tooltipHeight: 180,
+    },
+    {
+      triggerIndex: 1,
+      tooltipTestId: 'cost-detail-tooltip',
+      tooltipWidth: 296,
+      tooltipHeight: 340,
+    },
+  ])(
+    'keeps $tooltipTestId inside a narrow viewport',
+    async ({ triggerIndex, tooltipTestId, tooltipWidth, tooltipHeight }) => {
+      const viewportWidthSpy = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(320)
+      const viewportHeightSpy = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(640)
+      const rectSpy = vi.mocked(HTMLElement.prototype.getBoundingClientRect)
+      rectSpy.mockImplementation(function (this: HTMLElement) {
+        if (this.dataset.testid === tooltipTestId) {
+          return {
+            x: 0,
+            y: 0,
+            top: 0,
+            left: 0,
+            right: tooltipWidth,
+            bottom: tooltipHeight,
+            width: tooltipWidth,
+            height: tooltipHeight,
+            toJSON: () => ({}),
+          } as DOMRect
+        }
+
         return {
-          x: 0,
-          y: 0,
-          top: 0,
-          left: 0,
-          right: tooltipWidth,
-          bottom: tooltipHeight,
-          width: tooltipWidth,
-          height: tooltipHeight,
+          x: 280,
+          y: 300,
+          top: 300,
+          left: 280,
+          right: 304,
+          bottom: 320,
+          width: 24,
+          height: 20,
           toJSON: () => ({}),
         } as DOMRect
-      }
+      })
 
-      return {
-        x: 280,
-        y: 300,
-        top: 300,
-        left: 280,
-        right: 304,
-        bottom: 320,
-        width: 24,
-        height: 20,
-        toJSON: () => ({}),
-      } as DOMRect
-    })
-
-    const wrapper = mount(UsageTable, {
-      props: {
-        data: [{
-          request_id: 'req-mobile-tooltip',
-          model: 'gpt-5.4',
-          actual_cost: 0.092883,
-          total_cost: 0.092883,
-          rate_multiplier: 1,
-          input_cost: 0.020285,
-          output_cost: 0.00303,
-          cache_creation_cost: 0,
-          cache_read_cost: 0.069568,
-          input_tokens: 4057,
-          output_tokens: 101,
-        }],
-        loading: false,
-        columns: [],
-      },
-      global: {
-        stubs: {
-          DataTable: DataTableStub,
-          EmptyState: true,
-          Icon: true,
-          Teleport: true,
+      const wrapper = mount(UsageTable, {
+        props: {
+          data: [
+            {
+              request_id: 'req-mobile-tooltip',
+              model: 'gpt-5.4',
+              actual_cost: 0.092883,
+              total_cost: 0.092883,
+              rate_multiplier: 1,
+              input_cost: 0.020285,
+              output_cost: 0.00303,
+              cache_creation_cost: 0,
+              cache_read_cost: 0.069568,
+              input_tokens: 4057,
+              output_tokens: 101,
+            },
+          ],
+          loading: false,
+          columns: [],
         },
-      },
-    })
+        global: {
+          stubs: {
+            DataTable: DataTableStub,
+            EmptyState: true,
+            Icon: true,
+            Teleport: true,
+          },
+        },
+      })
 
-    try {
-      await wrapper.findAll('.group.relative')[triggerIndex].trigger('mouseenter')
-      await nextTick()
-      await nextTick()
+      try {
+        await wrapper.findAll('.group.relative')[triggerIndex].trigger('mouseenter')
+        await nextTick()
+        await nextTick()
 
-      const tooltip = wrapper.get(`[data-testid="${tooltipTestId}"]`)
-      const left = Number.parseFloat((tooltip.element as HTMLElement).style.left)
-      expect(left).toBeGreaterThanOrEqual(12)
-      expect(left + tooltipWidth).toBeLessThanOrEqual(308)
-      expect(tooltip.classes()).not.toContain('invisible')
-    } finally {
-      wrapper.unmount()
-      viewportWidthSpy.mockRestore()
-      viewportHeightSpy.mockRestore()
-    }
-  })
+        const tooltip = wrapper.get(`[data-testid="${tooltipTestId}"]`)
+        const left = Number.parseFloat((tooltip.element as HTMLElement).style.left)
+        expect(left).toBeGreaterThanOrEqual(12)
+        expect(left + tooltipWidth).toBeLessThanOrEqual(308)
+        expect(tooltip.classes()).not.toContain('invisible')
+      } finally {
+        wrapper.unmount()
+        viewportWidthSpy.mockRestore()
+        viewportHeightSpy.mockRestore()
+      }
+    },
+  )
 
-  // 后端确认上游模型与出站模型不同后展示声明，未知模型保持未知。
+  // Upstream response-model fixtures cover matching, different, and unrecorded identities.
+  // The test protects conditional mismatch text and the relationship shown between
+  // forwarded and returned models.
   it.each([
     { mismatch: true, response: 'runtime-model-' + 'v'.repeat(160), visible: true },
     { mismatch: false, response: 'sent-model', visible: false },
     { mismatch: null, response: null, visible: false },
     { mismatch: undefined, response: undefined, visible: false },
     { mismatch: true, response: '', visible: false },
-  ])('renders the response model only on a known mismatch: $mismatch/$visible', ({ mismatch, response, visible }) => {
-    const wrapper = mount(UsageTable, {
-      props: {
-        data: [{ ...baseImageRow, model: 'public-model', upstream_model: 'sent-model',
-          model_mapping_chain: 'public-model→sent-model',
-          upstream_response_model: response, upstream_model_mismatch: mismatch }],
-        loading: false,
-        columns: [],
-      },
-      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
-    })
-    const model = wrapper.find('[data-testid="upstream-response-model"]')
-    expect(model.exists()).toBe(visible)
-    expect(wrapper.text()).toContain('public-model')
-    expect(wrapper.text()).toContain('sent-model')
-    if (visible) {
-      expect(model.text()).toContain('↳')
-      expect(model.text()).toContain(response)
-      expect(model.attributes('title')).toContain(`sent-model → ${response}`)
-      expect(model.classes()).toEqual(expect.arrayContaining(['text-xs', 'break-all', 'text-orange-600', 'dark:text-orange-400']))
-    }
-    wrapper.unmount()
-  })
+  ])(
+    'renders the response model only on a known mismatch: $mismatch/$visible',
+    ({ mismatch, response, visible }) => {
+      const wrapper = mount(UsageTable, {
+        props: {
+          data: [
+            {
+              ...baseImageRow,
+              model: 'public-model',
+              upstream_model: 'sent-model',
+              model_mapping_chain: 'public-model→sent-model',
+              upstream_response_model: response,
+              upstream_model_mismatch: mismatch,
+            },
+          ],
+          loading: false,
+          columns: [],
+        },
+        global: {
+          stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
+        },
+      })
+      const model = wrapper.find('[data-testid="upstream-response-model"]')
+      expect(model.exists()).toBe(visible)
+      expect(wrapper.text()).toContain('public-model')
+      expect(wrapper.text()).toContain('sent-model')
+      if (visible) {
+        expect(model.text()).toContain('↳')
+        expect(model.text()).toContain(response)
+        expect(model.attributes('title')).toContain(`sent-model → ${response}`)
+        expect(model.classes()).toEqual(
+          expect.arrayContaining([
+            'text-xs',
+            'break-all',
+            'text-orange-600',
+            'dark:text-orange-400',
+          ]),
+        )
+      }
+      wrapper.unmount()
+    },
+  )
 
+  // An administrator row has different requested and forwarded model names. The test
+  // protects displaying both identities so the requested model does not conceal upstream
+  // attribution.
   it('shows requested and upstream models separately for admin rows', () => {
     const row = {
       request_id: 'req-admin-model-1',
@@ -528,6 +652,9 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('claude-sonnet-4-20250514')
   })
 
+  // Image fixtures cover default, input, output, and historical size sources. The test
+  // protects billing size labels, source provenance, raw dimensions, and per-image pricing
+  // details.
   it.each([
     {
       name: 'defaulted row',
@@ -611,6 +738,9 @@ describe('admin UsageTable tooltip', () => {
     }
   })
 
+  // A historical image record lacks an explicit billing mode and recorded size. The test
+  // protects image classification while keeping unavailable size visible instead of
+  // inventing a tier.
   it('displays historical image rows with missing billing_mode as image usage without a 2K fallback', async () => {
     const wrapper = mount(UsageTable, {
       props: {
@@ -656,6 +786,8 @@ describe('admin UsageTable request ID column', () => {
     clipboardMocks.copyToClipboard.mockReset().mockResolvedValue(true)
   })
 
+  // The request-ID column receives a complete identifier on a usage row. The test protects
+  // showing that identifier and passing its full value to the clipboard helper.
   it('renders and copies the request ID', async () => {
     const wrapper = mount(UsageTable, {
       props: {
@@ -676,9 +808,15 @@ describe('admin UsageTable request ID column', () => {
     expect(wrapper.text()).toContain('req-admin-visible-id')
     await wrapper.get('button[title="Copy request ID"]').trigger('click')
 
-    expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith('req-admin-visible-id', 'Request ID copied')
+    expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith(
+      'req-admin-visible-id',
+      'Request ID copied',
+    )
   })
 
+  // An upstream identifier is present while the local request identifier is empty. The test
+  // protects the independent upstream copy action and its identifier-specific completion
+  // message.
   it('renders and copies the upstream ID', async () => {
     const wrapper = mount(UsageTable, {
       props: {
@@ -701,12 +839,19 @@ describe('admin UsageTable request ID column', () => {
     expect(copyButtons).toHaveLength(1)
     await copyButtons[0].trigger('click')
 
-    expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith('20260903082826779695', 'Upstream ID copied')
+    expect(clipboardMocks.copyToClipboard).toHaveBeenCalledWith(
+      '20260903082826779695',
+      'Upstream ID copied',
+    )
   })
 })
 describe('admin UsageTable IP geolocation batch toolbar', () => {
+  // DataTableStubWithIp renders the address slot for each fixture row so batch toolbar
+  // tests can inspect page-scoped lookups and actual geographic labels together.
   const DataTableStubWithIp = {
-    props: ['data'],
+    props: [
+      'data', // supplied usage row records
+    ],
     template: `
       <div>
         <div v-for="row in data" :key="row.request_id">
@@ -723,6 +868,8 @@ describe('admin UsageTable IP geolocation batch toolbar', () => {
     ipGeoMocks.getEntry.mockReturnValue({ status: 'idle' })
   })
 
+  // The visible column list omits the IP address column. The test protects hiding the batch
+  // location toolbar even when the supplied rows contain addresses.
   it('does not render the batch toolbar when the ip_address column is not visible', () => {
     const wrapper = mount(UsageTable, {
       props: {
@@ -735,6 +882,8 @@ describe('admin UsageTable IP geolocation batch toolbar', () => {
     expect(wrapper.text()).not.toContain('usage.ipGeo.batchFetch')
   })
 
+  // The IP address column is visible with pending addresses in its rows. The test protects
+  // rendering pending lookup feedback and enabling the batch lookup action.
   it('renders the batch toolbar with a pending count when the ip_address column is visible', () => {
     const wrapper = mount(UsageTable, {
       props: {
@@ -754,6 +903,9 @@ describe('admin UsageTable IP geolocation batch toolbar', () => {
     expect((button.element as HTMLButtonElement).disabled).toBe(false)
   })
 
+  // The visible page repeats an address across several usage rows. The test protects
+  // deduplicating the batch payload and leaving failure events absent after successful
+  // lookup.
   it('fetches deduplicated IPs from the current page when the batch button is clicked', async () => {
     ipGeoMocks.fetchBatch.mockResolvedValue(true)
     const wrapper = mount(UsageTable, {
@@ -773,6 +925,8 @@ describe('admin UsageTable IP geolocation batch toolbar', () => {
     expect(wrapper.emitted('ipGeoBatchFailed')).toBeUndefined()
   })
 
+  // The batch location helper reports a network-level failure. The test protects emitting
+  // exactly one failure event so the parent page can display its notification.
   it('emits ipGeoBatchFailed when the batch request reports a network-level failure', async () => {
     ipGeoMocks.fetchBatch.mockResolvedValue(false)
     const wrapper = mount(UsageTable, {
@@ -787,8 +941,14 @@ describe('admin UsageTable IP geolocation batch toolbar', () => {
     expect(wrapper.emitted('ipGeoBatchFailed')).toHaveLength(1)
   })
 
+  // A successful location cache entry exists for a usage row address. The test protects
+  // rendering both the address and its resolved geographic label in the cell.
   it('renders IpGeoCell content for ip_address cells', () => {
-    ipGeoMocks.getEntry.mockReturnValue({ status: 'success', label: 'CN · Guangdong · Shenzhen', detail: {} })
+    ipGeoMocks.getEntry.mockReturnValue({
+      status: 'success',
+      label: 'CN · Guangdong · Shenzhen',
+      detail: {},
+    })
     const wrapper = mount(UsageTable, {
       props: {
         data: [{ request_id: 'r1', ip_address: '121.35.47.43' }],
@@ -802,9 +962,12 @@ describe('admin UsageTable IP geolocation batch toolbar', () => {
   })
 })
 
-// 这个 DataTable stub 会渲染 cell-user，便于断言已删除徽标。
+// DataTableStubWithUser renders member attribution alongside model, billing, token, and
+// cost slots for deleted-user and compact-column assertions.
 const DataTableStubWithUser = {
-  props: ['data'],
+  props: [
+    'data', // supplied usage row records
+  ],
   template: `
     <div>
       <div v-for="row in data" :key="row.request_id">
@@ -819,6 +982,9 @@ const DataTableStubWithUser = {
 }
 
 describe('admin UsageTable deleted-user badge', () => {
+  // A compact member row contains a very long email address. The test protects responsive
+  // alignment classes, truncated display text, complete hover text, and visible numeric
+  // identity.
   it('right-aligns compact members on mobile and constrains long emails on desktop', () => {
     const email = 'member.with.a.very.long.address@tokenrouter.example.com'
     const wrapper = mount(UsageTable, {
@@ -839,11 +1005,9 @@ describe('admin UsageTable deleted-user badge', () => {
       },
     })
 
-    expect(wrapper.get('[data-test="usage-user-cell"]').classes()).toEqual(expect.arrayContaining([
-      'justify-end',
-      'md:w-32',
-      'md:justify-start',
-    ]))
+    expect(wrapper.get('[data-test="usage-user-cell"]').classes()).toEqual(
+      expect.arrayContaining(['justify-end', 'md:w-32', 'md:justify-start']),
+    )
     expect(wrapper.get('[data-test="usage-user-cell"]').classes()).not.toContain('w-32')
     expect(wrapper.get('[data-test="usage-user-email"]').classes()).toContain('truncate')
     expect(wrapper.get('[data-test="usage-user-email"]').text()).toBe('m***s')
@@ -851,10 +1015,14 @@ describe('admin UsageTable deleted-user badge', () => {
     expect(wrapper.text()).toContain('#3559')
   })
 
+  // A member email has a single-character local part. The test protects repeating that
+  // character around the mask and retaining the complete email in the hover title.
   it('uses the same first-and-last masking rule for a one-character email local part', () => {
     const wrapper = mount(UsageTable, {
       props: {
-        data: [{ request_id: 'req-short-email', user_id: 8, user: { id: 8, email: 'a@example.com' } }],
+        data: [
+          { request_id: 'req-short-email', user_id: 8, user: { id: 8, email: 'a@example.com' } },
+        ],
         loading: false,
         columns: [{ key: 'user', label: 'User' }],
         userClickable: false,
@@ -869,10 +1037,18 @@ describe('admin UsageTable deleted-user badge', () => {
     expect(wrapper.get('[data-test="usage-user-email"]').attributes('title')).toBe('a@example.com')
   })
 
+  // A member row includes both a custom username and email. The test protects username
+  // precedence in the cell and retaining the email in the hover title.
   it('prefers a custom username while preserving the email in the title', () => {
     const wrapper = mount(UsageTable, {
       props: {
-        data: [{ request_id: 'req-username', user_id: 7, user: { id: 7, username: 'Ada', email: 'ada@example.com' } }],
+        data: [
+          {
+            request_id: 'req-username',
+            user_id: 7,
+            user: { id: 7, username: 'Ada', email: 'ada@example.com' },
+          },
+        ],
         loading: false,
         columns: [{ key: 'user', label: 'User' }],
         userClickable: false,
@@ -884,9 +1060,14 @@ describe('admin UsageTable deleted-user badge', () => {
     })
 
     expect(wrapper.get('[data-test="usage-user-email"]').text()).toBe('Ada')
-    expect(wrapper.get('[data-test="usage-user-email"]').attributes('title')).toBe('Ada (ada@example.com)')
+    expect(wrapper.get('[data-test="usage-user-email"]').attributes('title')).toBe(
+      'Ada (ada@example.com)',
+    )
   })
 
+  // A historical usage row references a soft-deleted user record. The test protects
+  // rendering the deleted badge while keeping the masked member identity visible for
+  // attribution.
   it('renders deleted badge for a soft-deleted user row', () => {
     const row = {
       request_id: 'req-deleted-user-1',
@@ -922,6 +1103,8 @@ describe('admin UsageTable deleted-user badge', () => {
     expect(wrapper.text()).toContain('d***d')
   })
 
+  // A usage row references an active user with no deletion timestamp. The test protects
+  // omitting the deleted badge while retaining the normal masked identity text.
   it('does NOT render deleted badge for an active user row', () => {
     const row = {
       request_id: 'req-active-user-1',

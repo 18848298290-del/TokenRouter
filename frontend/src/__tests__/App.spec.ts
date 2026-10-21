@@ -3,6 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import App from '@/App.vue'
 
+// App.spec.ts verifies announcement popup visibility in the shared application shell
+// across public and console destinations. Route and store doubles isolate popup mounting
+// from authentication requests. The actual shell runs its mount lifecycle before
+// assertions compare public landing destinations with the dashboard.
+
+// mocks supplies route and store state before module evaluation; each case selects a
+// destination while asynchronous startup requests resolve through controlled spies.
 const mocks = vi.hoisted(() => ({
   route: {
     path: '/home',
@@ -61,13 +68,16 @@ vi.mock('@/router/title', () => ({
   resolveRouteDocumentTitle: () => 'Test Site',
 }))
 
-vi.mock('@/components/common/AnnouncementPopup.vue', () => ({
+vi.mock('@/components/announcements/AnnouncementPopup.vue', () => ({
   default: {
     name: 'AnnouncementPopup',
     template: '<div data-testid="announcement-popup"></div>',
   },
 }))
 
+// mountApp selects a mocked route and mounts the actual application shell. The caller
+// awaits startup promises and owns unmounting the returned wrapper so shell event
+// listeners are released.
 function mountApp(path: string, name?: string) {
   mocks.route.path = path
   mocks.route.fullPath = path
@@ -96,6 +106,9 @@ describe('App announcement popup visibility', () => {
     document.body.style.overflow = ''
   })
 
+  // An authenticated shell mounts at the root or named Home destination. The global
+  // announcement popup stays absent on both public-facing destinations after
+  // asynchronous mounting work settles.
   it.each([
     ['/', undefined],
     ['/home', 'Home'],
@@ -108,6 +121,9 @@ describe('App announcement popup visibility', () => {
     wrapper.unmount()
   })
 
+  // An authenticated shell mounts at the dashboard destination. The global announcement
+  // popup remains mounted after startup work settles so console announcements can be
+  // presented there.
   it('进入 dashboard 后保留公告弹窗挂载', async () => {
     const wrapper = mountApp('/dashboard', 'Dashboard')
     await flushPromises()

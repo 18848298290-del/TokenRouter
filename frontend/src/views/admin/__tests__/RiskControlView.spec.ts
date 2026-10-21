@@ -4,8 +4,23 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils'
 
 import RiskControlView from '../RiskControlView.vue'
-import type { ContentModerationConfig, ContentModerationCyberWarning, ContentModerationLog, UpdateContentModerationConfig } from '@/api/admin/riskControl'
+import type {
+  ContentModerationConfig,
+  ContentModerationCyberWarning,
+  ContentModerationLog,
+  UpdateContentModerationConfig,
+} from '@/api/admin/riskControl'
 
+/**
+ * RiskControlView.spec.ts exercises administrator risk settings and audit record
+ * presentation through the mounted page. Network substitutes expose submitted
+ * requests, while dialog and input stubs preserve the interactions needed to
+ * verify credential precedence, validation order, detail cleanup, and runtime
+ * card layout across moderation modes.
+ */
+
+// Hoisted service spies capture page requests and notifications while each test
+// supplies its own response data.
 const {
   getConfig,
   updateConfig,
@@ -63,6 +78,7 @@ vi.mock('@/api/admin', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
+  // useAppStore supplies notification spies observed by the page's save and load tests.
   useAppStore: () => ({
     showError,
     showSuccess,
@@ -70,6 +86,9 @@ vi.mock('@/stores/app', () => ({
 }))
 
 vi.mock('@/utils/apiError', () => ({
+  // extractApiErrorMessage returns the caller's fallback text for every mocked error.
+  // The error object is ignored so page tests observe the fallback message selected
+  // by the caller.
   extractApiErrorMessage: (_err: unknown, fallback: string) => fallback,
 }))
 
@@ -77,7 +96,11 @@ vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
+    // useI18n exposes the deterministic translation helper used by mounted page assertions.
     useI18n: () => ({
+      // t renders the two fixture-specific messages and otherwise interpolates key text.
+      // Optional parameters supply named values; missing values keep their brace
+      // placeholders in the general interpolation path.
       t: (key: string, params?: Record<string, string | number>) => {
         if (key === 'admin.riskControl.preBlockAPIKeyLoadSummary') {
           return `同步并发 ${params?.active} / 可用 Key ${params?.available}，累计 ${params?.total} 次，worker：${params?.workerActive} / ${params?.workerTotal}`
@@ -91,6 +114,7 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
+/** baseConfig returns a complete saved moderation configuration for page initialization. */
 const baseConfig = (): ContentModerationConfig => ({
   enabled: true,
   mode: 'pre_block',
@@ -139,6 +163,7 @@ const baseConfig = (): ContentModerationConfig => ({
   audit_tool_output_max_chars: 1000000,
 })
 
+/** runtimeStatus returns idle runtime metrics with an empty credential pool. */
 const runtimeStatus = () => ({
   enabled: true,
   risk_control_enabled: true,
@@ -170,9 +195,13 @@ const runtimeStatus = () => ({
   last_cleanup_deleted_non_hit: 0,
 })
 
+// Layout and control substitutes retain slots, visibility, and model editing so page
+// tests exercise the actual event handlers.
 const AppLayoutStub = { template: '<div><slot /></div>' }
 const BaseDialogStub = defineComponent({
   props: {
+    // show controls slot mounting, matching the detail and settings dialogs used by
+    // the page under test.
     show: {
       type: Boolean,
       default: false,
@@ -182,13 +211,23 @@ const BaseDialogStub = defineComponent({
 })
 const ModelWhitelistSelectorStub = defineComponent({
   props: {
+    // modelValue contains the selected model names; the input emits a replacement
+    // array after each textual edit.
     modelValue: {
       type: Array,
       default: () => [],
     },
   },
+  // update:modelValue supplies the selected model array consumed by the real page's
+  // model-filter draft binding.
   emits: ['update:modelValue'],
+  /**
+   * setup renders an editable substitute for the model whitelist selector.
+   * It receives the selected names through props and emits parsed replacement
+   * names through the component's model update event.
+   */
   setup(props, { emit }) {
+    /** onInput emits trimmed model names parsed from comma or newline separators. */
     const onInput = (event: Event) => {
       const value = (event.target as HTMLInputElement).value
       emit(
@@ -196,7 +235,7 @@ const ModelWhitelistSelectorStub = defineComponent({
         value
           .split(/[,\n]/)
           .map((item) => item.trim())
-          .filter(Boolean)
+          .filter(Boolean),
       )
     }
     return () =>
@@ -208,12 +247,87 @@ const ModelWhitelistSelectorStub = defineComponent({
   },
 })
 
+/**
+ * findButtonByText finds the first button containing the requested visible text.
+ * A missing match throws immediately so interaction tests fail at the intended
+ * action rather than continuing with another control.
+ */
 function findButtonByText(wrapper: VueWrapper, text: string): DOMWrapper<HTMLButtonElement> {
-  const button = wrapper.findAll<HTMLButtonElement>('button').find((item) => item.text().includes(text))
+  const button = wrapper
+    .findAll<HTMLButtonElement>('button')
+    .find((item) => item.text().includes(text))
   if (!button) {
     throw new Error(`button not found: ${text}`)
   }
   return button
+}
+
+/**
+ * mountRiskControl renders the page with network mocks and lightweight controls.
+ * Callers await initialization before arranging drafts and unmount the returned
+ * wrapper after assertions to release page timers and details.
+ */
+function mountRiskControl() {
+  return mount(RiskControlView, {
+    global: {
+      stubs: {
+        AppLayout: AppLayoutStub,
+        BaseDialog: BaseDialogStub,
+        Icon: true,
+        Select: true,
+        Toggle: true,
+        Pagination: true,
+        ModelWhitelistSelector: ModelWhitelistSelectorStub,
+        ProxySelector: true,
+      },
+    },
+  })
+}
+
+// RiskControlSetup exposes page actions used to arrange competing draft operations.
+interface RiskControlSetup {
+  // configForm is the mounted component draft; tests arrange conflicting operations
+  // directly before invoking the actual save action.
+  configForm: Record<string, unknown> // Mutable settings form draft.
+  // pendingDeleteApiKeyHashes belongs to the mounted page; tests add entries to
+  // exercise deletion precedence against metadata and replacement.
+  pendingDeleteApiKeyHashes: string[] // Queued stored credential removals.
+  // apiKeyMetadataDrafts maps stored hashes to mutable edits, allowing tests to
+  // verify that removed hashes omit metadata updates.
+  apiKeyMetadataDrafts: Record<
+    string,
+    {
+      priority: number // Arranged credential priority input.
+      note: string // Arranged credential note input.
+    }
+  > // Unsaved stored credential metadata.
+  /**
+   * saveConfig validates the arranged draft before invoking the mocked persistence service.
+   * Validation failures report an error and skip persistence; successful saves apply
+   * the response before closing settings and refreshing runtime records.
+   */
+  saveConfig: () => Promise<void> // Persist current validated draft.
+  /**
+   * openInputDetail selects a moderation row and loads its complete record and media.
+   * Tests await completion to observe published detail state, while a later open
+   * or close invalidates the pending response through the shared generation.
+   */
+  openInputDetail: (row: ContentModerationLog) => Promise<void> // Load selected moderation record.
+  /**
+   * closeInputDetail invalidates pending detail requests and clears the moderation row.
+   * Shared media URLs are released before the row disappears, and the moderation
+   * loading flag resets for the closed dialog.
+   */
+  closeInputDetail: () => void // Close moderation detail dialog.
+}
+
+/**
+ * pageSetup exposes the mounted page's live draft and action bindings for tests.
+ * Callers arrange competing operations through these bindings, then exercise
+ * the page's actual save or detail lifecycle handlers.
+ */
+function pageSetup(wrapper: VueWrapper): RiskControlSetup {
+  return wrapper.vm.$.setupState as unknown as RiskControlSetup
 }
 
 describe('admin RiskControlView', () => {
@@ -259,6 +373,116 @@ describe('admin RiskControlView', () => {
     }))
   })
 
+  // Competing credential edits can coexist while a form is being prepared.
+  // Submission chooses clear, replacement, deletion, and metadata fields in the
+  // documented order.
+  it.each([
+    { clear: true, mode: 'append', text: '', entries: false, deletes: false, updates: false },
+    {
+      clear: true,
+      mode: 'append',
+      text: 'sk-new | 20 | note',
+      entries: true,
+      deletes: true,
+      updates: true,
+    },
+    {
+      clear: false,
+      mode: 'replace',
+      text: 'sk-new',
+      entries: true,
+      deletes: false,
+      updates: false,
+    },
+    { clear: false, mode: 'append', text: '', entries: false, deletes: true, updates: true },
+  ])('chooses credential operations for $mode clear=$clear input=$text', async (scenario) => {
+    const wrapper = mountRiskControl()
+    await flushPromises()
+    const state = pageSetup(wrapper)
+    Object.assign(state.configForm, {
+      clear_api_key: scenario.clear,
+      api_keys_mode: scenario.mode,
+      api_keys_text: scenario.text,
+    })
+    state.pendingDeleteApiKeyHashes.push('removed')
+    state.apiKeyMetadataDrafts.removed = { priority: 10, note: 'discard' }
+    state.apiKeyMetadataDrafts.kept = { priority: 0, note: '  keep  ' }
+    await state.saveConfig()
+    const payload = updateConfig.mock.calls[0][0]
+    expect(payload.clear_api_key).toBe(scenario.clear && !scenario.entries)
+    expect(Boolean(payload.api_key_entries)).toBe(scenario.entries)
+    expect(payload.delete_api_key_hashes).toEqual(scenario.deletes ? ['removed'] : undefined)
+    expect(payload.api_key_updates).toEqual(
+      scenario.updates ? [{ key_hash: 'kept', priority: 100, note: 'keep' }] : undefined,
+    )
+    wrapper.unmount()
+  })
+
+  // Empty model selection and empty replacement credentials are independently invalid drafts.
+  // The model error appears first and neither attempt sends an update request.
+  it('validates model selection before replacement credentials', async () => {
+    const wrapper = mountRiskControl()
+    await flushPromises()
+    const state = pageSetup(wrapper)
+    Object.assign(state.configForm, {
+      model_filter_type: 'include',
+      model_filter_models: [],
+      api_keys_mode: 'replace',
+    })
+    await state.saveConfig()
+    expect(showError).toHaveBeenLastCalledWith('admin.riskControl.modelFilterModelsRequired')
+    state.configForm.model_filter_type = 'all'
+    await state.saveConfig()
+    expect(showError).toHaveBeenLastCalledWith('admin.riskControl.apiKeysReplaceNoInput')
+    expect(updateConfig).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  // A detail response can arrive after the administrator closes its dialog.
+  // Closing suppresses both the late content and any subsequent media content request.
+  it('ignores a detail response that arrives after close', async () => {
+    const deferred = Promise.withResolvers<ContentModerationLog>()
+    getLog.mockReturnValueOnce(deferred.promise)
+    const wrapper = mountRiskControl()
+    await flushPromises()
+    const state = pageSetup(wrapper)
+    const pending = state.openInputDetail({ id: 9 } as ContentModerationLog)
+    state.closeInputDetail()
+    deferred.resolve({
+      id: 9,
+      input_excerpt: 'late-content',
+      media: [{ id: 77, snapshot_status: 'ready' }],
+    } as ContentModerationLog)
+    await pending
+    expect(wrapper.text()).not.toContain('late-content')
+    expect(getMediaContent).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  // Media loading may finish after the owning page has already unmounted.
+  // The newly created object URL is revoked and cannot survive in an abandoned detail view.
+  it('releases media that finishes after unmount', async () => {
+    const deferred = Promise.withResolvers<Blob>()
+    getLog.mockResolvedValueOnce({ id: 9, media: [{ id: 77, snapshot_status: 'ready' }] })
+    getMediaContent.mockReturnValueOnce(deferred.promise)
+    const createObjectURL = vi.fn(() => 'blob:late-image')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    const wrapper = mountRiskControl()
+    await flushPromises()
+    const pending = pageSetup(wrapper).openInputDetail({ id: 9 } as ContentModerationLog)
+    await flushPromises()
+    wrapper.unmount()
+    deferred.resolve(new Blob(['image']))
+    await pending
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:late-image')
+  })
+
+  // Moderation records include distinct standard, keyword, and hash blocking decisions. The
+  // result selector keeps separate option values and sends the selected hash-block filter to
+  // the API.
   it('separates standard, keyword, and hash block filters', async () => {
     const wrapper = mount(RiskControlView, {
       global: {
@@ -277,8 +501,12 @@ describe('admin RiskControlView', () => {
     await flushPromises()
 
     const resultSelect = wrapper.findAllComponents({ name: 'Select' })[0]
-    const options = resultSelect.props('options') as Array<{ value: string; label: string }>
-    // UI 选项和后端 action 一一对应，防止未来再次把不同处置合并到同一筛选。
+    const options = resultSelect.props('options') as Array<{
+      value: string // Backend result filter value.
+      label: string // Localized result filter label.
+    }>
+    // Each result option maps to one backend action so selecting hash blocks does
+    // not request ordinary or keyword block rows.
     expect(options.map((option) => option.value)).toEqual([
       '',
       'hit',
@@ -297,6 +525,9 @@ describe('admin RiskControlView', () => {
     expect(listLogs).toHaveBeenLastCalledWith(expect.objectContaining({ result: 'hash_block' }))
   })
 
+  // A keyword block can originate from a team-funded request. The displayed row retains the
+  // matched keyword, acting user context, team identifier, and separate billing owner
+  // attribution.
   it('renders matched keyword and team attribution for keyword-block audit logs', async () => {
     const log: ContentModerationLog = {
       id: 1,
@@ -350,9 +581,14 @@ describe('admin RiskControlView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('admin.riskControl.matchedKeyword: secret-token')
-    expect(wrapper.get('[data-test="moderation-team-attribution"]').text()).toBe('团队 8001 · 付款 UID 9001')
+    expect(wrapper.get('[data-test="moderation-team-attribution"]').text()).toBe(
+      '团队 8001 · 付款 UID 9001',
+    )
   })
 
+  // Cyber warnings include team attribution in both list and detail responses. Opening the
+  // detail uses its returned team and billing user rather than retaining stale list
+  // attribution.
   it('renders cyber team attribution in the list and detail dialog', async () => {
     const warning: ContentModerationCyberWarning = {
       id: 11,
@@ -378,7 +614,13 @@ describe('admin RiskControlView', () => {
       user_status: 'active',
       created_at: '2026-01-02T03:04:05Z',
     }
-    listCyberWarnings.mockResolvedValue({ items: [warning], total: 1, page: 1, page_size: 20, pages: 1 })
+    listCyberWarnings.mockResolvedValue({
+      items: [warning],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
     getCyberWarning.mockResolvedValue({
       ...warning,
       billing_user_id: 9202,
@@ -408,15 +650,21 @@ describe('admin RiskControlView', () => {
     await findButtonByText(wrapper, 'admin.riskControl.recordTabs.cyber').trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('[data-test="cyber-team-attribution"]').text()).toBe('团队 8101 · 付款 UID 9101')
+    expect(wrapper.get('[data-test="cyber-team-attribution"]').text()).toBe(
+      '团队 8101 · 付款 UID 9101',
+    )
 
     await wrapper.get('[data-test="cyber-detail-button"]').trigger('click')
     await flushPromises()
 
     expect(getCyberWarning).toHaveBeenCalledWith(11)
-    expect(wrapper.get('[data-test="cyber-detail-team-attribution"]').text()).toBe('团队 8202 · 付款 UID 9202')
+    expect(wrapper.get('[data-test="cyber-detail-team-attribution"]').text()).toBe(
+      '团队 8202 · 付款 UID 9202',
+    )
   })
 
+  // A hash-blocked record is flagged but represents a blocked action. Its visible badge uses
+  // the blocked label and red styling rather than the ordinary hit presentation.
   it('renders hash blocks with a red blocked badge instead of a hit badge', async () => {
     const log: ContentModerationLog = {
       id: 2,
@@ -467,14 +715,17 @@ describe('admin RiskControlView', () => {
 
     await flushPromises()
 
-    const badge = wrapper.findAll('span').find((node) =>
-      node.text() === 'admin.riskControl.action.hashBlock'
-    )
+    const badge = wrapper
+      .findAll('span')
+      .find((node) => node.text() === 'admin.riskControl.action.hashBlock')
     expect(badge).toBeDefined()
     expect(badge?.classes()).toEqual(expect.arrayContaining(['bg-red-100', 'text-red-700']))
     expect(wrapper.text()).not.toContain('admin.riskControl.result.hit')
   })
 
+  // A review row initially contains an excerpt and receives full content on demand. Its
+  // authenticated image preview displays after loading and releases its Blob URL when the
+  // dialog closes.
   it('loads full review content and releases media blob URLs when closed', async () => {
     const log: ContentModerationLog = {
       id: 9,
@@ -512,19 +763,23 @@ describe('admin RiskControlView', () => {
       ...log,
       content_complete: true,
       audit_complete: true,
-      input_items: [{ index: 0, source: 'tool', type: 'text', text: 'complete tool output with secret' }],
-      media: [{
-        id: 77,
-        source_index: 1,
-        source: 'tool',
-        mime_type: 'image/png',
-        sha256: 'a'.repeat(64),
-        byte_size: 5,
-        original_ref: 'data:image/png;base64,aW1hZ2U=',
-        snapshot_status: 'ready',
-        snapshot_error: '',
-        created_at: '2026-01-02T03:04:05Z',
-      }],
+      input_items: [
+        { index: 0, source: 'tool', type: 'text', text: 'complete tool output with secret' },
+      ],
+      media: [
+        {
+          id: 77,
+          source_index: 1,
+          source: 'tool',
+          mime_type: 'image/png',
+          sha256: 'a'.repeat(64),
+          byte_size: 5,
+          original_ref: 'data:image/png;base64,aW1hZ2U=',
+          snapshot_status: 'ready',
+          snapshot_error: '',
+          created_at: '2026-01-02T03:04:05Z',
+        },
+      ],
     }
     listLogs.mockResolvedValue({ items: [log], total: 1, page: 1, page_size: 20, pages: 1 })
     getLog.mockResolvedValue(detail)
@@ -555,13 +810,17 @@ describe('admin RiskControlView', () => {
     expect(getLog).toHaveBeenCalledWith(9)
     expect(getMediaContent).toHaveBeenCalledWith(77)
     expect(wrapper.text()).toContain('complete tool output with secret')
-    expect(wrapper.get('[data-test="moderation-detail-team-attribution"]').text()).toBe('团队 8001 · 付款 UID 9001')
+    expect(wrapper.get('[data-test="moderation-detail-team-attribution"]').text()).toBe(
+      '团队 8001 · 付款 UID 9001',
+    )
     expect(wrapper.get('img').attributes('src')).toBe('blob:review-image')
 
     await findButtonByText(wrapper, 'common.close').trigger('click')
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:review-image')
   })
 
+  // The administrator restricts moderation to selected model names through the scope tab.
+  // Saving sends include mode with those names and the zero sentinel for direct proxy access.
   it('saves the selected model filter mode and models', async () => {
     const wrapper = mount(RiskControlView, {
       global: {
@@ -587,17 +846,21 @@ describe('admin RiskControlView', () => {
     await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
     await flushPromises()
 
-    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({
-      proxy_id: 0,
-      model_filter: {
-        type: 'include',
-        models: ['gpt-5.5', 'gpt-5.4'],
-      },
-    }))
+    expect(updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proxy_id: 0,
+        model_filter: {
+          type: 'include',
+          models: ['gpt-5.5', 'gpt-5.4'],
+        },
+      }),
+    )
     expect(getProxies).toHaveBeenCalledTimes(1)
     expect(showError).not.toHaveBeenCalled()
   })
 
+  // The scope tab exposes separate user-text and tool-output character limits. Edited values
+  // reach the configuration request together with the existing image and tool audit switches.
   it('saves upstream audit content limits from the existing scope tab', async () => {
     const wrapper = mount(RiskControlView, {
       global: {
@@ -618,20 +881,26 @@ describe('admin RiskControlView', () => {
     await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
     await findButtonByText(wrapper, 'admin.riskControl.tabs.scope').trigger('click')
 
-    expect(wrapper.get('[data-test="audit-content-scope"]').text()).toContain('admin.riskControl.auditContentScope')
+    expect(wrapper.get('[data-test="audit-content-scope"]').text()).toContain(
+      'admin.riskControl.auditContentScope',
+    )
     await wrapper.get('[data-test="audit-user-text-max-chars"]').setValue('8000')
     await wrapper.get('[data-test="audit-tool-output-max-chars"]').setValue('2000')
     await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
     await flushPromises()
 
-    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({
-      audit_user_text_max_chars: 8000,
-      audit_images: true,
-      audit_tool_outputs: true,
-      audit_tool_output_max_chars: 2000,
-    }))
+    expect(updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        audit_user_text_max_chars: 8000,
+        audit_images: true,
+        audit_tool_outputs: true,
+        audit_tool_output_max_chars: 2000,
+      }),
+    )
   })
 
+  // A configured credential has editable priority and annotation separate from its health
+  // status. Saving sends the edited metadata under its stable stored credential hash.
   it('saves priority and note edits for a stored moderation key', async () => {
     const keyHash = 'a'.repeat(64)
     const keyStatus = {
@@ -682,11 +951,16 @@ describe('admin RiskControlView', () => {
     await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
     await flushPromises()
 
-    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({
-      api_key_updates: [{ key_hash: keyHash, priority: 20, note: 'Tier 1 backup' }],
-    }))
+    expect(updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        api_key_updates: [{ key_hash: keyHash, priority: 20, note: 'Tier 1 backup' }],
+      }),
+    )
   })
 
+  // Threshold number inputs represent category values as percentages in settings.
+  // Saving converts the edited harassment and sexual values to the corresponding
+  // request ratios.
   it('submits edited risk control thresholds when saving moderation config', async () => {
     const wrapper = mount(RiskControlView, {
       global: {
@@ -712,15 +986,19 @@ describe('admin RiskControlView', () => {
     await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
     await flushPromises()
 
-    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({
-      thresholds: expect.objectContaining({
-        sexual: 0.72,
-        harassment: 0.99,
+    expect(updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        thresholds: expect.objectContaining({
+          sexual: 0.72,
+          harassment: 0.99,
+        }),
       }),
-    }))
+    )
     expect(showError).not.toHaveBeenCalled()
   })
 
+  // Observe mode processes audit work asynchronously and exposes queue utilization. The page
+  // shows its worker runtime card, record count, and queue capacity in the expected mode.
   it('describes worker runtime as async audit and pre-block record processing', async () => {
     getStatus.mockResolvedValue({
       ...runtimeStatus(),
@@ -753,6 +1031,9 @@ describe('admin RiskControlView', () => {
     expect(wrapper.text()).toContain('2 / 32,768')
   })
 
+  // Pre-block mode reports synchronous decisions and per-credential call load. Its metric card
+  // and credential card remain siblings in the responsive grid with independently bounded
+  // credential scrolling.
   it('shows pre-block synchronous moderation metrics separately from worker queue', async () => {
     getStatus.mockResolvedValue({
       ...runtimeStatus(),
@@ -833,11 +1114,13 @@ describe('admin RiskControlView', () => {
     const syncCard = wrapper.get('[data-test="pre-block-sync-card"]')
     const apiKeyLoadCard = wrapper.get('[data-test="pre-block-api-key-load-card"]')
 
-    expect(runtimeCards.classes()).toEqual(expect.arrayContaining([
-      'grid',
-      'grid-cols-1',
-      'xl:grid-cols-[minmax(0,520px)_minmax(0,1fr)]',
-    ]))
+    expect(runtimeCards.classes()).toEqual(
+      expect.arrayContaining([
+        'grid',
+        'grid-cols-1',
+        'xl:grid-cols-[minmax(0,520px)_minmax(0,1fr)]',
+      ]),
+    )
     expect(syncCard.element.parentElement).toBe(runtimeCards.element)
     expect(apiKeyLoadCard.element.parentElement).toBe(runtimeCards.element)
     expect(syncCard.classes()).toContain('card')
@@ -846,9 +1129,11 @@ describe('admin RiskControlView', () => {
     expect(syncCard.text()).toContain('admin.riskControl.preBlockSyncHint')
     expect(apiKeyLoadCard.get('h2').text()).toBe('admin.riskControl.preBlockAPIKeyLoad')
     expect(apiKeyLoadCard.text()).toContain('admin.riskControl.preBlockAPIKeyLoadHint')
-    expect(wrapper.get('[data-test="pre-block-api-key-load-list"]').classes()).toEqual(expect.arrayContaining([
-      'max-h-[280px]', // check-ui-allow: 规则列表局部高度属登记例外,与源文件豁免一致
-      'overflow-y-auto',
-    ]))
+    expect(wrapper.get('[data-test="pre-block-api-key-load-list"]').classes()).toEqual(
+      expect.arrayContaining([
+        'max-h-[280px]', // check-ui-allow: Assert the registered local height of the runtime credential list.
+        'overflow-y-auto',
+      ]),
+    )
   })
 })

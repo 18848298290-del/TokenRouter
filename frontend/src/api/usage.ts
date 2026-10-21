@@ -1,195 +1,257 @@
-/**
- * Usage tracking API endpoints
- * Handles usage logs and statistics retrieval
- */
-
 import { apiClient } from './client'
 import type {
   UsageLog,
   UsageQueryParams,
   UsageStatsResponse,
-  PaginatedResponse,
   TrendDataPoint,
   ModelStat,
   GroupStat,
   UsageRequestType,
   UserErrorRequest,
   UserErrorRequestDetail,
-  UserErrorListParams
-} from '@/types'
+  UserErrorListParams,
+} from '@/api/usage.types'
+import type { PaginatedResponse } from '@/api/common.types'
 
-// ==================== Dashboard Types ====================
+/**
+ * usage.ts retrieves user usage records, dashboard aggregates and failed-request
+ * details. Query helpers retain time, ownership and billing filters, while
+ * statistics accept either a period string or query object and permit an
+ * explicit API-key override.
+ */
 
+/**
+ * PlatformDashboardStats summarizes lifetime and daily request, token and
+ * deducted-cost totals for one platform.
+ */
 export interface PlatformDashboardStats {
-  platform: string
-  total_requests: number
-  total_tokens: number
-  total_actual_cost: number
-  today_requests: number
-  today_tokens: number
-  today_actual_cost: number
-}
-
-export interface UserDashboardStats {
-  total_api_keys: number
-  active_api_keys: number
-  total_requests: number
-  total_input_tokens: number
-  total_output_tokens: number
-  total_cache_creation_tokens: number
-  total_cache_read_tokens: number
-  total_tokens: number
-  total_cost: number // 标准计费
-  total_actual_cost: number // 实际扣除
-  today_requests: number
-  today_input_tokens: number
-  today_output_tokens: number
-  today_cache_creation_tokens: number
-  today_cache_read_tokens: number
-  today_tokens: number
-  today_cost: number // 今日标准计费
-  today_actual_cost: number // 今日实际扣除
-  average_duration_ms: number
-  rpm: number // 近5分钟平均每分钟请求数
-  tpm: number // 近5分钟平均每分钟Token数
-  by_platform?: PlatformDashboardStats[]
-}
-
-export interface TrendParams {
-  start_date?: string
-  end_date?: string
-  granularity?: 'day' | 'hour'
-  api_key_id?: number
-  model?: string
-  group_id?: number
-  team_id?: number
-  request_type?: UsageRequestType
-  stream?: boolean
-  billing_type?: number | null
-  billing_mode?: string | null
-  native_compaction_v2?: boolean | null
-  timezone?: string
-}
-
-export interface TrendResponse {
-  trend: TrendDataPoint[]
-  start_date: string
-  end_date: string
-  granularity: string
-}
-
-export interface ModelStatsResponse {
-  models: ModelStat[]
-  start_date: string
-  end_date: string
-}
-
-export interface UsageRankingItem {
-  rank: number
-  user_id: number
-  display_name: string
-  avatar_url: string
-  requests?: number
-  input_tokens?: number
-  output_tokens?: number
-  cache_creation_tokens?: number
-  cache_read_tokens?: number
-  total_tokens?: number
-  actual_cost?: number
-}
-
-export type UsageRankingSortBy = 'total_tokens' | 'requests' | 'actual_cost'
-
-export interface UsageRankingResponse {
-  ranking: UsageRankingItem[]
-  total_requests?: number
-  total_tokens?: number
-  total_actual_cost?: number
-  sort_by: UsageRankingSortBy
-  show_total_tokens: boolean
-  show_requests: boolean
-  show_actual_cost: boolean
-  start_date: string
-  end_date: string
-  limit: number
-}
-
-export interface UsageRankingParams {
-  start_date?: string
-  end_date?: string
-}
-
-export interface UsageDashboardSnapshotV2Params extends TrendParams {
-  include_trend?: boolean
-  include_model_stats?: boolean
-  include_group_stats?: boolean
-}
-
-export interface UsageDashboardSnapshotV2Response {
-  generated_at: string
-  start_date: string
-  end_date: string
-  granularity: string
-  trend?: TrendDataPoint[]
-  models?: ModelStat[]
-  groups?: GroupStat[]
+  platform: string // Provider platform identifier.
+  total_requests: number // Recorded total requests.
+  total_tokens: number // Combined token count.
+  total_actual_cost: number // Total actual cost.
+  today_requests: number // Recorded today requests.
+  today_tokens: number // Recorded today tokens.
+  today_actual_cost: number // Today actual cost.
 }
 
 /**
- * Get usage logs with advanced query parameters
- * @param params - Query parameters for filtering and pagination
- * @returns Paginated list of usage logs
+ * UserDashboardStats combines the user's key counts, lifetime or daily usage
+ * totals and recent throughput observations.
+ */
+export interface UserDashboardStats {
+  total_api_keys: number // Total API keys.
+  active_api_keys: number // Active API keys.
+  total_requests: number // Recorded total requests.
+  total_input_tokens: number // Total input tokens.
+  total_output_tokens: number // Total output tokens.
+  total_cache_creation_tokens: number // Total cache creation tokens.
+  total_cache_read_tokens: number // Total cache read tokens.
+  total_tokens: number // Combined token count.
+  total_cost: number /**
+   * Standard billed cost.
+   */
+  total_actual_cost: number /**
+   * Actual deducted cost.
+   */
+  today_requests: number // Recorded today requests.
+  today_input_tokens: number // Today input tokens.
+  today_output_tokens: number // Today output tokens.
+  today_cache_creation_tokens: number // Today cache creation tokens.
+  today_cache_read_tokens: number // Today cache read tokens.
+  today_tokens: number // Recorded today tokens.
+  today_cost: number /**
+   * Today's standard billed cost.
+   */
+  today_actual_cost: number /**
+   * Today's actual deducted cost.
+   */
+  average_duration_ms: number // Average duration milliseconds.
+  rpm: number /**
+   * Requests per minute averaged over the preceding five minutes.
+   */
+  tpm: number /**
+   * Tokens per minute averaged over the preceding five minutes.
+   */
+  by_platform?: PlatformDashboardStats[] // Recorded by platform.
+}
+
+/**
+ * TrendParams selects a usage trend's date range, granularity and available
+ * ownership filters.
+ */
+export interface TrendParams {
+  start_date?: string // Requested start date.
+  end_date?: string // Requested end date.
+  granularity?: 'day' | 'hour' // Time bucket granularity.
+  api_key_id?: number // API-key record identifier.
+  model?: string // Model identifier value.
+  group_id?: number // Group record identifier.
+  team_id?: number // Team record identifier.
+  request_type?: UsageRequestType // Recorded request mode.
+  stream?: boolean // Streaming request flag.
+  billing_type?: number | null // Recorded billing classification.
+  billing_mode?: string | null // Selected billing calculation.
+  native_compaction_v2?: boolean | null // Native compaction v2.
+  timezone?: string // IANA timezone name.
+}
+
+/**
+ * TrendResponse pairs usage trend points with the returned date range and bucket
+ * granularity.
+ */
+export interface TrendResponse {
+  trend: TrendDataPoint[] // Usage time-series points.
+  start_date: string // Requested start date.
+  end_date: string // Requested end date.
+  granularity: string // Time bucket granularity.
+}
+
+/**
+ * ModelStatsResponse pairs model usage aggregates with the date range returned
+ * by the statistics endpoint.
+ */
+export interface ModelStatsResponse {
+  models: ModelStat[] // Model usage aggregates.
+  start_date: string // Requested start date.
+  end_date: string // Requested end date.
+}
+
+/**
+ * UsageRankingItem pairs a ranked user's display identity with whichever usage
+ * totals the endpoint exposes.
+ */
+export interface UsageRankingItem {
+  rank: number // Position within ranking.
+  user_id: number // Owning user identifier.
+  display_name: string // Recorded display name.
+  avatar_url: string // Recorded avatar url.
+  requests?: number // Observed request count.
+  input_tokens?: number // Consumed input tokens.
+  output_tokens?: number // Generated output tokens.
+  cache_creation_tokens?: number // Cache creation tokens.
+  cache_read_tokens?: number // Cache read tokens.
+  total_tokens?: number // Combined token count.
+  actual_cost?: number // Actual deducted cost.
+}
+
+/**
+ * UsageRankingSortBy selects total tokens, request count or deducted cost as the
+ * usage-ranking order.
+ */
+export type UsageRankingSortBy = 'total_tokens' | 'requests' | 'actual_cost'
+
+/**
+ * UsageRankingResponse contains ranked users, display switches and interval
+ * metadata for the usage leaderboard.
+ */
+export interface UsageRankingResponse {
+  ranking: UsageRankingItem[] // Ranked user entries.
+  total_requests?: number // Recorded total requests.
+  total_tokens?: number // Combined token count.
+  total_actual_cost?: number // Total actual cost.
+  sort_by: UsageRankingSortBy // Requested sort column.
+  show_total_tokens: boolean // Show total tokens.
+  show_requests: boolean // Recorded show requests.
+  show_actual_cost: boolean // Show actual cost.
+  start_date: string // Requested start date.
+  end_date: string // Requested end date.
+  limit: number // Maximum returned entries.
+}
+
+/**
+ * UsageRankingParams optionally selects the start and end dates for a usage
+ * ranking query.
+ */
+export interface UsageRankingParams {
+  start_date?: string // Requested start date.
+  end_date?: string // Requested end date.
+}
+
+/**
+ * UsageDashboardSnapshotV2Params extends usage filters with switches selecting
+ * trend, model and group aggregates.
+ */
+export interface UsageDashboardSnapshotV2Params extends TrendParams {
+  include_trend?: boolean // Requested include trend.
+  include_model_stats?: boolean // Include model stats.
+  include_group_stats?: boolean // Include group stats.
+}
+
+/**
+ * UsageDashboardSnapshotV2Response collects requested user-dashboard aggregates
+ * with their generation timestamp and interval metadata.
+ */
+export interface UsageDashboardSnapshotV2Response {
+  generated_at: string // Recorded generated at.
+  start_date: string // Requested start date.
+  end_date: string // Requested end date.
+  granularity: string // Time bucket granularity.
+  trend?: TrendDataPoint[] // Usage time-series points.
+  models?: ModelStat[] // Model usage aggregates.
+  groups?: GroupStat[] // Group usage aggregates.
+}
+
+/**
+ * query retrieves usage logs with advanced query parameters. Config defaults to
+ * {}; the caller may cancel through the supplied AbortSignal. The function
+ * returns the data portion of the completed response.
  */
 export async function query(
-  params: UsageQueryParams & { sort_by?: string; sort_order?: 'asc' | 'desc' },
-  config: { signal?: AbortSignal } = {}
+  params: UsageQueryParams & {
+    sort_by?: string // Requested sort column.
+    sort_order?: 'asc' | 'desc' // Requested ordering direction.
+  },
+  config: {
+    signal?: AbortSignal // Caller-owned cancellation signal.
+  } = {},
 ): Promise<PaginatedResponse<UsageLog>> {
   const { data } = await apiClient.get<PaginatedResponse<UsageLog>>('/usage', {
     ...config,
-    params
+    params,
   })
   return data
 }
 
 /**
- * Get usage statistics for a specific period
- * @param period - Time period ('today', 'week', 'month', 'year')
- * @param apiKeyId - Optional API key ID filter
- * @returns Usage statistics
+ * getStats retrieves usage statistics from a period name or query object. The
+ * default period is today; an explicit apiKeyId overrides the object's
+ * api_key_id value, including when that argument is zero.
  */
 export async function getStats(
-  paramsOrPeriod: (UsageQueryParams & { period?: string; timezone?: string }) | string = 'today',
-  apiKeyId?: number
+  paramsOrPeriod:
+    | (UsageQueryParams & {
+        period?: string // Requested statistics period.
+        timezone?: string // IANA timezone name.
+      })
+    | string = 'today',
+  apiKeyId?: number,
 ): Promise<UsageStatsResponse> {
-  const params: Record<string, unknown> = typeof paramsOrPeriod === 'string'
-    ? { period: paramsOrPeriod }
-    : { ...paramsOrPeriod }
+  const params: Record<string, unknown> =
+    typeof paramsOrPeriod === 'string' ? { period: paramsOrPeriod } : { ...paramsOrPeriod }
 
   if (apiKeyId !== undefined) {
     params.api_key_id = apiKeyId
   }
 
   const { data } = await apiClient.get<UsageStatsResponse>('/usage/stats', {
-    params
+    params,
   })
   return data
 }
 
 /**
- * 获取指定时间范围内的用户用量排行。
- * @param params - 可选时间范围，未传时后端默认使用今天
- * @returns 按 Token 总量排序的排行
+ * getRanking retrieves usage rankings for the supplied time range. Omitting the
+ * range lets the server select today. Ordering follows the server-configured
+ * ranking metric, which can be total tokens, requests, or actual cost.
  */
 export async function getRanking(params: UsageRankingParams = {}): Promise<UsageRankingResponse> {
   const { data } = await apiClient.get<UsageRankingResponse>('/usage/ranking', { params })
   return data
 }
 
-// ==================== Dashboard API ====================
-
 /**
- * Get user dashboard statistics
- * @returns Dashboard statistics for current user
+ * getDashboardStats retrieves the current user's key, usage and throughput
+ * dashboard totals.
  */
 export async function getDashboardStats(): Promise<UserDashboardStats> {
   const { data } = await apiClient.get<UserDashboardStats>('/usage/dashboard/stats')
@@ -197,9 +259,8 @@ export async function getDashboardStats(): Promise<UserDashboardStats> {
 }
 
 /**
- * Get user usage trend data
- * @param params - Query parameters for filtering
- * @returns Usage trend data for current user
+ * getDashboardTrend retrieves user usage trend data and returns the server
+ * result.
  */
 export async function getDashboardTrend(params?: TrendParams): Promise<TrendResponse> {
   const { data } = await apiClient.get<TrendResponse>('/usage/dashboard/trend', { params })
@@ -207,99 +268,119 @@ export async function getDashboardTrend(params?: TrendParams): Promise<TrendResp
 }
 
 /**
- * Get user model usage statistics
- * @param params - Query parameters for filtering
- * @returns Model usage statistics for current user
+ * getDashboardModels retrieves user model usage statistics and returns the
+ * server result.
  */
 export async function getDashboardModels(params?: {
-  start_date?: string
-  end_date?: string
-  api_key_id?: number
-  model?: string
-  model_source?: 'requested'
-  group_id?: number
-  request_type?: UsageRequestType
-  stream?: boolean
-  billing_type?: number | null
-  billing_mode?: string | null
-  native_compaction_v2?: boolean | null
-  timezone?: string
+  start_date?: string // Requested start date.
+  end_date?: string // Requested end date.
+  api_key_id?: number // API-key record identifier.
+  model?: string // Model identifier value.
+  model_source?: 'requested' // Model identifier selection.
+  group_id?: number // Group record identifier.
+  request_type?: UsageRequestType // Recorded request mode.
+  stream?: boolean // Streaming request flag.
+  billing_type?: number | null // Recorded billing classification.
+  billing_mode?: string | null // Selected billing calculation.
+  native_compaction_v2?: boolean | null // Native compaction v2.
+  timezone?: string // IANA timezone name.
 }): Promise<ModelStatsResponse> {
   const { data } = await apiClient.get<ModelStatsResponse>('/usage/dashboard/models', { params })
   return data
 }
 
+/**
+ * getDashboardSnapshotV2 retrieves dashboard snapshot v2 and returns the server
+ * response data.
+ */
 export async function getDashboardSnapshotV2(
-  params?: UsageDashboardSnapshotV2Params
+  params?: UsageDashboardSnapshotV2Params,
 ): Promise<UsageDashboardSnapshotV2Response> {
   const { data } = await apiClient.get<UsageDashboardSnapshotV2Response>(
     '/usage/dashboard/snapshot-v2',
-    { params }
+    { params },
   )
   return data
 }
 
+/**
+ * BatchApiKeyUsageStats pairs an API-key identifier with its daily and
+ * accumulated deducted costs.
+ */
 export interface BatchApiKeyUsageStats {
-  api_key_id: number
-  today_actual_cost: number
-  total_actual_cost: number
-}
-
-export interface BatchApiKeysUsageResponse {
-  stats: Record<string, BatchApiKeyUsageStats>
+  api_key_id: number // API-key record identifier.
+  today_actual_cost: number // Today actual cost.
+  total_actual_cost: number // Total actual cost.
 }
 
 /**
- * Get batch usage stats for user's own API keys
- * @param apiKeyIds - Array of API key IDs
- * @param options - Optional request options
- * @returns Usage stats map keyed by API key ID
+ * BatchApiKeysUsageResponse maps stringified API-key identifiers to the
+ * requested usage summary records.
+ */
+export interface BatchApiKeysUsageResponse {
+  stats: Record<string, BatchApiKeyUsageStats> // Identifier-indexed usage summaries.
+}
+
+/**
+ * getDashboardApiKeysUsage retrieves batch usage stats for user's own API keys.
+ * The caller may cancel through the supplied AbortSignal. The function returns
+ * the data portion of the completed response.
  */
 export async function getDashboardApiKeysUsage(
   apiKeyIds: number[],
   options?: {
-    signal?: AbortSignal
-  }
+    signal?: AbortSignal // Caller-owned cancellation signal.
+  },
 ): Promise<BatchApiKeysUsageResponse> {
   const { data } = await apiClient.post<BatchApiKeysUsageResponse>(
     '/usage/dashboard/api-keys-usage',
     {
-      api_key_ids: apiKeyIds
+      api_key_ids: apiKeyIds,
     },
     {
-      signal: options?.signal
-    }
+      signal: options?.signal,
+    },
   )
   return data
 }
 
+/**
+ * listMyErrorRequests retrieves my error requests and returns the server
+ * response data.
+ */
 export async function listMyErrorRequests(
-  params: UserErrorListParams
+  params: UserErrorListParams,
 ): Promise<PaginatedResponse<UserErrorRequest>> {
   const { data } = await apiClient.get<PaginatedResponse<UserErrorRequest>>('/usage/errors', {
-    params
+    params,
   })
   return data
 }
 
+/**
+ * getMyErrorDetail retrieves my error detail and returns the server response
+ * data.
+ */
 export async function getMyErrorDetail(id: number): Promise<UserErrorRequestDetail> {
   const { data } = await apiClient.get<UserErrorRequestDetail>(`/usage/errors/${id}`)
   return data
 }
 
+/**
+ * usageAPI groups user usage records, rankings, dashboard summaries, and error
+ * reads for callers using the module's named or default API object.
+ */
 export const usageAPI = {
   query,
   getStats,
   getRanking,
-  // Dashboard
   getDashboardStats,
   getDashboardTrend,
   getDashboardModels,
   getDashboardSnapshotV2,
   getDashboardApiKeysUsage,
-  // 错误请求
   listMyErrorRequests,
-  getMyErrorDetail
+  getMyErrorDetail,
 }
 
 export default usageAPI

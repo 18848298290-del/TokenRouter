@@ -1,43 +1,50 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
-
+import postcss from 'postcss'
 import tailwindConfig from '../../tailwind.config.js'
+import { cssRules, declarations, readSource } from './helpers/sourceSyntax'
 
-// 圆角工具类通过 var() 引用 :root 变量，数值在 style.css 中维护。
-const styleCss = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), '../style.css'),
-  'utf8'
-)
+// radiusTheme.spec.js checks the relationship between Tailwind radius utilities
+// and their CSS custom properties. Numeric radii belong to the root stylesheet,
+// while configuration exposes semantic names and the explicit square and pill
+// shapes that do not depend on those properties.
 
-describe('OpenRouter 圆角主题', () => {
-  const radius = tailwindConfig.theme.borderRadius
+// rootRules retains every root declaration block so duplicate radius definitions are observable to the tests.
+const rootRules = cssRules(postcss.parse(readSource('style.css')), ':root')
 
-  it('提供紧凑、控件、表面和弹窗四级语义令牌(经 CSS 变量引用)', () => {
-    expect(radius).toMatchObject({
+describe('radius theme', () => {
+  // Semantic radii are configured through variable references, allowing the root
+  // stylesheet to own their numeric values. All four named levels remain available.
+  it('maps semantic radius utilities to CSS properties', () => {
+    expect(tailwindConfig.theme.borderRadius).toMatchObject({
       compact: 'var(--radius-compact)',
       control: 'var(--radius-control)',
       surface: 'var(--radius-surface)',
-      dialog: 'var(--radius-dialog)'
+      dialog: 'var(--radius-dialog)',
     })
   })
 
-  it(':root 变量承载唯一数值(圆润取向 6/8/12/16)', () => {
-    expect(styleCss).toContain('--radius-compact: 6px')
-    expect(styleCss).toContain('--radius-control: 8px')
-    expect(styleCss).toContain('--radius-surface: 12px')
-    expect(styleCss).toContain('--radius-dialog: 16px')
+  // Each semantic property has exactly one value in the root stylesheet. This
+  // guards the compact, control, surface, and dialog geometry against conflicting declarations.
+  it.each([
+    ['compact', '6px'],
+    ['control', '8px'],
+    ['surface', '12px'],
+    ['dialog', '16px'],
+  ])('defines %s exactly once', (name, value) => {
+    expect(rootRules.flatMap((rule) => declarations(rule, `--radius-${name}`))).toEqual([value])
   })
 
-  it('旧尺度兼容 key 已删除(由 check:ui 门禁阻止复活)', () => {
-    for (const legacy of ['DEFAULT', 'sm', 'md', 'lg', 'xl', '2xl', '3xl', '4xl']) {
-      expect(radius).not.toHaveProperty(legacy)
-    }
+  // Legacy scale keys must stay unavailable because the UI checks enforce
+  // semantic naming. Accidentally restoring a scale would allow divergent visual choices.
+  it('omits legacy scale keys', () => {
+    for (const legacy of ['DEFAULT', 'sm', 'md', 'lg', 'xl', '2xl', '3xl', '4xl'])
+      expect(tailwindConfig.theme.borderRadius).not.toHaveProperty(legacy)
   })
 
-  it('保留无圆角和全圆工具类', () => {
-    expect(radius.none).toBe('0px')
-    expect(radius.full).toBe('9999px')
+  // Square corners and fully rounded pills are explicit shape choices. Their
+  // utilities remain available independently of the four semantic component radius levels.
+  it('retains square and pill utilities', () => {
+    expect(tailwindConfig.theme.borderRadius.none).toBe('0px')
+    expect(tailwindConfig.theme.borderRadius.full).toBe('9999px')
   })
 })

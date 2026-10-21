@@ -3,6 +3,14 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EmailVerifyView from '@/views/auth/EmailVerifyView.vue'
 
+// EmailVerifyView.spec.ts checks ordinary email registration and pending OAuth
+// continuation through the verification page. API and captcha replacements expose
+// sent proofs and stored metadata, while mounted forms exercise resends, account
+// creation, existing-account recovery, and email-domain policy feedback.
+
+// These fixtures provide controllable dependencies and component handles for the
+// cases below. Each test configures the responses it needs and inspects calls or
+// rendered state at that boundary.
 const {
   pushMock,
   showSuccessMock,
@@ -36,30 +44,46 @@ const {
   verifyActionMock: vi.fn(),
   authStoreState: {
     pendingAuthSession: null as null | {
-      token: string
-      token_field: 'pending_auth_token' | 'pending_oauth_token'
-      provider: string
-      redirect?: string
-      adoption_required?: boolean
-      suggested_display_name?: string
-      suggested_avatar_url?: string
-    }
+      token: string // pending authentication token
+
+      token_field: 'pending_auth_token' | 'pending_oauth_token' // backend pending token field
+
+      provider: string // authentication provider identifier
+
+      redirect?: string // post-authentication destination path
+
+      adoption_required?: boolean // profile adoption confirmation flag
+
+      suggested_display_name?: string // provider suggested display name
+
+      suggested_avatar_url?: string // provider suggested avatar URL
+    },
   },
-}))
+})) // hoisted dependency and routing fixtures
 
 vi.mock('vue-router', () => ({
+  // useRouter supplies observable navigation handlers for the mounted
+  // authentication component.
   useRouter: () => ({
     push: pushMock,
   }),
 }))
 
 vi.mock('vue-i18n', () => ({
+  // createI18n supplies the global translator needed by imported authentication
+  // dependencies.
   createI18n: () => ({
     global: {
+      // t returns translation keys directly for stable component text assertions.
       t: (key: string) => key,
     },
   }),
+  // useI18n supplies the translation fixture used by rendered authentication
+  // labels.
   useI18n: () => ({
+    // t resolves the translation keys needed by this test fixture. Unhandled keys
+    // remain visible as their identifiers so assertions can inspect copy selection
+    // without loading locale catalogs.
     t: (key: string, params?: Record<string, string | number>) => {
       if (key === 'auth.accountCreatedSuccess') {
         return `Account created for ${params?.siteName ?? 'TokenRouter'}`
@@ -71,15 +95,29 @@ vi.mock('vue-i18n', () => ({
 }))
 
 vi.mock('@/stores', () => ({
+  // useAuthStore exposes the mocked session state and authentication actions
+  // consumed by the component.
   useAuthStore: () => ({
     pendingAuthSession: authStoreState.pendingAuthSession,
+    // register records signup credentials and attribution for the registration
+    // assertions.
     register: (...args: any[]) => registerMock(...args),
+    // setToken records which authenticated access token the callback installs in
+    // the store.
     setToken: (...args: any[]) => setTokenMock(...args),
+    // setPendingAuthSession records continuation metadata retained for unfinished
+    // provider authentication.
     setPendingAuthSession: (...args: any[]) => setPendingAuthSessionMock(...args),
+    // clearPendingAuthSession records removal of the completed pending provider
+    // continuation.
     clearPendingAuthSession: (...args: any[]) => clearPendingAuthSessionMock(...args),
   }),
+  // useAppStore exposes the toast and settings fixtures consumed by the component.
   useAppStore: () => ({
+    // showSuccess records completion feedback delivered through the app toast
+    // service.
     showSuccess: (...args: any[]) => showSuccessMock(...args),
+    // showError records failure feedback delivered through the app toast service.
     showError: (...args: any[]) => showErrorMock(...args),
   }),
 }))
@@ -88,20 +126,34 @@ vi.mock('@/api/auth', async () => {
   const actual = await vi.importActual<typeof import('@/api/auth')>('@/api/auth')
   return {
     ...actual,
+    // getPublicSettings returns the configured public policy response for the
+    // current case.
     getPublicSettings: (...args: any[]) => getPublicSettingsMock(...args),
+    // sendVerifyCode records ordinary signup email delivery requests and their
+    // proofs.
     sendVerifyCode: (...args: any[]) => sendVerifyCodeMock(...args),
+    // sendPendingOAuthVerifyCode records email delivery requests for the pending
+    // provider session.
     sendPendingOAuthVerifyCode: (...args: any[]) => sendPendingOAuthVerifyCodeMock(...args),
+    // persistOAuthTokenContext records refresh metadata published before
+    // access-token installation.
     persistOAuthTokenContext: (...args: any[]) => persistOAuthTokenContextMock(...args),
   }
 })
 
 vi.mock('@/api/client', () => ({
   apiClient: {
+    // post records account-action paths and payloads through the configured API
+    // mock.
     post: (...args: any[]) => apiClientPostMock(...args),
   },
 }))
 
 describe('EmailVerifyView', () => {
+  // Reset the dependency fixtures before each case so request histories and
+  // configured responses belong to the scenario being asserted in that case. Clear
+  // stored authentication or registration values before seeding the next
+  // continuation.
   beforeEach(() => {
     pushMock.mockReset()
     showSuccessMock.mockReset()
@@ -132,6 +184,9 @@ describe('EmailVerifyView', () => {
     setTokenMock.mockResolvedValue({})
   })
 
+  // The user repeats email-code resend through the action captcha widget. Two
+  // verification calls must provide different proof values to their corresponding
+  // send-code requests.
   it('acquires a fresh Tencent proof for each resend action', async () => {
     getPublicSettingsMock.mockResolvedValue({
       turnstile_enabled: false,
@@ -152,10 +207,14 @@ describe('EmailVerifyView', () => {
         password: 'secret-123',
         tencent_captcha_ticket: 'initial-ticket',
         tencent_captcha_randstr: '@initial-rand',
-      })
+      }),
     )
 
     const CaptchaChallengeStub = defineComponent({
+      // setup exposes the fixture controls expected by the parent component. The
+      // rendered placeholder omits external SDK behavior, letting tests drive
+      // verification, cancellation, or reset through the configured mock
+      // functions.
       setup(_, { expose }) {
         expose({ verifyAction: verifyActionMock, reset: createTurnstileResetMock })
         return () => h('div')
@@ -173,9 +232,10 @@ describe('EmailVerifyView', () => {
     })
 
     await flushPromises()
-    const resendButton = () => wrapper.findAll('button').find((button) =>
-      button.text().includes('auth.clickToResend')
-    )!
+    // resendButton locates the email resend action by its translated fixture
+    // label.
+    const resendButton = () =>
+      wrapper.findAll('button').find((button) => button.text().includes('auth.clickToResend'))!
 
     await resendButton().trigger('click')
     await flushPromises()
@@ -183,16 +243,25 @@ describe('EmailVerifyView', () => {
     await flushPromises()
 
     expect(verifyActionMock).toHaveBeenCalledTimes(2)
-    expect(sendVerifyCodeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      tencent_captcha_ticket: 'ticket-1',
-      tencent_captcha_randstr: '@rand-1',
-    }))
-    expect(sendVerifyCodeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
-      tencent_captcha_ticket: 'ticket-2',
-      tencent_captcha_randstr: '@rand-2',
-    }))
+    expect(sendVerifyCodeMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        tencent_captcha_ticket: 'ticket-1',
+        tencent_captcha_randstr: '@rand-1',
+      }),
+    )
+    expect(sendVerifyCodeMock).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        tencent_captcha_ticket: 'ticket-2',
+        tencent_captcha_randstr: '@rand-2',
+      }),
+    )
   })
 
+  // Saved registration data identifies a pending OAuth session. Initial code
+  // delivery must use the pending endpoint with that metadata and leave the
+  // ordinary registration endpoint uncalled.
   it('uses the pending oauth verify-code endpoint when register data carries a pending auth session', async () => {
     authStoreState.pendingAuthSession = {
       token: 'pending-token-1',
@@ -205,7 +274,7 @@ describe('EmailVerifyView', () => {
       JSON.stringify({
         email: 'fresh@example.com',
         password: 'secret-123',
-      })
+      }),
     )
 
     mount(EmailVerifyView, {
@@ -228,6 +297,9 @@ describe('EmailVerifyView', () => {
     expect(sendVerifyCodeMock).not.toHaveBeenCalled()
   })
 
+  // Initial code delivery fails after consuming the saved captcha proof. The page
+  // must display its resend challenge so retry cannot rely on the failed request's
+  // token.
   it('requires a fresh captcha proof after the initial send-code request fails', async () => {
     getPublicSettingsMock.mockResolvedValue({
       turnstile_enabled: true,
@@ -242,7 +314,7 @@ describe('EmailVerifyView', () => {
         email: 'fresh@example.com',
         password: 'secret-123',
         turnstile_token: 'initial-proof',
-      })
+      }),
     )
 
     const wrapper = mount(EmailVerifyView, {
@@ -251,7 +323,8 @@ describe('EmailVerifyView', () => {
           AuthLayout: { template: '<div><slot /><slot name="footer" /></div>' },
           Icon: true,
           TurnstileWidget: {
-            template: '<button data-testid="resend-captcha" @click="$emit(\'verify\', \'fresh-proof\')">verify</button>',
+            template:
+              '<button data-testid="resend-captcha" @click="$emit(\'verify\', \'fresh-proof\')">verify</button>',
           },
           transition: false,
         },
@@ -260,12 +333,17 @@ describe('EmailVerifyView', () => {
 
     await flushPromises()
 
-    expect(sendVerifyCodeMock).toHaveBeenCalledWith(expect.objectContaining({
-      turnstile_token: 'initial-proof',
-    }))
+    expect(sendVerifyCodeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turnstile_token: 'initial-proof',
+      }),
+    )
     expect(wrapper.find('[data-testid="resend-captcha"]').exists()).toBe(true)
   })
 
+  // The draft email lies outside the signup whitelist but belongs to pending
+  // OAuth. Verification must reach the pending endpoint without a local
+  // email-policy toast.
   it('skips the registration email suffix whitelist for pending oauth verification', async () => {
     authStoreState.pendingAuthSession = {
       token: 'pending-token-2',
@@ -284,7 +362,7 @@ describe('EmailVerifyView', () => {
       JSON.stringify({
         email: 'fresh@example.com',
         password: 'secret-123',
-      })
+      }),
     )
 
     mount(EmailVerifyView, {
@@ -307,6 +385,9 @@ describe('EmailVerifyView', () => {
     expect(showErrorMock).not.toHaveBeenCalled()
   })
 
+  // The auth store supplies pending provider identity absent from the registration
+  // draft. The page must use the pending verification endpoint and leave ordinary
+  // signup code delivery uncalled.
   it('uses the pending oauth verify-code endpoint when auth store only carries the pending provider', async () => {
     authStoreState.pendingAuthSession = {
       token: '',
@@ -325,7 +406,7 @@ describe('EmailVerifyView', () => {
       JSON.stringify({
         email: 'fresh@example.com',
         password: 'secret-123',
-      })
+      }),
     )
 
     mount(EmailVerifyView, {
@@ -349,6 +430,9 @@ describe('EmailVerifyView', () => {
     expect(showErrorMock).not.toHaveBeenCalled()
   })
 
+  // Pending code delivery returns another account-action session instead of a
+  // countdown. The page must save that continuation and return to its provider
+  // callback without an error toast.
   it('returns to the oauth callback flow when pending send-code detects an existing account email', async () => {
     authStoreState.pendingAuthSession = {
       token: '',
@@ -372,7 +456,7 @@ describe('EmailVerifyView', () => {
       JSON.stringify({
         email: 'fresh@example.com',
         password: 'secret-123',
-      })
+      }),
     )
 
     mount(EmailVerifyView, {
@@ -398,6 +482,9 @@ describe('EmailVerifyView', () => {
     expect(showErrorMock).not.toHaveBeenCalled()
   })
 
+  // The registration draft lacks pending metadata supplied by the auth store.
+  // Verification must create the OAuth account, install its session, clear pending
+  // state, and follow its redirect.
   it('submits pending auth account creation when session storage has no pending metadata but auth store does', async () => {
     authStoreState.pendingAuthSession = {
       token: 'pending-token-1',
@@ -411,7 +498,7 @@ describe('EmailVerifyView', () => {
         email: 'fresh@example.com',
         password: 'secret-123',
         aff_code: 'AFF123',
-      })
+      }),
     )
     apiClientPostMock.mockResolvedValue({
       data: {
@@ -456,6 +543,9 @@ describe('EmailVerifyView', () => {
     expect(registerMock).not.toHaveBeenCalled()
   })
 
+  // Initial pending code delivery consumes one Turnstile proof. The final creation
+  // button must await a separate proof and include that new token in the creation
+  // request.
   it('requires and submits a fresh turnstile token for pending oauth account creation', async () => {
     authStoreState.pendingAuthSession = {
       token: 'pending-token-3',
@@ -475,7 +565,7 @@ describe('EmailVerifyView', () => {
         email: 'fresh@example.com',
         password: 'secret-123',
         turnstile_token: 'send-code-token',
-      })
+      }),
     )
     apiClientPostMock.mockResolvedValue({
       data: {
@@ -492,7 +582,8 @@ describe('EmailVerifyView', () => {
           AuthLayout: { template: '<div><slot /><slot name="footer" /></div>' },
           Icon: true,
           TurnstileWidget: {
-            template: '<button data-testid="create-turnstile" @click="$emit(\'verify\', \'create-token\')">verify</button>',
+            template:
+              '<button data-testid="create-turnstile" @click="$emit(\'verify\', \'create-token\')">verify</button>',
             methods: {
               reset: createTurnstileResetMock,
             },
@@ -528,6 +619,9 @@ describe('EmailVerifyView', () => {
     expect(setTokenMock).toHaveBeenCalledWith('oauth-access-token')
   })
 
+  // Pending account creation rejects a request carrying a fresh Turnstile token.
+  // The widget must reset and the submit button must require another proof
+  // afterward.
   it('resets the pending oauth create-account turnstile after submit failure', async () => {
     authStoreState.pendingAuthSession = {
       token: 'pending-token-4',
@@ -547,7 +641,7 @@ describe('EmailVerifyView', () => {
         email: 'fresh@example.com',
         password: 'secret-123',
         turnstile_token: 'send-code-token',
-      })
+      }),
     )
     apiClientPostMock.mockRejectedValue(new Error('invalid verify code'))
 
@@ -557,7 +651,8 @@ describe('EmailVerifyView', () => {
           AuthLayout: { template: '<div><slot /><slot name="footer" /></div>' },
           Icon: true,
           TurnstileWidget: {
-            template: '<button data-testid="create-turnstile" @click="$emit(\'verify\', \'create-token\')">verify</button>',
+            template:
+              '<button data-testid="create-turnstile" @click="$emit(\'verify\', \'create-token\')">verify</button>',
             methods: {
               reset: createTurnstileResetMock,
             },
@@ -585,6 +680,9 @@ describe('EmailVerifyView', () => {
     expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
   })
 
+  // Account creation returns an unfinished binding session. The page must retain
+  // continuation metadata and navigate to the callback without installing tokens
+  // or showing authentication success.
   it('returns to the oauth callback flow when pending account creation becomes bind-login', async () => {
     authStoreState.pendingAuthSession = {
       token: '',
@@ -603,7 +701,7 @@ describe('EmailVerifyView', () => {
       JSON.stringify({
         email: 'fresh@example.com',
         password: 'secret-123',
-      })
+      }),
     )
     apiClientPostMock.mockResolvedValue({
       data: {
@@ -649,10 +747,13 @@ describe('EmailVerifyView', () => {
     expect(showSuccessMock).not.toHaveBeenCalled()
   })
 
+  // The draft contains ordinary signup credentials and referral attribution.
+  // Verification must call the registration store, clear both referral stores, and
+  // open the dashboard without the pending endpoint.
   it('keeps the normal email registration flow unchanged', async () => {
     localStorage.setItem(
       'affiliate_aff_code',
-      JSON.stringify({ code: 'AFF-OLD', expiresAt: Date.now() + 60000 })
+      JSON.stringify({ code: 'AFF-OLD', expiresAt: Date.now() + 60000 }),
     )
     sessionStorage.setItem('oauth_aff_code', 'AFF-OLD')
     sessionStorage.setItem(
@@ -662,7 +763,7 @@ describe('EmailVerifyView', () => {
         password: 'secret-456',
         promo_code: 'PROMO',
         invitation_code: 'INVITE',
-      })
+      }),
     )
     registerMock.mockResolvedValue({})
 
@@ -699,6 +800,9 @@ describe('EmailVerifyView', () => {
     expect(sessionStorage.getItem('oauth_aff_code')).toBeNull()
   })
 
+  // Initial email delivery consumes the saved Tencent ticket and random string.
+  // The test checks their removal from saved draft data before ordinary final
+  // registration proceeds.
   it('does not require another Tencent proof for final email registration', async () => {
     getPublicSettingsMock.mockResolvedValue({
       turnstile_enabled: false,
@@ -715,7 +819,7 @@ describe('EmailVerifyView', () => {
         password: 'secret-456',
         tencent_captcha_ticket: 'send-code-ticket',
         tencent_captcha_randstr: '@send-code-rand',
-      })
+      }),
     )
     registerMock.mockResolvedValue({})
 
@@ -736,10 +840,12 @@ describe('EmailVerifyView', () => {
     })
 
     await flushPromises()
-    expect(sendVerifyCodeMock).toHaveBeenCalledWith(expect.objectContaining({
-      tencent_captcha_ticket: 'send-code-ticket',
-      tencent_captcha_randstr: '@send-code-rand',
-    }))
+    expect(sendVerifyCodeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tencent_captcha_ticket: 'send-code-ticket',
+        tencent_captcha_randstr: '@send-code-rand',
+      }),
+    )
     expect(JSON.parse(sessionStorage.getItem('register_data') || '{}')).toEqual({
       email: 'normal@example.com',
       password: 'secret-456',
@@ -749,14 +855,19 @@ describe('EmailVerifyView', () => {
     await wrapper.get('form').trigger('submit.prevent')
     await flushPromises()
 
-    expect(registerMock).toHaveBeenCalledWith(expect.objectContaining({
-      email: 'normal@example.com',
-      verify_code: '654321',
-      tencent_captcha_ticket: undefined,
-      tencent_captcha_randstr: undefined,
-    }))
+    expect(registerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'normal@example.com',
+        verify_code: '654321',
+        tencent_captcha_ticket: undefined,
+        tencent_captcha_randstr: undefined,
+      }),
+    )
   })
 
+  // Domain quota policy permits a non-whitelisted address to reach code delivery.
+  // A backend quota rejection must become the translated domain-registration-limit
+  // toast on the page.
   it('submits a non-whitelist domain and localizes a send-code quota error', async () => {
     getPublicSettingsMock.mockResolvedValue({
       turnstile_enabled: false,
@@ -792,6 +903,9 @@ describe('EmailVerifyView', () => {
     expect(showErrorMock).toHaveBeenCalledWith('auth.emailDomainRegistrationLimit')
   })
 
+  // The final registration request receives an email-domain quota rejection. The
+  // verification page must show the dedicated translated limit message through its
+  // app error toast.
   it('localizes a final registration domain quota error', async () => {
     sessionStorage.setItem(
       'register_data',
@@ -820,6 +934,8 @@ describe('EmailVerifyView', () => {
     expect(showErrorMock).toHaveBeenLastCalledWith('auth.emailDomainRegistrationLimit')
   })
 
+  // Quota fallback is disabled and the draft email misses the whitelist. The page
+  // must reject locally, show the allowed-suffix message, and avoid code delivery.
   it('blocks sending code for a non-whitelist domain when quota is disabled', async () => {
     getPublicSettingsMock.mockResolvedValue({
       turnstile_enabled: false,

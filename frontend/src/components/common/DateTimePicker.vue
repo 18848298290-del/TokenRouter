@@ -9,18 +9,13 @@
       :class="[
         'input input-trigger',
         modelValue && 'pr-10',
-        isOpen && 'date-time-picker-trigger-open'
+        isOpen && 'date-time-picker-trigger-open',
       ]"
     >
       <span class="date-time-picker-icon">
         <Icon name="calendar" size="sm" />
       </span>
-      <span
-        :class="[
-          'date-time-picker-value',
-          !modelValue && 'date-time-picker-placeholder'
-        ]"
-      >
+      <span :class="['date-time-picker-value', !modelValue && 'date-time-picker-placeholder']">
         {{ displayValue }}
       </span>
       <span v-if="!modelValue" class="date-time-picker-icon">
@@ -33,7 +28,10 @@
       </span>
     </button>
 
-    <!-- 清除按钮和触发器是兄弟节点，按钮里不能再嵌套按钮 -->
+    <!--
+      The clear action is a sibling of the trigger so the control avoids nesting one
+      button inside another.
+    -->
     <button
       v-if="modelValue"
       type="button"
@@ -47,14 +45,17 @@
     <MotionTransition name="dropdown-fade">
       <div v-if="isOpen" class="date-time-picker-dropdown" :style="dropdownStyle" role="dialog">
         <div class="date-time-picker-body">
-          <!-- 快捷选项：桌面端是左侧纵向列表，窄屏折成可换行的 chip -->
+          <!-- Shortcuts form a vertical sidebar on desktop and wrap into chips on narrow screens. -->
           <div v-if="presets?.length" class="date-time-picker-presets">
             <p v-if="presetsTitle" class="date-time-picker-presets-title">{{ presetsTitle }}</p>
             <button
               v-for="preset in presets"
               :key="preset.key"
               type="button"
-              :class="['date-time-picker-preset', isPresetActive(preset) && 'date-time-picker-preset-active']"
+              :class="[
+                'date-time-picker-preset',
+                isPresetActive(preset) && 'date-time-picker-preset-active',
+              ]"
               @click="selectPreset(preset)"
             >
               <span class="truncate">{{ preset.label }}</span>
@@ -68,7 +69,7 @@
             </button>
           </div>
 
-          <!-- 单月日历，点击即选中日期 -->
+          <!-- Clicking a day updates the single-month calendar draft. -->
           <div class="date-time-picker-calendar">
             <div class="date-time-picker-header">
               <button
@@ -91,7 +92,11 @@
             </div>
 
             <div class="date-time-picker-grid">
-              <span v-for="weekday in weekdayLabels" :key="weekday" class="date-time-picker-weekday">
+              <span
+                v-for="weekday in weekdayLabels"
+                :key="weekday"
+                class="date-time-picker-weekday"
+              >
                 {{ weekday }}
               </span>
               <div v-for="cell in calendarCells" :key="cell.key" class="date-time-picker-day-cell">
@@ -104,7 +109,7 @@
                   :class="[
                     'date-time-picker-day',
                     cell.selected && 'date-time-picker-day-selected',
-                    cell.isToday && 'date-time-picker-day-today'
+                    cell.isToday && 'date-time-picker-day-today',
                   ]"
                   @click="selectDay(cell.date)"
                 >
@@ -114,7 +119,7 @@
             </div>
           </div>
 
-          <!-- 时、分两列滚动选择，列高跟随左侧日历 -->
+          <!-- Hour and minute columns scroll within the height allocated by the adjacent calendar. -->
           <div class="date-time-picker-time">
             <div class="date-time-picker-header date-time-picker-time-header">
               <span class="date-time-picker-title tabular-nums">{{ timeLabel }}</span>
@@ -138,7 +143,7 @@
                     :data-value="value"
                     :class="[
                       'date-time-picker-option',
-                      column.selected === value && 'date-time-picker-option-selected'
+                      column.selected === value && 'date-time-picker-option-selected',
                     ]"
                     @click="column.select(value)"
                   >
@@ -150,7 +155,7 @@
           </div>
         </div>
 
-        <!-- 底栏：左侧一键选当前时间，右侧取消与确定 -->
+        <!-- The footer offers the current-time shortcut beside cancellation and application actions. -->
         <div class="date-time-picker-actions">
           <button type="button" class="date-time-picker-now" @click="selectNow">
             {{ t('dates.now') }}
@@ -159,7 +164,12 @@
             <button type="button" class="btn btn-secondary btn-sm h-8" @click="close">
               {{ t('common.cancel') }}
             </button>
-            <button type="button" class="btn btn-primary btn-sm h-8" :disabled="!localDate" @click="apply">
+            <button
+              type="button"
+              class="btn btn-primary btn-sm h-8"
+              :disabled="!localDate"
+              @click="apply"
+            >
               {{ t('common.confirm') }}
             </button>
           </div>
@@ -177,77 +187,138 @@ import MotionTransition from '@/components/common/MotionTransition.vue'
 import { useFloatingMotion } from '@/composables/useFloatingMotion'
 import { getFloatingPanelPosition, type FloatingPanelPosition } from '@/utils/floatingPanel'
 
+// DateTimePicker.vue edits a local date and minute-resolution time in a floating
+// calendar. Opening parses the parent value into a local draft; applying formats that
+// draft, while presets and the current-time action publish immediately. Closing leaves
+// the parent model unchanged.
+//
+// Calendar cells compare only the date portion of min. Clock choices remain available
+// on that date, and immediate shortcuts publish their resolved values directly.
+// Time-column clicks can establish today when no date is selected, while column
+// scrolling waits for the rendered panel. The shared floating-panel helper computes
+// placement with width chosen from preset availability.
+
+// CalendarCell contains the display and selection state for one calendar position.
 interface CalendarCell {
-  key: string
+  key: string // Stable rendered item identifier.
+  // Local YYYY-MM-DD date; null represents a blank calendar cell outside the currently
+  // displayed month.
   date: string | null
-  day: number
-  ariaLabel: string
-  disabled: boolean
-  isToday: boolean
-  selected: boolean
+  day: number // Calendar day display number.
+  ariaLabel: string // Accessible item label text.
+  disabled: boolean // Disables user control interaction.
+  isToday: boolean // Current local day flag.
+  selected: boolean // Current selection highlight flag.
 }
 
+// TimeColumnKey identifies the hour or minute column receiving scroll measurements.
 type TimeColumnKey = 'hour' | 'minute'
 
+// DateTimePreset resolves a local timestamp when its shortcut is selected.
 export interface DateTimePreset {
-  key: string
-  label: string
-  /** 点击时计算目标值，格式同 modelValue。 */
+  key: string // Stable rendered item identifier.
+  label: string // Visible field label text.
+
+  // Resolves a local timestamp at invocation, allowing relative shortcuts to use the
+  // time of the current selection.
   resolve: () => string
 }
 
+// Props describes the values and options supplied by the parent component.
 interface Props {
-  /** 本地时间，格式和 datetime-local 一致（YYYY-MM-DDTHH:mm），空字符串表示未设置。 */
+  // Local YYYY-MM-DDTHH:mm text; an empty string means unset, and parsing ignores
+  // trailing seconds or milliseconds.
   modelValue: string
-  /** 未设置时触发器显示的文字，可以写成空值的含义，例如“立即生效”。 */
+
+  // Labels an unset or unparsable parent value; a missing or empty label selects the
+  // translated default.
   placeholder?: string
-  /** 最早可选的日期时间，格式同 modelValue。早于它所在日期的日子置灰。 */
+
+  // Disables calendar days before this local timestamp date; its clock portion does
+  // not restrict time-column choices or immediate shortcut values.
   min?: string
-  /** 弹层左侧的快捷选项，点击后直接写回并关闭弹层。 */
-  presets?: DateTimePreset[]
-  /** 快捷选项列表的标题。 */
-  presetsTitle?: string
-  id?: string
+
+  presets?: DateTimePreset[] // Immediate date-time shortcut entries.
+
+  presetsTitle?: string // Shortcut list heading text.
+  id?: string // Native control identifier attribute.
 }
 
+// props holds parent-supplied component options consumed by the rendering and
+// interaction handlers below.
 const props = defineProps<Props>()
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+// emit publishes the declared component notifications so the parent can update its
+// owned state.
+const emit = defineEmits<{
+  'update:modelValue': [value: string] // Replacement parent model payload.
+}>()
 
+// t and locale provide translated actions and localized calendar labels from the
+// application language.
 const { t, locale } = useI18n()
 
+// isOpen controls the panel, containerRef defines measurement and outside-click
+// ownership, and dropdownPosition stores the shared floating helper result.
 const isOpen = ref(false)
 const containerRef = ref<HTMLElement | null>(null)
 const dropdownPosition = ref<FloatingPanelPosition | null>(null)
+// columnRefs retains rendered time-column elements so the opening tick can center
+// selected values independently for hours and minutes.
 const columnRefs: Partial<Record<TimeColumnKey, HTMLElement>> = {}
 
-// 弹层里的草稿，点确定后才写回 modelValue。
+// localDate, localHour, and localMinute hold the pending calendar and time selection
+// until an apply action publishes their combined local timestamp.
 const localDate = ref('')
 const localHour = ref(0)
 const localMinute = ref(0)
-// 日历当前展示月份的 1 日，格式 YYYY-MM-DD。
+
+// viewMonth stores the first local day of the displayed month as YYYY-MM-DD for
+// calendar navigation.
 const viewMonth = ref('')
 
+// dropdownWidth and dropdownMargin bound panel width and viewport padding in CSS
+// pixels before the shared floating helper calculates placement.
 const dropdownWidth = computed(() => (props.presets?.length ? 544 : 432))
 const dropdownMargin = 12
 
+// hours and minutes enumerate the selectable clock values used by the two scrolling
+// time columns.
 const hours = Array.from({ length: 24 }, (_, index) => index)
 const minutes = Array.from({ length: 60 }, (_, index) => index)
 
+// pad formats a numeric time field with at least two characters.
 const pad = (value: number): string => String(value).padStart(2, '0')
 
+// formatDate formats local calendar fields into a YYYY-MM-DD date string.
 const formatDate = (date: Date): string => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
+// parseLocalDate reads the date prefix at midnight in the browser timezone. Time
+// components are discarded for calendar calculations. The Date constructor can
+// normalize impossible calendar days, while prefixes it cannot parse produce an
+// invalid Date for the caller.
 const parseLocalDate = (value: string): Date => new Date(`${value.slice(0, 10)}T00:00:00`)
 
-// 解析 YYYY-MM-DDTHH:mm 开头的值，秒和毫秒忽略。
-const parseValue = (value: string): { date: string; hour: number; minute: number } | null => {
+// parseValue extracts the date, hour, and minute prefix from local timestamp text.
+// Seconds and later characters are ignored, and strings lacking the expected prefix
+// return null for caller defaults.
+const parseValue = (
+  value: string,
+): {
+  date: string // Captured YYYY-MM-DD prefix; years may contain more than four digits.
+  hour: number // Local hour numeric value.
+  minute: number // Local minute numeric value.
+} | null => {
+  // Read minute precision from the accepted prefix; trailing seconds do not
+  // participate in draft display or emitted apply values.
   const match = /^(\d{4,}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(value)
   if (!match) return null
   return { date: match[1], hour: Number(match[2]), minute: Number(match[3]) }
 }
 
+// dropdownStyle maps the floating helper coordinates to CSS, retaining auto for the
+// unused vertical side and an empty style before measurement.
 const dropdownStyle = computed(() => {
   const position = dropdownPosition.value
   if (!position) return {}
@@ -256,10 +327,12 @@ const dropdownStyle = computed(() => {
     top: position.top === null ? 'auto' : `${position.top}px`,
     bottom: position.bottom === null ? 'auto' : `${position.bottom}px`,
     width: `${position.width}px`,
-    maxHeight: `${position.maxHeight}px`
+    maxHeight: `${position.maxHeight}px`,
   }
 })
 
+// displayValue formats the parent value for the trigger, while timeLabel formats the
+// pending hour and minute within the open draft panel.
 const displayValue = computed(() => {
   const parsed = parseValue(props.modelValue)
   if (!parsed) return props.placeholder || t('dates.selectDateTime')
@@ -270,25 +343,30 @@ const displayValue = computed(() => {
 
 const timeLabel = computed(() => `${pad(localHour.value)}:${pad(localMinute.value)}`)
 
+// monthLabel names the displayed month, while weekStartsOn and weekdayLabels place
+// Monday first for zh-Hans and Sunday first for other locales.
 const monthLabel = computed(() => {
   if (!viewMonth.value) return ''
-  return parseLocalDate(viewMonth.value).toLocaleDateString(locale.value, { year: 'numeric', month: 'long' })
+  return parseLocalDate(viewMonth.value).toLocaleDateString(locale.value, {
+    year: 'numeric',
+    month: 'long',
+  })
 })
 
-// 中文日历以周一开头，英文以周日开头。
 const weekStartsOn = computed(() => (locale.value === 'zh-Hans' ? 1 : 0))
 
 const weekdayLabels = computed(() => {
-  // 2023-01-01 是周日，以它为基准依次生成一周的星期缩写。
   return Array.from({ length: 7 }, (_, index) => {
+    // January first of 2023 was Sunday, providing a fixed weekday-label anchor.
     const date = new Date(2023, 0, 1 + ((index + weekStartsOn.value) % 7))
     return date.toLocaleDateString(locale.value, { weekday: 'narrow' })
   })
 })
 
+// minDate extracts the minimum calendar date, and calendarCells disables earlier days
+// while retaining a fixed six-week grid for stable panel height.
 const minDate = computed(() => parseValue(props.min ?? '')?.date ?? '')
 
-// 固定生成 6 周 42 格，切换月份时面板高度不变。
 const calendarCells = computed<CalendarCell[]>(() => {
   if (!viewMonth.value) return []
   const first = parseLocalDate(viewMonth.value)
@@ -296,6 +374,7 @@ const calendarCells = computed<CalendarCell[]>(() => {
   const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate()
   const today = formatDate(new Date())
 
+  // Six full weeks keep calendar height stable across different month layouts.
   return Array.from({ length: 42 }, (_, index) => {
     const day = index - leading + 1
     if (day < 1 || day > daysInMonth) {
@@ -306,7 +385,7 @@ const calendarCells = computed<CalendarCell[]>(() => {
         ariaLabel: '',
         disabled: true,
         isToday: false,
-        selected: false
+        selected: false,
       }
     }
     const current = new Date(first.getFullYear(), first.getMonth(), day)
@@ -318,16 +397,20 @@ const calendarCells = computed<CalendarCell[]>(() => {
       ariaLabel: current.toLocaleDateString(locale.value, { dateStyle: 'full' }),
       disabled: !!minDate.value && date < minDate.value,
       isToday: date === today,
-      selected: date === localDate.value
+      selected: date === localDate.value,
     }
   })
 })
 
-// 用户先点时间再点日期时，日期默认取今天，确定按钮随即可用。
+// ensureDate supplies today when a time selection has no draft date. This makes a
+// time-first interaction eligible for application, while a previously chosen day
+// remains the draft date.
 const ensureDate = () => {
   if (!localDate.value) localDate.value = formatDate(new Date())
 }
 
+// timeColumns binds each clock column to its current draft selection and establishes
+// today when a time-first edit lacks a date.
 const timeColumns = computed(() => [
   {
     key: 'hour' as const,
@@ -337,7 +420,7 @@ const timeColumns = computed(() => [
     select: (value: number) => {
       localHour.value = value
       ensureDate()
-    }
+    },
   },
   {
     key: 'minute' as const,
@@ -347,10 +430,13 @@ const timeColumns = computed(() => [
     select: (value: number) => {
       localMinute.value = value
       ensureDate()
-    }
-  }
+    },
+  },
 ])
 
+// setColumnRef registers the DOM element for an hour or minute column. Non-HTMLElement
+// values remove the registration, so the later scroll helper skips columns that are no
+// longer mounted.
 const setColumnRef = (key: TimeColumnKey, el: Element | ComponentPublicInstance | null) => {
   if (el instanceof HTMLElement) {
     columnRefs[key] = el
@@ -359,9 +445,14 @@ const setColumnRef = (key: TimeColumnKey, el: Element | ComponentPublicInstance 
   }
 }
 
-// 打开时把选中的时、分滚到列中间。
+// scrollColumnsToSelection centers the selected hour and minute within their rendered
+// columns. Call it after the panel DOM updates; missing column elements or matching
+// options are skipped independently.
 const scrollColumnsToSelection = () => {
-  const selections: Record<TimeColumnKey, number> = { hour: localHour.value, minute: localMinute.value }
+  const selections: Record<TimeColumnKey, number> = {
+    hour: localHour.value,
+    minute: localMinute.value,
+  }
   for (const key of ['hour', 'minute'] as const) {
     const column = columnRefs[key]
     const option = column?.querySelector<HTMLElement>(`[data-value="${selections[key]}"]`)
@@ -371,40 +462,59 @@ const scrollColumnsToSelection = () => {
   }
 }
 
+// showMonthOf selects the first day of the month containing the supplied date. An
+// empty value uses the current local month, providing an initial calendar page for an
+// unset selection.
 const showMonthOf = (date: string) => {
   const base = date ? parseLocalDate(date) : new Date()
   viewMonth.value = formatDate(new Date(base.getFullYear(), base.getMonth(), 1))
 }
 
+// shiftMonth moves the calendar view by the supplied month offset.
 const shiftMonth = (offset: number) => {
   const current = parseLocalDate(viewMonth.value)
   viewMonth.value = formatDate(new Date(current.getFullYear(), current.getMonth() + offset, 1))
 }
 
+// selectDay replaces the draft date with the clicked calendar day.
 const selectDay = (date: string) => {
   localDate.value = date
 }
 
+// emitValue publishes a local date-time string containing hour and minute. The date is
+// used as supplied, and padded clock fields produce the minute-resolution
+// representation expected by parent model consumers.
 const emitValue = (date: string, hour: number, minute: number) => {
   emit('update:modelValue', `${date}T${pad(hour)}:${pad(minute)}`)
 }
 
+// isPresetActive resolves a shortcut and compares it with the parent timestamp. An
+// empty parent value is inactive, and relative resolvers run at comparison time rather
+// than retaining an earlier result.
 const isPresetActive = (preset: DateTimePreset): boolean => {
   return !!props.modelValue && preset.resolve() === props.modelValue
 }
 
+// selectPreset resolves a preset at click time and publishes its string. It closes the
+// panel immediately, leaving the parent responsible for accepting the replacement
+// model value.
 const selectPreset = (preset: DateTimePreset) => {
   emit('update:modelValue', preset.resolve())
   isOpen.value = false
 }
 
-// “此刻”直接写回当前时间并关闭弹层。
+// selectNow publishes the current local calendar date, hour, and minute. It closes the
+// panel after emitting the value, so callers receive minute precision from this
+// immediate action.
 const selectNow = () => {
   const now = new Date()
   emitValue(formatDate(now), now.getHours(), now.getMinutes())
   isOpen.value = false
 }
 
+// open initializes the draft from the parent value and displays its month. Missing
+// parsed time fields use the current local time, and column centering waits until Vue
+// renders the panel.
 const open = () => {
   const parsed = parseValue(props.modelValue)
   const now = new Date()
@@ -414,14 +524,21 @@ const open = () => {
   showMonthOf(localDate.value)
   isOpen.value = true
   updateDropdownPosition()
+  // Time columns mount with the open panel, so wait for Vue to render their selected
+  // options before measuring and centering them.
   void nextTick(scrollColumnsToSelection)
 }
 
-// 未点确定就关闭时丢弃草稿，触发器继续显示已生效的值。
+// close hides the date-time panel while leaving the parent value unchanged. The next
+// open initializes a fresh draft from modelValue, so abandoned local edits are
+// replaced at that point.
 const close = () => {
   isOpen.value = false
 }
 
+// toggle opens the picker or hides the currently visible panel. Opening initializes
+// the draft from modelValue, while hiding leaves the parent value unchanged until
+// another action publishes a replacement.
 const toggle = () => {
   if (isOpen.value) {
     close()
@@ -430,59 +547,85 @@ const toggle = () => {
   }
 }
 
+// apply publishes the draft date and time when a date is selected. An empty date
+// returns immediately; calendar-day disabling handles the supplied minimum, and this
+// handler performs no further minimum comparison.
 const apply = () => {
   if (!localDate.value) return
   emitValue(localDate.value, localHour.value, localMinute.value)
   isOpen.value = false
 }
 
+// clear publishes the empty-string unset value and closes the picker. The parent
+// receives the update before visibility changes, and accepting that value restores the
+// configured empty-state trigger label.
 const clear = () => {
   emit('update:modelValue', '')
   isOpen.value = false
 }
 
-// 弹层打开时按 Esc 关闭弹层，并阻止事件冒泡到外层弹窗的 Esc 处理。
+// handleEscape closes an open picker and stops the handled event from bubbling. The
+// template invokes it for Escape, keeping the enclosing dialog from consuming that
+// same dismissal key.
 const handleEscape = (event: KeyboardEvent) => {
   if (!isOpen.value) return
   event.stopPropagation()
   close()
 }
 
-// 触发器在视口右半侧时右缘对齐，否则左缘对齐。空间不足时由公共定位函数翻转和夹取。
+// updateDropdownPosition measures the trigger and delegates panel sizing to
+// getFloatingPanelPosition. The trigger center selects left or right alignment, while
+// the helper applies viewport padding, vertical flipping, and height limits.
 const updateDropdownPosition = () => {
   const trigger = containerRef.value?.getBoundingClientRect()
   if (!trigger) return
   const triggerCenter = trigger.left + trigger.width / 2
-  dropdownPosition.value = getFloatingPanelPosition(trigger, window.innerWidth, window.innerHeight, {
-    viewportPadding: dropdownMargin,
-    maxWidth: dropdownWidth.value,
-    maxHeightRatio: 0.85,
-    align: triggerCenter > window.innerWidth / 2 ? 'right' : 'left',
-    pinLeftOnMobile: false
-  })
+  dropdownPosition.value = getFloatingPanelPosition(
+    trigger,
+    window.innerWidth,
+    window.innerHeight,
+    {
+      viewportPadding: dropdownMargin,
+      maxWidth: dropdownWidth.value,
+      maxHeightRatio: 0.85,
+      align: triggerCenter > window.innerWidth / 2 ? 'right' : 'left',
+      pinLeftOnMobile: false,
+    },
+  )
 }
 
+// Follow ancestor movement through the shared lifecycle and close when the trigger
+// becomes unavailable, keeping the floating panel tied to its visible control.
 useFloatingMotion(containerRef, () => isOpen.value, close, updateDropdownPosition)
 
+// handleClickOutside closes the picker when a click falls outside its container.
+// Internal calendar and action clicks remain available, including when an enclosing
+// dialog stops event bubbling.
 const handleClickOutside = (event: MouseEvent) => {
   if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
     close()
   }
 }
 
+// handleViewportChange updates placement when the picker is currently open. Closed
+// pickers defer measurement until opening so hidden panel state does not drive
+// viewport positioning work.
 const handleViewportChange = () => {
   if (isOpen.value) {
     updateDropdownPosition()
   }
 }
 
+// Capture outside clicks before an enclosing dialog stops bubbling; viewport listeners
+// then keep the open calendar positioned during scrolling or resizing.
 onMounted(() => {
-  // 在弹窗拦截冒泡前处理外部点击，关闭日期时间草稿。
   document.addEventListener('click', handleClickOutside, true)
   window.addEventListener('resize', handleViewportChange)
   window.addEventListener('scroll', handleViewportChange, true)
 })
 
+// Release this calendar instance document and viewport listeners so an unmounted
+// picker cannot react to later clicks or request position updates.
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside, true)
   window.removeEventListener('resize', handleViewportChange)
@@ -491,7 +634,10 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 触发器基线来自 input input-trigger，展开态描边和 DateRangePicker、Select 一致。 */
+/*
+  The input and input-trigger classes supply the control baseline; open-state
+  outlines match DateRangePicker and Select.
+*/
 .date-time-picker-trigger-open {
   @apply border-primary-900/10 ring-2 ring-black/10 dark:border-dark-400 dark:ring-white/6;
 }
@@ -527,7 +673,7 @@ onUnmounted(() => {
   @apply flex flex-col sm:flex-row;
 }
 
-/* 窄屏时快捷选项横排换行，sm 起改为左侧纵向列表。 */
+/* Shortcuts wrap on narrow screens and form a vertical sidebar from the sm breakpoint. */
 .date-time-picker-presets {
   @apply flex flex-wrap items-center gap-1 p-2;
   @apply border-b border-primary-900/10 dark:border-dark-600;
@@ -546,7 +692,7 @@ onUnmounted(() => {
   @apply max-sm:border max-sm:border-primary-900/10 max-sm:dark:border-dark-600;
 }
 
-/* 和 DateRangePicker 的选中快捷项同一配色。 */
+/* Selected shortcuts share the DateRangePicker selection palette. */
 .date-time-picker-preset-active {
   @apply bg-gray-100 font-medium text-primary-700 dark:bg-primary-500/8 dark:text-primary-500 dark:hover:bg-primary-500/8;
 }
@@ -596,7 +742,7 @@ onUnmounted(() => {
   @apply disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent dark:disabled:text-dark-600;
 }
 
-/* 今天用底部小圆点标记，和选中态的实心底色区分。 */
+/* Today uses a bottom dot independent of the filled selected-day surface. */
 .date-time-picker-day-today::after {
   content: '';
   @apply absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-primary-500;
@@ -611,22 +757,31 @@ onUnmounted(() => {
   @apply bg-white;
 }
 
-/* 窄屏时时间区排在日历下方，sm 起放到右侧并用竖线隔开。 */
+/* Time columns sit below the calendar on narrow screens and beside it with a divider from sm. */
 .date-time-picker-time {
   @apply flex flex-col p-3;
   @apply border-t border-primary-900/10 dark:border-dark-600;
   @apply sm:w-32 sm:shrink-0 sm:border-l sm:border-t-0;
 }
 
-/* 列表绝对定位，列高由左侧日历撑出，和日历网格等高。 */
+/*
+  Absolute column lists inherit the calendar grid height so extra clock options
+  scroll inside that allocated region.
+*/
 .date-time-picker-columns-frame {
   @apply relative min-h-0 flex-1 max-sm:h-48;
 }
 
-/* 上下边缘渐隐，提示列表还能继续滚动。 */
+/* Top and bottom fading indicates that additional clock values remain scrollable. */
 .date-time-picker-columns {
   @apply absolute inset-0 flex gap-1;
-  mask-image: linear-gradient(to bottom, transparent, black 1.5rem, black calc(100% - 1.5rem), transparent);
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black 1.5rem,
+    black calc(100% - 1.5rem),
+    transparent
+  );
 }
 
 .date-time-picker-column {

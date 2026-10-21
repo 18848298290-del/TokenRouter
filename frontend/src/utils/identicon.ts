@@ -1,76 +1,107 @@
 /**
- * GitHub 风格默认头像（identicon）生成工具。
- *
- * 根据用户 ID 等种子字符串确定性地生成 7x7 纵向镜像像素图案：
- * 相同种子永远得到相同头像，不同种子的图案与颜色基本不重复。
- * 全程同步纯函数，输出 SVG data URI，可直接作为 <img src> 使用。
+ * identicon.ts generates deterministic SVG avatar data URIs from normalized seed
+ * strings. It hashes the trimmed, lowercased seed into a synchronous pseudorandom
+ * sequence, uses that sequence for a seven-by-seven mirrored pattern, and chooses its
+ * hue from the same sequence.
  */
 
-/** 图案网格为 7x7，比 GitHub 经典的 5x5 更细，放大头像时色块也较小。 */
+/**
+ * GRID_SIZE and HALF_COLUMNS define a seven-cell square with four sampled columns,
+ * including its shared center column.
+ */
 const GRID_SIZE = 7
-/** 纵向镜像对称时只需计算左半部分列数（含中列） */
 const HALF_COLUMNS = 4
-/** 背景色：GitHub 同款中性浅灰，深浅主题下都协调 */
+
+/**
+ * BACKGROUND_COLOR and the foreground saturation and lightness set the avatar palette,
+ * while each seed selects its foreground hue.
+ */
 const BACKGROUND_COLOR = '#ececf0'
-/** 前景固定饱和度，仅色相随种子变化 */
 const FOREGROUND_SATURATION = 65
-/** 前景固定亮度，50% 保证在浅灰底上可读 */
 const FOREGROUND_LIGHTNESS = 50
 
 /**
- * FNV-1a 32-bit 哈希。
- * 这里不需要密码学安全性，只要确定性和分布均匀；
- * 不选 SubtleCrypto SHA-256 是因为它是异步接口，无法用于 computed/模板。
+ * fnv1a hashes the seed's UTF-16 code units into an unsigned 32-bit value. Math.imul
+ * retains 32-bit multiplication behavior, providing repeatable input for the
+ * synchronous avatar generator.
  */
 function fnv1a(input: string): number {
   let hash = 0x811c9dc5
   for (let i = 0; i < input.length; i++) {
     hash ^= input.charCodeAt(i)
-    // 乘以 FNV 素数 16777619（用位运算避免精度问题）
+
+    /**
+     * Multiply by the FNV prime with 32-bit wrapping for repeatable patterns.
+     */
     hash = Math.imul(hash, 0x01000193)
   }
-  // 无符号化
+
+  /**
+   * Expose the hash as an unsigned generator seed.
+   */
   return hash >>> 0
 }
 
 /**
- * mulberry32 伪随机数生成器：由 32 位种子产生确定性的 [0, 1) 序列。
+ * mulberry32 creates a stateful pseudorandom generator from the unsigned 32-bit seed.
+ * Each call advances its private state and returns a deterministic value in the
+ * half-open interval from zero to one.
  */
 function mulberry32(seed: number): () => number {
+  // Truncate the seed to the generator's unsigned 32-bit state.
   let state = seed >>> 0
   return () => {
+    // Wrap each advance before mixing its pseudorandom output bits.
     state = (state + 0x6d2b79f5) >>> 0
     let t = state
     t = Math.imul(t ^ (t >>> 15), t | 1)
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    /**
+     * Scale unsigned generator output into the half-open unit interval.
+     */
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
 }
 
 /**
- * 根据种子生成默认头像的 SVG data URI。
- * 种子传入前会做归一化（去首尾空格、转小写），空串兜底为 '?'。
+ * identiconDataUri creates a percent-encoded SVG data URI for a mirrored avatar. Seeds
+ * are trimmed and lowercased, empty seeds use a question mark, and identical normalized
+ * seeds produce identical output.
  */
 export function identiconDataUri(seed: string): string {
   const normalized = seed.trim().toLowerCase() || '?'
   const random = mulberry32(fnv1a(normalized))
 
-  // 前 3 列共 15 格逐格决定是否填充，第 4、5 列镜像第 2、1 列
+  /**
+   * Sample four columns including the center; the final three columns reuse those
+   * sampled values to form a seven-column mirror.
+   */
   const filled: boolean[][] = []
   for (let column = 0; column < HALF_COLUMNS; column++) {
     const columnCells: boolean[] = []
     for (let row = 0; row < GRID_SIZE; row++) {
+      /**
+       * Half of the random interval selects a filled cell.
+       */
       columnCells.push(random() < 0.5)
     }
     filled.push(columnCells)
   }
 
+  /**
+   * Map the next random sample to whole hue degrees.
+   */
   const hue = Math.floor(random() * 360)
   const foreground = `hsl(${hue}, ${FOREGROUND_SATURATION}%, ${FOREGROUND_LIGHTNESS}%)`
 
-  const rects: string[] = [`<rect width="${GRID_SIZE}" height="${GRID_SIZE}" fill="${BACKGROUND_COLOR}"/>`]
+  const rects: string[] = [
+    `<rect width="${GRID_SIZE}" height="${GRID_SIZE}" fill="${BACKGROUND_COLOR}"/>`,
+  ]
   for (let column = 0; column < GRID_SIZE; column++) {
-    // 右半部分列镜像取左半部分的填充状态
+    /**
+     * Mirror columns across the center using the previously sampled cells, so both
+     * sides have identical occupancy for every avatar seed.
+     */
     const sourceColumn = column < HALF_COLUMNS ? column : GRID_SIZE - 1 - column
     for (let row = 0; row < GRID_SIZE; row++) {
       if (filled[sourceColumn][row]) {

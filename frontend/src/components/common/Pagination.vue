@@ -23,7 +23,9 @@
       </button>
     </div>
 
-    <div class="pagination-desktop hidden lg:flex lg:flex-1 lg:flex-wrap lg:items-center lg:justify-between lg:gap-x-4 lg:gap-y-2">
+    <div
+      class="pagination-desktop hidden lg:flex lg:flex-1 lg:flex-wrap lg:items-center lg:justify-between lg:gap-x-4 lg:gap-y-2"
+    >
       <!-- Desktop pagination info -->
       <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
         <p class="pagination-summary text-sm text-gray-700 dark:text-gray-300">
@@ -41,7 +43,10 @@
           <span class="text-sm text-gray-700 dark:text-gray-300"
             >{{ t('pagination.perPage') }}:</span
           >
-          <!-- 96px 宽度:px-4 触发器内 padding + 下拉图标占 60px,给三位数页容量留足文本空间。 -->
+          <!--
+            The 96px wrapper leaves room for three-digit page sizes after trigger
+            padding and the dropdown icon consume 60px.
+          -->
           <div class="page-size-select w-24">
             <Select
               :model-value="pageSize"
@@ -62,7 +67,11 @@
             :placeholder="t('pagination.jumpPlaceholder')"
             @keyup.enter="submitJump"
           />
-          <button type="button" class="pagination-jump-button btn btn-ghost btn-sm h-9" @click="submitJump">
+          <button
+            type="button"
+            class="pagination-jump-button btn btn-ghost btn-sm h-9"
+            @click="submitJump"
+          >
             {{ t('pagination.jumpAction') }}
           </button>
         </div>
@@ -94,7 +103,7 @@
             pageNum === page
               ? 'z-10 border-primary-500 bg-primary-50 text-primary-600 dark:border-primary-500/15 dark:bg-primary-500/8 dark:text-primary-500'
               : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-dark-600 dark:bg-dark-950 dark:text-gray-300 dark:hover:bg-dark-800',
-            typeof pageNum !== 'number' && 'cursor-default'
+            typeof pageNum !== 'number' && 'cursor-default',
           ]"
           :aria-label="
             typeof pageNum === 'number' ? t('pagination.goToPage', { page: pageNum }) : undefined
@@ -126,30 +135,50 @@ import Select from './Select.vue'
 import { getConfiguredTablePageSizeOptions, normalizeTablePageSize } from '@/utils/tablePreferences'
 import { setPersistedPageSize } from '@/composables/usePersistedPageSize'
 
+// Pagination.vue renders page navigation, record counts, page-size selection, and
+// optional numeric jumping. The parent owns the current page and record total, while
+// valid size selections update the shared persisted preference before publishing the
+// new page size.
+
+// t resolves the component action and status labels using the active application
+// locale.
 const { t } = useI18n()
 
+// Props describes the values and options supplied by the parent component.
 interface Props {
-  total: number
-  page: number
-  pageSize: number
+  total: number // Total matching record count.
+  page: number // Current one-based page number.
+  pageSize: number // Current records per page.
+  // Declared caller page-size options; the current selector derives its choices from
+  // shared configuration plus the active size and does not read this prop.
   pageSizeOptions?: number[]
-  showPageSizeSelector?: boolean
-  showJump?: boolean
+  showPageSizeSelector?: boolean // Page-size selector visibility flag.
+  showJump?: boolean // Numeric page-jump visibility flag.
 }
 
+// Emits defines the component notifications delivered to its parent listeners.
 interface Emits {
+  // Requests selected page number.
   (e: 'update:page', page: number): void
+  // Publishes selected page size.
   (e: 'update:pageSize', pageSize: number): void
 }
 
+// props holds parent-supplied component options consumed by the rendering and
+// interaction handlers below.
 const props = withDefaults(defineProps<Props>(), {
   pageSizeOptions: () => getConfiguredTablePageSizeOptions(),
   showPageSizeSelector: true,
-  showJump: false
+  showJump: false,
 })
 
+// emit publishes the declared component notifications so the parent can update its
+// owned state.
 const emit = defineEmits<Emits>()
 
+// totalPages, fromItem, and toItem derive one-based paging feedback from parent
+// counts. pageSizeSelectOptions merges configured sizes with the active normalized
+// size; jumpPage holds typed navigation, and visiblePages bounds displayed page links.
 const totalPages = computed(() => Math.ceil(props.total / props.pageSize))
 
 const fromItem = computed(() => {
@@ -164,15 +193,12 @@ const toItem = computed(() => {
 
 const pageSizeSelectOptions = computed(() => {
   const options = Array.from(
-    new Set([
-      ...getConfiguredTablePageSizeOptions(),
-      normalizeTablePageSize(props.pageSize)
-    ])
+    new Set([...getConfiguredTablePageSizeOptions(), normalizeTablePageSize(props.pageSize)]),
   ).sort((a, b) => a - b)
 
   return options.map((size) => ({
     value: size,
-    label: String(size)
+    label: String(size),
   }))
 })
 
@@ -180,61 +206,71 @@ const jumpPage = ref('')
 
 const visiblePages = computed(() => {
   const pages: (number | string)[] = []
+  // Small page sets show every page before ellipses become useful.
   const maxVisible = 7
   const total = totalPages.value
 
   if (total <= maxVisible) {
-    // Show all pages if total is small
     for (let i = 1; i <= total; i++) {
       pages.push(i)
     }
   } else {
-    // Always show first page
     pages.push(1)
 
+    // Bound the middle window to two neighbors around the active page.
     const start = Math.max(2, props.page - 2)
     const end = Math.min(total - 1, props.page + 2)
 
-    // Add ellipsis before if needed
     if (start > 2) {
       pages.push('...')
     }
 
-    // Add middle pages
     for (let i = start; i <= end; i++) {
       pages.push(i)
     }
 
-    // Add ellipsis after if needed
     if (end < total - 1) {
       pages.push('...')
     }
 
-    // Always show last page
     pages.push(total)
   }
 
   return pages
 })
 
+// goToPage publishes a page request within the current one-based range. Requests equal
+// to the current page or outside totalPages are ignored, leaving the parent-owned
+// selection unchanged.
 const goToPage = (newPage: number) => {
   if (newPage >= 1 && newPage <= totalPages.value && newPage !== props.page) {
     emit('update:page', newPage)
   }
 }
 
+// handlePageSizeChange normalizes a string or numeric selection into a supported page
+// size. Null and boolean inputs are ignored; the shared preference is updated before
+// the model event reaches the parent.
 const handlePageSizeChange = (value: string | number | boolean | null) => {
   if (value === null || typeof value === 'boolean') return
-  const newPageSize = normalizeTablePageSize(typeof value === 'string' ? parseInt(value, 10) : value)
+  const newPageSize = normalizeTablePageSize(
+    typeof value === 'string' ? parseInt(value, 10) : value,
+  )
+  // Persist the normalized preference before publishing the model change so subsequent
+  // consumers reading the shared page size observe the selected value.
   setPersistedPageSize(newPageSize)
   emit('update:pageSize', newPageSize)
 }
 
+// submitJump parses the entered page and clamps it to the current range. Empty or
+// unparsable input is retained, while a parsed jump clears the input before delegating
+// navigation.
 const submitJump = () => {
   const value = jumpPage.value.trim()
   if (!value) return
   const pageNum = Number.parseInt(value, 10)
   if (Number.isNaN(pageNum)) return
+  // Bound the jump to page limits before goToPage rejects unavailable pages.
   const nextPage = Math.min(Math.max(pageNum, 1), totalPages.value)
   jumpPage.value = ''
   goToPage(nextPage)

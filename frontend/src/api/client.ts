@@ -1,10 +1,5 @@
-/**
- * Axios HTTP Client Configuration
- * Base client with interceptors for authentication, token refresh, and error handling
- */
-
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
-import type { ApiResponse } from '@/types'
+import type { ApiResponse } from '@/api/common.types'
 import { getLocale } from '@/i18n'
 import { responseErrorMessage, localizedErrorMessage } from '@/i18n/errors'
 import {
@@ -15,30 +10,58 @@ import {
 } from './adminUIRequest'
 import { refreshAuthTokens } from './tokenRefresh'
 import { getAPIBaseURL } from './url'
+
+/**
+ * client.ts configures the browser HTTP client and the interceptors that attach
+ * session, locale, timezone and timing metadata. Successful envelope responses
+ * expose their data payload, while business and HTTP failures become the error
+ * objects consumed by views. Cancellation errors retain their Axios identity so
+ * callers can suppress interrupted requests.
+ *
+ * A GET that completes after a locale switch is replayed through the request
+ * interceptor before its result is delivered. A first unauthorized response can
+ * refresh and retry with rotated credentials; failed refresh cleanup checks the
+ * captured refresh token and serialized user so an earlier request cannot erase
+ * a later session. Authentication-entry failures remain available to their
+ * forms.
+ */
+
 export { buildApiUrl, buildGatewayUrl } from './url'
 
-// ==================== Axios Instance Configuration ====================
-
+/**
+ * apiClient shares authentication and response handling across browser API
+ * modules, with cookies enabled and a thirty-second default request timeout.
+ */
 export const apiClient: AxiosInstance = axios.create({
   baseURL: getAPIBaseURL(),
   withCredentials: true,
   timeout: 30000,
   headers: {
-    'Content-Type': 'application/json'
-  }
+    'Content-Type': 'application/json',
+  },
 })
 
-// ==================== Request Interceptor ====================
-
-// Get user's timezone
+/**
+ * getUserTimezone returns the browser's IANA timezone for GET query parameters.
+ * If Intl timezone lookup throws, it returns UTC so request construction can
+ * continue with a defined timezone value.
+ */
 const getUserTimezone = (): string => {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone
   } catch {
+    /**
+     * When Intl cannot resolve a timezone, UTC keeps GET date-range defaults
+     * defined and lets request construction continue.
+     */
     return 'UTC'
   }
 }
 
+/**
+ * Read browser session and locale at dispatch time so replayed requests receive
+ * the credentials and language currently selected.
+ */
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     // Attach token from localStorage
@@ -74,14 +97,17 @@ apiClient.interceptors.request.use(
   },
   (error) => {
     return Promise.reject(error)
-  }
+  },
 )
 
 // ==================== Response Interceptor ====================
 
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => {
-    // 切换期间完成的旧 GET 重新读取当前语言，调用方不会收到旧文案。
+    /**
+     * When a GET finishes after the locale changes, replay it through the request
+     * interceptor so the caller receives the current language.
+     */
     const requestLocale = response.config?.headers?.['Accept-Language']
     if (response.config?.method === 'get' && requestLocale && requestLocale !== getLocale()) {
       return apiClient.request(response.config)
@@ -98,7 +124,12 @@ apiClient.interceptors.response.use(
         return Promise.reject({
           status: response.status,
           code: apiResponse.code,
-          message: responseErrorMessage(String(response.config?.url || ''), resp.reason, response.status, apiResponse.message || ''),
+          message: responseErrorMessage(
+            String(response.config?.url || ''),
+            resp.reason,
+            response.status,
+            apiResponse.message || '',
+          ),
           request_id: response.headers?.['x-request-id'],
           reason: resp.reason,
           metadata: resp.metadata,
@@ -114,7 +145,9 @@ apiClient.interceptors.response.use(
       return Promise.reject(error)
     }
 
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
+    const originalRequest = error.config as InternalAxiosRequestConfig & {
+      _retry?: boolean // Refresh retry marker.
+    }
 
     // Handle common errors
     if (error.response) {
@@ -128,14 +161,18 @@ apiClient.interceptors.response.use(
       // from ops pages to avoid broken UI states.
       if (status === 404 && apiData.message === 'Ops monitoring is disabled') {
         try {
+          /**
+           * Cache the disabled flag before notifying listeners so operations
+           * views can stop polling and read the same disabled state.
+           */
           localStorage.setItem('ops_monitoring_enabled_cached', 'false')
         } catch {
-          // ignore localStorage failures
+          // Storage may be unavailable, but the structured disabled-feature error still needs to reach the caller and trigger navigation.
         }
         try {
           window.dispatchEvent(new CustomEvent('ops-monitoring-disabled'))
         } catch {
-          // ignore event failures
+          // Event dispatch failure must not prevent the disabled-feature response from rejecting or the operations page from redirecting.
         }
 
         if (window.location.pathname.startsWith('/admin/ops')) {
@@ -146,7 +183,7 @@ apiClient.interceptors.response.use(
           status,
           code: 'OPS_DISABLED',
           message: apiData.message || error.message,
-          url
+          url,
         })
       }
 
@@ -163,6 +200,10 @@ apiClient.interceptors.response.use(
         // If we have a refresh token and this is not an auth endpoint, try to refresh
         if (refreshToken && !isAuthEndpoint) {
           const refreshSessionUser = localStorage.getItem('auth_user')
+          /**
+           * Mark this request before awaiting refresh so a second unauthorized
+           * result cannot enter another refresh loop for the same request.
+           */
           originalRequest._retry = true
 
           try {
@@ -174,13 +215,19 @@ apiClient.interceptors.response.use(
                 : null
             const tokens = await refreshAuthTokens({ failedAccessToken })
 
-            // 使用轮换后的 access token 重试原请求。
+            /**
+             * Retry through the shared client with the rotated access token so
+             * authentication headers reflect the completed refresh attempt.
+             */
             if (originalRequest.headers) {
               originalRequest.headers.Authorization = `Bearer ${tokens.access_token}`
             }
             return apiClient(originalRequest)
           } catch {
-            // 旧请求刷新期间若已登出或换号，不能清除后来建立的新会话。
+            /**
+             * A failed refresh for an earlier identity must not clear a later login; compare
+             * refresh token and serialized user before cleanup.
+             */
             const sessionChanged =
               localStorage.getItem('refresh_token') !== refreshToken ||
               localStorage.getItem('auth_user') !== refreshSessionUser
@@ -188,11 +235,11 @@ apiClient.interceptors.response.use(
               return Promise.reject({
                 status: 401,
                 code: 'AUTH_SESSION_CHANGED',
-                message: localizedErrorMessage('AUTH_SESSION_CHANGED', 401)
+                message: localizedErrorMessage('AUTH_SESSION_CHANGED', 401),
               })
             }
 
-            // Clear tokens and redirect to login
+            // After confirming the captured session still owns storage, remove its credentials before marking expiry and navigating to login.
             localStorage.removeItem('auth_token')
             localStorage.removeItem('refresh_token')
             localStorage.removeItem('auth_user')
@@ -206,12 +253,12 @@ apiClient.interceptors.response.use(
             return Promise.reject({
               status: 401,
               code: 'TOKEN_REFRESH_FAILED',
-              message: localizedErrorMessage('SESSION_EXPIRED', 401)
+              message: localizedErrorMessage('SESSION_EXPIRED', 401),
             })
           }
         }
 
-        // No refresh token or is auth endpoint - clear auth and redirect
+        // Without a refresh attempt, record whether credentials were present before cleanup so anonymous authentication errors do not show a session-expired notice.
         const hasToken = !!localStorage.getItem('auth_token')
         const headers = error.config?.headers as Record<string, unknown> | undefined
         const authHeader = headers?.Authorization ?? headers?.authorization
@@ -229,7 +276,10 @@ apiClient.interceptors.response.use(
         if ((hasToken || sentAuth) && !isAuthEndpoint) {
           sessionStorage.setItem('auth_expired', '1')
         }
-        // 登录入口自己的 401 交给当前页面处理，不能误判为已有会话过期。
+        /**
+         * Authentication-entry 401 responses belong to the login form; redirecting them
+         * as session expiry would hide its credential error.
+         */
         if (!isAuthEndpoint && !window.location.pathname.includes('/login')) {
           window.location.href = '/login'
         }
@@ -241,7 +291,12 @@ apiClient.interceptors.response.use(
         code: apiData.code,
         reason: apiData.reason,
         error: apiData.error,
-        message: responseErrorMessage(url, apiData.reason, status, apiData.message || apiData.detail || error.message),
+        message: responseErrorMessage(
+          url,
+          apiData.reason,
+          status,
+          apiData.message || apiData.detail || error.message,
+        ),
         request_id: error.response?.headers?.['x-request-id'],
         metadata: apiData.metadata,
       })
@@ -250,9 +305,9 @@ apiClient.interceptors.response.use(
     // Network error
     return Promise.reject({
       status: 0,
-      message: localizedErrorMessage('NETWORK_ERROR', 0)
+      message: localizedErrorMessage('NETWORK_ERROR', 0),
     })
-  }
+  },
 )
 
 export default apiClient

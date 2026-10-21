@@ -1,15 +1,29 @@
 <template>
-  <BaseDialog :show="show" :title="t('admin.users.balanceHistoryTitle')" width="wide" :close-on-click-outside="true" @close="$emit('close')">
+  <BaseDialog
+    :show="show"
+    :title="t('admin.users.balanceHistoryTitle')"
+    width="wide"
+    :close-on-click-outside="true"
+    @close="$emit('close')"
+  >
     <div v-if="user" class="space-y-4">
       <!-- User header: two-row layout with full user info -->
       <div class="rounded-surface bg-gray-50 p-4 dark:bg-dark-700">
         <!-- Row 1: avatar + email/username/created_at (left) + current balance (right) -->
         <div class="flex items-center gap-3">
-          <UserAvatar :avatar-url="user.avatar_url || ''" :user-id="user.id" :alt="user.email" size-class="h-10 w-10 flex-shrink-0" />
+          <UserAvatar
+            :avatar-url="user.avatar_url || ''"
+            :user-id="user.id"
+            :alt="user.email"
+            size-class="h-10 w-10 flex-shrink-0"
+          />
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <p class="truncate font-medium text-gray-900 dark:text-white">{{ user.email }}</p>
-              <span v-if="user.deleted_at" class="flex-shrink-0 inline-flex items-center rounded-compact px-1 py-px text-xs font-medium leading-tight bg-rose-100 text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/20 dark:text-rose-400 dark:ring-rose-500/30">
+              <span
+                v-if="user.deleted_at"
+                class="flex-shrink-0 inline-flex items-center rounded-compact px-1 py-px text-xs font-medium leading-tight bg-rose-100 text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/20 dark:text-rose-400 dark:ring-rose-500/30"
+              >
                 {{ t('admin.usage.userDeletedBadge') }}
               </span>
               <span
@@ -25,32 +39,37 @@
           </div>
           <!-- Current balance: prominent display on the right -->
           <div class="flex-shrink-0 text-right">
-            <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.users.currentBalance') }}</p>
+            <p class="text-xs text-gray-500 dark:text-dark-400">
+              {{ t('admin.users.currentBalance') }}
+            </p>
             <p class="text-xl font-bold text-gray-900 dark:text-white">
               {{ formatBalanceAmount(user.balance || 0) }}
             </p>
           </div>
         </div>
         <!-- Row 2: notes + total recharged -->
-        <div class="mt-2.5 flex items-center justify-between border-t border-gray-200/60 pt-2.5 dark:border-dark-600/60">
-          <p class="min-w-0 flex-1 truncate text-xs text-gray-500 dark:text-dark-400" :title="user.notes || ''">
+        <div
+          class="mt-2.5 flex items-center justify-between border-t border-gray-200/60 pt-2.5 dark:border-dark-600/60"
+        >
+          <p
+            class="min-w-0 flex-1 truncate text-xs text-gray-500 dark:text-dark-400"
+            :title="user.notes || ''"
+          >
             <template v-if="user.notes">{{ t('admin.users.notes') }}: {{ user.notes }}</template>
             <template v-else>&nbsp;</template>
           </p>
           <p class="ml-4 flex-shrink-0 text-xs text-gray-500 dark:text-dark-400">
-            {{ t('admin.users.totalRecharged') }}: <span class="font-semibold text-emerald-600 dark:text-emerald-400">{{ formatBalanceAmount(totalRecharged) }}</span>
+            {{ t('admin.users.totalRecharged') }}:
+            <span class="font-semibold text-emerald-600 dark:text-emerald-400">{{
+              formatBalanceAmount(totalRecharged)
+            }}</span>
           </p>
         </div>
       </div>
 
       <!-- Type filter + Action buttons -->
       <div class="flex items-center gap-2">
-        <Select
-          v-model="typeFilter"
-          :options="typeOptions"
-          class="w-56"
-          @change="loadHistory(1)"
-        />
+        <Select v-model="typeFilter" :options="typeOptions" class="w-56" @change="loadHistory(1)" />
         <!-- Deposit button - matches menu style -->
         <button
           v-if="!hideActions"
@@ -92,7 +111,7 @@
               <div
                 :class="[
                   'flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-control',
-                  getIconBg(item)
+                  getIconBg(item),
                 ]"
               >
                 <BalanceIcon
@@ -100,18 +119,13 @@
                   size="sm"
                   :class="getIconColor(item)"
                 />
-                <Icon
-                  v-else
-                  :name="getIconName(item)"
-                  size="sm"
-                  :class="getIconColor(item)"
-                />
+                <Icon v-else :name="getIconName(item)" size="sm" :class="getIconColor(item)" />
               </div>
               <div>
                 <p class="text-sm font-medium text-gray-900 dark:text-white">
                   {{ getItemTitle(item) }}
                 </p>
-                <!-- Notes (admin adjustment reason) -->
+                <!-- Long notes show a shortened preview while the title retains the complete adjustment reason. -->
                 <p
                   v-if="item.notes"
                   class="mt-0.5 text-xs text-gray-500 dark:text-dark-400"
@@ -129,16 +143,11 @@
               <p :class="['text-sm font-semibold', getValueColor(item)]">
                 {{ formatValue(item) }}
               </p>
-              <p
-                v-if="isAdminType(item.type)"
-                class="text-xs text-gray-400 dark:text-dark-500"
-              >
+              <p v-if="isAdminType(item.type)" class="text-xs text-gray-400 dark:text-dark-500">
                 {{ t('redeem.adminAdjustment') }}
               </p>
-              <p
-                v-else
-                class="font-mono text-xs text-gray-400 dark:text-dark-500"
-              >
+              <!-- Show eight code characters to keep history rows compact. -->
+              <p v-else class="font-mono text-xs text-gray-400 dark:text-dark-500">
                 {{ item.code.slice(0, 8) }}...
               </p>
             </div>
@@ -176,7 +185,7 @@ import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI, type BalanceHistoryItem } from '@/api/admin'
 import { formatDateTime } from '@/utils/format'
-import type { AdminUser } from '@/types'
+import type { AdminUser } from '@/api/admin/users.types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import BalanceIcon from '@/components/common/BalanceIcon.vue'
@@ -184,40 +193,100 @@ import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 
-const props = defineProps<{ show: boolean; user: AdminUser | null; hideActions?: boolean }>()
+// UserBalanceHistoryModal.vue displays paginated balance, concurrency, and subscription
+// history for a selected user. A type filter changes the server query, while local
+// helpers choose labels, icons, and formatted values for the returned entries. Deposit
+// and withdrawal events let the parent open the appropriate balance editor.
+//
+// History type and value sign jointly determine the monetary or concurrency colors and
+// the administrator action label. Subscription entries use their own badge and duration
+// representation. The monetary display formats an absolute magnitude with a plus prefix
+// for nonnegative values, while negative values currently receive no minus prefix. The
+// displayed recharge total comes from the history response rather than a sum of the
+// visible page.
+
+// props and emit connect the history subject, optional action visibility, and
+// parent-owned close, deposit, and withdrawal flows displayed by the modal.
+const props = defineProps<{
+  show: boolean // Parent-controlled dialog visibility.
+  // user supplies the selected account; null leaves identity-dependent operations waiting
+  // until the parent chooses an account.
+  user: AdminUser | null
+  // hideActions suppresses both deposit and withdrawal controls while leaving the
+  // history query and table available.
+  hideActions?: boolean
+}>()
 const emit = defineEmits(['close', 'deposit', 'withdraw'])
+// The translation and balance-display services provide history labels and monetary text
+// in the configured balance unit used by this modal.
 const { t } = useI18n()
 const { formatBalanceAmount } = useBalanceDisplay()
 
+// history, loading, currentPage, and total hold the displayed server page and its
+// pending state; totalRecharged separately displays the server's aggregate recharge
+// amount.
 const history = ref<BalanceHistoryItem[]>([])
 const loading = ref(false)
 const currentPage = ref(1)
 const total = ref(0)
 const totalRecharged = ref(0)
+// pageSize fixes the history request size, while typeFilter supplies an optional
+// server-side category for the next history page load.
 const pageSize = 15
 const typeFilter = ref('')
 
+// totalPages rounds the item count into history pages and keeps at least one page
+// available when the server returns no records.
 const totalPages = computed(() => Math.ceil(total.value / pageSize) || 1)
 
-// Type filter options
+// typeOptions supplies the server history categories and an empty choice that removes
+// category filtering from subsequent history requests.
 const typeOptions = computed(() => [
-  { value: '', label: t('admin.users.allTypes') },
-  { value: 'balance', label: t('admin.users.typeBalance') },
-  { value: 'affiliate_balance', label: t('admin.users.typeAffiliateBalance') },
-  { value: 'admin_balance', label: t('admin.users.typeAdminBalance') },
-  { value: 'concurrency', label: t('admin.users.typeConcurrency') },
-  { value: 'admin_concurrency', label: t('admin.users.typeAdminConcurrency') },
-  { value: 'subscription', label: t('admin.users.typeSubscription') }
+  {
+    value: '', // Stored option value.
+    label: t('admin.users.allTypes'), // Displayed option label.
+  },
+  {
+    value: 'balance', // Stored option value.
+    label: t('admin.users.typeBalance'), // Displayed option label.
+  },
+  {
+    value: 'affiliate_balance', // Stored option value.
+    label: t('admin.users.typeAffiliateBalance'), // Displayed option label.
+  },
+  {
+    value: 'admin_balance', // Stored option value.
+    label: t('admin.users.typeAdminBalance'), // Displayed option label.
+  },
+  {
+    value: 'concurrency', // Stored option value.
+    label: t('admin.users.typeConcurrency'), // Displayed option label.
+  },
+  {
+    value: 'admin_concurrency', // Stored option value.
+    label: t('admin.users.typeAdminConcurrency'), // Displayed option label.
+  },
+  {
+    value: 'subscription', // Stored option value.
+    label: t('admin.users.typeSubscription'), // Displayed option label.
+  },
 ])
 
-// Watch modal open
-watch(() => props.show, (v) => {
-  if (v && props.user) {
-    typeFilter.value = ''
-    loadHistory(1)
-  }
-})
+// Opening clears the previous type filter and loads the first history page, keeping
+// navigation from the last viewed user out of the new query.
+watch(
+  () => props.show,
+  (v) => {
+    if (v && props.user) {
+      typeFilter.value = ''
+      loadHistory(1)
+    }
+  },
+)
 
+// loadHistory requests one page for the selected user and optional type filter. Missing
+// items and totals become empty or zero values, while request errors are logged and
+// retain the previously displayed history.
 const loadHistory = async (page: number) => {
   if (!props.user) return
   loading.value = true
@@ -227,35 +296,47 @@ const loadHistory = async (page: number) => {
       props.user.id,
       page,
       pageSize,
-      typeFilter.value || undefined
+      typeFilter.value || undefined,
     )
     history.value = res.items || []
     total.value = res.total || 0
     totalRecharged.value = res.total_recharged || 0
   } catch (error) {
+    // History failures retain the last response and recharge total while recording the
+    // error; pending feedback still ends in the finally block.
     console.error('Failed to load balance history:', error)
   } finally {
     loading.value = false
   }
 }
 
-// Helper: check if admin type
+// isAdminType identifies administrator-issued balance or concurrency history entries
+// for their labels.
 const isAdminType = (type: string) => type === 'admin_balance' || type === 'admin_concurrency'
 
-// Helper: check if balance type (includes admin_balance)
+// isBalanceType identifies monetary history entries including affiliate transfers and
+// administrator adjustments.
 const isBalanceType = (type: string) =>
   type === 'balance' || type === 'admin_balance' || type === 'affiliate_balance'
 
-// Helper: check if subscription type
+// isSubscriptionType identifies subscription assignment entries for their plan-duration
+// display.
 const isSubscriptionType = (type: string) => type === 'subscription'
 
-// Icon name based on type
+// getIconName selects the subscription badge or the concurrency bolt icon. Monetary
+// entries use their separate balance rendering path in the template, which determines
+// when this helper is called.
 const getIconName = (item: BalanceHistoryItem) => {
   if (isSubscriptionType(item.type)) return 'badge'
-  return 'bolt' // concurrency
+  return 'bolt'
 }
 
-// Icon background color
+// getIconBg combines history type and amount sign to choose the icon background
+// classes. Balance entries use green for nonnegative values and red for deductions;
+// subscription entries use purple regardless of sign. Remaining concurrency entries use
+// blue or orange according to the amount. The returned classes contain both light and
+// dark variants so the same classification remains visible when the application theme
+// changes.
 const getIconBg = (item: BalanceHistoryItem) => {
   if (isBalanceType(item.type)) {
     return item.value >= 0
@@ -263,12 +344,14 @@ const getIconBg = (item: BalanceHistoryItem) => {
       : 'bg-red-100 dark:bg-red-900/30'
   }
   if (isSubscriptionType(item.type)) return 'bg-purple-100 dark:bg-purple-900/30'
-  return item.value >= 0
-    ? 'bg-blue-100 dark:bg-blue-900/30'
-    : 'bg-orange-100 dark:bg-orange-900/30'
+  return item.value >= 0 ? 'bg-blue-100 dark:bg-blue-900/30' : 'bg-orange-100 dark:bg-orange-900/30'
 }
 
-// Icon text color
+// getIconColor combines history type and amount sign to choose the icon text classes.
+// Balance entries use green for nonnegative values and red for deductions; subscription
+// entries use purple regardless of sign. Remaining concurrency entries use blue or
+// orange according to the amount. Both theme variants are returned together so the
+// icon's meaning stays consistent with its background when dark mode changes.
 const getIconColor = (item: BalanceHistoryItem) => {
   if (isBalanceType(item.type)) {
     return item.value >= 0
@@ -281,7 +364,12 @@ const getIconColor = (item: BalanceHistoryItem) => {
     : 'text-orange-600 dark:text-orange-400'
 }
 
-// Value text color
+// getValueColor combines history type and amount sign to choose value text colors.
+// Balance entries use green for nonnegative values and red for deductions; subscription
+// entries use purple regardless of sign. Remaining concurrency entries use blue or
+// orange according to the amount. The returned light and dark classes keep the number's
+// classification consistent with the matching icon while the displayed unit varies by
+// history type.
 const getValueColor = (item: BalanceHistoryItem) => {
   if (isBalanceType(item.type)) {
     return item.value >= 0
@@ -294,7 +382,12 @@ const getValueColor = (item: BalanceHistoryItem) => {
     : 'text-orange-600 dark:text-orange-400'
 }
 
-// Item title
+// getItemTitle resolves a translated action label from history type and the sign of
+// administrator adjustments. Redeemed balance, affiliate balance, concurrency, and
+// subscription records each have a fixed source label. Administrator balance and
+// concurrency records choose increase or decrease labels from their signed values.
+// Unknown types use the common unknown label so an unfamiliar server record still
+// receives a heading in the history list.
 const getItemTitle = (item: BalanceHistoryItem) => {
   switch (item.type) {
     case 'balance':
@@ -306,7 +399,9 @@ const getItemTitle = (item: BalanceHistoryItem) => {
     case 'concurrency':
       return t('redeem.concurrencyAddedRedeem')
     case 'admin_concurrency':
-      return item.value >= 0 ? t('redeem.concurrencyAddedAdmin') : t('redeem.concurrencyReducedAdmin')
+      return item.value >= 0
+        ? t('redeem.concurrencyAddedAdmin')
+        : t('redeem.concurrencyReducedAdmin')
     case 'subscription':
       return t('redeem.subscriptionAssigned')
     default:
@@ -314,13 +409,17 @@ const getItemTitle = (item: BalanceHistoryItem) => {
   }
 }
 
-// Format display value
+// formatValue renders balance magnitudes, subscription days, or signed concurrency
+// values according to the entry type. Subscription duration uses validity_days when
+// truthy and otherwise rounds value; the balance path formats the absolute magnitude.
 const formatValue = (item: BalanceHistoryItem) => {
   if (isBalanceType(item.type)) {
     const sign = item.value >= 0 ? '+' : ''
     return `${sign}${formatBalanceAmount(Math.abs(item.value))}`
   }
   if (isSubscriptionType(item.type)) {
+    // Subscription history uses an explicit truthy validity period when present, then
+    // rounds the generic value into whole displayed days.
     const days = item.validity_days || Math.round(item.value)
     const groupName = item.group?.name || ''
     return groupName ? `${days}d - ${groupName}` : `${days}d`

@@ -1,7 +1,6 @@
 <template>
   <AuthLayout>
     <div class="space-y-6">
-      <!-- Title -->
       <div class="text-center">
         <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
           {{ t('auth.resetPasswordTitle') }}
@@ -11,11 +10,14 @@
         </p>
       </div>
 
-      <!-- Invalid Link State -->
       <div v-if="isInvalidLink" class="space-y-6">
-        <div class="rounded-surface border border-amber-200 bg-amber-50 p-6 dark:border-amber-800/50 dark:bg-amber-900/20">
+        <div
+          class="rounded-surface border border-amber-200 bg-amber-50 p-6 dark:border-amber-800/50 dark:bg-amber-900/20"
+        >
           <div class="flex flex-col items-center gap-4 text-center">
-            <div class="flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-800/50">
+            <div
+              class="flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-800/50"
+            >
               <Icon name="exclamationCircle" size="lg" class="text-amber-600 dark:text-amber-400" />
             </div>
             <div>
@@ -39,11 +41,14 @@
         </div>
       </div>
 
-      <!-- Success State -->
       <div v-else-if="isSuccess" class="space-y-6">
-        <div class="rounded-surface border border-green-200 bg-green-50 p-6 dark:border-green-800/50 dark:bg-green-900/20">
+        <div
+          class="rounded-surface border border-green-200 bg-green-50 p-6 dark:border-green-800/50 dark:bg-green-900/20"
+        >
           <div class="flex flex-col items-center gap-4 text-center">
-            <div class="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-800/50">
+            <div
+              class="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-800/50"
+            >
               <Icon
                 name="checkCircle"
                 size="lg"
@@ -63,19 +68,14 @@
         </div>
 
         <div class="text-center">
-          <router-link
-            to="/login"
-            class="btn btn-primary inline-flex items-center gap-2"
-          >
+          <router-link to="/login" class="btn btn-primary inline-flex items-center gap-2">
             <Icon name="login" size="sm" />
             {{ t('auth.signIn') }}
           </router-link>
         </div>
       </div>
 
-      <!-- Form State -->
       <form v-else @submit.prevent="handleSubmit" class="space-y-5">
-        <!-- Email (readonly) -->
         <div>
           <label for="email" class="input-label">
             {{ t('auth.emailLabel') }}
@@ -95,7 +95,6 @@
           </div>
         </div>
 
-        <!-- New Password Input -->
         <div>
           <label for="password" class="input-label">
             {{ t('auth.newPassword') }}
@@ -126,7 +125,6 @@
           </div>
         </div>
 
-        <!-- Confirm Password Input -->
         <div>
           <label for="confirmPassword" class="input-label">
             {{ t('auth.confirmPassword') }}
@@ -157,12 +155,7 @@
           </div>
         </div>
 
-        <!-- Submit Button -->
-        <button
-          type="submit"
-          :disabled="isLoading"
-          class="btn btn-primary w-full"
-        >
+        <button type="submit" :disabled="isLoading" class="btn btn-primary w-full">
           <Icon
             name="loader"
             size="sm"
@@ -176,7 +169,6 @@
       </form>
     </div>
 
-    <!-- Footer -->
     <template #footer>
       <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.rememberedPassword') }}
@@ -200,52 +192,63 @@ import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores'
 import { resetPassword } from '@/api/auth'
 
-const { t } = useI18n()
+// ResetPasswordView.vue changes a password using the email and reset token from
+// the route query. The page validates the replacement and confirmation locally,
+// reports expired-token failures with dedicated copy, and switches to success
+// content after the endpoint accepts the request.
 
-// ==================== Router & Stores ====================
+// t resolves the authentication messages displayed by this component. Nearby store
+// and navigation services deliver those messages and handle the requested
+// authentication transition.
+const { t } = useI18n() // translated authentication message resolver
 
-const route = useRoute()
-const appStore = useAppStore()
+const route = useRoute() // current callback query context
+const appStore = useAppStore() // public settings and toast owner
 
-// ==================== State ====================
+// Password-reset state distinguishes an in-flight request from successful
+// completion. The route credentials, replacement draft, visibility toggles, and
+// validation feedback feed the corresponding template states.
+const isLoading = ref<boolean>(false) // current form request busy flag
+const isSuccess = ref<boolean>(false) // completed password-reset screen flag
+const errorMessage = ref<string>('') // current action failure message
+const showPassword = ref<boolean>(false) // password input visibility toggle
+const showConfirmPassword = ref<boolean>(false) // confirmation input visibility toggle
 
-const isLoading = ref<boolean>(false)
-const isSuccess = ref<boolean>(false)
-const errorMessage = ref<string>('')
-const showPassword = ref<boolean>(false)
-const showConfirmPassword = ref<boolean>(false)
-
-// URL parameters
-const email = ref<string>('')
-const token = ref<string>('')
+const email = ref<string>('') // route-derived readonly account email
+const token = ref<string>('') // route-provided password reset token
 
 const formData = reactive({
-  password: '',
-  confirmPassword: ''
-})
+  password: '', // entered account password
+  confirmPassword: '', // matching password confirmation
+}) // editable authentication form draft
 
 const errors = reactive({
-  password: '',
-  confirmPassword: ''
-})
+  password: '', // password field validation message
+  confirmPassword: '', // confirmPassword field validation message
+}) // field validation message collection
 
-const validationToastMessage = computed(
-  () => errors.password || errors.confirmPassword || ''
-)
+// validationToastMessage selects the first currently active validation error for
+// the toast watcher. Empty values clear the selection without emitting a
+// notification.
+const validationToastMessage = computed(() => errors.password || errors.confirmPassword || '') // first active validation toast message
 
+// Only changed nonempty validation messages reach the app toast, preventing an
+// unchanged reactive error from producing repeated notifications during field
+// updates.
 watch(validationToastMessage, (value, previousValue) => {
   if (value && value !== previousValue) {
     appStore.showError(value)
   }
 })
 
-// Check if the reset link is valid (has email and token)
-const isInvalidLink = computed(() => !email.value || !token.value)
+// isInvalidLink detects missing reset-query credentials before the reset form can
+// proceed. The route email and token remain the values sent with a validated
+// replacement password.
+const isInvalidLink = computed(() => !email.value || !token.value) // missing reset-query credential flag
 
-// ==================== Lifecycle ====================
-
+// Read the reset email and token from the route on mount. Missing credentials show
+// invalid-link feedback and keep the replacement-password form unavailable.
 onMounted(() => {
-  // Get email and token from URL query parameters
   email.value = (route.query.email as string) || ''
   token.value = (route.query.token as string) || ''
 
@@ -254,15 +257,15 @@ onMounted(() => {
   }
 })
 
-// ==================== Validation ====================
-
+// validateForm checks the replacement password and its confirmation for the reset
+// request. It clears both previous errors first, requires at least six characters,
+// and rejects a confirmation that differs from the password.
 function validateForm(): boolean {
   errors.password = ''
   errors.confirmPassword = ''
 
   let isValid = true
 
-  // Password validation
   if (!formData.password) {
     errors.password = t('auth.passwordRequired')
     isValid = false
@@ -271,7 +274,6 @@ function validateForm(): boolean {
     isValid = false
   }
 
-  // Confirm password validation
   if (!formData.confirmPassword) {
     errors.confirmPassword = t('auth.confirmPasswordRequired')
     isValid = false
@@ -283,8 +285,9 @@ function validateForm(): boolean {
   return isValid
 }
 
-// ==================== Form Handlers ====================
-
+// handleSubmit sends the replacement password with the route email and token after
+// validation. It shows dedicated expired-token feedback when the endpoint
+// identifies that failure, and otherwise reports detail or fallback text.
 async function handleSubmit(): Promise<void> {
   errorMessage.value = ''
 
@@ -298,15 +301,23 @@ async function handleSubmit(): Promise<void> {
     await resetPassword({
       email: email.value,
       token: token.value,
-      new_password: formData.password
+      new_password: formData.password,
     })
 
     isSuccess.value = true
     appStore.showSuccess(t('auth.passwordResetSuccess'))
   } catch (error: unknown) {
-    const err = error as { message?: string; response?: { data?: { detail?: string; code?: string } } }
+    const err = error as {
+      message?: string // reported failure message
 
-    // Check for invalid/expired token error
+      response?: {
+        data?: {
+          detail?: string // server detailed failure message
+          code?: string // server failure code
+        } // HTTP response payload
+      } // optional HTTP error response
+    }
+
     if (err.response?.data?.code === 'INVALID_RESET_TOKEN') {
       errorMessage.value = t('auth.invalidOrExpiredToken')
     } else if (err.response?.data?.detail) {
@@ -324,5 +335,4 @@ async function handleSubmit(): Promise<void> {
 }
 </script>
 
-<style scoped>
-</style>
+<style scoped></style>

@@ -4,11 +4,7 @@
       <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
         {{ t('admin.dashboard.groupDistribution') }}
       </h3>
-      <div
-        v-segmented
-        v-if="showMetricToggle"
-        class="segmented"
-      >
+      <div v-segmented v-if="showMetricToggle" class="segmented">
         <button
           type="button"
           class="segmented-item px-2.5 py-1 text-xs"
@@ -28,8 +24,11 @@
       </div>
     </div>
     <ChartSkeleton v-if="loading" variant="distribution" />
-    <!-- 桌面端表格与圆环图顶部对齐。 -->
-    <div v-else-if="displayGroupStats.length > 0 && chartData" class="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-6">
+    <!-- Align the table and chart at their top edges on desktop. -->
+    <div
+      v-else-if="displayGroupStats.length > 0 && chartData"
+      class="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-6"
+    >
       <div class="h-48 w-48 shrink-0">
         <Bar v-if="chartType === 'bar'" :data="chartData" :options="barOptions" />
         <Doughnut v-else :data="doughnutChartData" :options="doughnutOptions" />
@@ -42,21 +41,39 @@
               <th class="pb-2 text-right">{{ t('admin.dashboard.requests') }}</th>
               <th class="pb-2 text-right">{{ t('admin.dashboard.tokens') }}</th>
               <th class="pb-2 text-right">{{ t('admin.dashboard.actual') }}</th>
-              <th v-if="showProviderCost" class="pb-2 text-right">{{ t('admin.dashboard.providerCost') }}</th>
-              <th v-if="showStandardCost" class="pb-2 text-right">{{ t('admin.dashboard.standard') }}</th>
+              <th v-if="showProviderCost" class="pb-2 text-right">
+                {{ t('admin.dashboard.providerCost') }}
+              </th>
+              <th v-if="showStandardCost" class="pb-2 text-right">
+                {{ t('admin.dashboard.standard') }}
+              </th>
             </tr>
           </thead>
           <tbody>
             <template v-for="group in displayGroupStats" :key="group.group_id">
-              <tr data-icon-trigger
+              <tr
+                data-icon-trigger
                 class="group/breakdown border-t border-gray-100 transition-colors dark:border-dark-600"
-                :class="enableBreakdown && group.group_id > 0 ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-700/40' : ''"
-                @click="enableBreakdown && group.group_id > 0 && toggleBreakdown('group', group.group_id)"
+                :class="
+                  enableBreakdown && group.group_id > 0
+                    ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-700/40'
+                    : ''
+                "
+                @click="
+                  enableBreakdown && group.group_id > 0 && toggleBreakdown('group', group.group_id)
+                "
               >
-                <!-- 有明细的分组在悬停整行时着色，未分组项使用普通文字色。 -->
+                <!--
+                  Color expandable group names on row hover; ungrouped rows keep
+                  ordinary text colors.
+                -->
                 <td
                   class="max-w-[100px] truncate py-1.5 font-medium text-gray-900 dark:text-white"
-                  :class="enableBreakdown && group.group_id > 0 ? 'group-hover/breakdown:text-primary-600 dark:group-hover/breakdown:text-primary-500' : ''"
+                  :class="
+                    enableBreakdown && group.group_id > 0
+                      ? 'group-hover/breakdown:text-primary-600 dark:group-hover/breakdown:text-primary-500'
+                      : ''
+                  "
                   :title="group.group_name || String(group.group_id)"
                 >
                   <span class="inline-flex items-center gap-1">
@@ -80,22 +97,31 @@
                 <td class="py-1.5 text-right text-green-600 dark:text-green-400">
                   {{ balanceUnitSymbol }}{{ formatCost(group.actual_cost) }}
                 </td>
-                <td v-if="showProviderCost" class="py-1.5 text-right text-orange-500 dark:text-orange-400">
+                <td
+                  v-if="showProviderCost"
+                  class="py-1.5 text-right text-orange-500 dark:text-orange-400"
+                >
                   {{ usdUnitSymbol }}{{ formatCost(group.provider_cost) }}
                 </td>
-                <td v-if="showStandardCost" class="py-1.5 text-right text-gray-400 dark:text-gray-500">
+                <td
+                  v-if="showStandardCost"
+                  class="py-1.5 text-right text-gray-400 dark:text-gray-500"
+                >
                   {{ usdUnitSymbol }}{{ formatCost(group.cost) }}
                 </td>
               </tr>
               <!-- User breakdown sub-rows -->
-              <ExpandableTableRow :open="expandedKey === `group-${group.group_id}`" :colspan="distributionColspan">
-                  <UserBreakdownSubTable
-                    :items="breakdownItems"
-                    :loading="breakdownLoading"
-                    :show-provider-cost="showProviderCost"
-                    :show-standard-cost="showStandardCost"
-                  />
-                </ExpandableTableRow>
+              <ExpandableTableRow
+                :open="expandedKey === `group-${group.group_id}`"
+                :colspan="distributionColspan"
+              >
+                <UserBreakdownSubTable
+                  :items="breakdownItems"
+                  :loading="breakdownLoading"
+                  :show-provider-cost="showProviderCost"
+                  :show-standard-cost="showStandardCost"
+                />
+              </ExpandableTableRow>
             </template>
           </tbody>
         </table>
@@ -117,61 +143,112 @@ import ExpandableTableRow from '@/components/common/ExpandableTableRow.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Chart as ChartJS, ArcElement, BarElement, CategoryScale, LinearScale, Tooltip, Legend } from 'chart.js'
+import {
+  Chart as ChartJS,
+  ArcElement,
+  BarElement,
+  CategoryScale,
+  LinearScale,
+  Tooltip,
+  Legend,
+} from 'chart.js'
 import { Bar, Doughnut } from 'vue-chartjs'
 import ChartSkeleton from '@/components/common/ChartSkeleton.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import UserBreakdownSubTable from './UserBreakdownSubTable.vue'
 import { externalTooltipHandler, hideExternalTooltip } from '@/utils/chartExternalTooltip'
 import { CHART_PALETTE, CHART_TICK_FONT_SIZE } from '@/composables/useChartTheme'
-import type { GroupStat, UserBreakdownItem } from '@/types'
+import type { GroupStat } from '@/api/usage.types'
+import type { UserBreakdownItem } from '@/api/admin/dashboard.types'
 import { getUserBreakdown } from '@/api/admin/dashboard'
 import { formatTokens } from '@/utils/format'
 
+// GroupDistributionChart.vue presents group usage as a chart and an expandable table.
+// Parent-owned aggregates determine the selected metric and row order, while row
+// expansion loads user details for the current dates and filters.
 ChartJS.register(ArcElement, BarElement, CategoryScale, LinearScale, Tooltip, Legend)
 
+// Hide the shared external tooltip when this chart unmounts so a body-level tooltip
+// cannot remain over the next page.
 onBeforeUnmount(hideExternalTooltip)
 
+// Translations and currency symbols supply the chart headings, table values, and tooltip
+// labels for the active application settings.
 const { t } = useI18n()
 const { balanceUnitSymbol, usdUnitSymbol } = useBalanceDisplay()
 
+// DistributionMetric selects the usage quantity used for chart ordering.
+// tokens uses total_tokens, while actual_cost uses the recorded actual charge.
 type DistributionMetric = 'tokens' | 'actual_cost'
-// 图表默认为圆环图，用户用量页使用水平条形图。
+// GroupChartType selects a doughnut or a horizontal comparison chart.
 type GroupChartType = 'doughnut' | 'bar'
 
-const props = withDefaults(defineProps<{
-  groupStats: GroupStat[]
-  loading?: boolean
-  metric?: DistributionMetric
-  chartType?: GroupChartType
-  showMetricToggle?: boolean
-  enableBreakdown?: boolean
-  showProviderCost?: boolean
-  showStandardCost?: boolean
-  startDate?: string
-  endDate?: string
-  filters?: Record<string, any>
-}>(), {
-  loading: false,
-  metric: 'tokens',
-  chartType: 'doughnut',
-  showMetricToggle: false,
-  enableBreakdown: true,
-  showProviderCost: true,
-  showStandardCost: true,
-})
+// props supplies parent-owned aggregate arrays and controlled display choices; defaults
+// keep the standard dashboard distribution presentation available.
+const props = withDefaults(
+  defineProps<{
+    groupStats: GroupStat[] // Per-group usage aggregates
+    // Shows the skeleton while the parent reloads the selected aggregates; omitted
+    // values leave chart content visible.
+    loading?: boolean
+    // Selects token totals or actual charges for ordering and chart values; defaults to
+    // tokens.
+    metric?: DistributionMetric
+    // Selects the doughnut by default; bar mode shows horizontal bars with abbreviated
+    // group labels.
+    chartType?: GroupChartType
+    // Displays controlled metric buttons when true; clicking emits a selection for the
+    // parent to apply.
+    showMetricToggle?: boolean
+    // Allows table rows to request per-user details when enabled; the default enables
+    // expansion.
+    enableBreakdown?: boolean
+    // Includes provider charges in USD by default; disabling it removes the column and
+    // adjusts expanded rows.
+    showProviderCost?: boolean
+    // Includes the USD standard-cost column by default; hiding it also reduces the
+    // expanded row span.
+    showStandardCost?: boolean
+    startDate?: string // Breakdown range start
+    endDate?: string // Breakdown range end
+    // Supplies additional breakdown query fields; explicit dates and the selected row
+    // override matching filter keys.
+    filters?: Record<string, any>
+  }>(),
+  {
+    loading: false,
+    metric: 'tokens',
+    chartType: 'doughnut',
+    showMetricToggle: false,
+    enableBreakdown: true,
+    showProviderCost: true,
+    showStandardCost: true,
+  },
+)
 
+// emit forwards metric selections to the parent, which applies the requested value
+// through the controlled metric prop before chart ordering changes.
 const emit = defineEmits<{
-  'update:metric': [value: DistributionMetric]
+  'update:metric': [value: DistributionMetric] // Requested metric selection
 }>()
 
+// expandedKey, breakdownItems, and breakdownLoading share one expansion buffer. Each
+// completed request replaces that buffer, including responses arriving after another row
+// was selected or collapsed.
 const expandedKey = ref<string | null>(null)
 const breakdownItems = ref<UserBreakdownItem[]>([])
 const breakdownLoading = ref(false)
+// Visible cost columns determine both table cells and the spanning detail row, keeping
+// loading and expanded content under the same headings.
 const showProviderCost = computed(() => props.showProviderCost)
 const showStandardCost = computed(() => props.showStandardCost)
-const distributionColspan = computed(() => 4 + (showProviderCost.value ? 1 : 0) + (showStandardCost.value ? 1 : 0))
+const distributionColspan = computed(
+  () => 4 + (showProviderCost.value ? 1 : 0) + (showStandardCost.value ? 1 : 0),
+)
 
+// toggleBreakdown collapses the selected group row or loads its user details. Requests
+// use the current dates and filters; failures display an empty detail list, and pending
+// requests continue after selection changes.
 const toggleBreakdown = async (type: string, id: number | string) => {
   const key = `${type}-${id}`
   if (expandedKey.value === key) {
@@ -190,30 +267,45 @@ const toggleBreakdown = async (type: string, id: number | string) => {
     })
     breakdownItems.value = res.users || []
   } catch {
+    // A failed detail request clears the shared list so the expanded table shows its
+    // empty state after loading finishes.
     breakdownItems.value = []
   } finally {
     breakdownLoading.value = false
   }
 }
 
-const chartColors = CHART_PALETTE // 原 10 色拷贝前缀逐项一致,补齐 11/12 色
+// chartColors supplies the shared categorical palette in the same order as the sorted
+// display rows.
+const chartColors = CHART_PALETTE
 
+// displayGroupStats copies the selected aggregates before sorting by the active metric,
+// so chart ordering leaves the parent array intact.
 const displayGroupStats = computed(() => {
   if (!props.groupStats?.length) return []
 
   const metricKey = props.metric === 'actual_cost' ? 'actual_cost' : 'total_tokens'
-  return [...props.groupStats].sort((a, b) => toFiniteNumber(b[metricKey]) - toFiniteNumber(a[metricKey]))
+  return [...props.groupStats].sort(
+    (a, b) => toFiniteNumber(b[metricKey]) - toFiniteNumber(a[metricKey]),
+  )
 })
 
-// 图表标签与表格行保持一致：无分组（group_id=0）显示“No Group”。
+// groupLabel chooses a group name, positive numeric ID, or translated ungrouped label.
+// An empty name with a nonpositive ID selects the ungrouped label used by the chart so
+// those entries have a readable category.
 const groupLabel = (g: GroupStat): string =>
   g.group_name || (g.group_id > 0 ? String(g.group_id) : t('admin.dashboard.noGroup'))
 
-// 圆环扇区与 tooltip 共用原始指标值，保证扇区大小与占比一致。
+// chartValues feeds both chart geometry and tooltip percentages from the same ordered
+// metric values, keeping their displayed proportions consistent.
 const chartValues = computed(() =>
-  displayGroupStats.value.map((g) => toFiniteNumber(props.metric === 'actual_cost' ? g.actual_cost : g.total_tokens))
+  displayGroupStats.value.map((g) =>
+    toFiniteNumber(props.metric === 'actual_cost' ? g.actual_cost : g.total_tokens),
+  ),
 )
 
+// chartData combines ordered labels, metric values, and palette entries; an empty
+// aggregate list produces null for the template empty state.
 const chartData = computed(() => {
   if (!props.groupStats?.length) return null
 
@@ -223,110 +315,142 @@ const chartData = computed(() => {
       {
         data: chartValues.value,
         backgroundColor: chartColors.slice(0, displayGroupStats.value.length),
-        borderWidth: 0
-      }
-    ]
+        borderWidth: 0,
+      },
+    ],
   }
 })
 
-// 与 chartData 同生命周期（无数据时模板分支不会渲染），保持非空类型以通过图表组件的 data 校验。
+// doughnutChartData supplies a nonnullable dataset accepted by Doughnut; the surrounding
+// template checks chartData before mounting this chart component.
 const doughnutChartData = computed(() => ({
   labels: displayGroupStats.value.map(groupLabel),
   datasets: [
     {
       data: chartValues.value,
       backgroundColor: chartColors.slice(0, displayGroupStats.value.length),
-      borderWidth: 0
-    }
-  ]
+      borderWidth: 0,
+    },
+  ],
 }))
 
-// 圆环图与条形图共用 tooltip，按原始指标值展示「名称: 数值 (占比)」。
+// tooltipLabel formats the selected metric and its share of displayed values. Missing
+// indices use zero; an empty total yields a zero percentage for both chart
+// presentations, while actual charges use the configured balance symbol.
 const tooltipLabel = (context: any) => {
   const value = chartValues.value[context.dataIndex] ?? 0
   const total = chartValues.value.reduce((a: number, b: number) => a + b, 0)
+  // Use one decimal place for distribution shares, keeping zero totals displayable when
+  // all selected metric values are zero.
   const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0'
-  const formattedValue = props.metric === 'actual_cost'
-    ? `${balanceUnitSymbol.value}${formatCost(value)}`
-    : formatTokens(value)
+  const formattedValue =
+    props.metric === 'actual_cost'
+      ? `${balanceUnitSymbol.value}${formatCost(value)}`
+      : formatTokens(value)
   return `${context.label}: ${formattedValue} (${percentage}%)`
 }
 
+// doughnutOptions delegates tooltip rendering to the shared HTML handler and hides the
+// chart legend because the adjacent table identifies categories.
 const doughnutOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      display: false
+      display: false,
     },
     tooltip: {
       enabled: false,
       external: externalTooltipHandler,
       callbacks: {
-        label: tooltipLabel
-      }
-    }
-  }
+        label: tooltipLabel,
+      },
+    },
+  },
 }))
 
+// barOptions supplies responsive linear bars and the same HTML tooltip formatter used by
+// the doughnut presentation for comparable metric values.
 const barOptions = computed(() => ({
   indexAxis: 'y' as const,
   responsive: true,
   maintainAspectRatio: false,
   scales: {
-    // 数值轴从零开始，条形长度与原始用量成正比。
+    // A zero baseline makes bar lengths proportional to the selected raw metric values,
+    // matching the distribution tooltip.
     x: {
       type: 'linear' as const,
       beginAtZero: true,
       ticks: {
-        display: false
+        display: false,
       },
       grid: {
-        display: false
-      }
+        display: false,
+      },
     },
     y: {
       grid: {
-        display: false
+        display: false,
       },
       ticks: {
         autoSkip: false,
         font: {
-          size: CHART_TICK_FONT_SIZE
+          size: CHART_TICK_FONT_SIZE,
         },
-        // 分组名可能较长，y 轴标签截断展示，全名见 tooltip 与表格。
+        // callback abbreviates group names for the narrow category axis. Labels longer
+        // than twelve characters receive an ellipsis; the table title and chart tooltip
+        // retain the full category name for inspection.
         callback(this: any, value: any) {
           const label = String(this.getLabelForValue(value) ?? '')
+          // Keep category text within the narrow plot.
           return label.length > 12 ? `${label.slice(0, 12)}…` : label
-        }
-      }
-    }
+        },
+      },
+    },
   },
   plugins: {
     legend: {
-      display: false
+      display: false,
     },
     tooltip: {
       enabled: false,
       external: externalTooltipHandler,
       callbacks: {
-        label: tooltipLabel
-      }
-    }
-  }
+        label: tooltipLabel,
+      },
+    },
+  },
 }))
 
+// formatNumber renders request counts using the application locale after numeric
+// coercion.
+//
+// Nonfinite inputs display as zero so missing or invalid aggregate values remain
+// readable in the table.
 const formatNumber = (value: number): string => {
   return toFiniteNumber(value).toLocaleString(getLocale())
 }
 
+// toFiniteNumber coerces aggregate values into finite numeric chart inputs.
+//
+// Values that convert to NaN or infinity become zero, allowing sorting and formatting to
+// operate on a numeric result.
 const toFiniteNumber = (value: unknown): number => {
   const numberValue = Number(value)
+  // Replace nonfinite values with zero because aggregate sorting and Chart.js datasets
+  // require usable numbers to render these distribution rows.
   return Number.isFinite(numberValue) ? numberValue : 0
 }
 
+// formatCost renders charges with precision selected by their magnitude.
+//
+// Amounts at least one thousand use a K suffix; smaller amounts use two, three, or four
+// decimals so small charges remain visible. Missing or nonfinite numeric values display
+// as zero after coercion.
 const formatCost = (value: number | null | undefined): string => {
   const safeValue = toFiniteNumber(value)
+  // Scale large charges to thousands while retaining extra decimals for smaller table
+  // amounts.
   if (safeValue >= 1000) {
     return (safeValue / 1000).toFixed(2) + 'K'
   } else if (safeValue >= 1) {

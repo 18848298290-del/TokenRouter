@@ -1,8 +1,3 @@
-/**
- * TOTP (2FA) API endpoints
- * Handles Two-Factor Authentication with Google Authenticator
- */
-
 import { apiClient } from './client'
 import type {
   TotpStatus,
@@ -11,12 +6,19 @@ import type {
   TotpEnableRequest,
   TotpEnableResponse,
   TotpDisableRequest,
-  TotpVerificationMethod
-} from '@/types'
+  TotpVerificationMethod,
+} from '@/api/totp.types'
 
 /**
- * Get TOTP status for current user
- * @returns TOTP status including enabled state and feature availability
+ * totp.ts sends account TOTP enrollment, disabling and step-up requests.
+ * Enrollment separates proof preparation from code verification, and
+ * verification-method lookup tells callers which proof to collect; step-up
+ * returns the session's temporary sensitive-operation authorization result.
+ */
+
+/**
+ * getStatus retrieves TOTP status for current user and returns the server
+ * result.
  */
 export async function getStatus(): Promise<TotpStatus> {
   const { data } = await apiClient.get<TotpStatus>('/user/totp/status')
@@ -24,8 +26,8 @@ export async function getStatus(): Promise<TotpStatus> {
 }
 
 /**
- * Get verification method for TOTP operations
- * @returns Method ('email' or 'password') required for setup/disable
+ * getVerificationMethod retrieves verification method for TOTP operations and
+ * returns the server result.
  */
 export async function getVerificationMethod(): Promise<TotpVerificationMethod> {
   const { data } = await apiClient.get<TotpVerificationMethod>('/user/totp/verification-method')
@@ -33,18 +35,19 @@ export async function getVerificationMethod(): Promise<TotpVerificationMethod> {
 }
 
 /**
- * Send email verification code for TOTP operations
- * @returns Success response
+ * sendVerifyCode sends email verification code for TOTP operations.
  */
-export async function sendVerifyCode(): Promise<{ success: boolean }> {
-  const { data } = await apiClient.post<{ success: boolean }>('/user/totp/send-code')
+export async function sendVerifyCode(): Promise<{
+  success: boolean // Operation success flag.
+}> {
+  const { data } = await apiClient.post<{
+    success: boolean // Operation success flag.
+  }>('/user/totp/send-code')
   return data
 }
 
 /**
- * Initiate TOTP setup - generates secret and QR code
- * @param request - Email code or password depending on verification method
- * @returns Setup response with secret, QR code URL, and setup token
+ * initiateSetup starts TOTP setup - generates secret and QR code.
  */
 export async function initiateSetup(request?: TotpSetupRequest): Promise<TotpSetupResponse> {
   const { data } = await apiClient.post<TotpSetupResponse>('/user/totp/setup', request || {})
@@ -52,9 +55,7 @@ export async function initiateSetup(request?: TotpSetupRequest): Promise<TotpSet
 }
 
 /**
- * Complete TOTP setup by verifying the code
- * @param request - TOTP code and setup token
- * @returns Enable response with success status and enabled timestamp
+ * enable completes TOTP setup by verifying the code.
  */
 export async function enable(request: TotpEnableRequest): Promise<TotpEnableResponse> {
   const { data } = await apiClient.post<TotpEnableResponse>('/user/totp/enable', request)
@@ -62,30 +63,40 @@ export async function enable(request: TotpEnableRequest): Promise<TotpEnableResp
 }
 
 /**
- * Disable TOTP for current user
- * @param request - Email code or password depending on verification method
- * @returns Success response
+ * disable disables TOTP for current user and returns the server result.
  */
-export async function disable(request: TotpDisableRequest): Promise<{ success: boolean }> {
-  const { data } = await apiClient.post<{ success: boolean }>('/user/totp/disable', request)
+export async function disable(request: TotpDisableRequest): Promise<{
+  success: boolean // Operation success flag.
+}> {
+  const { data } = await apiClient.post<{
+    success: boolean // Operation success flag.
+  }>('/user/totp/disable', request)
   return data
 }
 
-/** 敏感操作二次验证响应。 */
+/**
+ * TotpStepUpResponse reports successful step-up verification and the temporary
+ * authorization lifetime in seconds.
+ */
 export interface TotpStepUpResponse {
-  verified: boolean
-  expires_in: number
+  verified: boolean // Successful verification flag.
+  expires_in: number // Lifetime in seconds.
 }
 
 /**
- * 校验 TOTP 并为当前会话授予短期敏感操作权限。
- * @param code 六位 TOTP 验证码
+ * stepUp verifies a TOTP code to authorize sensitive operations for the current
+ * session. The server returns the temporary authorization result; callers supply
+ * the six-digit code entered by the user.
  */
 export async function stepUp(code: string): Promise<TotpStepUpResponse> {
   const { data } = await apiClient.post<TotpStepUpResponse>('/user/totp/step-up', { code })
   return data
 }
 
+/**
+ * totpAPI groups TOTP enrollment, verification and step-up requests for callers
+ * using the module's named or default API object.
+ */
 export const totpAPI = {
   getStatus,
   getVerificationMethod,
@@ -93,7 +104,7 @@ export const totpAPI = {
   initiateSetup,
   enable,
   disable,
-  stepUp
+  stepUp,
 }
 
 export default totpAPI

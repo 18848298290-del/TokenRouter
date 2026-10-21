@@ -4,6 +4,14 @@ import { ref } from 'vue'
 
 import DateRangePicker from '../DateRangePicker.vue'
 
+// DateRangePicker.spec.ts tests preset recognition and calendar draft application
+// through the rendered picker. Deterministic action labels identify shortcuts, while
+// emitted endpoints and trigger text distinguish applied selections from edits
+// abandoned through cancellation.
+
+// messages supplies deterministic English labels for date-range shortcuts and actions
+// so assertions can inspect recognized presets independently of locale catalog
+// loading.
 const messages: Record<string, string> = {
   'dates.today': 'Today',
   'dates.yesterday': 'Yesterday',
@@ -22,16 +30,17 @@ const messages: Record<string, string> = {
   'dates.selectEndDate': 'Select an end date',
   'dates.previousMonth': 'Previous month',
   'dates.nextMonth': 'Next month',
-  'common.cancel': 'Cancel'
+  'common.cancel': 'Cancel',
 }
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string) => messages[key] ?? key,
-    locale: ref('en')
-  })
+    locale: ref('en'),
+  }),
 }))
 
+// formatLocalDate formats fixture dates using browser-local year, month, and day.
 const formatLocalDate = (date: Date): string => {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -39,9 +48,14 @@ const formatLocalDate = (date: Date): string => {
   return `${year}-${month}-${day}`
 }
 
+// waitForTransition waits for the test panel leave delay to elapse. It uses a fixed
+// timer so assertions can inspect the removed panel after its CSS transition window.
 const waitForTransition = () => new Promise((resolve) => window.setTimeout(resolve, 250))
 
 describe('DateRangePicker', () => {
+  // The initial endpoints span yesterday through today using browser-local date
+  // strings. The trigger must recognize the matching last-24-hours preset during setup
+  // before any panel interaction occurs.
   it('uses last 24 hours as the default recognized preset', () => {
     const now = new Date()
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
@@ -49,18 +63,21 @@ describe('DateRangePicker', () => {
     const wrapper = mount(DateRangePicker, {
       props: {
         startDate: formatLocalDate(yesterday),
-        endDate: formatLocalDate(now)
+        endDate: formatLocalDate(now),
       },
       global: {
         stubs: {
-          Icon: true
-        }
-      }
+          Icon: true,
+        },
+      },
     })
 
     expect(wrapper.text()).toContain('Last 24 Hours')
   })
 
+  // The user selects the last-24-hours shortcut and then applies the draft. The
+  // component must publish both date endpoints and an aggregate change carrying the
+  // matching preset identifier.
   it('emits range updates with last24Hours preset when applied', async () => {
     const now = new Date()
     const today = formatLocalDate(now)
@@ -68,19 +85,19 @@ describe('DateRangePicker', () => {
     const wrapper = mount(DateRangePicker, {
       props: {
         startDate: today,
-        endDate: today
+        endDate: today,
       },
       global: {
         stubs: {
-          Icon: true
-        }
-      }
+          Icon: true,
+        },
+      },
     })
 
     await wrapper.find('.input-trigger').trigger('click')
-    const presetButton = wrapper.findAll('.date-picker-preset').find((node) =>
-      node.text().includes('Last 24 Hours')
-    )
+    const presetButton = wrapper
+      .findAll('.date-picker-preset')
+      .find((node) => node.text().includes('Last 24 Hours'))
     expect(presetButton).toBeDefined()
 
     await presetButton!.trigger('click')
@@ -97,11 +114,14 @@ describe('DateRangePicker', () => {
       {
         startDate: expectedStart,
         endDate: expectedEnd,
-        preset: 'last24Hours'
-      }
+        preset: 'last24Hours',
+      },
     ])
   })
 
+  // The picker enables immediate application and the user selects the previous-month
+  // shortcut. The change event must identify that preset and the panel must disappear
+  // after its leave transition.
   it('can apply a preset immediately when applyOnPreset is enabled', async () => {
     const now = new Date()
     const today = formatLocalDate(now)
@@ -110,48 +130,51 @@ describe('DateRangePicker', () => {
       props: {
         startDate: today,
         endDate: today,
-        applyOnPreset: true
+        applyOnPreset: true,
       },
       global: {
         stubs: {
-          Icon: true
-        }
-      }
+          Icon: true,
+        },
+      },
     })
 
     await wrapper.find('.input-trigger').trigger('click')
-    const presetButton = wrapper.findAll('.date-picker-preset').find((node) =>
-      node.text().includes('Last Month')
-    )
+    const presetButton = wrapper
+      .findAll('.date-picker-preset')
+      .find((node) => node.text().includes('Last Month'))
     expect(presetButton).toBeDefined()
 
     await presetButton!.trigger('click')
 
     expect(wrapper.emitted('change')?.[0]?.[0]).toMatchObject({
-      preset: 'lastMonth'
+      preset: 'lastMonth',
     })
     await waitForTransition()
     expect(wrapper.find('.date-picker-dropdown').exists()).toBe(false)
   })
 
+  // The user selects day twenty followed by day five within the same displayed month.
+  // Application remains disabled after the first click, then emits ordered endpoints
+  // with a custom preset marker.
   it('selects a custom range from the calendar and swaps reversed clicks', async () => {
     const wrapper = mount(DateRangePicker, {
       props: {
         startDate: '2026-01-10',
-        endDate: '2026-01-12'
+        endDate: '2026-01-12',
       },
       global: {
         stubs: {
-          Icon: true
-        }
-      }
+          Icon: true,
+        },
+      },
     })
 
     await wrapper.find('.input-trigger').trigger('click')
+    // dayButton finds the rendered calendar button for the requested day.
     const dayButton = (day: number) =>
       wrapper.findAll('.date-picker-day').find((node) => node.text() === String(day))!
 
-    // 先点 20 日再点 5 日，结束日期早于开始日期时自动对调。
     await dayButton(20).trigger('click')
     expect(wrapper.find('.date-picker-actions .btn-primary').attributes('disabled')).toBeDefined()
     await dayButton(5).trigger('click')
@@ -162,37 +185,40 @@ describe('DateRangePicker', () => {
       {
         startDate: '2026-01-05',
         endDate: '2026-01-20',
-        preset: null
-      }
+        preset: null,
+      },
     ])
   })
 
+  // The user selects a different preset while the picker holds an opening snapshot,
+  // then cancels. The trigger keeps its applied label and cancellation publishes no
+  // aggregate range change.
   it('discards unapplied changes when cancelled', async () => {
     const wrapper = mount(DateRangePicker, {
       props: {
         startDate: '2026-01-10',
-        endDate: '2026-01-12'
+        endDate: '2026-01-12',
       },
       global: {
         stubs: {
-          Icon: true
-        }
-      }
+          Icon: true,
+        },
+      },
     })
 
     const triggerText = wrapper.find('.input-trigger').text()
     await wrapper.find('.input-trigger').trigger('click')
-    const presetButton = wrapper.findAll('.date-picker-preset').find((node) =>
-      node.text().includes('Last 7 Days')
-    )
+    const presetButton = wrapper
+      .findAll('.date-picker-preset')
+      .find((node) => node.text().includes('Last 7 Days'))
     await presetButton!.trigger('click')
-    // 未应用前触发器仍显示原范围。
+
     expect(wrapper.find('.input-trigger').text()).toBe(triggerText)
     expect(wrapper.find('.date-picker-preset-active').text()).toContain('Last 7 Days')
 
-    const cancelButton = wrapper.findAll('.date-picker-actions .btn').find((node) =>
-      node.text().includes('Cancel')
-    )
+    const cancelButton = wrapper
+      .findAll('.date-picker-actions .btn')
+      .find((node) => node.text().includes('Cancel'))
     await cancelButton!.trigger('click')
 
     expect(wrapper.emitted('change')).toBeUndefined()

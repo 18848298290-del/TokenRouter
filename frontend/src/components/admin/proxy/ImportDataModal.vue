@@ -90,32 +90,58 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
-import type { AdminDataImportResult } from '@/types'
+import type { AdminDataImportResult } from '@/api/admin/providers.types'
 
+// ImportDataModal.vue imports a selected proxy-data JSON file and displays created, reused, and
+// failed counts. Opening resets the chosen file and previous result. Browser file-reading
+// alternatives feed the same parser, and completed imports with failed records retain detailed
+// errors for inspection.
+
+// Props controls visibility of the proxy data import dialog.
 interface Props {
-  show: boolean
+  show: boolean // dialog visibility flag
 }
 
+// Emits reports dialog closure and imports completed without failed proxy records.
 interface Emits {
+  // The close event requests dialog dismissal when importing is idle. The imported event
+  // reports a completed response with no failed proxies so the page can reload its list.
   (e: 'close'): void
+  // The close event requests dialog dismissal when importing is idle. The imported event
+  // reports a completed response with no failed proxies so the page can reload its list.
   (e: 'imported'): void
 }
 
+// props supplies the parent visibility flag; reopening resets the locally owned file
+// selection and completed import result.
 const props = defineProps<Props>()
+// emit requests dismissal or reports an import with no failed records so the parent
+// can reload its proxy list and close the completed dialog.
 const emit = defineEmits<Emits>()
 
+// t resolves the current locale messages used by labels, validation, and action notifications.
 const { t } = useI18n()
+// appStore displays operation notifications after requests complete or validation prevents the
+// requested action.
 const appStore = useAppStore()
 
+// importing controls the pending import state, while file and result retain the selected input
+// and completed per-record outcome.
 const importing = ref(false)
 const file = ref<File | null>(null)
 const result = ref<AdminDataImportResult | null>(null)
 
+// fileInput exposes the browser picker, and fileName derives the chosen file label displayed
+// beside the import controls.
 const fileInput = ref<HTMLInputElement | null>(null)
 const fileName = computed(() => file.value?.name || '')
 
+// errorItems supplies failed import records from the completed response, using an empty list
+// before results are available.
 const errorItems = computed(() => result.value?.errors || [])
 
+// Reopening clears both reactive selection and the native file input so choosing the same
+// file again can produce a fresh change event.
 watch(
   () => props.show,
   (open) => {
@@ -126,33 +152,44 @@ watch(
         fileInput.value.value = ''
       }
     }
-  }
+  },
 )
 
+// openFilePicker opens the mounted hidden file input for user selection.
 const openFilePicker = () => {
   fileInput.value?.click()
 }
 
+// handleFileChange stores the first selected file or clears the file reference.
 const handleFileChange = (event: Event) => {
   const target = event.target as HTMLInputElement
   file.value = target.files?.[0] || null
 }
 
+// handleClose requests dialog closure when no import is running. While importing, it leaves
+// visibility to the pending operation so the current result can be presented in the dialog.
 const handleClose = () => {
   if (importing.value) return
   emit('close')
 }
 
+// readFileAsText reads the chosen browser file using its available text API. It prefers
+// File.text, then decodes arrayBuffer, and finally uses FileReader for environments lacking
+// those methods. FileReader failures reject with its error or a localized read-failure error.
 const readFileAsText = async (sourceFile: File): Promise<string> => {
   if (typeof sourceFile.text === 'function') {
     return sourceFile.text()
   }
 
+  // Some browser file implementations lack text(); decoding their available byte buffer keeps
+  // the same import parser usable in those environments.
   if (typeof sourceFile.arrayBuffer === 'function') {
     const buffer = await sourceFile.arrayBuffer()
     return new TextDecoder().decode(buffer)
   }
 
+  // Older file implementations require FileReader callbacks, so bridge their completion and
+  // read errors into the promise awaited by the import operation.
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result ?? ''))
@@ -161,6 +198,13 @@ const readFileAsText = async (sourceFile: File): Promise<string> => {
   })
 }
 
+// handleImport parses the selected file and submits its JSON to proxy import. Missing selection
+// reports an error immediately, while parse and API failures produce their corresponding
+// notification. The result remains visible with per-record errors when some proxies fail.
+//
+// Only a response with no failed proxies emits imported, allowing the page to refresh and close
+// the modal. The importing flag brackets reading and submission, and is released in finally for
+// every completion path.
 const handleImport = async () => {
   if (!file.value) {
     appStore.showError(t('admin.proxies.dataImportSelectFile'))
@@ -179,7 +223,7 @@ const handleImport = async () => {
     const msgParams: Record<string, unknown> = {
       proxy_created: res.proxy_created,
       proxy_reused: res.proxy_reused,
-      proxy_failed: res.proxy_failed
+      proxy_failed: res.proxy_failed,
     }
 
     if (res.proxy_failed > 0) {

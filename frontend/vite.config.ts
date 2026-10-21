@@ -3,16 +3,29 @@ import vue from '@vitejs/plugin-vue'
 import checker from 'vite-plugin-checker'
 import { resolve } from 'path'
 
+// vite.config.ts configures development proxying and the browser assets embedded
+// in release builds. Development documents receive public settings and branding
+// before application startup. Vendor groups keep payment SDK initialization in
+// the payment flow, while Vue and localization use their configured runtime builds.
+
+// escapeHtml encodes HTML-sensitive characters in injected branding text and attributes.
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  })[character] || character)
+  return value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      })[character] || character,
+  )
 }
 
+// isSafeImageUrl recognizes the source syntax allowed for an injected site icon.
+// Root-relative paths, image data URLs, and HTTP(S) URLs pass this filter. Callers
+// use it for source selection; resource contents are outside this syntax check.
 function isSafeImageUrl(value: string): boolean {
   const trimmed = value.trim()
   if ((trimmed.startsWith('/') && !trimmed.startsWith('//')) || /^data:image\//i.test(trimmed)) {
@@ -26,7 +39,17 @@ function isSafeImageUrl(value: string): boolean {
   }
 }
 
-function injectBranding(html: string, config: { site_name?: string; site_logo?: string }): string {
+// injectBranding replaces existing title and icon tags using nonempty site settings.
+// Text and attribute characters are escaped before insertion, and icon replacement
+// requires an allowed source URL. Missing tags or unavailable settings retain the
+// corresponding markup from the supplied document template.
+function injectBranding(
+  html: string,
+  config: {
+    site_name?: string // Optional title branding text.
+    site_logo?: string // Optional favicon source URL.
+  },
+): string {
   let brandedHtml = html
   const siteName = config.site_name?.trim()
   if (siteName) {
@@ -46,20 +69,25 @@ function injectBranding(html: string, config: { site_name?: string; site_logo?: 
   return brandedHtml
 }
 
-/**
- * Vite 插件：开发模式下注入公开配置到 index.html
- * 与生产模式的后端注入行为保持一致，消除闪烁
- */
+// injectPublicSettings creates the development document-transform plugin for public
+// settings. Its pre-transform completes before the app reads injected branding and
+// access flags. Unsuccessful or unavailable configuration leaves the template intact
+// so browser startup can request public settings through its normal API path.
 function injectPublicSettings(backendUrl: string): Plugin {
   return {
     name: 'inject-public-settings',
     apply: 'serve',
     transformIndexHtml: {
       order: 'pre',
+      // handler fetches startup configuration for one development document render.
+      // Only a successful API envelope is injected. A request timeout, network
+      // failure, or transform error leaves the original document for client loading.
       async handler(html) {
         try {
+          // Bound configuration loading to two seconds so a disconnected backend
+          // does not indefinitely delay serving the browser's application document.
           const response = await fetch(`${backendUrl}/api/v1/settings/public`, {
-            signal: AbortSignal.timeout(2000)
+            signal: AbortSignal.timeout(2000),
           })
           if (response.ok) {
             const data = await response.json()
@@ -69,16 +97,18 @@ function injectPublicSettings(backendUrl: string): Plugin {
             }
           }
         } catch (e) {
+          // The browser can fetch public settings after startup, so a failed
+          // development-time injection is logged and returns the unmodified template.
           console.warn('[vite] 无法获取公开配置，将回退到 API 调用:', (e as Error).message)
         }
         return html
-      }
-    }
+      },
+    },
   }
 }
 
 export default defineConfig(({ mode }) => {
-  // 加载环境变量
+  // Development addresses come from the selected mode environment, with local server defaults for an unconfigured checkout.
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080'
   const devPort = Number(env.VITE_DEV_PORT || 3000)
@@ -87,98 +117,103 @@ export default defineConfig(({ mode }) => {
     plugins: [
       vue(),
       checker({
-        vueTsc: true
+        vueTsc: true,
       }),
-      injectPublicSettings(backendUrl)
+      injectPublicSettings(backendUrl),
     ],
-  resolve: {
-    alias: {
-      '@': resolve(import.meta.dirname, 'src'),
-      // 使用 vue-i18n 运行时版本，避免 CSP unsafe-eval 问题
-      'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js'
-    }
-  },
-  define: {
-    // 启用 vue-i18n JIT 编译，在 CSP 环境下处理消息插值
-    // JIT 编译器生成 AST 对象，兼容禁用 unsafe-eval 的 CSP。
-    __INTLIFY_JIT_COMPILATION__: true
-  },
-  build: {
-    outDir: '../backend/internal/web/dist',
-    emptyOutDir: true,
-    rolldownOptions: {
-      output: {
-        strictExecutionOrder: true,
-        codeSplitting: {
-          groups: [{
-            test: /node_modules/,
-            includeDependenciesRecursively: false,
-            // 支付 SDK 的初始化由对应支付页面触发。
-            name(id: string) {
-              if (id.includes('node_modules')) {
-                // Vue 核心库
-                if (
-                  id.includes('/vue/') ||
-                  id.includes('/vue-router/') ||
-                  id.includes('/pinia/') ||
-                  id.includes('/@vue/')
-                ) {
-                  return 'vendor-vue'
-                }
+    resolve: {
+      alias: {
+        '@': resolve(import.meta.dirname, 'src'),
+        // Use the runtime localization build alongside the configured JIT message compiler.
+        'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js',
+      },
+    },
+    define: {
+      // The JIT compiler represents messages as AST objects, allowing interpolation
+      // when the document CSP does not permit dynamically evaluated JavaScript.
+      __INTLIFY_JIT_COMPILATION__: true,
+    },
+    build: {
+      outDir: '../backend/internal/web/dist',
+      emptyOutDir: true,
+      rolldownOptions: {
+        output: {
+          strictExecutionOrder: true,
+          codeSplitting: {
+            groups: [
+              {
+                test: /node_modules/,
+                includeDependenciesRecursively: false,
+                // name assigns vendor modules to bundles according to their runtime role.
+                // Payment namespaces receive separate chunks so loading a shared
+                // application dependency does not initialize a payment SDK early.
+                name(id: string) {
+                  if (id.includes('node_modules')) {
+                    // Vue runtime, routing, state, and compiler packages share this vendor group.
+                    if (
+                      id.includes('/vue/') ||
+                      id.includes('/vue-router/') ||
+                      id.includes('/pinia/') ||
+                      id.includes('/@vue/')
+                    ) {
+                      return 'vendor-vue'
+                    }
 
-                // UI 工具库（较大，单独分离）
-                if (id.includes('/@vueuse/') || id.includes('/xlsx/')) {
-                  return 'vendor-ui'
-                }
+                    // Reused browser utilities and spreadsheet exports share the UI vendor group.
+                    if (id.includes('/@vueuse/') || id.includes('/xlsx/')) {
+                      return 'vendor-ui'
+                    }
 
-                // 图表库
-                if (id.includes('/chart.js/') || id.includes('/vue-chartjs/')) {
-                  return 'vendor-chart'
-                }
+                    // Chart rendering libraries share a group used by analytics pages.
+                    if (id.includes('/chart.js/') || id.includes('/vue-chartjs/')) {
+                      return 'vendor-chart'
+                    }
 
-                // 国际化
-                if (id.includes('/vue-i18n/') || id.includes('/@intlify/')) {
-                  return 'vendor-i18n'
-                }
+                    // Localization packages remain together with their message compiler dependencies.
+                    if (id.includes('/vue-i18n/') || id.includes('/@intlify/')) {
+                      return 'vendor-i18n'
+                    }
 
-                // Stripe 在支付流程中按需加载。
-                if (id.includes('/@stripe/stripe-js/')) {
-                  return 'vendor-stripe'
-                }
+                    // Stripe initialization follows its dynamically imported payment entry point.
+                    if (id.includes('/@stripe/stripe-js/')) {
+                      return 'vendor-stripe'
+                    }
 
-                // Airwallex 在模块加载时预取支付脚本，独立分包让支付页按需触发。
-                if (id.includes('/@airwallex/')) {
-                  return 'vendor-airwallex'
-                }
+                    // Airwallex prefetches payment scripts during initialization; keeping its
+                    // namespace separate preserves the payment page as that load trigger.
+                    if (id.includes('/@airwallex/')) {
+                      return 'vendor-airwallex'
+                    }
 
-                // 其他第三方库合并
-                return 'vendor-misc'
-              }
+                    // Remaining vendor modules use the shared miscellaneous dependency group.
+                    return 'vendor-misc'
+                  }
 
-              return null
-            }
-          }]
-        }
-      }
-    }
-  },
+                  return null
+                },
+              },
+            ],
+          },
+        },
+      },
+    },
     server: {
       host: '0.0.0.0',
       port: devPort,
       proxy: {
         '/api': {
           target: backendUrl,
-          changeOrigin: true
+          changeOrigin: true,
         },
         '/v1': {
           target: backendUrl,
-          changeOrigin: true
+          changeOrigin: true,
         },
         '/setup': {
           target: backendUrl,
-          changeOrigin: true
-        }
-      }
-    }
+          changeOrigin: true,
+        },
+      },
+    },
   }
 })

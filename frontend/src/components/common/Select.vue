@@ -12,11 +12,11 @@
       :aria-describedby="ariaDescribedby"
       :class="[
         'input input-trigger',
-        // 触发器文字色沿用选择器既有的中性灰(比 .input 默认色略浅),保持现状视觉。
+        // Trigger text uses the selection control palette independently of option highlighting.
         'text-gray-900 dark:text-gray-100',
         isOpen && 'select-trigger-open',
         error && 'select-trigger-error',
-        disabled && 'select-trigger-disabled'
+        disabled && 'select-trigger-disabled',
       ]"
       @keydown.down.prevent="onTriggerKeyDown"
       @keydown.up.prevent="onTriggerKeyDown"
@@ -90,8 +90,10 @@
                 'select-option',
                 isGroupHeaderOption(option) && 'select-option-group',
                 isSelected(option) && 'select-option-selected',
-                isOptionDisabled(option) && !isGroupHeaderOption(option) && 'select-option-disabled',
-                focusedIndex === index && !isGroupHeaderOption(option) && 'select-option-focused'
+                isOptionDisabled(option) &&
+                  !isGroupHeaderOption(option) &&
+                  'select-option-disabled',
+                focusedIndex === index && !isGroupHeaderOption(option) && 'select-option-focused',
               ]"
             >
               <slot name="option" :option="option" :selected="isSelected(option)">
@@ -101,7 +103,11 @@
                   size="sm"
                   class="flex-shrink-0 text-gray-400"
                 />
-                <span class="select-option-label" :class="option._creatable && 'italic text-gray-500 dark:text-dark-300'">{{ getOptionLabel(option) }}</span>
+                <span
+                  class="select-option-label"
+                  :class="option._creatable && 'italic text-gray-500 dark:text-dark-300'"
+                  >{{ getOptionLabel(option) }}</span
+                >
                 <Icon
                   v-if="isSelected(option)"
                   name="check"
@@ -133,42 +139,69 @@ import Icon from '@/components/icons/Icon.vue'
 import { SELECT_PANEL_MAX_HEIGHT, Z_INDEX } from '@/constants/overlay'
 import { FILTER_FIELD_KEY, isSameFilterValue, resolveEmptyValue } from './filterPanel'
 
+// Select.vue renders a controlled option picker with searching, keyboard navigation,
+// and a teleported menu. Option values and labels can come from caller-selected record
+// keys, and a generated instance marker links the separate menu to its trigger for
+// outside-click handling. FilterField integration reports the selection and supplies
+// its clear action.
+//
+// Opening schedules menu measurement and chooses a focused option after filtering.
+// Placement combines trigger bounds, menu dimensions, and viewport space, then updates
+// during scrolling and ancestor motion. Closing clears transient query and focus state
+// and releases menu-specific listeners, while unmount cleanup also removes the
+// document listener.
+
+// t resolves the component action and status labels using the active application
+// locale.
 const { t } = useI18n()
 
-// Instance ID for unique click-outside detection
+// instanceId labels this teleported menu so document clicks can distinguish its
+// options from another Select instance.
 const instanceId = `select-${Math.random().toString(36).substring(2, 9)}`
 
+// SelectOption represents a selectable value with its display label and metadata.
 export interface SelectOption {
-  value: string | number | boolean | null
-  label: string
-  disabled?: boolean
+  value: string | number | boolean | null // Stored option selection value.
+  label: string // Visible field label text.
+  disabled?: boolean // Disables user control interaction.
+  // Additional caller-provided option metadata.
   [key: string]: unknown
 }
 
+// Props describes the values and options supplied by the parent component.
 interface Props {
+  // Selected option value compared with strict equality; null, undefined, and empty
+  // strings hide the clear-selection affordance.
   modelValue: string | number | boolean | null | undefined
-  options: SelectOption[] | Array<Record<string, unknown>>
-  placeholder?: string
-  disabled?: boolean
-  error?: boolean
+  options: SelectOption[] | Array<Record<string, unknown>> // Available selection option records.
+  placeholder?: string // Empty field placeholder text.
+  disabled?: boolean // Disables user control interaction.
+  error?: boolean // Visible field error feedback.
+  // Enables search or chooses auto, which displays search when the options collection
+  // contains more than five entries.
   searchable?: boolean | 'auto'
-  searchPlaceholder?: string
-  emptyText?: string
-  valueKey?: string
-  labelKey?: string
-  creatable?: boolean
-  creatablePrefix?: string
-  clearable?: boolean
-  id?: string
-  ariaLabel?: string
-  ariaDescribedby?: string
+  searchPlaceholder?: string // Search field placeholder text.
+  emptyText?: string // Empty collection message text.
+  valueKey?: string // Option value property name.
+  labelKey?: string // Option label property name.
+  creatable?: boolean // Allows query-created selection entries.
+  creatablePrefix?: string // Created option label prefix.
+  clearable?: boolean // Clear button visibility flag.
+  id?: string // Native control identifier attribute.
+  ariaLabel?: string // Accessible item label text.
+  ariaDescribedby?: string // Accessible description element identifiers.
 }
 
+// Emits defines the component notifications delivered to its parent listeners.
 interface Emits {
+  // Publishes replacement model value.
   (e: 'update:modelValue', value: string | number | boolean | null): void
+  // Publishes selection change payload.
   (e: 'change', value: string | number | boolean | null, option: SelectOption | null): void
 }
 
+// props holds parent-supplied component options consumed by the rendering and
+// interaction handlers below.
 const props = withDefaults(defineProps<Props>(), {
   disabled: false,
   error: false,
@@ -177,11 +210,16 @@ const props = withDefaults(defineProps<Props>(), {
   creatablePrefix: '',
   clearable: false,
   valueKey: 'value',
-  labelKey: 'label'
+  labelKey: 'label',
 })
 
+// emit publishes the declared component notifications so the parent can update its
+// owned state.
 const emit = defineEmits<Emits>()
 
+// isOpen, searchQuery, and focusedIndex own transient menu interaction. Element refs
+// identify click regions, focus destinations, and scroll content; dropdownPosition,
+// triggerRect, and dropdownLeft hold viewport measurements for the teleported panel.
 const isOpen = ref(false)
 const searchQuery = ref('')
 const focusedIndex = ref(-1)
@@ -194,32 +232,42 @@ const dropdownPosition = ref<'bottom' | 'top'>('bottom')
 const triggerRect = ref<DOMRect | null>(null)
 const dropdownLeft = ref<number | null>(null)
 
-// i18n placeholders
+// placeholderText, searchPlaceholderText, and emptyTextDisplay retain supplied empty
+// labels through nullish defaults. isSearchable enables automatic search when more
+// than five options are supplied.
 const placeholderText = computed(() => props.placeholder ?? t('common.selectOption'))
-const searchPlaceholderText = computed(() => props.searchPlaceholder ?? t('common.searchPlaceholder'))
+const searchPlaceholderText = computed(
+  () => props.searchPlaceholder ?? t('common.searchPlaceholder'),
+)
 const emptyTextDisplay = computed(() => props.emptyText ?? t('common.noOptionsFound'))
 
 const isSearchable = computed(() => {
+  // Automatic search appears after five options to keep short menus compact.
   if (props.searchable === 'auto') return props.options.length > 5
   return props.searchable
 })
 
-// Computed style for teleported dropdown
+// dropdownStyle converts measured trigger geometry into fixed menu placement, with an
+// estimated width used before rendered menu measurement is available.
 const dropdownStyle = computed(() => {
   if (!triggerRect.value) return {}
 
   const rect = triggerRect.value
+  // Reserve sixteen CSS pixels beside the viewport edges.
   const viewportMargin = 16
   const maxDropdownWidth = Math.max(200, window.innerWidth - viewportMargin * 2)
   const estimatedWidth = Math.min(Math.max(rect.width, 200), maxDropdownWidth)
+  // Before the teleported menu has a measured width, clamp its estimated bounds so the
+  // first rendered position already accounts for viewport edges.
   const fallbackLeft = clampDropdownLeft(rect.left, estimatedWidth)
   const style: Record<string, string> = {
-    '--dropdown-shift': dropdownPosition.value === 'top' ? 'var(--motion-shift)' : 'calc(-1 * var(--motion-shift))',
+    '--dropdown-shift':
+      dropdownPosition.value === 'top' ? 'var(--motion-shift)' : 'calc(-1 * var(--motion-shift))',
     position: 'fixed',
     left: `${dropdownLeft.value ?? fallbackLeft}px`,
     minWidth: `${rect.width}px`,
     maxWidth: `${maxDropdownWidth}px`,
-    zIndex: String(Z_INDEX.TELEPORT_DROPDOWN)
+    zIndex: String(Z_INDEX.TELEPORT_DROPDOWN),
   }
 
   if (dropdownPosition.value === 'top') {
@@ -231,14 +279,21 @@ const dropdownStyle = computed(() => {
   return style
 })
 
+// clampDropdownLeft constrains the menu left coordinate to padded viewport space.
+// Widths larger than the available area settle at the left padding, leaving the menu
+// width rule to constrain rendering.
 const clampDropdownLeft = (left: number, width: number) => {
+  // Reserve sixteen CSS pixels beside the viewport edges.
   const viewportMargin = 16
   return Math.min(
     Math.max(left, viewportMargin),
-    Math.max(viewportMargin, window.innerWidth - width - viewportMargin)
+    Math.max(viewportMargin, window.innerWidth - width - viewportMargin),
   )
 }
 
+// getOptionValue reads the configured record key or returns a primitive option.
+// Missing object keys remain undefined, with selection handlers deciding when to
+// convert that value into null.
 const getOptionValue = (option: any): any => {
   if (typeof option === 'object' && option !== null) {
     return option[props.valueKey]
@@ -246,6 +301,9 @@ const getOptionValue = (option: any): any => {
   return option
 }
 
+// getOptionLabel reads the configured label key and converts it to text. Nullish
+// object labels and nullish primitive options become empty strings so callers can display and
+// search a string.
 const getOptionLabel = (option: any): string => {
   if (typeof option === 'object' && option !== null) {
     return String(option[props.labelKey] ?? '')
@@ -253,6 +311,7 @@ const getOptionLabel = (option: any): string => {
   return String(option ?? '')
 }
 
+// isOptionDisabled reports the truthiness of an object option disabled flag.
 const isOptionDisabled = (option: any): boolean => {
   if (typeof option === 'object' && option !== null) {
     return !!option.disabled
@@ -260,6 +319,7 @@ const isOptionDisabled = (option: any): boolean => {
   return false
 }
 
+// isGroupHeaderOption reports whether an object option declares the group kind.
 const isGroupHeaderOption = (option: any): boolean => {
   if (typeof option === 'object' && option !== null) {
     return option.kind === 'group'
@@ -267,6 +327,10 @@ const isGroupHeaderOption = (option: any): boolean => {
   return false
 }
 
+// selectedOption uses strict value equality; selectedLabel can display a raw creatable
+// value, hasValue controls clearing, and filteredOptions combines translated terms,
+// labels, descriptions, and brands before optionally prepending a query-created
+// option.
 const selectedOption = computed(() => {
   return props.options.find((opt) => getOptionValue(opt) === props.modelValue) || null
 })
@@ -275,7 +339,9 @@ const selectedLabel = computed(() => {
   if (selectedOption.value) {
     return getOptionLabel(selectedOption.value)
   }
-  // In creatable mode, show the raw value if no matching option
+
+  // A created value may be absent from supplied options; show its raw text so the
+  // trigger still identifies that nonempty selection.
   if (props.creatable && props.modelValue) {
     return String(props.modelValue)
   }
@@ -283,7 +349,7 @@ const selectedLabel = computed(() => {
 })
 
 const hasValue = computed(
-  () => props.modelValue !== null && props.modelValue !== undefined && props.modelValue !== ''
+  () => props.modelValue !== null && props.modelValue !== undefined && props.modelValue !== '',
 )
 
 const filteredOptions = computed(() => {
@@ -291,30 +357,42 @@ const filteredOptions = computed(() => {
   if (isSearchable.value && searchQuery.value) {
     const query = searchQuery.value.toLowerCase()
     opts = opts.filter((opt) => {
-      // 名称与有效译文共用一次过滤，结果按业务条目去重。
-      if (Array.isArray(opt.search_terms) && opt.search_terms.some((text: string) => text.toLowerCase().includes(query))) return true
-      // Match label
+      // Search aliases and translated labels feed one predicate, keeping each supplied
+      // business option at most once in the filtered result.
+      if (
+        Array.isArray(opt.search_terms) &&
+        opt.search_terms.some((text: string) => text.toLowerCase().includes(query))
+      )
+        return true
+
       if (getOptionLabel(opt).toLowerCase().includes(query)) return true
-      // Also match description if present
       if (opt.description && String(opt.description).toLowerCase().includes(query)) return true
-      // 分组选项会附带 displayBrand，搜索时也应按品牌命中。
       if (opt.displayBrand && String(opt.displayBrand).toLowerCase().includes(query)) return true
       return false
     })
-    // In creatable mode, always prepend a fuzzy search option
+
+    // A nonblank query adds an independent creation entry ahead of matches, allowing
+    // the user to submit that text even when supplied options also match.
     if (props.creatable && searchQuery.value.trim()) {
       const trimmed = searchQuery.value.trim()
       const prefix = props.creatablePrefix || t('common.search')
-      opts = [{ [props.valueKey]: trimmed, [props.labelKey]: `${prefix} "${trimmed}"`, _creatable: true }, ...opts]
+      opts = [
+        { [props.valueKey]: trimmed, [props.labelKey]: `${prefix} "${trimmed}"`, _creatable: true },
+        ...opts,
+      ]
     }
   }
   return opts
 })
 
+// isSelected compares the option value with the model using strict equality.
 const isSelected = (option: any): boolean => {
   return getOptionValue(option) === props.modelValue
 }
 
+// findNextEnabledIndex searches forward through one wrapped pass of filtered options.
+// It returns minus one when no enabled option exists, allowing keyboard and opening
+// logic to keep focus unset.
 const findNextEnabledIndex = (startIndex: number): number => {
   const opts = filteredOptions.value
   if (opts.length === 0) return -1
@@ -325,6 +403,9 @@ const findNextEnabledIndex = (startIndex: number): number => {
   return -1
 }
 
+// findPrevEnabledIndex searches backward through one wrapped pass of filtered options.
+// It returns minus one for empty or wholly disabled results, leaving keyboard focus
+// outside the option list.
 const findPrevEnabledIndex = (startIndex: number): number => {
   const opts = filteredOptions.value
   if (opts.length === 0) return -1
@@ -335,12 +416,17 @@ const findPrevEnabledIndex = (startIndex: number): number => {
   return -1
 }
 
+// handleOptionMouseEnter moves the keyboard highlight to a hovered selectable row.
+// Disabled options and group headers are skipped, allowing their pointer movement to
+// leave the current focus index intact.
 const handleOptionMouseEnter = (option: any, index: number) => {
   if (isOptionDisabled(option) || isGroupHeaderOption(option)) return
   focusedIndex.value = index
 }
 
-// Update trigger rect periodically while open to follow scroll/resize
+// updateTriggerRect records current trigger bounds and schedules horizontal menu
+// measurement. The next tick lets the teleported menu acquire its rendered width
+// before updateDropdownLeft adjusts its viewport position.
 const updateTriggerRect = () => {
   if (containerRef.value) {
     triggerRect.value = containerRef.value.getBoundingClientRect()
@@ -348,14 +434,28 @@ const updateTriggerRect = () => {
   }
 }
 
+// updateDropdownLeft clamps the menu using its measured or estimated width. Before
+// measurement is available, the estimate combines the trigger width and viewport
+// allowance so the initial menu remains positioned.
 const updateDropdownLeft = () => {
   if (!triggerRect.value) return
-  const dropdownWidth = dropdownRef.value?.offsetWidth
-    || Math.min(Math.max(triggerRect.value.width, 200), Math.max(200, window.innerWidth - 32))
-  // 根据菜单实际宽度调整横坐标，使菜单位于视口内。
+  // Use measured menu width when available; before layout provides it, estimate from
+  // trigger and viewport sizes so horizontal placement can still be bounded.
+  const dropdownWidth =
+    dropdownRef.value?.offsetWidth ||
+    Math.min(Math.max(triggerRect.value.width, 200), Math.max(200, window.innerWidth - 32))
+
   dropdownLeft.value = clampDropdownLeft(triggerRect.value.left, dropdownWidth)
 }
 
+// calculateDropdownPosition chooses above or below using the rendered menu and trigger
+// geometry. It first refreshes the trigger rectangle, then waits for Vue to expose the
+// menu dimensions before comparing available space.
+//
+// The menu opens above only when the space below is insufficient and the space above
+// exceeds the required height. An unavailable measured height uses
+// SELECT_PANEL_MAX_HEIGHT, and missing elements abort the deferred calculation while
+// leaving the current placement state intact.
 const calculateDropdownPosition = () => {
   if (!containerRef.value) return
   updateTriggerRect()
@@ -363,6 +463,8 @@ const calculateDropdownPosition = () => {
   nextTick(() => {
     if (!dropdownRef.value || !triggerRect.value) return
     updateDropdownLeft()
+    // If layout has no menu height yet, the shared maximum supplies a positioning
+    // estimate so above-versus-below selection can still compare available space.
     const dropdownHeight = dropdownRef.value.offsetHeight || SELECT_PANEL_MAX_HEIGHT
     const spaceBelow = window.innerHeight - triggerRect.value.bottom
     const spaceAbove = triggerRect.value.top
@@ -375,15 +477,20 @@ const calculateDropdownPosition = () => {
   })
 }
 
+// toggle changes menu visibility unless the control is disabled. The visibility
+// watcher performs measurement, focus initialization, and listener cleanup, keeping
+// those operations attached to every open-state change.
 const toggle = () => {
   if (props.disabled) return
   isOpen.value = !isOpen.value
 }
 
+// Tie scroll and resize subscriptions to visible menu lifetime, and reset the query
+// and focus index on closing before the next opening starts.
 watch(isOpen, (open) => {
   if (open) {
     calculateDropdownPosition()
-    // Reset focused index to current selection or first item
+
     if (filteredOptions.value.length === 0) {
       focusedIndex.value = -1
     } else {
@@ -397,7 +504,9 @@ watch(isOpen, (open) => {
     if (isSearchable.value) {
       nextTick(() => searchInputRef.value?.focus())
     }
-    // Add scroll listener to update position
+
+    // Capture scrolling from nested containers while open so fixed portal coordinates
+    // follow trigger movement even when the document itself does not scroll.
     window.addEventListener('scroll', updateTriggerRect, { capture: true, passive: true })
     window.addEventListener('resize', calculateDropdownPosition)
   } else {
@@ -409,9 +518,20 @@ watch(isOpen, (open) => {
   }
 })
 
-// 折叠父区退出时关闭 portal，展开过程中让定位跟随触发按钮。
-useFloatingMotion(containerRef, () => isOpen.value, () => { isOpen.value = false }, updateTriggerRect)
+// Delegate ancestor movement and visibility tracking so a teleported menu closes when
+// its trigger becomes hidden or inert inside another animated component.
+useFloatingMotion(
+  containerRef,
+  () => isOpen.value,
+  () => {
+    isOpen.value = false
+  },
+  updateTriggerRect,
+)
 
+// selectOption publishes the selected value and option, closes the menu, and focuses
+// the trigger. Nullish option values become null; callers validate disabled options
+// before invoking this selection handler.
 const selectOption = (option: any) => {
   const value = getOptionValue(option) ?? null
   emit('update:modelValue', value)
@@ -420,39 +540,50 @@ const selectOption = (option: any) => {
   triggerRef.value?.focus()
 }
 
+// clearSelection publishes null model and change payloads when the control is enabled.
+// The menu state is retained, allowing the surrounding click handler to decide whether
+// selection clearing changes visibility.
 const clearSelection = () => {
   if (props.disabled) return
   emit('update:modelValue', null)
   emit('change', null, null)
 }
 
-// 放在筛选面板字段里时，向字段上报当前选项，用于生成已选条件标签；移除标签即恢复“全部”。
+// filterField connects an embedded selector to its owning filter chip and supplies the
+// value used when that chip is removed.
 const filterField = inject(FILTER_FIELD_KEY, null)
 if (filterField) {
+  // An explicitly supplied reset value wins, including null; otherwise infer it from
+  // the first option so removing a chip restores the field default.
   const emptyValue = computed(() => {
     const explicit = filterField.emptyValue()
     if (explicit !== undefined) return explicit
     return resolveEmptyValue(props.options.length ? getOptionValue(props.options[0]) : null)
   })
-  filterField.bindControl(computed(() => ({
-    active: !isSameFilterValue(props.modelValue, emptyValue.value),
-    text: selectedLabel.value,
-    clear: () => {
-      const value = (emptyValue.value ?? null) as SelectOption['value']
-      const option = props.options.find((opt) => getOptionValue(opt) === value) ?? null
-      emit('update:modelValue', value)
-      emit('change', value, option as SelectOption | null)
-    },
-  })))
+  filterField.bindControl(
+    computed(() => ({
+      active: !isSameFilterValue(props.modelValue, emptyValue.value),
+      text: selectedLabel.value,
+      clear: () => {
+        const value = (emptyValue.value ?? null) as SelectOption['value']
+        const option = props.options.find((opt) => getOptionValue(opt) === value) ?? null
+        emit('update:modelValue', value)
+        emit('change', value, option as SelectOption | null)
+      },
+    })),
+  )
 }
 
-// Keyboards
+// onTriggerKeyDown opens the menu when a trigger keyboard action requests it.
 const onTriggerKeyDown = () => {
   if (!isOpen.value) {
     isOpen.value = true
   }
 }
 
+// onDropdownKeyDown handles option navigation, selection, and menu dismissal. Arrow
+// keys wrap through enabled options, Enter selects the highlighted row, Escape
+// restores trigger focus, and Tab closes without preventing traversal.
 const onDropdownKeyDown = (e: KeyboardEvent) => {
   switch (e.key) {
     case 'ArrowDown':
@@ -483,6 +614,9 @@ const onDropdownKeyDown = (e: KeyboardEvent) => {
   }
 }
 
+// scrollToFocused adjusts the option list after the next Vue update. It scrolls only
+// when the focused row lies outside the visible area, and skips missing list or row
+// elements.
 const scrollToFocused = () => {
   nextTick(() => {
     const list = optionsListRef.value
@@ -498,9 +632,12 @@ const scrollToFocused = () => {
   })
 }
 
+// handleClickOutside closes an open menu when the target belongs to neither owned
+// region. The generated instance class identifies its teleported menu, preventing
+// another Select menu from counting as this one.
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement
-  // Check if click is inside THIS specific instance's dropdown or trigger
+
   const isInDropdown = !!target.closest(`.${instanceId}`)
   const isInTrigger = containerRef.value?.contains(target)
 
@@ -509,11 +646,14 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 }
 
+// Capture clicks before surrounding dialogs stop bubbling so clicking another control
+// can close this menu while that control processes its own event.
 onMounted(() => {
-  // 捕获弹窗内的点击，关闭其他选择框时仍让当前触发器正常展开。
   document.addEventListener('click', handleClickOutside, true)
 })
 
+// Remove document and open-menu listeners on unmount as well as normal close, covering
+// removal while this Select is still open.
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside, true)
   window.removeEventListener('scroll', updateTriggerRect, { capture: true })
@@ -522,10 +662,12 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 基线配方(h-9/px-4/py-1.5/边框/焦点环)已与 .input 同源,模板以 input input-trigger 组合;
-   这里只保留展开/错误/禁用三个状态增量。 */
+/*
+  The template combines input and input-trigger for shared baseline dimensions,
+  border, and focus styling. These rules add open, error, and disabled states.
+*/
 .select-trigger-open {
-  /* 展开态使用中性描边和外圈，与输入框焦点保持一致。 */
+  /* The open state uses a neutral outline and outer ring matching focused input controls. */
   @apply border-primary-900/10 ring-2 ring-black/10 dark:border-dark-400 dark:ring-white/6;
 }
 
@@ -589,13 +731,13 @@ onUnmounted(() => {
 }
 
 .select-dropdown-portal .select-option-selected {
-  /* 深色选中项保留淡品牌色底，文字和勾选使用品牌青。 */
+  /* Dark selected options use a tinted brand surface with brand-colored labels and check marks. */
   @apply bg-gray-100 dark:bg-primary-500/8 dark:hover:bg-primary-500/8;
   @apply text-primary-700 dark:text-primary-500;
 }
 
 .select-dropdown-portal .select-option-focused {
-  /* 键盘焦点与 hover 共用弱填充，选中项仍使用自己的底色。 */
+  /* Keyboard focus uses a subtle fill; selected options retain their own dark selection surface. */
   @apply bg-gray-100 dark:bg-dark-800 dark:text-primary-500;
 }
 
@@ -626,5 +768,4 @@ onUnmounted(() => {
   @apply px-4 py-8 text-center text-sm;
   @apply text-primary-900/90 dark:text-dark-400;
 }
-
 </style>

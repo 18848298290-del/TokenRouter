@@ -1,14 +1,25 @@
-/* TokenRouter 交互导览样式 */
-
+/*
+ * onboarding.css styles driver.js tours with application surfaces and responsive
+ * popover content. Driver elements use inline styles and their own stacking levels,
+ * so scoped class combinations and important declarations supply the tour appearance
+ * while retaining the library's placement.
+ *
+ * The overlay paints the surrounding dim region while pointer events pass through to
+ * page controls, including teleported selectors. The popover remains a bounded flex
+ * column: its title and footer stay visible while the description can scroll. Theme
+ * variables color tour content shared by translated HTML, and small screens reduce
+ * outer clearance and padding.
+ */
 /* 1. Overlay & Highlight */
 .driver-overlay {
   position: fixed !important;
   inset: 0 !important;
-  z-index: 99999998 !important; /* check-ui-allow: driver.js 第三方覆盖,层级受外部约束 */
+  z-index: 99999998 !important; /* check-ui-allow: driver.js external stacking requirement */
   background-color: transparent !important;
   /*
-   * 遮罩让点击穿透至 Select 下拉菜单等高亮区域外的控件。
-   * allowClose: false 让引导保持打开，SVG 继续绘制遮罩。
+   * The overlay passes clicks through to controls outside the highlighted element,
+   * including Select dropdowns; allowClose is disabled by the tour controller while
+   * SVG painting remains visible.
    */
   pointer-events: none !important;
 }
@@ -19,15 +30,22 @@
 
 .driver-active-element {
   position: relative !important;
-  z-index: 99999999 !important; /* check-ui-allow: driver.js 第三方覆盖,层级受外部约束 */
+  z-index: 99999999 !important; /* check-ui-allow: driver.js external stacking requirement */
   outline: 4px solid rgba(0, 210, 255, 0.24) !important;
   border-radius: var(--radius-compact) !important;
 }
 
 /* 2. Popover Container */
-/* 宽度 440px 与内边距均落在 4px 网格上;!important 用于覆盖 driver.js 的内联默认样式,属合法例外。 */
+/*
+ * The popover width and padding follow the spacing grid; important declarations
+ * override driver.js inline defaults so its content fits within the viewport
+ * clearance.
+ */
 .driver-popover.theme-tour-popover {
-  /* 中英文引导 HTML 共用这些颜色，提示框随弹窗主题切换。 */
+  /*
+   * Translated tour HTML reads these semantic colors; dark theme overrides update
+   * its status boxes and action text together with the surrounding popover.
+   */
   --tour-success-bg: theme('colors.green.50');
   --tour-info-bg: theme('colors.blue.50');
   --tour-warning-bg: theme('colors.amber.100');
@@ -35,7 +53,7 @@
   --tour-action-color: theme('colors.primary.700');
   --tour-muted-color: theme('colors.gray.500');
   position: fixed !important;
-  z-index: 100000000 !important; /* check-ui-allow: driver.js 第三方覆盖,层级受外部约束 */
+  z-index: 100000000 !important; /* check-ui-allow: driver.js external stacking requirement */
   box-sizing: border-box !important;
   display: flex !important;
   flex-direction: column !important;
@@ -44,11 +62,13 @@
   max-width: calc(100vw - 24px) !important;
   max-height: calc(100dvh - 24px) !important;
   background-color: #ffffff !important;
-  border: 1px solid #CDEFFD !important;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
+  border: 1px solid #cdeffd !important;
+  box-shadow:
+    0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
   border-radius: var(--radius-dialog) !important;
   padding: 0 !important;
-  color: #2D4F68 !important;
+  color: #2d4f68 !important;
   font-family: inherit !important;
   overflow: hidden !important;
 }
@@ -60,9 +80,9 @@
   --tour-danger-bg: theme('colors.red.500 / 12%');
   --tour-action-color: theme('colors.primary.500');
   --tour-muted-color: theme('colors.dark.300');
-  background-color: #0F0F10 !important;
+  background-color: #0f0f10 !important;
   border-color: theme('borderColor.dark.600') !important;
-  color: #DEE0E2 !important;
+  color: #dee0e2 !important;
 }
 
 /* 3. Header Area */
@@ -70,7 +90,7 @@
   display: flex !important;
   flex: 0 0 auto !important;
   align-items: center !important;
-  padding: 20px 24px 12px 24px !important; 
+  padding: 20px 24px 12px 24px !important;
   margin: 0 !important;
   background-color: transparent !important;
   position: relative !important;
@@ -79,11 +99,13 @@
 .driver-popover-title-text {
   font-size: 18px !important;
   font-weight: 700 !important;
-  color: #071A2A !important;
+  color: #071a2a !important;
   line-height: 1.3 !important;
   padding-right: 40px !important;
 }
-.dark .driver-popover-title-text { color: #ffffff !important; }
+.dark .driver-popover-title-text {
+  color: #ffffff !important;
+}
 
 /* Close Button */
 .theme-tour-popover .driver-popover-close-btn {
@@ -96,14 +118,19 @@
   color: #9ca3af !important;
   background-color: transparent !important;
   border: none !important;
-  z-index: 20 !important; /* check-ui-allow: driver.js 第三方覆盖,层级受外部约束 */
+  z-index: 20 !important; /* check-ui-allow: driver.js external stacking requirement */
   border-radius: var(--radius-compact) !important;
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
 }
-.theme-tour-popover .driver-popover-close-btn:hover { background-color: #f3f4f6 !important; color: #4b5563 !important; }
-.dark .theme-tour-popover .driver-popover-close-btn:hover { background-color: #27272A !important; }
+.theme-tour-popover .driver-popover-close-btn:hover {
+  background-color: #f3f4f6 !important;
+  color: #4b5563 !important;
+}
+.dark .theme-tour-popover .driver-popover-close-btn:hover {
+  background-color: #27272a !important;
+}
 
 /* 4. Body Content */
 .theme-tour-popover .driver-popover-description {
@@ -113,19 +140,24 @@
   overflow-y: auto !important;
   font-size: 14px !important;
   font-weight: 400 !important;
-  color: #2D4F68 !important;
+  color: #2d4f68 !important;
   padding: 0 24px 24px 24px !important;
   margin: 0 !important;
   line-height: 1.6 !important;
   background-color: transparent !important;
 }
-.dark .theme-tour-popover .driver-popover-description { color: #DEE0E2 !important; }
+.dark .theme-tour-popover .driver-popover-description {
+  color: #dee0e2 !important;
+}
 
 .theme-tour-popover .driver-popover-description-hint {
   color: var(--tour-muted-color);
 }
 
-/* 5. 底部展示页码和操作按钮。 */
+/*
+ * The footer keeps progress and navigation visible below the scrolling description,
+ * and allows actions to wrap when their labels need more width.
+ */
 .theme-tour-popover .driver-popover-footer {
   display: flex !important;
   flex: 0 0 auto !important;
@@ -134,8 +166,8 @@
   justify-content: space-between !important;
   gap: 8px !important;
   padding: 16px 24px !important;
-  background-color: #F6FCFF !important;
-  border-top: 1px solid #DDF4FC !important;
+  background-color: #f6fcff !important;
+  border-top: 1px solid #ddf4fc !important;
   margin: 0 !important;
 }
 .dark .theme-tour-popover .driver-popover-footer {
@@ -147,12 +179,14 @@
   display: block !important;
   flex: 0 0 auto !important;
   margin: 0 !important;
-  color: #2D4F68 !important;
+  color: #2d4f68 !important;
   font-size: 13px !important;
   font-weight: 500 !important;
   white-space: nowrap !important;
 }
-.dark .theme-tour-popover .driver-popover-progress-text { color: #DEE0E2 !important; }
+.dark .theme-tour-popover .driver-popover-progress-text {
+  color: #dee0e2 !important;
+}
 
 .theme-tour-popover .driver-popover-navigation-btns {
   display: flex !important;
@@ -181,7 +215,9 @@
   font-weight: 500 !important;
   border-radius: var(--radius-control) !important;
   cursor: pointer !important;
-  transition: background-color 0.2s, border-color 0.2s !important;
+  transition:
+    background-color 0.2s,
+    border-color 0.2s !important;
   border: 1px solid transparent !important;
   line-height: 1.2 !important;
   letter-spacing: 0 !important;
@@ -192,11 +228,13 @@
 }
 
 .theme-tour-popover .driver-popover-next-btn {
-  background-color: #12A7E8 !important;
+  background-color: #12a7e8 !important;
   color: #ffffff !important;
   box-shadow: none !important;
 }
-.theme-tour-popover .driver-popover-next-btn:hover { background-color: #0B8FD8 !important; }
+.theme-tour-popover .driver-popover-next-btn:hover {
+  background-color: #0b8fd8 !important;
+}
 
 .theme-tour-popover .driver-popover-prev-btn {
   background-color: white !important;
@@ -204,13 +242,20 @@
   border: 1px solid #e5e7eb !important;
   box-shadow: none !important;
 }
-.theme-tour-popover .driver-popover-prev-btn:hover { background-color: #F6FCFF !important; color: #2D4F68 !important; }
+.theme-tour-popover .driver-popover-prev-btn:hover {
+  background-color: #f6fcff !important;
+  color: #2d4f68 !important;
+}
 .dark .theme-tour-popover .driver-popover-prev-btn {
-  background-color: #0F0F10 !important;
+  background-color: #0f0f10 !important;
   border-color: theme('borderColor.dark.600') !important;
-  color: #DEE0E2 !important;
+  color: #dee0e2 !important;
 }
 
+/*
+ * Narrow screens reduce outer clearance and interior padding so the fixed popover
+ * leaves room around its edges while its description can still scroll.
+ */
 @media (max-width: 480px) {
   .driver-popover.theme-tour-popover {
     width: calc(100vw - 16px) !important;
@@ -236,13 +281,31 @@
 }
 
 /* Arrows */
-.driver-popover-arrow { z-index: 100000001 !important; } /* check-ui-allow: driver.js 第三方覆盖,层级受外部约束 */
-.driver-popover-arrow-side-left.driver-popover-arrow { border-left-color: #ffffff !important; }
-.driver-popover-arrow-side-right.driver-popover-arrow { border-right-color: #ffffff !important; }
-.driver-popover-arrow-side-top.driver-popover-arrow { border-top-color: #ffffff !important; }
-.driver-popover-arrow-side-bottom.driver-popover-arrow { border-bottom-color: #ffffff !important; }
+.driver-popover-arrow {
+  z-index: 100000001 !important;
+} /* check-ui-allow: driver.js external stacking requirement */
+.driver-popover-arrow-side-left.driver-popover-arrow {
+  border-left-color: #ffffff !important;
+}
+.driver-popover-arrow-side-right.driver-popover-arrow {
+  border-right-color: #ffffff !important;
+}
+.driver-popover-arrow-side-top.driver-popover-arrow {
+  border-top-color: #ffffff !important;
+}
+.driver-popover-arrow-side-bottom.driver-popover-arrow {
+  border-bottom-color: #ffffff !important;
+}
 
-.dark .driver-popover-arrow-side-left.driver-popover-arrow { border-left-color: #0F0F10 !important; }
-.dark .driver-popover-arrow-side-right.driver-popover-arrow { border-right-color: #0F0F10 !important; }
-.dark .driver-popover-arrow-side-top.driver-popover-arrow { border-top-color: #0F0F10 !important; }
-.dark .driver-popover-arrow-side-bottom.driver-popover-arrow { border-bottom-color: #0F0F10 !important; }
+.dark .driver-popover-arrow-side-left.driver-popover-arrow {
+  border-left-color: #0f0f10 !important;
+}
+.dark .driver-popover-arrow-side-right.driver-popover-arrow {
+  border-right-color: #0f0f10 !important;
+}
+.dark .driver-popover-arrow-side-top.driver-popover-arrow {
+  border-top-color: #0f0f10 !important;
+}
+.dark .driver-popover-arrow-side-bottom.driver-popover-arrow {
+  border-bottom-color: #0f0f10 !important;
+}

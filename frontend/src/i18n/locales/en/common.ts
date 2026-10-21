@@ -1,11 +1,16 @@
+// common.ts supplies English messages shared by controls, navigation,
+// authentication, and sensitive-action verification. Common actions and
+// authentication states live in separate namespaces so interface components and
+// sign-in forms can reuse established translation paths across pages.
+
 export default {
-// Common
+  // Common
   common: {
-    submitting: "Submitting…",
-    sending: "Sending…",
-    tryAgain: "Try again",
-    multiplier: "Multiplier",
-    rightsReserved: "All rights reserved.",
+    submitting: 'Submitting…',
+    sending: 'Sending…',
+    tryAgain: 'Try again',
+    multiplier: 'Multiplier',
+    rightsReserved: 'All rights reserved.',
 
     ruleIndex: 'Rule #{index}',
     retry: 'Retry',
@@ -57,12 +62,12 @@ export default {
     userMenu: 'User menu',
     enabled: 'Enabled',
     disabled: 'Disabled',
-	    total: 'Total',
-	    balance: 'Balance',
-	    availableBalance: 'Available balance',
-	    frozenBalance: 'Frozen balance',
-	    totalBalance: 'Total balance',
-	    available: 'Available',
+    total: 'Total',
+    balance: 'Balance',
+    availableBalance: 'Available balance',
+    frozenBalance: 'Frozen balance',
+    totalBalance: 'Total balance',
+    available: 'Available',
     copiedToClipboard: 'Copied to clipboard',
     copied: 'Copied',
     copyFailed: 'Failed to copy',
@@ -109,11 +114,11 @@ export default {
         daysHours: '{d}d {h}h',
         hoursMinutes: '{h}h {m}m',
         minutes: '{m}m',
-        withSuffix: '{time} to lift'
-      }
-    }
+        withSuffix: '{time} to lift',
+      },
+    },
   },
-// Navigation
+  // Navigation
   nav: {
     dashboard: 'Dashboard',
     modelMarketplace: 'Models',
@@ -163,14 +168,15 @@ export default {
     paymentConfig: 'Payment Config',
     paymentPlans: 'Plans',
     riskControl: 'Risk Control',
-    auditLogs: 'Audit Logs'
+    auditLogs: 'Audit Logs',
   },
-// Auth
+  // Auth
   auth: {
     welcomeBack: 'Welcome Back',
     signInToAccount: 'Sign in to your account to continue',
     signIn: 'Sign In',
-    agreementRequired: 'Please read and agree to the usage policy, terms of service, and supported countries and regions before continuing.',
+    agreementRequired:
+      'Please read and agree to the usage policy, terms of service, and supported countries and regions before continuing.',
     signingIn: 'Signing in...',
     passkeySignIn: 'Sign in with a passkey',
     passkeySigningIn: 'Waiting for passkey...',
@@ -197,7 +203,7 @@ export default {
     passwordMinLength: 'Password must be at least 6 characters',
     loginFailed: 'Login failed. Please check your credentials and try again.',
     errors: {
-      USER_NOT_ACTIVE: 'Account has been disabled.'
+      USER_NOT_ACTIVE: 'Account has been disabled.',
     },
     registrationFailed: 'Registration failed. Please try again.',
     emailDomainRegistrationLimit:
@@ -245,7 +251,8 @@ export default {
     promoCodeMaxUsed: 'This promo code has reached its usage limit',
     promoCodeAlreadyUsed: 'You have already used this promo code',
     promoCodeValidating: 'Promo code is being validated, please wait',
-    promoCodeInvalidCannotRegister: 'Invalid promo code. Please check and try again or clear the promo code field',
+    promoCodeInvalidCannotRegister:
+      'Invalid promo code. Please check and try again or clear the promo code field',
     invitationCodeLabel: 'Invitation Code',
     invitationCodePlaceholder: 'Enter invitation code',
     invitationCodeRequired: 'Invitation code is required',
@@ -259,33 +266,43 @@ export default {
       orContinue: 'or continue with email',
       callbackTitle: 'Signing you in',
       callbackProcessing: 'Completing login, please wait...',
-      callbackHint: 'If you are not redirected automatically, go back to the login page and try again.',
+      callbackHint:
+        'If you are not redirected automatically, go back to the login page and try again.',
       callbackMissingToken: 'Missing login token, please try again.',
       backToLogin: 'Back to Login',
-      invitationRequired: 'This Linux.do account is not yet registered. The site requires an invitation code — please enter one to complete registration.',
-      invalidPendingToken: 'The registration token has expired. Please sign in with Linux.do again.',
+      invitationRequired:
+        'This Linux.do account is not yet registered. The site requires an invitation code — please enter one to complete registration.',
+      invalidPendingToken:
+        'The registration token has expired. Please sign in with Linux.do again.',
       completeRegistration: 'Complete Registration',
       completing: 'Completing registration…',
-      completeRegistrationFailed: 'Registration failed. Please check your invitation code and try again.'
+      completeRegistrationFailed:
+        'Registration failed. Please check your invitation code and try again.',
     },
     dingtalk: {
       signIn: 'Continue with DingTalk',
       callbackTitle: 'Signing you in with DingTalk',
       callbackProcessing: 'Completing DingTalk login, please wait...',
-      callbackHint: 'If you are not redirected automatically, go back to the login page and try again.',
+      callbackHint:
+        'If you are not redirected automatically, go back to the login page and try again.',
       callbackMissingToken: 'Missing login token, please try again.',
       backToLogin: 'Back to Login',
-      invitationRequired: 'This DingTalk account is not yet registered. The site requires an invitation code — please enter one to complete registration.',
-      invalidPendingToken: 'The registration token has expired. Please sign in with DingTalk again.',
+      invitationRequired:
+        'This DingTalk account is not yet registered. The site requires an invitation code — please enter one to complete registration.',
+      invalidPendingToken:
+        'The registration token has expired. Please sign in with DingTalk again.',
       completeRegistration: 'Complete Registration',
       completing: 'Completing registration…',
-      completeRegistrationFailed: 'Registration failed. Please check your invitation code and try again.',
+      completeRegistrationFailed:
+        'Registration failed. Please check your invitation code and try again.',
       createAccountTitle: 'Create DingTalk Account',
-      registrationDisabledRedirectToBind: 'New account registration is currently disabled. Please bind to your existing account with its email and password.',
+      registrationDisabledRedirectToBind:
+        'New account registration is currently disabled. Please bind to your existing account with its email and password.',
       error: {
         title: 'DingTalk Sign-in Failed',
         csrf: 'Login session expired, please scan again',
-        corp_rejected: 'Your DingTalk account is not part of this organization. Please contact administrator',
+        corp_rejected:
+          'Your DingTalk account is not part of this organization. Please contact administrator',
         dingtalk_not_enabled: 'DingTalk login is not enabled',
         upstream_error: 'DingTalk service is temporarily unavailable. Please try again later',
         missing_browser_session: 'Browser session lost. Please login again',
@@ -293,17 +310,18 @@ export default {
         invalid_state: 'Invalid login state',
         provider_error: 'DingTalk authorization failed',
         session_error: 'Failed to create session. Please retry',
-        retry: 'Retry Login'
-      }
+        retry: 'Retry Login',
+      },
     },
     emailOAuth: {
-      signIn: 'Continue with {providerName}'
+      signIn: 'Continue with {providerName}',
     },
     oidc: {
       signIn: 'Continue with {providerName}',
       callbackTitle: 'Signing you in with {providerName}',
       callbackProcessing: 'Completing login with {providerName}, please wait...',
-      callbackHint: 'If you are not redirected automatically, go back to the login page and try again.',
+      callbackHint:
+        'If you are not redirected automatically, go back to the login page and try again.',
       callbackMissingToken: 'Missing login token, please try again.',
       backToLogin: 'Back to Login',
       invitationRequired:
@@ -311,11 +329,13 @@ export default {
       invalidPendingToken: 'The registration token has expired. Please sign in again.',
       completeRegistration: 'Complete Registration',
       completing: 'Completing registration…',
-      completeRegistrationFailed: 'Registration failed. Please check your invitation code and try again.'
+      completeRegistrationFailed:
+        'Registration failed. Please check your invitation code and try again.',
     },
     oauthFlow: {
       profileDetailsTitle: 'Use {providerName} profile details',
-      profileDetailsDescription: 'Choose whether to apply the nickname or avatar from {providerName} to this account.',
+      profileDetailsDescription:
+        'Choose whether to apply the nickname or avatar from {providerName} to this account.',
       useDisplayName: 'Use display name',
       useAvatar: 'Use avatar',
       avatarAlt: '{providerName} avatar',
@@ -327,21 +347,25 @@ export default {
       createNewAccount: 'Create new account',
       createAccountHint: 'Enter an email address to create your account and continue.',
       bindLoginHint: 'Log in to an existing account to bind this {providerName} sign-in.',
-      signInThenBindDescription: 'Sign in to an existing account, then bind this {providerName} sign-in to it.',
+      signInThenBindDescription:
+        'Sign in to an existing account, then bind this {providerName} sign-in to it.',
       bindSignInToExistingAccount: 'Bind this {providerName} sign-in to an existing account.',
       bindCurrentAccountTitle: 'Bind the current account',
-      bindCurrentAccountDescription: 'Bind this {providerName} sign-in to the account currently signed in on this browser.',
+      bindCurrentAccountDescription:
+        'Bind this {providerName} sign-in to the account currently signed in on this browser.',
       bindCurrentAccount: 'Bind current account',
       logInAndBind: 'Log in and bind',
       useDifferentEmail: 'Use a different email',
       backToOptions: 'Back to options',
       yourAccount: 'your account',
-      totpHint: 'Enter the 6-digit verification code for {account} to finish binding this {providerName} sign-in.',
+      totpHint:
+        'Enter the 6-digit verification code for {account} to finish binding this {providerName} sign-in.',
       verifyAndContinue: 'Verify and continue',
-      wechatAvailabilityUnknown: 'WeChat sign-in availability could not be confirmed. Refresh and retry.',
+      wechatAvailabilityUnknown:
+        'WeChat sign-in availability could not be confirmed. Refresh and retry.',
       wechatSystemBrowserOnly: 'This WeChat sign-in flow is only available in your system browser.',
       wechatBrowserOnly: 'This WeChat sign-in flow is only available inside the WeChat browser.',
-      wechatNotConfigured: 'WeChat sign-in is not configured yet.'
+      wechatNotConfigured: 'WeChat sign-in is not configured yet.',
     },
     linuxdoCallbackPageTitle: 'LinuxDo Sign-In Callback',
     dingtalkCallbackPageTitle: 'DingTalk Sign-In Callback',
@@ -354,26 +378,29 @@ export default {
       callbackTitle: 'Resuming WeChat payment',
       callbackProcessing: 'Resuming WeChat payment...',
       backToPayment: 'Back to payment',
-      callbackMissingResumeToken: 'The WeChat payment callback is missing the resume token.'
+      callbackMissingResumeToken: 'The WeChat payment callback is missing the resume token.',
     },
     oauth: {
       callbackTitle: 'OAuth Callback',
       callbackHint: 'Copy the code and state back to the admin authorization flow when needed.',
       invalidCallbackTitle: 'Invalid sign-in callback',
-      invalidCallbackHint: 'This page does not contain a valid authorization result. Return to the login page and start quick sign-in again.',
+      invalidCallbackHint:
+        'This page does not contain a valid authorization result. Return to the login page and start quick sign-in again.',
       code: 'Code',
       state: 'State',
-      fullUrl: 'Full URL'
+      fullUrl: 'Full URL',
     },
     // Forgot password
     forgotPassword: 'Forgot password?',
     forgotPasswordTitle: 'Reset Your Password',
-    forgotPasswordHint: 'Enter your email address and we will send you a link to reset your password.',
+    forgotPasswordHint:
+      'Enter your email address and we will send you a link to reset your password.',
     sendResetLink: 'Send Reset Link',
     sendingResetLink: 'Sending...',
     sendResetLinkFailed: 'Failed to send reset link. Please try again.',
     resetEmailSent: 'Reset Link Sent',
-    resetEmailSentHint: 'If an account exists with this email, you will receive a password reset link shortly. Please check your inbox and spam folder.',
+    resetEmailSentHint:
+      'If an account exists with this email, you will receive a password reset link shortly. Please check your inbox and spam folder.',
     backToLogin: 'Back to Login',
     rememberedPassword: 'Remembered your password?',
     // Reset password
@@ -389,18 +416,23 @@ export default {
     resettingPassword: 'Resetting...',
     resetPasswordFailed: 'Failed to reset password. Please try again.',
     passwordResetSuccess: 'Password Reset Successful',
-    passwordResetSuccessHint: 'Your password has been reset. You can now sign in with your new password.',
+    passwordResetSuccessHint:
+      'Your password has been reset. You can now sign in with your new password.',
     invalidResetLink: 'Invalid Reset Link',
-    invalidResetLinkHint: 'This password reset link is invalid or has expired. Please request a new one.',
+    invalidResetLinkHint:
+      'This password reset link is invalid or has expired. Please request a new one.',
     requestNewResetLink: 'Request New Reset Link',
-    invalidOrExpiredToken: 'The password reset link is invalid or has expired. Please request a new one.'
+    invalidOrExpiredToken:
+      'The password reset link is invalid or has expired. Please request a new one.',
   },
-  // 敏感操作二次验证
+  // Step-up verification for sensitive actions
   stepUp: {
     title: 'Two-Factor Verification Required',
     hint: 'Enter the 6-digit code from your authenticator app to continue this sensitive operation.',
     verifyFailed: 'Verification failed, please try again',
-    notEnabled: 'This operation requires two-factor authentication. Please enable TOTP in your profile first.',
-    adminApiKeyForbidden: 'Admin API keys cannot perform this operation. Use a two-factor verified admin session.'
-  }
+    notEnabled:
+      'This operation requires two-factor authentication. Please enable TOTP in your profile first.',
+    adminApiKeyForbidden:
+      'Admin API keys cannot perform this operation. Use a two-factor verified admin session.',
+  },
 }

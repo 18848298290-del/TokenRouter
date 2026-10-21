@@ -1,15 +1,24 @@
-// 边线透明度与 /70 等修饰符相乘，避免修饰符把低对比边框重新提亮。
-const darkEdgeColor = (opacity) => ({ opacityValue = '1' }) =>
-  `rgb(252 252 254 / calc(${opacity} * ${opacityValue}))`
+// tailwind.config.js maps application design tokens to generated utility classes.
+// Radius, overlay, motion, and panel-size utilities read the same CSS variables
+// as handwritten styles. Color ramps and font stacks remain shared across pages,
+// while dark edge intensity is configured separately from text and surface colors.
 
-// 深色边线独立于文字和表面色阶，border、divide、ring 共用同一强度。
+// darkEdgeColor creates a Tailwind color resolver for a configured edge alpha.
+// The returned resolver multiplies opacityValue by that alpha, keeping modifiers
+// such as /70 relative to the selected edge intensity rather than replacing it.
+const darkEdgeColor =
+  (opacity) =>
+  ({ opacityValue = '1' }) =>
+    `rgb(252 252 254 / calc(${opacity} * ${opacityValue}))`
+
+// darkEdges supplies shared border, divide, and ring opacities while text and surface utilities use separate color ramps.
 const darkEdges = {
   400: darkEdgeColor(0.3),
   500: darkEdgeColor(0.125),
   600: darkEdgeColor(0.078),
   700: darkEdgeColor(0.04),
   800: darkEdgeColor(0.031),
-  900: darkEdgeColor(0.02)
+  900: darkEdgeColor(0.02),
 }
 
 /** @type {import('tailwindcss').Config} */
@@ -17,16 +26,15 @@ export default {
   content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}'],
   darkMode: 'class',
   theme: {
-    // 语义圆角档位:紧凑元素、控件、内容表面、桌面弹窗。
-    // 数值统一由 style.css 的 :root --radius-* 变量定义,raw CSS 与工具类同源。
-    // 旧尺度 key(sm/md/lg/xl…)已删除,check:ui 门禁阻止其复活。
+    // Radius utilities reference the same root variables as handwritten styles.
+    // The UI check accepts these semantic tiers and rejects legacy numeric-scale names.
     borderRadius: {
       none: '0px',
       compact: 'var(--radius-compact)',
       control: 'var(--radius-control)',
       surface: 'var(--radius-surface)',
       dialog: 'var(--radius-dialog)',
-      full: '9999px'
+      full: '9999px',
     },
     extend: {
       borderColor: { dark: darkEdges },
@@ -34,10 +42,11 @@ export default {
       ringColor: { dark: darkEdges },
       opacity: {
         6: '0.06',
-        8: '0.08'
+        8: '0.08',
       },
-      // 浮层层级语义档:数值唯一来源是 style.css :root 的 --z-* 变量,这里只做 var() 引用。
-      // --z-tour(driver.js 外部约束)有意不暴露为工具类,防止业务代码依附第三方层级。
+      // Overlay utilities reference root z-index variables. The tour's externally
+      // constrained layer remains in its integration stylesheet instead of becoming
+      // a utility that unrelated application panels could depend on.
       zIndex: {
         'chart-tooltip': 'var(--z-chart-tooltip)',
         'sidebar-overlay': 'var(--z-sidebar-overlay)',
@@ -54,16 +63,16 @@ export default {
         'action-menu': 'var(--z-action-menu)',
         'teleport-tooltip': 'var(--z-teleport-tooltip)',
         'help-tooltip': 'var(--z-help-tooltip)',
-        'teleport-dropdown': 'var(--z-teleport-dropdown)'
+        'teleport-dropdown': 'var(--z-teleport-dropdown)',
       },
-      // 浮层面板最大高度三档,数值同样由 style.css :root 变量承载。
+      // Panel height tiers reference root variables shared by menus, dialogs, and handwritten layout rules.
       maxHeight: {
         'menu-sm': 'var(--max-h-menu-sm)',
         menu: 'var(--max-h-menu)',
-        panel: 'var(--max-h-panel)'
+        panel: 'var(--max-h-panel)',
       },
       colors: {
-        // 主色调 - Blue Archive 蓝白主题
+        // Primary blue shades supply the application accent ramp across light and dark themes.
         primary: {
           50: '#F6FCFF',
           100: '#DDF4FC',
@@ -75,9 +84,9 @@ export default {
           700: '#0B8FD8',
           800: '#176F9E',
           900: '#2D4F68',
-          950: '#071A2A'
+          950: '#071A2A',
         },
-        // 辅助色 - 冰白到品牌深蓝
+        // Accent shades provide the secondary white-to-blue ramp used by branded surfaces.
         accent: {
           50: '#FFFFFF',
           100: '#EAF8FE',
@@ -89,10 +98,10 @@ export default {
           700: '#176F9E',
           800: '#2D4F68',
           900: '#21465E',
-          950: '#071A2A'
+          950: '#071A2A',
         },
-        // 覆盖默认 gray/slate:Tailwind 默认值偏蓝(#1f2937/#0f172a 等),深色模式下会残留蓝调
-        // 统一映射到中性 zinc 色相,与 dark 色阶同一体系
+        // Gray and slate utilities share neutral zinc values so reused utilities
+        // stay in the same neutral family as the dark application surfaces.
         gray: {
           50: '#FAFAFA',
           100: '#F4F4F5',
@@ -104,7 +113,7 @@ export default {
           700: '#3F3F46',
           800: '#27272A',
           900: '#18181B',
-          950: '#09090B'
+          950: '#09090B',
         },
         slate: {
           50: '#FAFAFA',
@@ -117,27 +126,27 @@ export default {
           700: '#3F3F46',
           800: '#27272A',
           900: '#18181B',
-          950: '#09090B'
+          950: '#09090B',
         },
         // @project-doc docs/architecture/frontend_ui_conventions.md#dark_colors
-        // 深色文字与表面色阶；边框强度由 darkEdges 单独定义。
+        // Dark text and surface colors use this ramp; border, divide, and ring intensity comes from darkEdges.
         dark: {
-          50: '#FAFAFA', // 标题与强调文字
-          100: '#DEE0E2', // 正文文字、侧栏导航与顶栏图标默认色
-          200: '#D4D4D8', // 次强文字、占位文字底色
-          300: '#A1A1AA', // 次要文字
-          400: '#8B8B94', // 辅助文字、表头文字
-          500: '#5F5F67', // 图标、禁用文字
-          600: '#3D3D42', // 较强中性填充
-          700: '#27272A', // 中性填充：chip、禁用控件
-          800: '#17171A', // 弱填充：表格行 hover、嵌套面板
-          900: '#0F0F10', // 卡片、弹窗、下拉面板
-          950: '#141416' // 控件底：输入框、次级按钮、Tab 轨道、行内代码
-        }
+          50: '#FAFAFA', // Heading and emphasis text.
+          100: '#DEE0E2', // Body, navigation, and header foreground.
+          200: '#D4D4D8', // Secondary strong foreground.
+          300: '#A1A1AA', // Secondary text foreground.
+          400: '#8B8B94', // Hints and table headings.
+          500: '#5F5F67', // Icons and disabled foreground.
+          600: '#3D3D42', // Strong neutral fill.
+          700: '#27272A', // Chips and disabled fills.
+          800: '#17171A', // Row hover and nested surfaces.
+          900: '#0F0F10', // Cards, dialogs, and dropdowns.
+          950: '#141416', // Input, secondary-control, tab-track, and code surfaces.
+        },
       },
       fontFamily: {
-        // 英文用 OpenRouter 的开源字体 Plus Jakarta Sans。
-        // 中文在苹果设备上用系统自带的苹方，其他设备用字形接近的思源黑体网页字体。
+        // Latin text first selects the bundled Plus Jakarta Sans family. CJK glyphs
+        // prefer an installed PingFang face, then the bundled Noto Sans SC face.
         sans: [
           '"Plus Jakarta Sans Variable"',
           '"PingFang SC"',
@@ -151,7 +160,7 @@ export default {
           'Arial',
           'Hiragino Sans GB',
           'Microsoft YaHei',
-          'sans-serif'
+          'sans-serif',
         ],
         mono: [
           '"Geist Mono Variable"',
@@ -160,11 +169,12 @@ export default {
           'Menlo',
           'Monaco',
           'Consolas',
-          'monospace'
-        ]
+          'monospace',
+        ],
       },
       boxShadow: {
-        // 普通控件和结构表面只用边框分层；浮层、弹窗和品牌发光仍保留较强投影。
+        // Structural surfaces use border separation; floating surfaces and branded
+        // effects retain their explicitly selected shadow utilities.
         DEFAULT: 'none',
         sm: 'none',
         glass: 'none',
@@ -173,7 +183,7 @@ export default {
         'glow-lg': '0 0 40px rgba(18, 167, 232, 0.35)',
         card: 'none',
         'card-hover': 'none',
-        'inner-glow': 'inset 0 1px 0 rgba(255, 255, 255, 0.1)'
+        'inner-glow': 'inset 0 1px 0 rgba(255, 255, 255, 0.1)',
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
@@ -182,9 +192,9 @@ export default {
         'gradient-glass':
           'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
         'mesh-gradient':
-          'radial-gradient(at 40% 20%, rgba(0, 210, 255, 0.14) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(139, 221, 248, 0.12) 0px, transparent 50%), radial-gradient(at 0% 50%, rgba(18, 167, 232, 0.1) 0px, transparent 50%)'
+          'radial-gradient(at 40% 20%, rgba(0, 210, 255, 0.14) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(139, 221, 248, 0.12) 0px, transparent 50%), radial-gradient(at 0% 50%, rgba(18, 167, 232, 0.1) 0px, transparent 50%)',
       },
-      // 动效变量由 style.css 持有，工具类只负责引用。
+      // Transition utilities read the shared root timing variables also used by handwritten motion styles.
       transitionDuration: {
         DEFAULT: 'var(--motion-fast)',
         fast: 'var(--motion-fast)',
@@ -204,42 +214,42 @@ export default {
         'scale-in': 'scaleIn 0.2s ease-out',
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         shimmer: 'shimmer 2s linear infinite',
-        glow: 'glow 2s ease-in-out infinite alternate'
+        glow: 'glow 2s ease-in-out infinite alternate',
       },
       keyframes: {
         fadeIn: {
           '0%': { opacity: '0' },
-          '100%': { opacity: '1' }
+          '100%': { opacity: '1' },
         },
         slideUp: {
           '0%': { opacity: '0', transform: 'translateY(10px)' },
-          '100%': { opacity: '1', transform: 'translateY(0)' }
+          '100%': { opacity: '1', transform: 'translateY(0)' },
         },
         slideDown: {
           '0%': { opacity: '0', transform: 'translateY(-10px)' },
-          '100%': { opacity: '1', transform: 'translateY(0)' }
+          '100%': { opacity: '1', transform: 'translateY(0)' },
         },
         slideInRight: {
           '0%': { opacity: '0', transform: 'translateX(20px)' },
-          '100%': { opacity: '1', transform: 'translateX(0)' }
+          '100%': { opacity: '1', transform: 'translateX(0)' },
         },
         scaleIn: {
           '0%': { opacity: '0', transform: 'scale(0.95)' },
-          '100%': { opacity: '1', transform: 'scale(1)' }
+          '100%': { opacity: '1', transform: 'scale(1)' },
         },
         shimmer: {
           '0%': { backgroundPosition: '-200% 0' },
-          '100%': { backgroundPosition: '200% 0' }
+          '100%': { backgroundPosition: '200% 0' },
         },
         glow: {
           '0%': { boxShadow: '0 0 20px rgba(0, 210, 255, 0.28)' },
-          '100%': { boxShadow: '0 0 30px rgba(18, 167, 232, 0.4)' }
-        }
+          '100%': { boxShadow: '0 0 30px rgba(18, 167, 232, 0.4)' },
+        },
       },
       backdropBlur: {
-        xs: '2px'
-      }
-    }
+        xs: '2px',
+      },
+    },
   },
-  plugins: []
+  plugins: [],
 }

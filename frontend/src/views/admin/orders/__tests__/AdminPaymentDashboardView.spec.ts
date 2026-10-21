@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import AdminPaymentDashboardView from '../AdminPaymentDashboardView.vue'
 
+// AdminPaymentDashboardView.spec.ts checks the dates sent when payment analytics first
+// load and when the date picker changes. A concrete picker event and captured dashboard
+// requests distinguish local-calendar default selection from subsequent administrator-
+// selected date ranges.
+
+// Hoisted request replacements are shared with imported module mocks so each test can
+// control API outcomes and inspect calls.
 const { mockGetDashboard } = vi.hoisted(() => {
   vi.stubGlobal('localStorage', {
     getItem: vi.fn(() => null),
@@ -10,23 +17,23 @@ const { mockGetDashboard } = vi.hoisted(() => {
   })
 
   return {
-    mockGetDashboard: vi.fn()
+    mockGetDashboard: vi.fn(),
   }
 })
 
 vi.mock('@/api/admin/payment', () => ({
   default: {
-    getDashboard: (...args: unknown[]) => mockGetDashboard(...args)
+    getDashboard: (...args: unknown[]) => mockGetDashboard(...args),
   },
   adminPaymentAPI: {
-    getDashboard: (...args: unknown[]) => mockGetDashboard(...args)
-  }
+    getDashboard: (...args: unknown[]) => mockGetDashboard(...args),
+  },
 }))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: vi.fn()
-  })
+    showError: vi.fn(),
+  }),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -34,11 +41,12 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
-    })
+      t: (key: string) => key,
+    }),
   }
 })
 
+// formatLocalDate formats local calendar fields as a zero-padded API date string.
 const formatLocalDate = (date: Date): string => {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -46,6 +54,9 @@ const formatLocalDate = (date: Date): string => {
   return `${year}-${month}-${day}`
 }
 
+// mountView mounts the dashboard with isolated chart and layout components. Its date-
+// picker stub emits a concrete range so tests can observe the resulting API request
+// parameters.
 function mountView() {
   return mount(AdminPaymentDashboardView, {
     global: {
@@ -63,10 +74,10 @@ function mountView() {
               class="date-range-picker"
               @click="$emit('change', { startDate: '2026-05-01', endDate: '2026-05-09', preset: null })"
             >DateRangePicker</button>
-          `
-        }
-      }
-    }
+          `,
+        },
+      },
+    },
   })
 }
 
@@ -85,11 +96,13 @@ describe('AdminPaymentDashboardView', () => {
         daily_series: [],
         payment_methods: [],
         purchase_distribution: [],
-        top_users: {}
-      }
+        top_users: {},
+      },
     })
   })
 
+  // The dashboard is mounted with no manually selected date range. Its initial API query
+  // must include today and the preceding twenty-nine local calendar dates.
   it('loads dashboard with last 30 days date range by default', async () => {
     mountView()
     await flushPromises()
@@ -100,10 +113,12 @@ describe('AdminPaymentDashboardView', () => {
 
     expect(mockGetDashboard).toHaveBeenCalledWith({
       start_date: formatLocalDate(start),
-      end_date: formatLocalDate(now)
+      end_date: formatLocalDate(now),
     })
   })
 
+  // The date picker emits a new concrete start and end date. The dashboard must reload
+  // analytics using those values in its latest API request parameters.
   it('reloads dashboard when date range changes', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -113,7 +128,7 @@ describe('AdminPaymentDashboardView', () => {
 
     expect(mockGetDashboard).toHaveBeenLastCalledWith({
       start_date: '2026-05-01',
-      end_date: '2026-05-09'
+      end_date: '2026-05-09',
     })
   })
 })

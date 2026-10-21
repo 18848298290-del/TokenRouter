@@ -2,6 +2,14 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RegisterView from '@/views/auth/RegisterView.vue'
 
+// RegisterView.spec.ts checks registration referral fields, deferred invitation
+// validation, and email-domain admission. Mounted forms use controlled endpoint
+// responses so the assertions distinguish local rejection from backend quota
+// enforcement and detect duplicate validation toasts.
+
+// These fixtures provide controllable dependencies and component handles for the
+// cases below. Each test configures the responses it needs and inspects calls or
+// rendered state at that boundary.
 const {
   pushMock,
   showSuccessMock,
@@ -24,12 +32,15 @@ const {
   routeState: {
     query: {} as Record<string, unknown>,
   },
-}))
+})) // hoisted dependency and routing fixtures
 
 vi.mock('vue-router', () => ({
+  // useRouter supplies observable navigation handlers for the mounted
+  // authentication component.
   useRouter: () => ({
     push: pushMock,
   }),
+  // useRoute supplies the callback query fixture read by the component.
   useRoute: () => routeState,
 }))
 
@@ -37,7 +48,10 @@ vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
   return {
     ...actual,
+    // useI18n supplies the translation fixture used by rendered authentication
+    // labels.
     useI18n: () => ({
+      // t returns translation keys directly for stable component text assertions.
       t: (key: string) => key,
       locale: { value: 'zh-CN' },
     }),
@@ -45,11 +59,19 @@ vi.mock('vue-i18n', async (importOriginal) => {
 })
 
 vi.mock('@/stores', () => ({
+  // useAuthStore exposes the mocked session state and authentication actions
+  // consumed by the component.
   useAuthStore: () => ({
+    // register records signup credentials and attribution for the registration
+    // assertions.
     register: (...args: any[]) => registerMock(...args),
   }),
+  // useAppStore exposes the toast and settings fixtures consumed by the component.
   useAppStore: () => ({
+    // showSuccess records completion feedback delivered through the app toast
+    // service.
     showSuccess: (...args: any[]) => showSuccessMock(...args),
+    // showError records failure feedback delivered through the app toast service.
     showError: (...args: any[]) => showErrorMock(...args),
   }),
 }))
@@ -58,24 +80,43 @@ vi.mock('@/api/auth', async () => {
   const actual = await vi.importActual<typeof import('@/api/auth')>('@/api/auth')
   return {
     ...actual,
+    // getPublicSettings returns the configured public policy response for the
+    // current case.
     getPublicSettings: (...args: any[]) => getPublicSettingsMock(...args),
+    // validatePromoCode returns the controlled validation response for the entered
+    // promotion.
     validatePromoCode: (...args: any[]) => validatePromoCodeMock(...args),
+    // validateInvitationCode returns the controlled validation response for the
+    // entered invitation.
     validateInvitationCode: (...args: any[]) => validateInvitationCodeMock(...args),
   }
 })
 
 vi.mock('@/composables/useBalanceDisplay', () => ({
+  // useBalanceDisplay supplies the promotion-bonus formatter used by the
+  // registration page.
   useBalanceDisplay: () => ({
+    // formatBalanceAmount renders promotion bonus values through the configured
+    // display fixture.
     formatBalanceAmount: (...args: any[]) => formatBalanceAmountMock(...args),
   }),
 }))
 
+// Deferred exposes a promise and its settlement controls to asynchronous tests.
 type Deferred<T> = {
-  promise: Promise<T>
-  resolve: (value: T) => void
-  reject: (reason?: unknown) => void
+  // promise, resolve, and reject belong to one deferred validation result. Tests
+  // keep promise pending during intermediate assertions and settle that same
+  // instance through its returned controls.
+  promise: Promise<T> // pending controlled test promise
+
+  resolve: (value: T) => void // test-controlled promise resolution
+
+  reject: (reason?: unknown) => void // test-controlled promise rejection
 }
 
+// createDeferred returns a promise with externally controlled resolve and reject
+// functions. Tests settle it after intermediate assertions to reproduce requests
+// that remain pending while the user starts another action.
 function createDeferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void
   let reject!: (reason?: unknown) => void
@@ -86,6 +127,9 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject }
 }
 
+// mountView renders registration with external layout and provider controls
+// stubbed. It waits for initial promises before returning the wrapper so callers
+// can interact with settings-dependent form fields.
 async function mountView() {
   const wrapper = mount(RegisterView, {
     global: {
@@ -106,12 +150,18 @@ async function mountView() {
   return wrapper
 }
 
+// fillRequiredFields enters valid email and password values through registration
+// inputs.
 async function fillRequiredFields(wrapper: ReturnType<typeof mount>) {
   await wrapper.get('#email').setValue('alice@example.com')
   await wrapper.get('#password').setValue('secret123')
 }
 
 describe('RegisterView', () => {
+  // Reset the dependency fixtures before each case so request histories and
+  // configured responses belong to the scenario being asserted in that case. Clear
+  // stored authentication or registration values before seeding the next
+  // continuation.
   beforeEach(() => {
     vi.useFakeTimers()
     pushMock.mockReset().mockResolvedValue(undefined)
@@ -137,15 +187,23 @@ describe('RegisterView', () => {
     })
     validatePromoCodeMock.mockReset()
     validateInvitationCodeMock.mockReset()
-    formatBalanceAmountMock.mockReset().mockImplementation((amount: number) => `Balance ${amount.toFixed(2)}`)
+    formatBalanceAmountMock
+      .mockReset()
+      .mockImplementation((amount: number) => `Balance ${amount.toFixed(2)}`)
     routeState.query = {}
     sessionStorage.clear()
   })
 
+  // Restore the browser or timer fixtures changed by this case after its
+  // assertions, keeping those process-level replacements from affecting the next
+  // authentication scenario.
   afterEach(() => {
     vi.useRealTimers()
   })
 
+  // Public settings enable optional referral attribution without mandatory
+  // invitations. The registration page must label that field optional and place it
+  // before the captcha controls.
   it('在 Turnstile 前展示可选推广邀请码输入框', async () => {
     getPublicSettingsMock.mockResolvedValueOnce({
       registration_enabled: true,
@@ -176,6 +234,9 @@ describe('RegisterView', () => {
     ).toBeTruthy()
   })
 
+  // Public settings enable mandatory invitation codes. The registration page must
+  // show the required invitation input and omit the separate optional
+  // referral-invitation field from that layout.
   it('启用强制邀请码时不重复展示推广邀请码输入框', async () => {
     getPublicSettingsMock.mockResolvedValueOnce({
       registration_enabled: true,
@@ -200,15 +261,22 @@ describe('RegisterView', () => {
     expect(wrapper.get('#invitation_code').exists()).toBe(true)
   })
 
+  // Invitation validation is still pending when the user submits registration. The
+  // endpoint must remain uncalled until the deferred validation succeeds, after
+  // which the form can register and navigate.
   it('waits for a pending invitation validation before completing registration', async () => {
-    const invitationValidation = createDeferred<{ valid: boolean; error_code?: string }>()
+    const invitationValidation = createDeferred<{
+      valid: boolean // server validation result flag
+      error_code?: string // server validation failure code
+    }>()
     validateInvitationCodeMock.mockReturnValueOnce(invitationValidation.promise)
 
     const wrapper = await mountView()
     await fillRequiredFields(wrapper)
     await wrapper.get('#invitation_code').setValue('INVITE123')
 
-    // 用手动 Promise 模拟“提交时邀请码仍在异步校验中”的场景。
+    // Hold invitation validation with an explicitly settled promise so the test
+    // can submit registration before the validation response becomes available.
     await vi.advanceTimersByTimeAsync(500)
     await flushPromises()
 
@@ -237,8 +305,14 @@ describe('RegisterView', () => {
     expect(pushMock).toHaveBeenCalledWith('/dashboard')
   })
 
+  // A pending invitation check fails while registration waits for its result. The
+  // page must avoid registration and navigation and show only one validation error
+  // toast.
   it('shows only one error toast when the invitation becomes invalid during submit', async () => {
-    const invitationValidation = createDeferred<{ valid: boolean; error_code?: string }>()
+    const invitationValidation = createDeferred<{
+      valid: boolean // server validation result flag
+      error_code?: string // server validation failure code
+    }>()
     validateInvitationCodeMock.mockReturnValueOnce(invitationValidation.promise)
 
     const wrapper = await mountView()
@@ -269,6 +343,9 @@ describe('RegisterView', () => {
     )
   })
 
+  // Domain quota enforcement is enabled for registration. An address outside the
+  // local whitelist must reach the backend registration call without an immediate
+  // client-side rejection toast.
   it('submits a non-whitelist domain for backend quota enforcement', async () => {
     getPublicSettingsMock.mockResolvedValueOnce({
       registration_enabled: true,
@@ -300,6 +377,9 @@ describe('RegisterView', () => {
     expect(showErrorMock).not.toHaveBeenCalled()
   })
 
+  // The backend rejects signup because the email domain has reached its quota. The
+  // registration page must expose the dedicated translated limit message in its
+  // error toast.
   it('localizes the backend email domain quota error', async () => {
     getPublicSettingsMock.mockResolvedValueOnce({
       registration_enabled: true,
@@ -332,6 +412,9 @@ describe('RegisterView', () => {
     expect(showErrorMock).toHaveBeenCalledWith('auth.emailDomainRegistrationLimit')
   })
 
+  // Quota enforcement is absent and the address is outside the whitelist. The page
+  // must avoid registration, mark the email input invalid, and show allowed-suffix
+  // feedback.
   it('rejects a non-whitelist domain locally when quota is disabled by default', async () => {
     getPublicSettingsMock.mockResolvedValueOnce({
       registration_enabled: true,
@@ -361,6 +444,9 @@ describe('RegisterView', () => {
     expect(wrapper.get('#email').classes()).toContain('input-error')
   })
 
+  // Quota enforcement is disabled but the submitted address matches an allowed
+  // suffix. The registration endpoint must receive that address after ordinary
+  // required-field validation passes.
   it('submits a whitelisted domain when quota is disabled', async () => {
     getPublicSettingsMock.mockResolvedValueOnce({
       registration_enabled: true,

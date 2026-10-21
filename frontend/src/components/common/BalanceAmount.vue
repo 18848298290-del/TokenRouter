@@ -10,23 +10,50 @@ import { computed } from 'vue'
 import BalanceIcon from '@/components/common/BalanceIcon.vue'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 
-const props = withDefaults(defineProps<{
-  amount: number | null | undefined
-  fractionDigits?: number
-  iconSize?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
-  useGrouping?: boolean
-}>(), {
-  fractionDigits: 2,
-  iconSize: 'sm',
-  useGrouping: true
-})
+/**
+ * BalanceAmount.vue renders an account amount with the configured currency symbol or
+ * balance icon. Formatting comes from useBalanceDisplay so callers share decimal
+ * precision, grouping, and the decision to omit the text symbol when a custom icon is
+ * present.
+ */
 
+/**
+ * props controls the source amount, decimal precision, grouping, and icon size
+ * forwarded to the balance presentation helpers.
+ */
+const props = withDefaults(
+  defineProps<{
+    /**
+     * amount is formatted through useBalanceDisplay; missing or nonfinite values
+     * use its two-decimal zero placeholder, including when a custom icon is shown.
+     */
+    amount: number | null | undefined
+    fractionDigits?: number /* decimal fraction digits */
+    iconSize?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' /* balance icon size */
+    useGrouping?: boolean /* numeric grouping preference */
+  }>(),
+  {
+    fractionDigits: 2,
+    iconSize: 'sm',
+    useGrouping: true,
+  },
+)
+
+/**
+ * The balance display composable supplies configuration and formatting together so the
+ * icon and amount use the same unit settings.
+ */
 const { hasCustomBalanceIcon, formatBalanceAmount } = useBalanceDisplay()
 
-// 配置 SVG 图标时用图标标识金额，文本部分显示数值。
-const formattedAmount = computed(() => formatBalanceAmount(props.amount, {
-  fractionDigits: props.fractionDigits,
-  useGrouping: props.useGrouping,
-  withSymbol: !hasCustomBalanceIcon.value
-}))
+/**
+ * formattedAmount pairs the numeric text with the configured icon, suppressing the
+ * text symbol when that icon supplies the unit.
+ */
+const formattedAmount = computed(() =>
+  formatBalanceAmount(props.amount, {
+    fractionDigits: props.fractionDigits,
+    useGrouping: props.useGrouping,
+    withSymbol: !hasCustomBalanceIcon.value,
+  }),
+)
 </script>

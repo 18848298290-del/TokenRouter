@@ -10,9 +10,11 @@
     />
     <Collapse :open="hideToggle || enabled" unmount-on-hide>
       <SettingsSubpanel>
-        <SettingsNotice tone="warning">{{ t('admin.providers.customErrorCodesWarning') }}</SettingsNotice>
+        <SettingsNotice tone="warning">{{
+          t('admin.providers.customErrorCodesWarning')
+        }}</SettingsNotice>
 
-        <!-- 常用错误码快捷切换 -->
+        <!-- Preset HTTP error-code toggles. -->
         <div class="flex flex-wrap gap-2">
           <button
             v-for="code in commonErrorCodes"
@@ -23,7 +25,7 @@
               'rounded-control px-3 py-1.5 text-sm font-medium transition-colors',
               codes.includes(code.value)
                 ? 'bg-red-100 text-red-700 ring-1 ring-red-500 dark:bg-red-900/30 dark:text-red-400'
-                : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-dark-700 dark:text-gray-400 dark:ring-dark-600 dark:hover:bg-dark-600'
+                : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-dark-700 dark:text-gray-400 dark:ring-dark-600 dark:hover:bg-dark-600',
             ]"
             @click="toggleCode(code.value)"
           >
@@ -31,7 +33,7 @@
           </button>
         </div>
 
-        <!-- 手动输入 -->
+        <!-- Manual HTTP error-code entry. -->
         <div class="flex items-center gap-2">
           <input
             v-model.number="draftCode"
@@ -53,7 +55,7 @@
           </button>
         </div>
 
-        <!-- 已选错误码汇总 -->
+        <!-- Selected HTTP error-code summary. -->
         <div class="flex flex-wrap gap-2">
           <span
             v-for="code in sortedCodes"
@@ -91,27 +93,50 @@ import Icon from '@/components/icons/Icon.vue'
 import { commonErrorCodes } from '@/composables/useModelWhitelist'
 import { useAppStore } from '@/stores/app'
 
-// 自定义错误码的开关、快捷选择和手动添加，三个提供商弹窗共用。
+// CustomErrorCodesFields.vue edits provider-specific error status codes through presets
+// and manual input. The parent owns the enabled flag and code array, and adding
+// rate-limit or overload codes requests browser confirmation before changing how those
+// responses are classified.
 defineProps<{
-  /** 批量编辑时由外层的应用开关控制启用状态。 */
+  // The enclosing bulk application field supplies enablement when the local toggle is
+  // hidden.
   hideToggle?: boolean
 }>()
+// enabled is the parent-owned feature switch whose value controls the visibility and
+// application of these settings.
 const enabled = defineModel<boolean>('enabled', { default: false })
+// codes binds the parent-owned selected HTTP error code array to the shared controls
+// through its model update event.
 const codes = defineModel<number[]>('codes', { required: true })
 
+// t resolves interface labels from the active component locale while reactive consumers
+// update their displayed text.
 const { t } = useI18n()
+// appStore displays operation feedback through the shared notification area used by the
+// provider administration screens.
 const appStore = useAppStore()
+// uid supplies one stable instance ID so labels target their own input when several
+// editors are mounted.
 const uid = useId()
+// draftCode holds a manual status-code input until validation and confirmation append it
+// to the selected codes.
 const draftCode = ref<number | null>(null)
+// sortedCodes gives the display an ascending copy while retaining the original order of
+// the parent-owned code array.
 const sortedCodes = computed(() => [...codes.value].sort((a, b) => a - b))
 
-// 429 与 529 会改变限流和过载的处理方式，加入前需要管理员确认。
+// confirmRiskyCode requests confirmation before adding rate-limit or overload status
+// codes. Other codes are accepted immediately, and a rejected browser confirmation leaves
+// the selected code array unchanged for the caller.
 function confirmRiskyCode(code: number) {
   if (code === 429) return confirm(t('admin.providers.customErrorCodes429Warning'))
   if (code === 529) return confirm(t('admin.providers.customErrorCodes529Warning'))
   return true
 }
 
+// toggleCode removes an existing code or appends a newly confirmed code. Confirmation
+// applies only to additions, allowing administrators to remove risky classifications
+// directly from the preset controls.
 function toggleCode(code: number) {
   if (codes.value.includes(code)) {
     removeCode(code)
@@ -121,8 +146,13 @@ function toggleCode(code: number) {
   codes.value = [...codes.value, code]
 }
 
+// addDraftCode validates the manual numeric draft and appends it after any required
+// confirmation. Out-of-range and duplicate values show feedback, while a successful
+// addition clears the draft input.
 function addDraftCode() {
   const code = draftCode.value
+  // Manual input accepts the HTTP status range from one hundred through five hundred
+  // ninety-nine; values outside it show validation feedback.
   if (code === null || typeof code !== 'number' || code < 100 || code > 599) {
     appStore.showError(t('admin.providers.invalidErrorCode'))
     return
@@ -136,7 +166,8 @@ function addDraftCode() {
   draftCode.value = null
 }
 
+// removeCode removes all occurrences of a code from the selected array.
 function removeCode(code: number) {
-  codes.value = codes.value.filter(item => item !== code)
+  codes.value = codes.value.filter((item) => item !== code)
 }
 </script>

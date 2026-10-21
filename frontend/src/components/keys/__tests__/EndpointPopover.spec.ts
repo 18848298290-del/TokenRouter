@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
+// The clipboard mock reports success while localized fixture messages let assertions
+// distinguish the normal hint from copied feedback.
 const copyToClipboard = vi.fn().mockResolvedValue(true)
 
 const messages: Record<string, string> = {
@@ -26,11 +28,18 @@ vi.mock('@/composables/useClipboard', () => ({
 
 import EndpointPopover from '../EndpointPopover.vue'
 
+// EndpointPopover.spec.ts mounts the endpoint popover with deterministic translations and
+// clipboard feedback. The cases inspect where endpoint descriptions appear and how a
+// successful URL copy changes the visible hint and accessible copy action.
+
 describe('EndpointPopover', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
+  // A configured alternate endpoint includes descriptive text and a copy hint. The test
+  // protects their visible placement and rejects the obsolete title-only tooltip
+  // presentation.
   it('将说明提示渲染到 URL 上方而不是旧的 title 图标上', () => {
     const wrapper = mount(EndpointPopover, {
       props: {
@@ -51,6 +60,8 @@ describe('EndpointPopover', () => {
     expect(wrapper.find('[title="自定义说明"]').exists()).toBe(false)
   })
 
+  // A successful clipboard operation follows a URL click in the default endpoint row. The
+  // test checks the copied payload and the resulting visible and accessible confirmation.
   it('点击 URL 后会复制并切换为已复制提示', async () => {
     const wrapper = mount(EndpointPopover, {
       props: {

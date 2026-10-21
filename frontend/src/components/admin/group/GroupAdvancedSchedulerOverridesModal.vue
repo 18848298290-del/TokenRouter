@@ -13,15 +13,21 @@
 
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
-          <label class="input-label">{{ t('admin.groups.advancedSchedulerOverrides.stickyWeighted') }}</label>
+          <label class="input-label">{{
+            t('admin.groups.advancedSchedulerOverrides.stickyWeighted')
+          }}</label>
           <Select v-model="draft.stickyWeighted" :options="booleanOptions" />
         </div>
         <div>
-          <label class="input-label">{{ t('admin.groups.advancedSchedulerOverrides.subscriptionPriority') }}</label>
+          <label class="input-label">{{
+            t('admin.groups.advancedSchedulerOverrides.subscriptionPriority')
+          }}</label>
           <Select v-model="draft.subscriptionPriority" :options="booleanOptions" />
         </div>
         <div>
-          <label class="input-label">{{ t('admin.groups.advancedSchedulerOverrides.stickyEscapeEnabled') }}</label>
+          <label class="input-label">{{
+            t('admin.groups.advancedSchedulerOverrides.stickyEscapeEnabled')
+          }}</label>
           <Select v-model="draft.stickyEscapeEnabled" :options="booleanOptions" />
         </div>
       </div>
@@ -35,7 +41,9 @@
         </div>
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div v-for="field in numericFields" :key="field.key">
-            <label class="input-label">{{ t(`admin.groups.advancedSchedulerOverrides.fields.${field.key}`) }}</label>
+            <label class="input-label">{{
+              t(`admin.groups.advancedSchedulerOverrides.fields.${field.key}`)
+            }}</label>
             <input
               v-model="draft[field.key]"
               :type="field.integer ? 'number' : 'number'"
@@ -90,20 +98,40 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { GroupAdvancedSchedulerOverrides } from '@/types'
+import type { GroupAdvancedSchedulerOverrides } from '@/api/groups.types'
 
+// GroupAdvancedSchedulerOverridesModal.vue edits optional scheduler overrides before publishing
+// a replacement object. Boolean selectors distinguish inherited settings from explicit true and
+// false values, while blank numeric fields omit their override. Opening the dialog hydrates
+// these display values from the parent's current configuration.
+//
+// Saving rebuilds the override object, validates numeric ranges according to each field, and
+// emits it after every configured field passes. Alpha values require a positive fraction, error
+// rates include zero, and designated integer fields require positive integers. Resetting the
+// draft clears every override so the group can inherit scheduler settings.
+
+// props supplies parent-owned editor values and display controls consumed by the fields below.
 const props = defineProps<{
-  show: boolean
+  show: boolean // dialog visibility flag
+  // modelValue supplies the parent-owned value edited by these controls. Updates are emitted to
+  // the parent for publication back through this prop.
   modelValue: GroupAdvancedSchedulerOverrides
 }>()
 
+// emit forwards typed edits and actions to the parent that owns the displayed draft.
 const emit = defineEmits<{
-  close: []
-  save: [value: GroupAdvancedSchedulerOverrides]
+  close: [] // request dialog closure
+  save: [
+    value: GroupAdvancedSchedulerOverrides, // replacement field value
+  ] // validated scheduler overrides
 }>()
 
+// t resolves the current locale messages used by labels, validation, and action notifications.
 const { t } = useI18n()
+// BooleanDraft distinguishes inherited scheduler switches from explicit enabled or disabled
+// overrides.
 type BooleanDraft = 'inherit' | 'true' | 'false'
+// NumericKey names the numeric draft fields displayed in the scheduler dialog.
 type NumericKey =
   | 'ewmaErrorRateAlpha'
   | 'ewmaTTFTAlpha'
@@ -119,14 +147,21 @@ type NumericKey =
   | 'weightQuotaHeadroom'
   | 'weightPreviousResponse'
   | 'weightSessionSticky'
-type NumericOverrideKey = Exclude<keyof GroupAdvancedSchedulerOverrides, 'sticky_weighted_enabled' | 'subscription_priority_enabled' | 'sticky_escape_enabled'>
+// NumericOverrideKey excludes boolean switches from numeric scheduler payload property names.
+type NumericOverrideKey = Exclude<
+  keyof GroupAdvancedSchedulerOverrides,
+  'sticky_weighted_enabled' | 'subscription_priority_enabled' | 'sticky_escape_enabled'
+>
 
-// 数字输入会写回 number，空字符串仍保留“未设置即继承”的语义。
-const draft = reactive<Record<NumericKey, string | number> & {
-  stickyWeighted: BooleanDraft
-  subscriptionPriority: BooleanDraft
-  stickyEscapeEnabled: BooleanDraft
-}>({
+// draft and errorMessage own unsaved scheduler inputs and validation feedback. Blank numbers
+// and inherit selectors omit overrides on save.
+const draft = reactive<
+  Record<NumericKey, string | number> & {
+    stickyWeighted: BooleanDraft // sticky weighting override
+    subscriptionPriority: BooleanDraft // subscription priority override
+    stickyEscapeEnabled: BooleanDraft // sticky escape override
+  }
+>({
   stickyWeighted: 'inherit',
   subscriptionPriority: 'inherit',
   stickyEscapeEnabled: 'inherit',
@@ -147,13 +182,20 @@ const draft = reactive<Record<NumericKey, string | number> & {
 })
 const errorMessage = ref('')
 
+// booleanOptions presents inheritance separately from explicit enabled and disabled overrides
+// for the three scheduler switches.
 const booleanOptions = [
   { value: 'inherit', label: t('admin.groups.advancedSchedulerOverrides.inherit') },
   { value: 'true', label: t('admin.groups.advancedSchedulerOverrides.enabled') },
   { value: 'false', label: t('admin.groups.advancedSchedulerOverrides.disabled') },
 ]
 
-const numericFields: Array<{ key: NumericKey; integer?: boolean }> = [
+// numericFields maps displayed scheduler inputs to their validation category, marking positive
+// integer fields for stricter checks.
+const numericFields: Array<{
+  key: NumericKey // selected property identifier
+  integer?: boolean // positive integer requirement
+}> = [
   { key: 'ewmaErrorRateAlpha' },
   { key: 'ewmaTTFTAlpha' },
   { key: 'stickyEscapeTTFTMs', integer: true },
@@ -170,6 +212,7 @@ const numericFields: Array<{ key: NumericKey; integer?: boolean }> = [
   { key: 'weightSessionSticky' },
 ]
 
+// resetToInherit clears all scheduler overrides and the current validation message.
 const resetToInherit = () => {
   draft.stickyWeighted = 'inherit'
   draft.subscriptionPriority = 'inherit'
@@ -178,12 +221,18 @@ const resetToInherit = () => {
   errorMessage.value = ''
 }
 
+// hydrate replaces the dialog draft with supplied scheduler overrides. It first clears every
+// field to inheritance, then converts present numbers and booleans to selector and input
+// values.
 const hydrate = (value: GroupAdvancedSchedulerOverrides | undefined) => {
   resetToInherit()
   if (!value) return
-  if (value.sticky_weighted_enabled !== undefined) draft.stickyWeighted = String(value.sticky_weighted_enabled) as BooleanDraft
-  if (value.subscription_priority_enabled !== undefined) draft.subscriptionPriority = String(value.subscription_priority_enabled) as BooleanDraft
-  if (value.sticky_escape_enabled !== undefined) draft.stickyEscapeEnabled = String(value.sticky_escape_enabled) as BooleanDraft
+  if (value.sticky_weighted_enabled !== undefined)
+    draft.stickyWeighted = String(value.sticky_weighted_enabled) as BooleanDraft
+  if (value.subscription_priority_enabled !== undefined)
+    draft.subscriptionPriority = String(value.subscription_priority_enabled) as BooleanDraft
+  if (value.sticky_escape_enabled !== undefined)
+    draft.stickyEscapeEnabled = String(value.sticky_escape_enabled) as BooleanDraft
   const mapping: Array<[NumericKey, keyof GroupAdvancedSchedulerOverrides]> = [
     ['ewmaErrorRateAlpha', 'ewma_error_rate_alpha'],
     ['ewmaTTFTAlpha', 'ewma_ttft_alpha'],
@@ -206,16 +255,32 @@ const hydrate = (value: GroupAdvancedSchedulerOverrides | undefined) => {
   }
 }
 
-watch(() => [props.show, props.modelValue] as const, ([show]) => {
-  if (show) hydrate(props.modelValue)
-}, { immediate: true, deep: true })
+// Reopening or replacing visible settings hydrates the modal from its parent value so
+// canceled draft inputs do not become the next editing baseline.
+watch(
+  () => [props.show, props.modelValue] as const,
+  ([show]) => {
+    if (show) hydrate(props.modelValue)
+  },
+  { immediate: true, deep: true },
+)
 
+// handleSave validates the scheduler draft and emits an override object. Inherited booleans and
+// blank numbers are omitted, while explicit false and zero remain configured values where
+// allowed. The first invalid numeric field sets a dialog error and prevents publication.
+//
+// Field metadata selects positive integer validation, and named alpha and rate fields select
+// their respective fractional ranges. Publication occurs after the entire numeric loop, so the
+// parent receives one complete valid object.
 const handleSave = () => {
   errorMessage.value = ''
   const value: GroupAdvancedSchedulerOverrides = {}
-  if (draft.stickyWeighted !== 'inherit') value.sticky_weighted_enabled = draft.stickyWeighted === 'true'
-  if (draft.subscriptionPriority !== 'inherit') value.subscription_priority_enabled = draft.subscriptionPriority === 'true'
-  if (draft.stickyEscapeEnabled !== 'inherit') value.sticky_escape_enabled = draft.stickyEscapeEnabled === 'true'
+  if (draft.stickyWeighted !== 'inherit')
+    value.sticky_weighted_enabled = draft.stickyWeighted === 'true'
+  if (draft.subscriptionPriority !== 'inherit')
+    value.subscription_priority_enabled = draft.subscriptionPriority === 'true'
+  if (draft.stickyEscapeEnabled !== 'inherit')
+    value.sticky_escape_enabled = draft.stickyEscapeEnabled === 'true'
   for (const field of numericFields) {
     const raw = String(draft[field.key] ?? '').trim()
     if (!raw) continue
@@ -226,7 +291,9 @@ const handleSave = () => {
       ? Number.isFinite(parsed) && parsed > 0 && parsed <= 1
       : isRate
         ? Number.isFinite(parsed) && parsed >= 0 && parsed <= 1
-        : Number.isFinite(parsed) && parsed >= 0 && (!field.integer || (Number.isInteger(parsed) && parsed > 0))
+        : Number.isFinite(parsed) &&
+          parsed >= 0 &&
+          (!field.integer || (Number.isInteger(parsed) && parsed > 0))
     if (!valid) {
       errorMessage.value = t('admin.groups.advancedSchedulerOverrides.invalidValue')
       return

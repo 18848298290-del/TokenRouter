@@ -1,30 +1,30 @@
 <template>
-  <!-- 各段文字加 self-baseline，徽章的基线取自第一段文字，移动卡片的标签和它对齐。 -->
   <div class="inline-flex flex-col gap-0.5 text-xs font-medium">
-    <!-- Row 1: Platform + Type -->
     <div class="inline-flex items-center overflow-hidden rounded-compact">
       <span :class="['inline-flex items-center gap-1 px-2 py-1', platformClass]">
         <PlatformIcon :platform="platform" size="xs" />
         <span class="self-baseline">{{ platformLabel }}</span>
       </span>
       <span :class="['inline-flex items-center gap-1 px-1.5 py-1', typeClass]">
-        <!-- OAuth icon -->
         <Icon name="key" size="xs" v-if="type === 'oauth'" class="h-3 w-3" />
-        <!-- Setup Token icon -->
+
         <Icon v-else-if="type === 'setup-token'" name="shield" size="xs" />
-        <!-- API Key icon -->
+
         <Icon v-else-if="type === 'service_account'" name="cloud" size="xs" />
         <Icon v-else name="key" size="xs" />
         <span class="self-baseline">{{ typeLabel }}</span>
       </span>
     </div>
-    <!-- Row 2: Plan type + Privacy mode (only if either exists) -->
-    <div v-if="planLabel || privacyBadge" class="inline-flex items-center overflow-hidden rounded-compact">
-      <span v-if="planLabel" :class="['inline-flex items-center gap-1 px-1.5 py-1', planBadgeClass]">
-        <GrokFreeIcon
-          v-if="isGrokFreePlan"
-          data-testid="grok-free-plan-icon"
-        />
+
+    <div
+      v-if="planLabel || privacyBadge"
+      class="inline-flex items-center overflow-hidden rounded-compact"
+    >
+      <span
+        v-if="planLabel"
+        :class="['inline-flex items-center gap-1 px-1.5 py-1', planBadgeClass]"
+      >
+        <GrokFreeIcon v-if="isGrokFreePlan" data-testid="grok-free-plan-icon" />
         <Icon
           v-else-if="planIconName"
           :name="planIconName"
@@ -43,8 +43,12 @@
         <span class="self-baseline">{{ privacyBadge.label }}</span>
       </span>
     </div>
-    <!-- Row 3: Subscription expiration (non-free paid providers only) -->
-    <div v-if="expiresLabel" class="text-xs leading-tight text-gray-400 dark:text-gray-500 pl-0.5" :title="subscriptionExpiresAt">
+
+    <div
+      v-if="expiresLabel"
+      class="text-xs leading-tight text-gray-400 dark:text-gray-500 pl-0.5"
+      :title="subscriptionExpiresAt"
+    >
       {{ expiresLabel }}
     </div>
   </div>
@@ -53,24 +57,58 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { ProviderPlatform, ProviderType } from '@/types'
+import type { ProviderPlatform, ProviderType } from '@/api/admin/providers.types'
 import PlatformIcon from './PlatformIcon.vue'
 import GrokFreeIcon from './GrokFreeIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 
+/**
+ * PlatformTypeBadge.vue combines provider platform, authentication type, subscription
+ * tier, privacy result, and expiration into compact rows. Plan and authentication
+ * aliases are normalized before display, paid tiers can show a local calendar date,
+ * and privacy details appear for supported OAuth platforms.
+ */
+
+/**
+ * The i18n translator resolves this component's message keys using the current
+ * application locale and its configured translation catalog.
+ */
 const { t } = useI18n()
 
+/**
+ * Props describes the caller supplied values consumed by PlatformTypeBadge.
+ */
 interface Props {
-  platform: ProviderPlatform
-  type: ProviderType
-  authMode?: string
-  planType?: string
-  privacyMode?: string
-  subscriptionExpiresAt?: string
+  platform: ProviderPlatform /* provider platform identifier */
+  type: ProviderType /* provider credential type */
+  /**
+   * authMode specializes the credential label when platform is OpenAI and type is OAuth;
+   * other provider combinations use their credential type label.
+   */
+  authMode?: string /* authentication mode subtype */
+  planType?: string /* subscription plan identifier */
+  /**
+   * privacyMode supplies a privacy badge for recognized results when type is OAuth and
+   * platform is OpenAI or Antigravity; other combinations omit that badge.
+   */
+  privacyMode?: string /* privacy operation result */
+  /**
+   * subscriptionExpiresAt supplies the date row when it parses successfully and planType
+   * is present with a normalized value outside the free, basic, and xbasic aliases.
+   */
+  subscriptionExpiresAt?: string /* subscription expiration timestamp */
 }
 
+/**
+ * props supplies provider identity and optional account metadata; computed labels
+ * decide which plan, privacy, and expiration rows exist.
+ */
 const props = defineProps<Props>()
 
+/**
+ * platformLabel maps known provider platforms to display names and uses Gemini for the
+ * remaining platform branch.
+ */
 const platformLabel = computed(() => {
   if (props.platform === 'anthropic') return 'Anthropic'
   if (props.platform === 'openai') return 'OpenAI'
@@ -81,13 +119,32 @@ const platformLabel = computed(() => {
   if (props.platform === 'zhipu') return 'Zhipu GLM'
   if (props.platform === 'deepseek') return 'DeepSeek'
   if (props.platform === 'jev') return 'Jev'
+  /**
+   * The remaining platform branch uses the Gemini label, matching the final blue
+   * platform palette used by this badge.
+   */
   return 'Gemini'
 })
 
+/**
+ * normalizedAuthMode removes case and separator differences before distinguishing
+ * OpenAI agent identity and personal access token authentication.
+ */
 const normalizedAuthMode = computed(() =>
-  (props.authMode || '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+  (props.authMode || '')
+    .trim()
+    .toLowerCase()
+    /**
+     * Remove separator variations from provider metadata before comparing
+     * authentication or subscription aliases in the badge display selectors.
+     */
+    .replace(/[\s_-]+/g, ''),
 )
 
+/**
+ * typeLabel specializes OpenAI OAuth modes and otherwise maps provider credential
+ * types to compact display labels.
+ */
 const typeLabel = computed(() => {
   if (props.platform === 'openai' && props.type === 'oauth') {
     if (normalizedAuthMode.value === 'agentidentity') return 'Agent Identity'
@@ -111,10 +168,25 @@ const typeLabel = computed(() => {
   }
 })
 
+/**
+ * normalizedPlanType removes case and separators before plan aliases determine labels,
+ * graphics, colors, and expiration eligibility.
+ */
 const normalizedPlanType = computed(() =>
-  (props.planType || '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+  (props.planType || '')
+    .trim()
+    .toLowerCase()
+    /**
+     * Remove separator variations from provider metadata before comparing
+     * authentication or subscription aliases in the badge display selectors.
+     */
+    .replace(/[\s_-]+/g, ''),
 )
 
+/**
+ * planLabel names recognized normalized plan aliases, preserves unknown supplied
+ * labels, and leaves an absent plan unlabeled.
+ */
 const planLabel = computed(() => {
   if (!normalizedPlanType.value) return ''
   switch (normalizedPlanType.value) {
@@ -147,16 +219,25 @@ const planLabel = computed(() => {
   }
 })
 
-const isGrokFreePlan = computed(() =>
-  props.platform === 'grok' &&
-  (normalizedPlanType.value === 'free' ||
-    normalizedPlanType.value === 'basic' ||
-    normalizedPlanType.value === 'xbasic')
+/**
+ * isGrokFreePlan identifies the free, basic, and X Basic aliases that receive the
+ * dedicated Grok free graphic.
+ */
+const isGrokFreePlan = computed(
+  () =>
+    props.platform === 'grok' &&
+    (normalizedPlanType.value === 'free' ||
+      normalizedPlanType.value === 'basic' ||
+      normalizedPlanType.value === 'xbasic'),
 )
 
+/**
+ * planIconName assigns a bolt to recognized SuperGrok or Heavy patterns on Grok
+ * providers, leaving other plans without that icon.
+ */
 const planIconName = computed<'bolt' | null>(() => {
   if (props.platform !== 'grok') return null
-  // 已知的 SuperGrok 和 Heavy 付费档位共用闪电图标，免费档位使用专用图标。
+
   if (
     normalizedPlanType.value === 'supergrok' ||
     normalizedPlanType.value === 'supergrokheavy' ||
@@ -167,6 +248,10 @@ const planIconName = computed<'bolt' | null>(() => {
   }
   return null
 })
+/**
+ * platformClass assigns the platform segment palette, using the blue Gemini palette
+ * for its final platform branch.
+ */
 const platformClass = computed(() => {
   if (props.platform === 'anthropic') {
     return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
@@ -195,6 +280,10 @@ const platformClass = computed(() => {
   return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
 })
 
+/**
+ * typeClass follows the platform palette with the credential segment text tone so both
+ * parts read as one badge.
+ */
 const typeClass = computed(() => {
   if (props.platform === 'anthropic') {
     return 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
@@ -223,11 +312,15 @@ const typeClass = computed(() => {
   return 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
 })
 
+/**
+ * planBadgeClass prioritizes abnormal and free tiers, then Grok paid patterns and
+ * common paid plan names before using the credential palette.
+ */
 const planBadgeClass = computed(() => {
   if (normalizedPlanType.value === 'abnormal') {
     return 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
   }
-  // 免费层保持柔和灰色，Grok 付费层使用不同颜色区分。
+
   if (
     normalizedPlanType.value === 'free' ||
     normalizedPlanType.value === 'basic' ||
@@ -236,18 +329,17 @@ const planBadgeClass = computed(() => {
     return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-dark-200'
   }
   if (props.platform === 'grok' && normalizedPlanType.value) {
-    // Heavy 与 SuperGrok Heavy 使用紫色。
     if (normalizedPlanType.value.includes('heavy')) {
       return 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-300'
     }
-    // SuperGrok 使用青色。
+
     if (normalizedPlanType.value.includes('supergrok')) {
       return 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300'
     }
-    // 其它非免费 Grok 套餐使用琥珀色，未来新增套餐也能保持醒目。
+
     return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
   }
-  // OpenAI 与其他付费计划标签需要和免费层灰色保持清晰区别。
+
   if (normalizedPlanType.value === 'plus') {
     return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
   }
@@ -260,47 +352,87 @@ const planBadgeClass = computed(() => {
   return typeClass.value
 })
 
-// 订阅到期时间仅对付费档位展示。
+/**
+ * expiresLabel formats a valid paid subscription expiration in the browser local
+ * calendar. Missing dates, missing plans, free aliases, and invalid dates produce no
+ * expiration row in the template.
+ */
 const expiresLabel = computed(() => {
   if (!props.subscriptionExpiresAt || !props.planType) return ''
   if (
     normalizedPlanType.value === 'free' ||
     normalizedPlanType.value === 'basic' ||
     normalizedPlanType.value === 'xbasic'
-  ) return ''
+  )
+    return ''
   try {
     const d = new Date(props.subscriptionExpiresAt)
+    /**
+     * Invalid upstream expiration text produces no date row, preventing a malformed
+     * timestamp from appearing as a meaningful subscription deadline.
+     */
     if (isNaN(d.getTime())) return ''
     const yyyy = d.getFullYear()
     const mm = String(d.getMonth() + 1).padStart(2, '0')
     const dd = String(d.getDate()).padStart(2, '0')
     return `${t('admin.providers.subscriptionExpires')} ${yyyy}-${mm}-${dd}`
   } catch {
+    /**
+     * If expiration conversion throws, omit the optional date row and leave the provider
+     * identity and plan details available.
+     */
     return ''
   }
 })
 
-// Privacy badge — shows different states for OpenAI/Antigravity OAuth privacy setting
+/**
+ * privacyBadge exposes supported OpenAI or Antigravity OAuth privacy results as a
+ * label, icon, tooltip, and palette; unknown states omit the badge.
+ */
 const privacyBadge = computed(() => {
   if (props.type !== 'oauth' || !props.privacyMode) return null
-  // 支持 OpenAI 和 Antigravity 平台
+
   if (props.platform !== 'openai' && props.platform !== 'antigravity') return null
 
   const shieldCheck = 'shieldCheck' as const
   const shieldX = 'shieldX' as const
   switch (props.privacyMode) {
-    // OpenAI states
     case 'training_off':
-      return { label: 'Private', icon: shieldCheck, title: t('admin.providers.privacyTrainingOff'), class: 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' }
+      return {
+        label: 'Private',
+        icon: shieldCheck,
+        title: t('admin.providers.privacyTrainingOff'),
+        class: 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400',
+      }
     case 'training_set_cf_blocked':
-      return { label: 'CF', icon: shieldX, title: t('admin.providers.privacyCfBlocked'), class: 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400' }
+      return {
+        label: 'CF',
+        icon: shieldX,
+        title: t('admin.providers.privacyCfBlocked'),
+        class: 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400',
+      }
     case 'training_set_failed':
-      return { label: 'Fail', icon: shieldX, title: t('admin.providers.privacyFailed'), class: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' }
-    // Antigravity states
+      return {
+        label: 'Fail',
+        icon: shieldX,
+        title: t('admin.providers.privacyFailed'),
+        class: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+      }
+
     case 'privacy_set':
-      return { label: 'Private', icon: shieldCheck, title: t('admin.providers.privacyAntigravitySet'), class: 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' }
+      return {
+        label: 'Private',
+        icon: shieldCheck,
+        title: t('admin.providers.privacyAntigravitySet'),
+        class: 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400',
+      }
     case 'privacy_set_failed':
-      return { label: 'Fail', icon: shieldX, title: t('admin.providers.privacyAntigravityFailed'), class: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' }
+      return {
+        label: 'Fail',
+        icon: shieldX,
+        title: t('admin.providers.privacyAntigravityFailed'),
+        class: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+      }
     default:
       return null
   }

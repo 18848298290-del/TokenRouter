@@ -3,13 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import TeamView from '../TeamView.vue'
 
-const {
-  currentTeam,
-  getMembers,
-  getInvitations,
-  getTeamKeys,
-  startTeamGuide,
-} = vi.hoisted(() => ({
+// TeamView.spec.ts checks restarting the team onboarding guide from different owner tabs.
+// The production page receives an active owner context and controlled management lists,
+// while layout stubs retain its actual tab and guide actions.
+
+// Team API and onboarding spies provide a stable owner page while capturing the guide entry
+// context from each selected tab.
+const { currentTeam, getMembers, getInvitations, getTeamKeys, startTeamGuide } = vi.hoisted(() => ({
   currentTeam: vi.fn(),
   getMembers: vi.fn(),
   getInvitations: vi.fn(),
@@ -57,6 +57,8 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
+// owner and teamContext describe an active team with unlimited member windows, enabling
+// owner tabs and their guide anchors for both scenarios.
 const owner = {
   id: 1,
   team_id: 1,
@@ -91,11 +93,14 @@ const teamContext = {
   owner,
 }
 
-// 布局用插槽替身，测试挂载团队页自身的入口。
+// Layout stubs render their slots so the mounted production team page owns the entry actions exercised by these tests.
 const AppLayoutStub = {
   template: '<div><slot /></div>',
 }
 
+// mountTeamView renders the production team page with slot-preserving layout and inert
+// dialog substitutes. It settles initial context and list requests before returning the
+// wrapper for tab navigation.
 const mountTeamView = async () => {
   const wrapper = mount(TeamView, {
     global: {
@@ -124,10 +129,10 @@ describe('TeamView 功能引导', () => {
     getTeamKeys.mockResolvedValue([])
   })
 
-  it.each([
-    'team.keys',
-    'team.settings',
-  ])('从%s页签启动时先恢复概览页', async (tabLabel) => {
+  // An owner starts onboarding while viewing keys or settings. The parameterized test
+  // protects restoration of overview anchors and the owner/team context passed to the guide
+  // controller.
+  it.each(['team.keys', 'team.settings'])('从%s页签启动时先恢复概览页', async (tabLabel) => {
     const wrapper = await mountTeamView()
     const tab = wrapper.findAll('nav button').find((button) => button.text() === tabLabel)
     expect(tab).toBeDefined()
@@ -135,7 +140,9 @@ describe('TeamView 功能引导', () => {
     await tab!.trigger('click')
     expect(wrapper.find('[data-tour="team-members"]').exists()).toBe(false)
 
-    const guideButton = wrapper.findAll('button').find((button) => button.text().includes('team.guideButton'))
+    const guideButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('team.guideButton'))
     expect(guideButton).toBeDefined()
     await guideButton!.trigger('click')
 

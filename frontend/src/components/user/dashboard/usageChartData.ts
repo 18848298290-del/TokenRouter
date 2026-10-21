@@ -1,58 +1,87 @@
-import type { TrendDataPoint } from '@/types'
+import type { TrendDataPoint } from '@/api/usage.types'
 
-// UsageRangePreset 是用量大图的快捷时间范围，custom 表示来自日期选择器的自定义范围。
+// usageChartData.ts builds dashboard time windows, fills absent usage buckets, and computes
+// metric totals. Picker dates represent local calendar days, while trend queries use an
+// exclusive end. The helpers retain that distinction when selecting presets, accepting
+// custom ranges, and deriving the adjacent comparison period.
+//
+// The chart needs a continuous horizontal axis even when the API omits unused periods.
+// Requested bucket keys control ordering and introduce zero records for those gaps, while
+// future periods remain absent. Cache-hit percentages use accumulated input categories, so
+// empty input remains distinguishable from a measured zero percentage and differently sized
+// buckets receive their proper weight.
+
+// UsageRangePreset identifies a dashboard shortcut or a picker-defined time window.
 export type UsageRangePreset = '24h' | '7d' | '30d' | '90d' | 'custom'
 
-// UsageGranularity 是趋势接口支持的聚合粒度。
+// UsageGranularity selects hourly or daily buckets in dashboard queries.
 export type UsageGranularity = 'hour' | 'day'
 
-// UsageRange 描述一次趋势查询的时间窗口，结束时间不包含在内。
+// UsageRange carries local calendar instants and their selected aggregation precision.
 export interface UsageRange {
-  startAt: Date
-  endAt: Date
-  granularity: UsageGranularity
+  startAt: Date // Inclusive local start.
+  endAt: Date // Exclusive local end.
+  granularity: UsageGranularity // Query bucket precision.
 }
 
-// UsageTotals 是一段时间内各指标的合计。
+// UsageTotals summarizes request volume, charged cost, and input cache effectiveness.
 export interface UsageTotals {
-  requests: number
-  tokens: number
-  cost: number
-  // 输入侧没有 token 时命中率无意义，记为 null。
+  requests: number // Completed request count.
+  tokens: number // Total recorded tokens.
+  cost: number // Charged balance amount.
+  // cacheHitRate is null when no positive input-side total exists, allowing the chart
+  // to render an undefined rate separately from a measured zero percent.
   cacheHitRate: number | null
 }
 
+// HOUR_MS and HOURLY_MAX_SPAN_MS express elapsed milliseconds used to select hourly
+// aggregation for short windows.
 const HOUR_MS = 60 * 60 * 1000
-// 跨度不超过两天时按小时聚合，展示每小时的数据点。
+// HOURLY_MAX_SPAN_MS keeps windows of at most two elapsed days in hourly buckets.
 const HOURLY_MAX_SPAN_MS = 2 * 24 * HOUR_MS
 
+// pad formats a numeric date part with at least two digits.
 const pad = (value: number): string => String(value).padStart(2, '0')
 
-// formatDayKey 生成与后端按天分组一致的键（YYYY-MM-DD，本地时区）。
+// formatDayKey returns the local calendar date used to match daily API buckets.
 export const formatDayKey = (date: Date): string =>
   `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 
-// formatHourKey 生成与后端按小时分组一致的键（YYYY-MM-DD HH:00，本地时区）。
-export const formatHourKey = (date: Date): string => `${formatDayKey(date)} ${pad(date.getHours())}:00`
+// formatHourKey returns the local date and hour used to match hourly API buckets.
+export const formatHourKey = (date: Date): string =>
+  `${formatDayKey(date)} ${pad(date.getHours())}:00`
 
-// formatQueryTime 生成趋势接口接受的本地时间参数（YYYY-MM-DDTHH:mm:ss）。
+// formatQueryTime serializes local calendar components for the dashboard time query
+// parameters.
 export const formatQueryTime = (date: Date): string =>
   `${formatDayKey(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 
-const startOfDay = (date: Date): Date => new Date(date.getFullYear(), date.getMonth(), date.getDate())
+// startOfDay returns a fresh Date at the supplied local calendar midnight.
+const startOfDay = (date: Date): Date =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate())
 
+// addDays returns a cloned Date shifted by local calendar days. The input remains unchanged,
+// and daylight-saving changes follow Date calendar arithmetic rather than elapsed-day
+// multiplication.
 const addDays = (date: Date, days: number): Date => {
   const next = new Date(date)
   next.setDate(next.getDate() + days)
   return next
 }
 
-// resolveGranularity 按窗口跨度选择粒度。
+// resolveGranularity selects hours for windows spanning at most two elapsed days. Longer
+// windows use daily aggregation; callers validate ordering before passing a custom picker
+// range.
 export const resolveGranularity = (startAt: Date, endAt: Date): UsageGranularity =>
   endAt.getTime() - startAt.getTime() <= HOURLY_MAX_SPAN_MS ? 'hour' : 'day'
 
-// resolvePresetRange 把快捷范围换算成整点或整天对齐的查询窗口。
-export const resolvePresetRange = (preset: Exclude<UsageRangePreset, 'custom'>, now: Date = new Date()): UsageRange => {
+// resolvePresetRange expands a shortcut into the aligned dashboard query window. The default
+// clock is sampled at invocation, and the current incomplete hour or calendar day remains
+// included for live usage display.
+export const resolvePresetRange = (
+  preset: Exclude<UsageRangePreset, 'custom'>,
+  now: Date = new Date(),
+): UsageRange => {
   if (preset === '24h') {
     const endAt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() + 1)
     return { startAt: new Date(endAt.getTime() - 24 * HOUR_MS), endAt, granularity: 'hour' }
@@ -62,14 +91,20 @@ export const resolvePresetRange = (preset: Exclude<UsageRangePreset, 'custom'>, 
   return { startAt: addDays(endAt, -days), endAt, granularity: 'day' }
 }
 
-// parsePickerValue 解析日期选择器的值；只有日期时取当天零点。
+// parsePickerValue converts picker text into a valid Date or null. Date-only text means
+// local midnight; empty text and values producing an invalid timestamp prevent custom range
+// selection.
 const parsePickerValue = (value: string): Date | null => {
   if (!value) return null
   const date = new Date(value.length === 10 ? `${value}T00:00:00` : value)
   return Number.isFinite(date.getTime()) ? date : null
 }
 
-// resolveCustomRange 把日期选择器的起止值换算成查询窗口，纯日期的结束值包含当天。
+// resolveCustomRange turns picker endpoints into the exclusive-end interval used by
+// dashboard queries. Invalid dates and reversed or empty intervals return null so the caller
+// retains its previous selection. A date-only end includes that entire local calendar day by
+// advancing to the following midnight. Timestamp ends already describe the exclusive instant
+// and remain unchanged, with aggregation chosen from the resulting elapsed span.
 export const resolveCustomRange = (startValue: string, endValue: string): UsageRange | null => {
   const startAt = parsePickerValue(startValue)
   const parsedEnd = parsePickerValue(endValue)
@@ -79,18 +114,31 @@ export const resolveCustomRange = (startValue: string, endValue: string): UsageR
   return { startAt, endAt, granularity: resolveGranularity(startAt, endAt) }
 }
 
-// previousRange 返回紧邻当前窗口之前、长度相同的窗口，用于计算环比。
+// previousRange builds the adjacent comparison interval ending at the current start. Hourly
+// windows preserve elapsed duration, while daily windows derive a rounded calendar-day count
+// and shift through local dates. That distinction keeps daily query endpoints at calendar
+// midnights across daylight-saving changes. The returned endAt shares the supplied startAt
+// Date, so consumers use these dates as query values and do not mutate them.
 export const previousRange = (range: UsageRange): UsageRange => {
   if (range.granularity === 'day') {
-    // 按日历天回退，跨夏令时的一天也保持整天对齐。
-    const days = Math.round((startOfDay(range.endAt).getTime() - startOfDay(range.startAt).getTime()) / (24 * HOUR_MS))
+    // Round elapsed days before calendar subtraction so an hour gained or lost at
+    // a daylight-saving transition does not shift a daily comparison off midnight.
+    const days = Math.round(
+      (startOfDay(range.endAt).getTime() - startOfDay(range.startAt).getTime()) / (24 * HOUR_MS),
+    )
     return { startAt: addDays(range.startAt, -days), endAt: range.startAt, granularity: 'day' }
   }
   const span = range.endAt.getTime() - range.startAt.getTime()
-  return { startAt: new Date(range.startAt.getTime() - span), endAt: range.startAt, granularity: 'hour' }
+  return {
+    startAt: new Date(range.startAt.getTime() - span),
+    endAt: range.startAt,
+    granularity: 'hour',
+  }
 }
 
-// bucketKeys 列出窗口内的全部分组键，截止到当前时刻，未来的时段不画。
+// bucketKeys enumerates local bucket labels up to the earlier of the window end and now. The
+// current bucket is included, future buckets are omitted, and the supplied Date objects
+// remain unchanged.
 export const bucketKeys = (range: UsageRange, now: Date = new Date()): string[] => {
   const keys: string[] = []
   const limit = Math.min(range.endAt.getTime(), now.getTime() + 1)
@@ -111,6 +159,7 @@ export const bucketKeys = (range: UsageRange, now: Date = new Date()): string[] 
   return keys
 }
 
+// emptyPoint supplies a dated zero-usage record for an omitted API bucket.
 const emptyPoint = (date: string): TrendDataPoint => ({
   date,
   requests: 0,
@@ -123,19 +172,33 @@ const emptyPoint = (date: string): TrendDataPoint => ({
   actual_cost: 0,
 })
 
-// fillTrendBuckets 按分组键补齐后端省略的空时段，保证横轴间隔均匀。
+// fillTrendBuckets returns records in the supplied bucket-key order and fills missing
+// records with zeros. Existing records remain shared with points; duplicate API dates
+// resolve to the last supplied record.
 export const fillTrendBuckets = (points: TrendDataPoint[], keys: string[]): TrendDataPoint[] => {
   const byKey = new Map(points.map((point) => [point.date, point]))
   return keys.map((key) => byKey.get(key) ?? emptyPoint(key))
 }
 
-// cacheHitRateOf 计算缓存命中率，分母是输入侧全部 token（后端的 input_tokens 已扣除缓存读取）。
-export const cacheHitRateOf = (input: number, cacheCreation: number, cacheRead: number): number | null => {
+// cacheHitRateOf returns cache-read tokens as a percentage of all input-side tokens. Input,
+// cache creation, and cache reads are separate quantities in these usage records, so all
+// three contribute to the denominator. No positive input-side total returns null, allowing
+// the chart to distinguish an undefined rate from measured zero cache hits. Callers
+// aggregate token counts first when computing a period-wide rate.
+export const cacheHitRateOf = (
+  input: number,
+  cacheCreation: number,
+  cacheRead: number,
+): number | null => {
   const inputSide = input + cacheCreation + cacheRead
   return inputSide > 0 ? (cacheRead / inputSide) * 100 : null
 }
 
-// summarizeTrend 汇总一段时间的各项指标。
+// summarizeTrend sums requests, total tokens, charged cost, and input-side token categories
+// across the supplied records. Cache effectiveness is calculated from those accumulated
+// input categories, so periods with different token volumes contribute proportionally to the
+// final percentage. Averaging each bucket percentage would give small buckets the same
+// weight as large ones. Empty input returns zero additive totals and a null cache-hit rate.
 export const summarizeTrend = (points: TrendDataPoint[]): UsageTotals => {
   let requests = 0
   let tokens = 0

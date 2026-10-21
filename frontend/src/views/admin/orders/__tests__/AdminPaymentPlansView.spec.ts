@@ -4,6 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AdminPaymentPlansView from '../AdminPaymentPlansView.vue'
 
+// AdminPaymentPlansView.spec.ts checks currency rendering for current and legacy
+// subscription plan prices. Table slot replacements render supplied plan rows, allowing
+// assertions to observe configured currency symbols, the empty-currency USD behavior, and
+// the shared table layout.
+
+// Hoisted request replacements are shared with imported module mocks so each test can
+// control API outcomes and inspect calls.
 const { getPlans, getConfig } = vi.hoisted(() => ({
   getPlans: vi.fn(),
   getConfig: vi.fn(),
@@ -30,6 +37,8 @@ vi.mock('vue-i18n', async (importOriginal) => {
   }
 })
 
+// DataTableStub renders each price slot with its corresponding plan row so assertions
+// observe the page currency formatting.
 const DataTableStub = {
   props: ['data'],
   template: `
@@ -41,6 +50,8 @@ const DataTableStub = {
   `,
 }
 
+// TablePageLayoutStub renders the table slot used by the plan page and exposes the layout
+// component for assertions.
 const TablePageLayoutStub = {
   template: '<div class="table-page-layout"><slot name="table" /></div>',
 }
@@ -80,6 +91,8 @@ describe('AdminPaymentPlansView', () => {
     })
   })
 
+  // The list includes a CNY plan and a legacy plan with an empty currency. Prices must
+  // display their corresponding currency symbols while retaining the shared table layout.
   it('uses the configured currency symbol and keeps legacy prices in USD', async () => {
     const wrapper = mount(AdminPaymentPlansView, {
       global: {

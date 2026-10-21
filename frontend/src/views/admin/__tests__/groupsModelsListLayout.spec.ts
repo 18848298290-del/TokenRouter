@@ -1,33 +1,70 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { describe, expect, it } from 'vitest'
+import ts from 'typescript'
+import {
+  attribute,
+  classes,
+  directive,
+  nodes,
+  parseScript,
+  parseVue,
+} from '@/__tests__/helpers/sourceSyntax'
 
-import { describe, expect, it } from "vitest";
+// groupsModelsListLayout.spec.ts verifies the model chooser's template hierarchy
+// and dialog scrolling policy. Toolbar actions stay outside the bounded list,
+// while both group forms delegate scrolling to their own content and present
+// the unified model discovery endpoint.
 
-const currentDir = dirname(fileURLToPath(import.meta.url));
-const groupsViewSource = readFileSync(
-  resolve(currentDir, "../GroupsView.vue"),
-  "utf8",
-);
+// Both parsed components retain element relationships and directive expressions;
+// assertions therefore identify the target control instead of matching source lines.
+const groups = parseVue('views/admin/GroupsView.vue')
+const list = parseVue('components/admin/group/GroupModelsListFields.vue')
 
-const listSource = readFileSync(resolve(currentDir, "../../../components/admin/group/GroupModelsListFields.vue"), "utf8");
+describe('groups models list layout', () => {
+  // A long model list scrolls below the selection toolbar inside one bordered panel.
+  // Keeping the toolbar as a sibling makes its actions available during list scrolling.
+  it('keeps the toolbar outside of the scrolling list content', () => {
+    const panel = list.elements.find((element) => classes(element).includes('overflow-hidden'))!
+    expect(classes(panel)).toEqual(expect.arrayContaining(['rounded-surface', 'border']))
+    const children = panel.children.filter((child) => child.type === 1)
+    expect(children).toHaveLength(2)
+    expect(classes(children[0])).toEqual(expect.arrayContaining(['border-b']))
+    expect(classes(children[1])).toEqual(
+      expect.arrayContaining(['max-h-64', 'divide-y', 'divide-gray-200', 'overflow-y-auto']),
+    )
+    expect(
+      groups.elements.some(
+        (element) => classes(element).includes('sticky') && classes(element).includes('top-0'),
+      ),
+    ).toBe(false)
+  })
 
-describe("groups models list layout", () => {
-  it("keeps the toolbar outside of the scrolling list content", () => {
-    expect(listSource).toContain("overflow-hidden rounded-surface border");
-    expect(listSource).toContain("max-h-64 divide-y divide-gray-200 overflow-y-auto");
-    expect(groupsViewSource).not.toContain("sticky top-0");
-  });
+  // Create and edit dialogs both delegate scrolling to their form content.
+  // Wide dimensions and disabled dialog body scrolling prevent a nested dialog scrollbar.
+  it('uses wide create and edit dialogs with form-owned scrolling', () => {
+    const dialogs = groups.elements.filter(
+      (element) => element.tag === 'BaseDialog' && attribute(element, 'width') === 'wide',
+    )
+    expect(dialogs).toHaveLength(2)
+    for (const dialog of dialogs) expect(directive(dialog, 'bind', 'body-scroll')).toBe('false')
+  })
 
-  it("uses a wide dialog with a single form-owned scroll area", () => {
-    expect(groupsViewSource).toContain('width="wide"');
-    expect(groupsViewSource).toContain(
-      ':body-scroll="false"',
-    );
-  });
-
-  it("uses the unified models endpoint in group configuration", () => {
-    expect(listSource).toContain("endpoint: '/v1/models'");
-    expect(groupsViewSource).not.toContain('modelsListEndpoint(createForm.platform)');
-  });
-});
+  // The model-list label and hint advertise the same API endpoint for every group.
+  // Their parsed translation arguments retain the endpoint value across quote and layout changes.
+  it('uses the unified models endpoint in group configuration', () => {
+    const toggle = list.elements.find((element) => element.tag === 'SettingToggleRow')!
+    for (const property of ['label', 'hint']) {
+      const expression = parseScript(directive(toggle, 'bind', property)!)
+      const endpoint = nodes(expression, ts.isPropertyAssignment).find(
+        (node) => ts.isIdentifier(node.name) && node.name.text === 'endpoint',
+      )!
+      expect(ts.isStringLiteral(endpoint.initializer) && endpoint.initializer.text).toBe(
+        '/v1/models',
+      )
+    }
+    expect(
+      nodes(groups.script, ts.isCallExpression).some(
+        (node) => ts.isIdentifier(node.expression) && node.expression.text === 'modelsListEndpoint',
+      ),
+    ).toBe(false)
+  })
+})

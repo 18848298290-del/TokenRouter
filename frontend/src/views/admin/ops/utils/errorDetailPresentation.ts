@@ -12,24 +12,29 @@ import type { OpsErrorDetail } from '@/api/admin/ops'
 // These rules also apply to individual upstream attempt descriptions.
 
 /** PayloadSource identifies the stored field represented by a response section. */
-export type PayloadSource = 'client' | 'upstream_message' | 'upstream_detail' | 'upstream_events' | 'message'
+export type PayloadSource =
+  'client' | 'upstream_message' | 'upstream_detail' | 'upstream_events' | 'message'
 
 /** ErrorSummary describes a bounded message and its recorded source. */
 export interface ErrorSummary {
-  kind: 'text' | 'html' | 'json' | 'empty' // summary display format
-  text: string // bounded extracted message
+  kind: 'text' | 'html' | 'json' | 'empty' // summary response format classification
+  text: string // bounded extracted message text
+  // source identifies the selected stored field when a candidate exists,
+  // including candidates displayed through a format label.
   source?: PayloadSource // selected stored field
 }
 
 /** ErrorPayload retains exact response content and all matching source labels. */
 export interface ErrorPayload {
-  key: PayloadSource // first matching source
+  key: PayloadSource // first matching stored source
+  // sources retains all fields with exactly matching content, in candidate
+  // order, for the inspector attribution labels.
   sources: PayloadSource[] // all identical sources
-  value: string // exact stored content
+  value: string // exact retained response content
 }
 
-// Summary previews are bounded separately from the original strings retained
-// for copying and inspection in the response section.
+// Summary previews are bounded separately from the original strings retained for
+// copying and inspection in the response section.
 const SUMMARY_LIMIT = 320
 
 /** meaningfulPayload excludes blank values and serialized empty response placeholders.
@@ -41,11 +46,15 @@ function meaningfulPayload(value: string | undefined): string {
   return value
 }
 
-/** summarizeErrorText classifies a response and bounds its readable message.
- * Recognized message fields are selected from JSON objects. HTML is identified
- * as a response format; its markup is never inserted into a document to derive
- * a diagnosis, and the caller supplies the translated format label.
- */
+// summarizeErrorText classifies retained response text and bounds a readable
+// diagnostic message. Empty input receives the empty classification, and
+// recognized JSON message fields are selected before whitespace normalization.
+//
+// JSON objects without a supported message remain classified as JSON, while
+// detected HTML receives a format label instead of a derived cause. The returned
+// summary can be shortened, so callers use retained payload strings for copying
+// and full inspection. Plain text and malformed JSON remain eligible for message
+// display after format detection.
 export function summarizeErrorText(raw: string): ErrorSummary {
   let text = raw.trim()
   if (!text) return { kind: 'empty', text: '' }
@@ -56,11 +65,11 @@ export function summarizeErrorText(raw: string): ErrorSummary {
     } else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const body = parsed as Record<string, unknown>
       const error = body.error
-      const errorMessage = error && typeof error === 'object'
-        ? (error as Record<string, unknown>).message
-        : error
-      const message = [errorMessage, body.message, body.error_description, body.detail]
-        .find(value => typeof value === 'string' && value.trim())
+      const errorMessage =
+        error && typeof error === 'object' ? (error as Record<string, unknown>).message : error
+      const message = [errorMessage, body.message, body.error_description, body.detail].find(
+        (value) => typeof value === 'string' && value.trim(),
+      )
       if (typeof message !== 'string') return { kind: 'json', text: '' }
       text = message
     } else {
@@ -68,7 +77,8 @@ export function summarizeErrorText(raw: string): ErrorSummary {
     }
   } catch {
     // Provider responses may contain plain text or HTML, so failed JSON parsing
-    // keeps the original text available for format detection and summary display.
+    // keeps the original text available for format detection and summary
+    // display.
   }
   if (/<(?:!doctype\s+html|html|head|body|title|h[1-6]|div|p|script|style)\b/i.test(text)) {
     return { kind: 'html', text: '' }
@@ -76,7 +86,10 @@ export function summarizeErrorText(raw: string): ErrorSummary {
   text = text.replace(/\s+/g, ' ').trim()
   if (!text) return { kind: 'empty', text: '' }
   // Bound summary length to keep diagnostic bodies from dominating the dialog.
-  return { kind: 'text', text: text.length > SUMMARY_LIMIT ? `${text.slice(0, SUMMARY_LIMIT)}…` : text }
+  return {
+    kind: 'text',
+    text: text.length > SUMMARY_LIMIT ? `${text.slice(0, SUMMARY_LIMIT)}…` : text,
+  }
 }
 
 /** getErrorSummary selects the first recorded error description by diagnostic priority.
@@ -89,7 +102,7 @@ export function getErrorSummary(detail: OpsErrorDetail | null): ErrorSummary {
     ['upstream_message', detail.upstream_error_message],
     ['upstream_detail', detail.upstream_error_detail],
     ['message', detail.message],
-    ['client', detail.error_body]
+    ['client', detail.error_body],
   ]
   for (const [source, candidate] of candidates) {
     const value = meaningfulPayload(candidate)
@@ -98,10 +111,14 @@ export function getErrorSummary(detail: OpsErrorDetail | null): ErrorSummary {
   return { kind: 'empty', text: '' }
 }
 
-/** getErrorPayloads groups identical stored strings while preserving source attribution.
- * Empty placeholders are omitted. Each section retains the exact first value,
- * including whitespace, for copying and for text rendering in the inspector.
- */
+// getErrorPayloads groups identical stored strings while preserving every source
+// attribution. Missing details and serialized empty placeholders produce no
+// sections, and each retained value keeps its original whitespace for copying.
+//
+// The first matching field supplies the stable section key. Later fields with
+// exactly equal contents append their source labels to that section, so equal
+// client and upstream bodies remain distinguishable by provenance even though
+// the inspector renders their shared content once.
 export function getErrorPayloads(detail: OpsErrorDetail | null): ErrorPayload[] {
   if (!detail) return []
   const candidates: Array<[PayloadSource, string | undefined]> = [
@@ -109,13 +126,13 @@ export function getErrorPayloads(detail: OpsErrorDetail | null): ErrorPayload[] 
     ['upstream_message', detail.upstream_error_message],
     ['upstream_detail', detail.upstream_error_detail],
     ['upstream_events', detail.upstream_errors],
-    ['message', detail.message]
+    ['message', detail.message],
   ]
   const sections: ErrorPayload[] = []
   for (const [source, candidate] of candidates) {
     const value = meaningfulPayload(candidate)
     if (!value) continue
-    const existing = sections.find(section => section.value === value)
+    const existing = sections.find((section) => section.value === value)
     if (existing) {
       existing.sources.push(source)
     } else {
@@ -135,7 +152,7 @@ export function getAttemptPayload(detail: OpsErrorDetail): string {
     detail.upstream_errors,
     detail.upstream_error_message,
     detail.error_body,
-    detail.message
+    detail.message,
   ]
   for (const candidate of candidates) {
     const value = meaningfulPayload(candidate)
@@ -153,7 +170,8 @@ export function formatErrorPayload(raw: string): string {
     return JSON.stringify(JSON.parse(raw), null, 2)
   } catch {
     // Non-JSON responses remain readable as text, including truncated HTML and
-    // provider messages whose payloads cannot be decoded as complete JSON documents.
+    // provider messages whose payloads cannot be decoded as complete JSON
+    // documents.
     return raw
   }
 }

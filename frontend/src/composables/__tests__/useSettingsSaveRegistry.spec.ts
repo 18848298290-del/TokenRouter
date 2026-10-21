@@ -2,7 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { createSettingsSaveRegistry } from '@/composables/useSettingsSaveRegistry'
 
+// useSettingsSaveRegistry.spec.ts checks page-level saving against independently owned
+// section dirty flags. The cases observe registration order, false-return handling,
+// unregistering, and selective discard so clean sections stay outside page-level
+// persistence and reload operations.
+
 describe('createSettingsSaveRegistry', () => {
+  // Three registered targets include a clean middle section and a first save returning
+  // false. Saving must call the dirty sections in order and return false after continuing.
   it('saves only dirty targets in registration order and keeps going after a failure', async () => {
     const { dirty, saveDirty, registry } = createSettingsSaveRegistry()
     const calls: string[] = []
@@ -39,6 +46,8 @@ describe('createSettingsSaveRegistry', () => {
     expect(calls).toEqual(['first', 'third'])
   })
 
+  // A registry contains one dirty section before that key is removed. The aggregate dirty
+  // flag must change to false once the section is unregistered.
   it('stops tracking a target after it is unregistered', () => {
     const { dirty, registry } = createSettingsSaveRegistry()
     registry.register('only', { dirty: ref(true), save: async () => true, discard: async () => {} })
@@ -48,6 +57,8 @@ describe('createSettingsSaveRegistry', () => {
     expect(dirty.value).toBe(false)
   })
 
+  // A registry contains both dirty and clean sections with separate discard spies. Discard
+  // must invoke the dirty section exactly once and leave the clean section untouched.
   it('discards only dirty targets', async () => {
     const { discardDirty, registry } = createSettingsSaveRegistry()
     const dirtyDiscard = vi.fn(async () => {})

@@ -1,37 +1,37 @@
-/**
- * Admin Subscriptions API endpoints
- * Handles user subscription management for administrators
- */
-
 import { apiClient } from '../client'
 import type {
   UserSubscription,
   AssignSubscriptionRequest,
   ExtendSubscriptionRequest,
-  PaginatedResponse
-} from '@/types'
+} from '@/api/subscriptions.types'
+import type { PaginatedResponse } from '@/api/common.types'
 
 /**
- * List all subscriptions with pagination
- * @param page - Page number (default: 1)
- * @param pageSize - Items per page (default: 20)
- * @param filters - Optional filters (status, user_id, plan_id, sort_by, sort_order)
- * @returns Paginated list of subscriptions
+ * subscriptions.ts retrieves and modifies administrator subscription
+ * assignments. List requests support filters and cancellation, while assignment,
+ * extension, usage reset and revocation have separate endpoints so subscription
+ * management views can submit the operation they selected.
+ */
+
+/**
+ * list lists all subscriptions with pagination. Page defaults to 1, pageSize
+ * defaults to 20; the caller may cancel through the supplied AbortSignal. The
+ * function returns the data portion of the completed response.
  */
 export async function list(
   page: number = 1,
   pageSize: number = 20,
   filters?: {
-    status?: 'active' | 'pending' | 'expired' | 'suspended' | 'revoked'
-    user_id?: number
-    plan_id?: number
-    platform?: string
-    sort_by?: string
-    sort_order?: 'asc' | 'desc'
+    status?: 'active' | 'pending' | 'expired' | 'suspended' | 'revoked' // Current server-reported status.
+    user_id?: number // Owning user identifier.
+    plan_id?: number // Subscription plan identifier.
+    platform?: string // Provider platform identifier.
+    sort_by?: string // Requested sort column.
+    sort_order?: 'asc' | 'desc' // Requested ordering direction.
   },
   options?: {
-    signal?: AbortSignal
-  }
+    signal?: AbortSignal // Caller-owned cancellation signal.
+  },
 ): Promise<PaginatedResponse<UserSubscription>> {
   const { data } = await apiClient.get<PaginatedResponse<UserSubscription>>(
     '/admin/subscriptions',
@@ -39,18 +39,16 @@ export async function list(
       params: {
         page,
         page_size: pageSize,
-        ...filters
+        ...filters,
       },
-      signal: options?.signal
-    }
+      signal: options?.signal,
+    },
   )
   return data
 }
 
 /**
- * Assign subscription to user
- * @param request - Assignment request
- * @returns Created subscription
+ * assign assigns subscription to user and returns the server result.
  */
 export async function assign(request: AssignSubscriptionRequest): Promise<UserSubscription> {
   const { data } = await apiClient.post<UserSubscription>('/admin/subscriptions/assign', request)
@@ -58,54 +56,62 @@ export async function assign(request: AssignSubscriptionRequest): Promise<UserSu
 }
 
 /**
- * Extend subscription validity
- * @param id - Subscription ID
- * @param request - Extension request with days
- * @returns Updated subscription
+ * extend extends subscription validity and returns the server result.
  */
 export async function extend(
   id: number,
-  request: ExtendSubscriptionRequest
+  request: ExtendSubscriptionRequest,
 ): Promise<UserSubscription> {
   const { data } = await apiClient.post<UserSubscription>(
     `/admin/subscriptions/${id}/extend`,
-    request
+    request,
   )
   return data
 }
 
 /**
- * Revoke subscription
- * @param id - Subscription ID
- * @returns Success confirmation
+ * revoke revokes subscription and returns the server result.
  */
-export async function revoke(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.post<{ message: string }>(`/admin/subscriptions/${id}/revoke`)
+export async function revoke(id: number): Promise<{
+  message: string // Server-provided result message.
+}> {
+  const { data } = await apiClient.post<{
+    message: string // Server-provided result message.
+  }>(`/admin/subscriptions/${id}/revoke`)
   return data
 }
 
+/**
+ * restore submits restore and returns the server response data.
+ */
 export async function restore(id: number): Promise<UserSubscription> {
   const { data } = await apiClient.post<UserSubscription>(`/admin/subscriptions/${id}/restore`)
   return data
 }
 
 /**
- * Reset daily, weekly, and/or monthly usage quota for a subscription
- * @param id - Subscription ID
- * @param options - Which windows to reset
- * @returns Updated subscription
+ * resetQuota resets daily, weekly, and/or monthly usage quota for a
+ * subscription.
  */
 export async function resetQuota(
   id: number,
-  options: { daily: boolean; weekly: boolean; monthly: boolean }
+  options: {
+    daily: boolean // Daily reset selection.
+    weekly: boolean // Weekly reset selection.
+    monthly: boolean // Monthly reset selection.
+  },
 ): Promise<UserSubscription> {
   const { data } = await apiClient.post<UserSubscription>(
     `/admin/subscriptions/${id}/reset-quota`,
-    options
+    options,
   )
   return data
 }
 
+/**
+ * subscriptionsAPI groups subscription records and administrative adjustments
+ * for callers using the module's named or default API object.
+ */
 export const subscriptionsAPI = {
   list,
   assign,

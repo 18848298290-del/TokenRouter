@@ -1,13 +1,33 @@
-// 代理有效期展示逻辑(ProxiesView 与 ProvidersView 共用)。
-// 到期紧迫度固定两档:剩余 ≤3 天红、≤7 天黄(不读 per-proxy expiry_warn_days)。
+/**
+ * proxyExpiry.ts generates proxy expiry badge classes and translation parameters from
+ * expiry dates and status. Remaining days are rounded upward from elapsed milliseconds.
+ * Explicit expired status wins over the date, while three-day and seven-day thresholds
+ * select warning colors.
+ */
+
+/**
+ * EXPIRY_WARN_DAYS and EXPIRY_DANGER_DAYS define inclusive visual warning thresholds
+ * shared by proxy expiry labels and badge colors.
+ */
 export const EXPIRY_WARN_DAYS = 7
 export const EXPIRY_DANGER_DAYS = 3
 
-// 距今整天数(向上取整)。
+/**
+ * daysUntil returns the ceiling of the remaining interval measured in twenty-four-hour
+ * days. It reads Date.now on every call, and invalid date strings produce NaN for the
+ * calling display helper.
+ */
 export const daysUntil = (iso: string): number =>
+  /**
+   * Round partial days upward for the shared urgency thresholds.
+   */
   Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000)
 
-// 倒计时徽章的 CSS class(纯函数,无 i18n 依赖)。
+/**
+ * proxyExpiryBadgeClass selects expiry urgency classes, with expired status taking
+ * precedence. Missing dates act as infinite remaining time; invalid dates fail both
+ * threshold comparisons and receive the neutral class.
+ */
 export function proxyExpiryBadgeClass(expiresAt: string | null, status?: string): string {
   if (status === 'expired') return 'badge badge-danger'
   const d = expiresAt ? daysUntil(expiresAt) : Infinity
@@ -16,11 +36,19 @@ export function proxyExpiryBadgeClass(expiresAt: string | null, status?: string)
   return 'text-gray-500'
 }
 
-// 返回倒计时文案的 i18n key 和参数，调用方负责翻译，测试可直接检查返回值。
+/**
+ * proxyExpiryLabelKey returns translation metadata for an expiry state, prioritizing
+ * explicit expired status. Other inputs use rounded remaining days; absent dates yield
+ * Infinity and invalid dates yield NaN in the remainingDays parameters.
+ */
 export function proxyExpiryLabelKey(
   expiresAt: string | null,
   status?: string,
-): { key: string; params?: { days: number } } {
+): {
+  key: string // translation lookup key
+  /** params carries the day count for relative labels and is omitted for explicit expired status. */
+  params?: { days: number /* remaining or overdue days */ }
+} {
   if (status === 'expired') return { key: 'admin.proxies.expired' }
   const d = expiresAt ? daysUntil(expiresAt) : Infinity
   if (d < 0) return { key: 'admin.proxies.overdueDays', params: { days: Math.abs(d) } }

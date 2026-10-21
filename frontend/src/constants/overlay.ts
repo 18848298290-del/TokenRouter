@@ -1,36 +1,34 @@
-/**
- * 浮层层级与面板尺寸的唯一来源(JS 侧)。
- *
- * 层级梯队与 style.css :root 的 --z-* 变量、tailwind.config.js 的 zIndex 扩展三轨同源,
- * src/__tests__/zIndexTheme.spec.ts 检查三处取值一致，修改数值时需要同步三处。
- * 梯队语义(低 → 高):内容区局部堆叠(0-20,DataTable 内部自治不入表) → 图表 tooltip 与
- * 侧栏遮罩(30) → 侧栏(40) → 顶栏与弹窗(50,同级靠 DOM 顺序与 teleport 决胜) →
- * 嵌套弹窗(60) → 提示与公告(100-140,公告梯队递增有意) → 菜单捕获层/通知(9998/9999) →
- * 帮助提示(99999) → 引导层(100000000,由 driver.js 设置，此处登记数值) →
- * teleported 下拉(100000020,必须压过引导层)。
- */
+// overlay.ts defines overlay stacking levels and panel dimensions used by JavaScript
+// layout consumers. Stacking values correspond to global CSS variables and Tailwind
+// extensions, with tests checking their agreement; nested surfaces and teleported
+// controls use higher layers when they must appear above their owners.
+
+// Z_INDEX orders chart overlays, navigation, dialogs, notifications, tours, and
+// teleported controls; synchronize changes with global CSS and Tailwind stacking values.
 export const Z_INDEX = {
-  CHART_TOOLTIP: 30,
-  SIDEBAR_OVERLAY: 30,
-  SIDEBAR: 40,
-  HEADER: 50,
-  MODAL: 50,
-  MODAL_NESTED: 60,
-  TOOLTIP: 100,
-  ANNOUNCEMENT: 100,
-  ANNOUNCEMENT_RAISED: 120,
-  ANNOUNCEMENT_TOP: 140,
-  MENU_OVERLAY: 9998,
-  TOAST: 9999,
-  ACTION_MENU: 9999,
-  TELEPORT_TOOLTIP: 9999,
-  HELP_TOOLTIP: 99999,
-  TOUR: 100000000,
-  TELEPORT_DROPDOWN: 100000020
+  CHART_TOOLTIP: 30, // Chart tooltip overlay layer.
+  SIDEBAR_OVERLAY: 30, // Mobile sidebar backdrop layer.
+  SIDEBAR: 40, // Application sidebar content layer.
+  HEADER: 50, // Application header content layer.
+  MODAL: 50, // Base dialog content layer.
+  MODAL_NESTED: 60, // Nested dialog content layer.
+  TOOLTIP: 100, // Local tooltip content layer.
+  ANNOUNCEMENT: 100, // Base announcement popup layer.
+  ANNOUNCEMENT_RAISED: 120, // Raised announcement surface layer.
+  ANNOUNCEMENT_TOP: 140, // Top announcement surface layer.
+  MENU_OVERLAY: 9998, // Menu outside-click capture layer.
+  TOAST: 9999, // Global notification content layer.
+  ACTION_MENU: 9999, // Action menu content layer.
+  TELEPORT_TOOLTIP: 9999, // Teleported tooltip content layer.
+  HELP_TOOLTIP: 99999, // Help tooltip content layer.
+  TOUR: 100000000, // Driver tour overlay layer.
+  TELEPORT_DROPDOWN: 100000020, // Dropdown above tour layer.
 } as const
 
-/** Select 下拉面板的 JS 侧最大高度(px),与 Select.vue 样式中的 max-h-80(320px)同源。 */
+// SELECT_PANEL_MAX_HEIGHT matches Select.vue's max-h-80 panel limit in pixels for
+// JavaScript positioning and available-space calculations.
 export const SELECT_PANEL_MAX_HEIGHT = 320
 
-/** 浮层翻转判断的最小舒适高度(px):下方空间不足该值且上方更宽裕时改为向上展开。 */
+// MIN_COMFORTABLE_PANEL_HEIGHT is the pixel threshold below which panels prefer opening
+// upward when the space above is larger.
 export const MIN_COMFORTABLE_PANEL_HEIGHT = 240

@@ -1,3 +1,23 @@
+/**
+ * registrationEmailPolicy.ts normalizes registration email domain restrictions
+ * and formats their display summaries. Exact domains use a canonical leading
+ * at-sign, while wildcard domains keep their star-dot prefix and match both
+ * the base domain and its subdomains.
+ *
+ * Pasted input rejects tokens containing invalid characters, whereas
+ * normalization of existing entries removes those characters before structural
+ * validation. Deduplication preserves first occurrence order. The admission
+ * helper normalizes the entire configured list before testing an email, so an
+ * absent list and a list with no surviving valid entries both allow any email.
+ * This module does not perform full email-address validation when restrictions
+ * are empty.
+ */
+
+/**
+ * Email suffix patterns distinguish pasted-token rejection from stored-value
+ * cleanup, define exact and wildcard notation, and limit the displayed rule
+ * summary.
+ */
 const EMAIL_SUFFIX_TOKEN_SPLIT_RE = /[\s,，]+/
 const EMAIL_SUFFIX_INVALID_CHAR_RE = /[^a-z0-9.-]/g
 const EMAIL_SUFFIX_INVALID_CHAR_CHECK_RE = /[^a-z0-9.-]/
@@ -7,9 +27,16 @@ const EMAIL_SUFFIX_MESSAGE_VISIBLE_LIMIT = 5
 const EMAIL_SUFFIX_DOMAIN_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/
 
-// 将原始输入归一化为规范域名标记：精确域名不带 "@"，通配符域名保留 "*." 前缀。
+/**
+ * normalizeRegistrationEmailSuffixDomain trims and lowercases an existing
+ * domain entry before removing invalid characters. Leading at-signs are
+ * removed, wildcard prefixes are retained, and structural validation remains a
+ * separate operation for callers.
+ */
 export function normalizeRegistrationEmailSuffixDomain(raw: string): string {
-  let value = String(raw || '').trim().toLowerCase()
+  let value = String(raw || '')
+    .trim()
+    .toLowerCase()
   if (!value) {
     return ''
   }
@@ -18,8 +45,14 @@ export function normalizeRegistrationEmailSuffixDomain(raw: string): string {
   return normalizeRegistrationEmailSuffixToken(value, false)
 }
 
+/**
+ * normalizeRegistrationEmailSuffixDomains returns valid unique normalized
+ * entries in first-occurrence order. Missing lists become empty, and invalid
+ * or duplicate entries are discarded before canonical at-sign prefixes are
+ * added elsewhere.
+ */
 export function normalizeRegistrationEmailSuffixDomains(
-  items: string[] | null | undefined
+  items: string[] | null | undefined,
 ): string[] {
   if (!items || items.length === 0) {
     return []
@@ -38,6 +71,12 @@ export function normalizeRegistrationEmailSuffixDomains(
   return normalized
 }
 
+/**
+ * parseRegistrationEmailSuffixWhitelistInput splits pasted text on whitespace
+ * and supported commas. Tokens containing invalid characters or invalid domain
+ * structure are discarded entirely, and valid normalized duplicates retain
+ * their first occurrence only.
+ */
 export function parseRegistrationEmailSuffixWhitelistInput(input: string): string[] {
   if (!input || !input.trim()) {
     return []
@@ -58,14 +97,27 @@ export function parseRegistrationEmailSuffixWhitelistInput(input: string): strin
   return normalized
 }
 
+/**
+ * normalizeRegistrationEmailSuffixWhitelist returns unique valid domains in
+ * their stored canonical form. Exact domains receive a leading at-sign,
+ * wildcard prefixes remain unchanged, and missing or wholly invalid lists
+ * become empty.
+ */
 export function normalizeRegistrationEmailSuffixWhitelist(
-  items: string[] | null | undefined
+  items: string[] | null | undefined,
 ): string[] {
   return normalizeRegistrationEmailSuffixDomains(items).map(toCanonicalRegistrationEmailSuffix)
 }
 
+/**
+ * extractRegistrationEmailDomain extracts a lowercase domain from an address
+ * containing exactly one at-sign. Empty local or domain portions return empty;
+ * this limited extraction does not validate all email syntax.
+ */
 function extractRegistrationEmailDomain(email: string): string {
-  const raw = String(email || '').trim().toLowerCase()
+  const raw = String(email || '')
+    .trim()
+    .toLowerCase()
   if (!raw) {
     return ''
   }
@@ -79,11 +131,27 @@ function extractRegistrationEmailDomain(email: string): string {
   return raw.slice(atIndex + 1)
 }
 
+/**
+ * isRegistrationEmailSuffixAllowed evaluates an email against normalized exact
+ * and wildcard domain restrictions. A normalized empty list allows every
+ * input, including when all supplied rules were discarded as invalid.
+ *
+ * With surviving restrictions, the address must yield a nonempty domain. Exact
+ * rules compare the full domain, while wildcard rules accept the base itself
+ * or a suffix separated by a dot. That separator prevents a similarly named
+ * unrelated domain from matching. Callers perform any additional email
+ * validation independently of this restriction check.
+ */
 export function isRegistrationEmailSuffixAllowed(
   email: string,
-  whitelist: string[] | null | undefined
+  whitelist: string[] | null | undefined,
 ): boolean {
   const normalizedWhitelist = normalizeRegistrationEmailSuffixWhitelist(whitelist)
+  /**
+   * Admission uses the surviving normalized list, so an absent configuration and
+   * a wholly invalid configuration both follow the unrestricted path implemented
+   * here.
+   */
   if (normalizedWhitelist.length === 0) {
     return true
   }
@@ -104,14 +172,23 @@ export function isRegistrationEmailSuffixAllowed(
   })
 }
 
+/**
+ * formatRegistrationEmailSuffixWhitelistForMessage joins up to five normalized
+ * rules for display. Additional rules become one caller-formatted count entry,
+ * and the supplied separator controls both ordinary entries and that final
+ * summary.
+ */
 export function formatRegistrationEmailSuffixWhitelistForMessage(
   whitelist: string[] | null | undefined,
   options: {
-    separator: string
-    more: (count: number) => string
-  }
+    separator: string // display entry separator
+    more: (count: number) => string // hidden-count message formatter
+  },
 ): string {
   const normalizedWhitelist = normalizeRegistrationEmailSuffixWhitelist(whitelist)
+  /**
+   * Limit the displayed list before appending the hidden-count message.
+   */
   const visible = normalizedWhitelist.slice(0, EMAIL_SUFFIX_MESSAGE_VISIBLE_LIMIT)
   const hiddenCount = normalizedWhitelist.length - visible.length
   if (hiddenCount > 0) {
@@ -120,9 +197,16 @@ export function formatRegistrationEmailSuffixWhitelistForMessage(
   return visible.join(options.separator)
 }
 
-// 粘贴输入采用严格模式：只要包含非法字符就丢弃整个标记。
+/**
+ * normalizeRegistrationEmailSuffixDomainStrict trims and lowercases pasted
+ * input before strict token normalization. Invalid characters cause an empty
+ * result rather than repair, while final domain structure is checked by the
+ * parser caller.
+ */
 function normalizeRegistrationEmailSuffixDomainStrict(raw: string): string {
-  let value = String(raw || '').trim().toLowerCase()
+  let value = String(raw || '')
+    .trim()
+    .toLowerCase()
   if (!value) {
     return ''
   }
@@ -130,6 +214,12 @@ function normalizeRegistrationEmailSuffixDomainStrict(raw: string): string {
   return normalizeRegistrationEmailSuffixToken(value, true)
 }
 
+/**
+ * isRegistrationEmailSuffixDomainValid checks domain structure with an
+ * optional leading wildcard prefix. Bare stars, single labels, misplaced
+ * stars, and malformed label boundaries fail; accepted values remain
+ * unmodified for the caller.
+ */
 export function isRegistrationEmailSuffixDomainValid(domain: string): boolean {
   if (!domain) {
     return false
@@ -140,12 +230,22 @@ export function isRegistrationEmailSuffixDomainValid(domain: string): boolean {
   return !domain.includes('*') && EMAIL_SUFFIX_DOMAIN_PATTERN.test(domain)
 }
 
+/**
+ * normalizeRegistrationEmailSuffixToken normalizes exact or wildcard domain
+ * text according to strictness. Strict mode rejects invalid characters, while
+ * permissive mode removes them; neither path replaces the caller structural
+ * domain check.
+ */
 function normalizeRegistrationEmailSuffixToken(value: string, strict: boolean): string {
   if (value.startsWith(EMAIL_SUFFIX_WILDCARD_PREFIX)) {
     const domain = value.slice(EMAIL_SUFFIX_WILDCARD_PREFIX.length)
     if (strict && (!domain || EMAIL_SUFFIX_INVALID_CHAR_CHECK_RE.test(domain))) {
       return ''
     }
+    /**
+     * Preserve the wildcard prefix separately from domain cleanup so permissive
+     * normalization does not turn a wildcard rule into an exact-domain rule.
+     */
     return `${EMAIL_SUFFIX_WILDCARD_PREFIX}${domain.replace(EMAIL_SUFFIX_INVALID_CHAR_RE, '')}`
   }
 
@@ -159,6 +259,10 @@ function normalizeRegistrationEmailSuffixToken(value: string, strict: boolean): 
   return value.replace(/[*]/g, '').replace(EMAIL_SUFFIX_INVALID_CHAR_RE, '')
 }
 
+/**
+ * toCanonicalRegistrationEmailSuffix prefixes exact domains while retaining
+ * wildcard domain notation.
+ */
 function toCanonicalRegistrationEmailSuffix(domain: string): string {
   return domain.startsWith(EMAIL_SUFFIX_WILDCARD_PREFIX) ? domain : `@${domain}`
 }

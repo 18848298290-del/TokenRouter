@@ -1,14 +1,17 @@
-/**
- * 用户仪表盘快捷操作测试
- */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
-import type { PublicSettings } from '@/types'
+import type { PublicSettings } from '@/api/settings.types'
 import UserDashboardQuickActions from '../UserDashboardQuickActions.vue'
 
+// UserDashboardQuickActions.spec.ts mounts dashboard shortcuts with controlled feature
+// availability. It checks visible destinations and navigation while the app store and batch-
+// image access composable provide deterministic account permissions for each scenario.
+
+// Router and access-refresh spies capture shortcut navigation and mount effects while the
+// app store controls payment-entry visibility in each scenario.
 const routerPush = vi.fn()
 const refreshBatchImageAccess = vi.fn()
 
@@ -37,6 +40,9 @@ describe('UserDashboardQuickActions', () => {
     vi.clearAllMocks()
   })
 
+  // Public settings initially omit payment availability and later enable it. The test
+  // protects conditional purchase visibility and verifies that its action navigates to the
+  // purchase page.
   it('仅在支付系统启用时展示购买入口并跳转到购买页', async () => {
     const appStore = useAppStore()
     const wrapper = mount(UserDashboardQuickActions)

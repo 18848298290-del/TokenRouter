@@ -77,28 +77,52 @@ import Icon from '@/components/icons/Icon.vue'
 import RuleListEditor from './RuleListEditor.vue'
 import type { ModelMappingRow } from '@/utils/modelMappingRules'
 
-/** ModelMappingFieldErrors 是已翻译的逐字段错误，与行按下标对齐。 */
-export type ModelMappingFieldErrors = Array<{ from?: string; to?: string } | undefined>
+// ModelMappingEditor.vue edits source and target model pairs inside the shared
+// rule-list shell. Rows are mutable objects: input bindings update their fields in
+// place, then publish a replacement array so parent consumers observe a collection
+// update. Field errors remain aligned to row indices.
+//
+// Object identity matters because RuleListEditor uses it for display keys. Adding and
+// removing rows therefore keep surviving objects intact, and lifecycle events include
+// the affected row after the model update. The parent owns validation decisions and
+// persistence, while this component forwards labels, slots, and list controls.
 
+// ModelMappingFieldErrors aligns translated source and target errors with row indices.
+export type ModelMappingFieldErrors = Array<
+  | {
+      from?: string // Source model error text.
+      to?: string // Target model error text.
+    }
+  | undefined
+>
+
+// props holds parent-supplied component options consumed by the rendering and
+// interaction handlers below.
 const props = withDefaults(
   defineProps<{
+    // Owns mutable row objects edited in place by the inputs; model updates replace
+    // the array while sharing retained rows.
     modelValue: ModelMappingRow[]
-    sourceLabel: string
-    targetLabel: string
-    sourcePlaceholder?: string
-    targetPlaceholder?: string
-    title?: string
-    hint?: string
-    titleStyle?: 'label' | 'section'
-    addLabel?: string
-    addPlacement?: 'header' | 'footer'
-    emptyText?: string
+    sourceLabel: string // Source input accessible name.
+    targetLabel: string // Target input accessible name.
+    sourcePlaceholder?: string // Source input placeholder text.
+    targetPlaceholder?: string // Target input placeholder text.
+    title?: string // Dialog or section heading.
+    hint?: string // Optional explanatory hint text.
+    titleStyle?: 'label' | 'section' // Editor heading style recipe.
+    addLabel?: string // Add action label override.
+    addPlacement?: 'header' | 'footer' // Add button placement selector.
+    emptyText?: string // Empty collection message text.
+    // Disables adding when the collection reaches this count; undefined leaves the
+    // maximum unbounded in the shared list shell.
     max?: number
-    disabled?: boolean
-    monospace?: boolean
+    disabled?: boolean // Disables user control interaction.
+    monospace?: boolean // Monospace input typography flag.
+    // Translated errors indexed by row; missing entries leave that row with ordinary
+    // input styling and no field alerts.
     fieldErrors?: ModelMappingFieldErrors
-    error?: string
-    testId?: string
+    error?: string // Visible field error feedback.
+    testId?: string // Optional test identifier prefix.
   }>(),
   {
     titleStyle: 'label',
@@ -107,23 +131,35 @@ const props = withDefaults(
   },
 )
 
+// emit publishes the declared component notifications so the parent can update its
+// owned state.
 const emit = defineEmits<{
-  'update:modelValue': [rows: ModelMappingRow[]]
-  add: [row: ModelMappingRow]
-  remove: [row: ModelMappingRow, index: number]
+  'update:modelValue': [rows: ModelMappingRow[]] // Replacement parent model payload.
+  add: [row: ModelMappingRow] // Added mapping row notification.
+  remove: [row: ModelMappingRow, index: number] // Removed row and index.
 }>()
 
-// 输入时原地修改行对象以保持行身份，再发出新数组让父级感知变化。
+// publish emits a new array containing the current mutable row objects. Input bindings
+// have already updated the edited field, so retaining row identity keeps
+// RuleListEditor keys and focused inputs stable.
 const publish = () => {
+  // Publish a fresh collection after the input binding changes its row; sharing that
+  // row keeps its display key and focused element stable.
   emit('update:modelValue', [...props.modelValue])
 }
 
+// addRow appends an empty mapping through a replacement model array. It publishes the
+// model update before the add event, and existing row objects remain shared with the
+// parent.
 const addRow = () => {
   const row: ModelMappingRow = { from: '', to: '' }
   emit('update:modelValue', [...props.modelValue, row])
   emit('add', row)
 }
 
+// removeRow removes the indexed mapping through a replacement model array. It
+// publishes remove with the removed object and index when that row exists, while
+// surviving objects retain their identity.
 const removeRow = (index: number) => {
   const row = props.modelValue[index]
   emit(
