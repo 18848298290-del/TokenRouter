@@ -26,11 +26,20 @@ import (
 func TestVideoTasksRedisOwnershipAndCompletion(t *testing.T) {
 	ctx := context.Background()
 	container, err := rediscontainer.Run(ctx, "redis:8.4-alpine")
+	// Register any created container before startup errors can stop this test.
+	// Later client cleanups run first because testing reverses registration order.
+	if container != nil {
+		t.Cleanup(func() {
+			// Setup or test cancellation must not cancel Docker removal. Start the
+			// bounded cleanup context when this callback runs.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := container.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate Redis container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	// After successful startup, register container termination using its own
-	// cleanup context so this isolated Redis instance is removed when the test
-	// ends.
-	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
 	host, err := container.Host(ctx)
 	require.NoError(t, err)
 	port, err := container.MappedPort(ctx, "6379/tcp")

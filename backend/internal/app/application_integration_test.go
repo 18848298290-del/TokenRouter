@@ -251,11 +251,20 @@ func TestProcessModes(t *testing.T) {
 	fixture := newDatabaseFixture(t)
 	ctx := context.Background()
 	rdb, err := rediscontainer.Run(ctx, "redis:8.4-alpine")
+	// Register Redis even when startup fails. Child processes finish subtest
+	// cleanup before this parent fixture is removed, keeping their cache available.
+	if rdb != nil {
+		t.Cleanup(func() {
+			// Setup or test cancellation must not cancel Docker removal. Start the
+			// bounded cleanup context when this callback runs.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := rdb.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate Redis container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	// Database-backed children finish subtest cleanup before parent fixture
-	// teardown terminates Redis and closes the pricing listener used by
-	// automatic setup.
-	t.Cleanup(func() { require.NoError(t, rdb.Terminate(context.Background())) })
 	redisHost, err := rdb.Host(ctx)
 	require.NoError(t, err)
 	redisPort, err := rdb.MappedPort(ctx, "6379/tcp")

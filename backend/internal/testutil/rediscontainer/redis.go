@@ -20,17 +20,28 @@ import (
 
 // New returns a client connected to a dedicated Redis integration container or
 // fails the test. Startup and connection-string discovery use a one-minute
-// context; cleanup closes the client before terminating the container. Callers
+// context. Cleanup closes the client before terminating any created container
+// with a fresh thirty-second context, including after startup errors. Callers
 // register application cleanup after obtaining the client.
 func New(t *testing.T) *redis.Client {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	container, err := Run(ctx, "redis:8.4-alpine")
+	// Register any created container before startup errors can stop this test.
+	// Later client cleanups run first because testing reverses registration order.
+	if container != nil {
+		t.Cleanup(func() {
+			// Setup or test cancellation must not cancel Docker removal. Start the
+			// bounded cleanup context when this callback runs.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := container.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate Redis container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	// Register the container first so client and later application cleanup run
-	// before server termination. Cleanup uses a fresh context after startup's budget ends.
-	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
 	uri, err := container.ConnectionString(ctx)
 	require.NoError(t, err)
 	options, err := redis.ParseURL(uri)

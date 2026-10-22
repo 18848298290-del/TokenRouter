@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	redisclient "github.com/redis/go-redis/v9"
 
@@ -26,19 +27,32 @@ var (
 func TestMain(m *testing.M) { os.Exit(runRedisTests(m)) }
 
 // runRedisTests starts a Redis container, publishes its client for suite
-// fixtures, and returns m.Run's status. The client closes before deferred
-// container termination on helper return, with cleanup errors ignored; setup
-// failures print to stderr and return one.
-func runRedisTests(m *testing.M) int {
+// fixtures, and returns the suite status after cleanup. Setup failures print
+// to stderr and return one. The client closes before bounded container cleanup,
+// whose failure turns a successful suite status into one.
+func runRedisTests(m *testing.M) (exitCode int) {
 	ctx := context.Background()
 	c, err := rediscontainer.Run(ctx, "redis:8.4-alpine")
+	// Startup can return a created container with an error. Register removal
+	// before handling that error so every return path releases the fixture.
+	if c != nil {
+		defer func() {
+			// Begin the cleanup budget on return so suite execution and failed
+			// setup cannot consume the time available for Docker removal.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := c.Terminate(cleanupCtx); err != nil {
+				fmt.Fprintf(os.Stderr, "terminate Redis container: %v\n", err)
+				if exitCode == 0 {
+					exitCode = 1
+				}
+			}
+		}()
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	// Register container cleanup before further setup so helper returns after
-	// address or URL parsing failure still attempts termination.
-	defer func() { _ = c.Terminate(ctx) }()
 	url, err := c.ConnectionString(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -50,8 +64,8 @@ func runRedisTests(m *testing.M) int {
 		return 1
 	}
 	integrationRedis = redisclient.NewClient(options)
-	// Close the shared client before the earlier container defer runs; both
-	// cleanup errors are suppressed while the test-run status is retained.
+	// Close the shared client before the earlier container defer runs; its close
+	// error is discarded after the suite has completed all Redis command assertions.
 	defer func() { _ = integrationRedis.Close() }()
 	return m.Run()
 }

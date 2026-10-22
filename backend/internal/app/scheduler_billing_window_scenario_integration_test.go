@@ -27,12 +27,20 @@ func TestSessionAndWindowCachesKeepIndependentState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	container, err := rediscontainer.Run(ctx, "redis:8.4-alpine")
+	// Register any created container before startup errors can stop this test.
+	// Later client cleanups run first because testing reverses registration order.
+	if container != nil {
+		t.Cleanup(func() {
+			// Setup or test cancellation must not cancel Docker removal. Start the
+			// bounded cleanup context when this callback runs.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := container.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate Redis container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		cleanup, stop := context.WithTimeout(context.Background(), 15*time.Second)
-		defer stop()
-		require.NoError(t, container.Terminate(cleanup))
-	})
 	endpoint, err := container.ConnectionString(ctx)
 	require.NoError(t, err)
 	options, err := redis.ParseURL(endpoint)

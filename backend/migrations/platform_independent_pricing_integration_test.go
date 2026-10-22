@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
@@ -26,8 +27,19 @@ import (
 func TestPlatformIndependentPricingMigration(t *testing.T) {
 	ctx := context.Background()
 	container, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("pricing_migration"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
+	// Run may return a container alongside a startup error. Register cleanup
+	// before checking the error, and give termination its own deadline so test
+	// cancellation still allows Docker to remove the partially started instance.
+	if container != nil {
+		t.Cleanup(func() {
+			cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancelCleanup()
+			if err := container.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate PostgreSQL container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, container.Terminate(ctx)) })
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
 	require.NoError(t, err)
 	db, err := sql.Open("postgres", dsn)

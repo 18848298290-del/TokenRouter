@@ -66,8 +66,20 @@ func TestSearchRedisReservations(t *testing.T) {
 	setup, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	container, err := rediscontainer.Run(setup, "redis:8.4-alpine")
+	// Run may return a container on startup failure. Register removal before the
+	// error assertion; the client defer below runs before test cleanup.
+	if container != nil {
+		t.Cleanup(func() {
+			// Setup or test cancellation must not cancel Docker removal. Start the
+			// bounded cleanup context when this callback runs.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := container.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate Redis container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
 	address, err := container.ConnectionString(setup)
 	require.NoError(t, err)
 	opts, err := redis.ParseURL(address)

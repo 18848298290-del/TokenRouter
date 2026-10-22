@@ -52,15 +52,28 @@ type databaseFixture struct {
 
 // newDatabaseFixture starts a PostgreSQL container, opens its shared SQL/Ent
 // pool, and applies migrations within a two-minute setup context. Failures
-// stop the test. Test cleanup closes Ent before terminating the container, so
-// callers need no separate pool owner.
+// stop the test. Test cleanup closes Ent before terminating any created
+// container with a fresh thirty-second context, including after startup errors.
+// Callers need no separate pool owner.
 func newDatabaseFixture(t *testing.T) *databaseFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("test_contracts"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
+	// Register any created container before startup errors can stop this test.
+	// Later client cleanups run first because testing reverses registration order.
+	if pg != nil {
+		t.Cleanup(func() {
+			// Setup or test cancellation must not cancel Docker removal. Start the
+			// bounded cleanup context when this callback runs.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := pg.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate PostgreSQL container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, pg.Terminate(context.Background())) })
 	dsn, err := pg.ConnectionString(ctx, "sslmode=disable", "TimeZone=UTC")
 	require.NoError(t, err)
 	db, err := sql.Open("postgres", dsn)

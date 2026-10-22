@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
@@ -27,19 +28,27 @@ const redisImageTag = "redis:8.4-alpine"
 
 // startRedis launches the selected Redis container, resolves its address, and
 // returns a pinged client. Test cleanup closes the client before terminating
-// the container; the supplied context also governs container operations and
-// its eventual termination attempt.
+// any created container with a fresh thirty-second context. The supplied
+// context governs setup, and cleanup failures are reported to t.
 func startRedis(t *testing.T, ctx context.Context) *redis.Client {
 	t.Helper()
 	ensureDockerAvailable(t)
 
-	// Register container cleanup before client cleanup so the test's reverse
-	// cleanup order closes the client while its dedicated Redis container still exists.
 	redisContainer, err := rediscontainer.Run(ctx, redisImageTag)
+	// Register any created container before startup errors can stop this test.
+	// Later client cleanups run first because testing reverses registration order.
+	if redisContainer != nil {
+		t.Cleanup(func() {
+			// Setup or test cancellation must not cancel Docker removal. Start the
+			// bounded cleanup context when this callback runs.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := redisContainer.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate Redis container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = redisContainer.Terminate(ctx)
-	})
 
 	redisHost, err := redisContainer.Host(ctx)
 	require.NoError(t, err)
@@ -50,11 +59,14 @@ func startRedis(t *testing.T, ctx context.Context) *redis.Client {
 		Addr: fmt.Sprintf("%s:%d", redisHost, redisPort.Int()),
 		DB:   0,
 	})
-	require.NoError(t, rdb.Ping(ctx).Err())
-
+	// Register the client before ping can fail so setup failures release its
+	// connections while the earlier container cleanup still waits its turn.
 	t.Cleanup(func() {
-		_ = rdb.Close()
+		if err := rdb.Close(); err != nil {
+			t.Errorf("close Redis client: %v", err)
+		}
 	})
+	require.NoError(t, rdb.Ping(ctx).Err())
 
 	return rdb
 }

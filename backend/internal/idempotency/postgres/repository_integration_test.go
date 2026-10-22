@@ -161,16 +161,27 @@ func TestIdempotencyRepo_StatusTransition_ToSucceeded(t *testing.T) {
 // idempotencyTestTx returns a transaction inside a fresh migrated PostgreSQL test
 // container. Setup uses a two-minute context, and cleanup rolls back the test
 // transaction before closing its pool and terminating the container, keeping
-// each repository scenario's state isolated from subsequent tests.
+// each repository scenario's state isolated from subsequent tests. Container
+// removal gets a fresh thirty-second context even when startup fails.
 func idempotencyTestTx(t *testing.T) *sql.Tx {
 	t.Helper()
-	// Register container, pool, and transaction cleanup as each resource is acquired;
-	// test cleanup's reverse order releases the transaction before its underlying database resources.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	container, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("idempotency_contracts"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
+	// Register any created container before startup errors can stop this test.
+	// Transaction and pool cleanup registered below runs before container removal.
+	if container != nil {
+		t.Cleanup(func() {
+			// Setup or test cancellation must not cancel Docker removal. Start the
+			// bounded cleanup context when this callback runs.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := container.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate PostgreSQL container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable", "TimeZone=UTC")
 	require.NoError(t, err)
 	db, err := sql.Open("postgres", dsn)

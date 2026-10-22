@@ -142,13 +142,21 @@ func TestRestoreSQLFailure(t *testing.T) {
 	// uses separate contexts.
 	defer cancel()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("test_restore"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
+	// Run may return a container alongside a startup error. Register cleanup
+	// before checking the error, and give termination its own deadline so test
+	// cancellation still allows Docker to remove the partially started instance.
+	if pg != nil {
+		t.Cleanup(func() {
+			cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancelCleanup()
+			if err := pg.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate PostgreSQL container: %v", err)
+			}
+		})
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Terminate the restore container after deferred database and backup
-	// cleanup; background context keeps this cleanup available after the
-	// test deadline is cancelled.
-	defer func() { _ = pg.Terminate(context.Background()) }()
 	host, err := pg.Host(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -289,19 +297,21 @@ func maintenanceDatabase(t *testing.T) *sql.DB {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	pg, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("test_maintenance"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
+	// Run may return a container alongside a startup error. Register cleanup
+	// before checking the error, and give termination its own deadline so test
+	// cancellation still allows Docker to remove the partially started instance.
+	if pg != nil {
+		t.Cleanup(func() {
+			cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancelCleanup()
+			if err := pg.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate PostgreSQL container: %v", err)
+			}
+		})
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		// Container cleanup gets its own bounded context after the
-		// construction deadline ends; this registered callback runs
-		// after the later SQL-pool cleanup.
-		cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
-		defer stop()
-		if err := pg.Terminate(cleanup); err != nil {
-			t.Error(err)
-		}
-	})
 	dsn, err := pg.ConnectionString(ctx, "sslmode=disable", "TimeZone=UTC")
 	if err != nil {
 		t.Fatal(err)

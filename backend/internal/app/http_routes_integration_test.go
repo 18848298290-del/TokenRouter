@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
@@ -60,20 +61,28 @@ func TestAuthRegisterRateLimitThresholdHitReturns429(t *testing.T) {
 }
 
 // startAuthRouteRedis starts and pings a Redis container after Docker
-// discovery. It registers client and container cleanup with t; close and
-// termination errors are discarded, and callers provide the context used by
-// setup and container cleanup.
+// discovery. The supplied context governs setup. Test cleanup closes the
+// client before terminating any created container with a fresh thirty-second
+// context, and cleanup failures are reported to t.
 func startAuthRouteRedis(t *testing.T, ctx context.Context) *redis.Client {
 	t.Helper()
 	ensureAuthRouteDockerAvailable(t)
 
 	redisContainer, err := rediscontainer.Run(ctx, authRouteRedisImageTag)
+	// Register any created container before startup errors can stop this test.
+	// Later client cleanups run first because testing reverses registration order.
+	if redisContainer != nil {
+		t.Cleanup(func() {
+			// Setup or test cancellation must not cancel Docker removal. Start the
+			// bounded cleanup context when this callback runs.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := redisContainer.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate Redis container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		// Container termination is final fixture cleanup. Its failure is discarded
-		// so this callback does not replace the assertions already made about authentication rate limiting.
-		_ = redisContainer.Terminate(ctx)
-	})
 
 	redisHost, err := redisContainer.Host(ctx)
 	require.NoError(t, err)
@@ -84,12 +93,14 @@ func startAuthRouteRedis(t *testing.T, ctx context.Context) *redis.Client {
 		Addr: fmt.Sprintf("%s:%d", redisHost, redisPort.Int()),
 		DB:   0,
 	})
-	require.NoError(t, rdb.Ping(ctx).Err())
+	// Register the client before ping can fail so setup failures release its
+	// connections while the earlier container cleanup still waits its turn.
 	t.Cleanup(func() {
-		// Client cleanup runs before container termination because it was registered
-		// later; the callback discards its close error after the fixture assertions have completed.
-		_ = rdb.Close()
+		if err := rdb.Close(); err != nil {
+			t.Errorf("close Redis client: %v", err)
+		}
 	})
+	require.NoError(t, rdb.Ping(ctx).Err())
 	return rdb
 }
 

@@ -26,17 +26,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// Repository integration tests share migrated PostgreSQL and Redis containers
-// rather than constructing a database per test. TestMain fixes process-local
-// dates to UTC, initializes the shared SQL/Ent resources, and requires a working
-// Docker daemon in CI or strict verification mode.
+// main_integration_test.go supplies migrated PostgreSQL and Redis fixtures for
+// Usage repository scenarios. Tests share SQL, Ent, and Redis clients for the
+// process lifetime and use UTC for Go and SQL dates. The PostgreSQL image
+// override supports database compatibility checks, while the Docker availability
+// policy permits local skips and requires a runtime for CI or strict acceptance.
 //
-// Local runs can exit successfully when Docker is absent. Resource setup
-// failures exit immediately, while a completed test run closes shared clients
-// before deferred container teardown. Connection startup retries readiness with
-// a per-ping deadline and a separate elapsed-time budget. The PostgreSQL image
-// can be overridden for compatibility checks; the image-selection helper
-// otherwise returns its preferred tag whether or not it is already cached.
+// The runner returns its status after deferred cleanup, including on partial
+// setup failures. Ent takes responsibility for closing the shared SQL pool when
+// constructed. Client cleanup precedes container removal, and each container has
+// an independent teardown deadline. Cleanup failures are logged and turn a
+// successful test status into failure.
 
 // Integration image defaults pin PostgreSQL and Redis fixture versions; the
 // PostgreSQL preferred tag can be overridden by the compatibility-test
@@ -55,16 +55,23 @@ var (
 	integrationRedis     *redisclient.Client // shared Redis fixture client
 )
 
-// TestMain initializes shared migrated PostgreSQL/Redis resources for
-// integration scenarios. It selects UTC dates, skips local runs when Docker is
-// absent, and fails setup under CI or strict mode.
-//
-// Ent and SQL share the migrated database handle, while Redis is checked before
-// m.Run. Normal return closes clients and runs deferred container termination;
-// setup os.Exit calls bypass deferred cleanup. Go's generated test wrapper then
-// exits with the result stored by m.Run, so this function can finish normal
-// teardown before returning.
+// TestMain runs the shared PostgreSQL and Redis integration fixtures in UTC.
+// The runner completes deferred cleanup before its status becomes the process
+// exit code, including when fixture initialization fails.
 func TestMain(m *testing.M) {
+	os.Exit(runIntegrationTests(m))
+}
+
+// runIntegrationTests initializes migrated PostgreSQL and Redis fixtures, runs
+// package tests, and returns the process status. Missing Docker skips ordinary
+// local runs and fails CI or strict verification before resources are created.
+//
+// Acquired resources register cleanup before later setup can fail. Database
+// closure belongs to the SQL pool until Ent wraps it, then the Ent client closes
+// that shared pool. Clients close before containers, and each container receives
+// its own background cleanup deadline. Cleanup failures turn a successful test
+// status into one while retaining an existing failure status.
+func runIntegrationTests(m *testing.M) (exitCode int) {
 	ctx := context.Background()
 
 	// Set UTC before stores construct local Calendars so suite dates and SQL
@@ -77,10 +84,10 @@ func TestMain(m *testing.M) {
 		// path.
 		if os.Getenv("CI") != "" || os.Getenv("TOKENROUTER_VERIFY_STRICT") == "1" {
 			log.Printf("docker is not available (CI=true); failing integration tests")
-			os.Exit(1)
+			return 1
 		}
 		log.Printf("docker is not available; skipping integration tests (start Docker to enable)")
-		os.Exit(0)
+		return 0
 	}
 
 	postgresImage := selectDockerImage(ctx, postgresImageTag)
@@ -92,30 +99,53 @@ func TestMain(m *testing.M) {
 		tcpostgres.WithPassword("postgres"),
 		tcpostgres.BasicWaitStrategies(),
 	)
+	// Startup can return a container together with a readiness error. Register
+	// termination before checking that error so partial startup releases Docker
+	// resources with a cleanup deadline independent of fixture setup.
+	if pgContainer != nil {
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := pgContainer.Terminate(cleanupCtx); err != nil {
+				log.Printf("failed to terminate postgres container: %v", err)
+				if exitCode == 0 {
+					exitCode = 1
+				}
+			}
+		}()
+	}
 	if err != nil {
 		log.Printf("failed to start postgres container: %v", err)
-		os.Exit(1)
+		return 1
 	}
-	// Normal harness return terminates the PostgreSQL fixture. Setup paths using
-	// os.Exit bypass this deferred teardown, leaving this local cleanup unexecuted.
-	defer func() { _ = pgContainer.Terminate(ctx) }()
 
 	redisContainer, err := rediscontainer.Run(
 		ctx,
 		redisImageTag,
 	)
+	// Redis can also return an allocated container on startup failure. Its
+	// later defer runs before PostgreSQL teardown and receives a separate budget.
+	if redisContainer != nil {
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := redisContainer.Terminate(cleanupCtx); err != nil {
+				log.Printf("failed to terminate redis container: %v", err)
+				if exitCode == 0 {
+					exitCode = 1
+				}
+			}
+		}()
+	}
 	if err != nil {
 		log.Printf("failed to start redis container: %v", err)
-		os.Exit(1)
+		return 1
 	}
-	// Normal return also terminates Redis after client cleanup; termination errors
-	// are ignored by the harness rather than changing the recorded test outcome.
-	defer func() { _ = redisContainer.Terminate(ctx) }()
 
 	dsn, err := pgContainer.ConnectionString(ctx, "sslmode=disable", "TimeZone=UTC")
 	if err != nil {
 		log.Printf("failed to get postgres dsn: %v", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Limit readiness polling before migration setup, so an unavailable fixture
@@ -123,46 +153,65 @@ func TestMain(m *testing.M) {
 	integrationDB, err = openSQLWithRetry(ctx, dsn, 30*time.Second)
 	if err != nil {
 		log.Printf("failed to open sql db: %v", err)
-		os.Exit(1)
+		return 1
 	}
+	// Migration failure still closes the newly acquired pool. Once Ent wraps
+	// that pool, its Close owns the same resource and replaces direct SQL closure.
+	defer func() {
+		var closeErr error
+		if integrationEntClient != nil {
+			closeErr = integrationEntClient.Close()
+		} else {
+			closeErr = integrationDB.Close()
+		}
+		if closeErr != nil {
+			log.Printf("failed to close postgres client: %v", closeErr)
+			if exitCode == 0 {
+				exitCode = 1
+			}
+		}
+	}()
 	if err := infra.ApplyMigrations(ctx, integrationDB, migrations.FS); err != nil {
 		log.Printf("failed to apply db migrations: %v", err)
-		os.Exit(1)
+		return 1
 	}
 
-	// Apply handwritten migrations before sharing SQL with Ent, so repository
-	// scenarios exercise the deployed schema and its triggers rather than
-	// auto-migration.
+	// Apply handwritten migrations before sharing SQL with Ent so repository
+	// scenarios exercise the deployed schema and its triggers during queries.
 	drv := entsql.OpenDB(dialect.Postgres, integrationDB)
 	integrationEntClient = dbent.NewClient(dbent.Driver(drv))
 
 	redisHost, err := redisContainer.Host(ctx)
 	if err != nil {
 		log.Printf("failed to get redis host: %v", err)
-		os.Exit(1)
+		return 1
 	}
 	redisPort, err := redisContainer.MappedPort(ctx, "6379/tcp")
 	if err != nil {
 		log.Printf("failed to get redis port: %v", err)
-		os.Exit(1)
+		return 1
 	}
 
 	integrationRedis = redisclient.NewClient(&redisclient.Options{
 		Addr: fmt.Sprintf("%s:%d", redisHost, redisPort.Int()), // mapped fixture Redis endpoint
 		DB:   0,                                                // fixture Redis database number
 	})
+	// Register client closure before its readiness ping so a failed connection
+	// attempt still releases Redis resources before either container is terminated.
+	defer func() {
+		if err := integrationRedis.Close(); err != nil {
+			log.Printf("failed to close redis client: %v", err)
+			if exitCode == 0 {
+				exitCode = 1
+			}
+		}
+	}()
 	if err := integrationRedis.Ping(ctx).Err(); err != nil {
 		log.Printf("failed to ping redis: %v", err)
-		os.Exit(1)
+		return 1
 	}
 
-	m.Run()
-
-	// Close shared clients on normal return before container teardown; the Ent
-	// driver and SQL pool share ownership, and these cleanup errors are ignored.
-	_ = integrationEntClient.Close()
-	_ = integrationRedis.Close()
-	_ = integrationDB.Close()
+	return m.Run()
 }
 
 // dockerIsAvailable reports whether docker info succeeds under the supplied

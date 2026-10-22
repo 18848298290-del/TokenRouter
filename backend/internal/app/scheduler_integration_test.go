@@ -40,8 +40,20 @@ func TestSchedulerSnapshotOutboxReplay(t *testing.T) {
 	f := newDatabaseFixture(t)
 	ctx := t.Context()
 	container, err := rediscontainer.Run(ctx, "redis:8.4-alpine")
+	// Register any created container before startup errors can stop this test.
+	// Later client cleanups run first because testing reverses registration order.
+	if container != nil {
+		t.Cleanup(func() {
+			// Setup or test cancellation must not cancel Docker removal. Start the
+			// bounded cleanup context when this callback runs.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := container.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate Redis container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
 	address, err := container.Endpoint(ctx, "")
 	require.NoError(t, err)
 	rdb := redis.NewClient(&redis.Options{Addr: address})

@@ -26,10 +26,20 @@ import (
 func TestDashboardCacheLegacyKeyAndTTL(t *testing.T) {
 	ctx := context.Background()
 	container, err := rediscontainer.Run(ctx, "redis:8.4-alpine")
+	// Register any created container before startup errors can stop this test.
+	// Later client cleanups run first because testing reverses registration order.
+	if container != nil {
+		t.Cleanup(func() {
+			// Setup or test cancellation must not cancel Docker removal. Start the
+			// bounded cleanup context when this callback runs.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := container.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate Redis container: %v", err)
+			}
+		})
+	}
 	require.NoError(t, err)
-	// Register container termination before later setup can fail; test cleanup
-	// also handles assertions ending before the Redis client has been constructed.
-	t.Cleanup(func() { _ = container.Terminate(ctx) })
 	url, err := container.ConnectionString(ctx)
 	require.NoError(t, err)
 	options, err := redis.ParseURL(url)

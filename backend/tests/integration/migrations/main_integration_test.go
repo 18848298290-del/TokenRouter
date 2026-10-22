@@ -22,10 +22,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// Migration assertions run against PostgreSQL with the embedded SQL history
-// already applied, allowing later tests to compare current schema and rebuild
-// historical fixtures. The package uses UTC for Go time values and the database
-// session, while one container and pool remain available through the test run.
+// main_integration_test.go prepares the PostgreSQL database used to inspect the
+// embedded migration history. Package tests share one container and SQL pool,
+// with UTC selected for Go dates and database sessions. The runner applies all
+// embedded migrations before cases compare the resulting schema or construct
+// historical fixtures through the shared database connection.
+//
+// Resource teardown is registered during acquisition, including when container
+// readiness fails after allocation. Ent closes the SQL pool once it wraps that
+// pool, before the container is removed. Container cleanup uses a separate
+// deadline, and cleanup errors make an otherwise successful test run fail.
 
 // integrationEntClient wraps integrationDB so the package fixture has one close
 // path for its PostgreSQL driver after the test run completes.
@@ -45,29 +51,42 @@ func TestMain(m *testing.M) {
 // Startup work shares a three-minute context, while container termination gets
 // an independent thirty-second budget. Setup failures print their error and
 // return one. Deferred database-close and container-termination failures print
-// their diagnostics without replacing the selected exit code.
-func runPostgresTests(m *testing.M) int {
+// their diagnostics and change a successful selected exit code to one. A
+// container returned with a startup error still receives deferred termination.
+func runPostgresTests(m *testing.M) (exitCode int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	image := strings.TrimSpace(os.Getenv("TOKENROUTER_TEST_POSTGRES_IMAGE"))
 	if image == "" {
 		image = "postgres:18.1-alpine3.23"
 	}
-	container, err := tcpostgres.Run(ctx, image, tcpostgres.WithDatabase("migration_contracts"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
+	container, err := tcpostgres.Run(
+		ctx,
+		image,
+		tcpostgres.WithDatabase("migration_contracts"),
+		tcpostgres.WithUsername("postgres"),
+		tcpostgres.WithPassword("postgres"),
+		tcpostgres.BasicWaitStrategies(),
+	)
+	// A readiness failure can accompany an allocated container. Register its
+	// teardown before handling the error so partial startup is also released
+	// under a deadline independent of the setup context.
+	if container != nil {
+		defer func() {
+			cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
+			defer stop()
+			if err := container.Terminate(cleanup); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to terminate postgres container: %v\n", err)
+				if exitCode == 0 {
+					exitCode = 1
+				}
+			}
+		}()
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	// Use an independent cleanup context so expired startup work still
-	// permits container termination. Termination errors are printed and
-	// leave the selected exit code unchanged.
-	defer func() {
-		cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
-		defer stop()
-		if err := container.Terminate(cleanup); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable", "TimeZone=UTC")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -79,15 +98,24 @@ func runPostgresTests(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	// Register client closure after container cleanup so the driver
-	// releases its pool first when deferred calls unwind, including
-	// failures while applying the embedded migrations.
-	integrationEntClient = dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, integrationDB)))
+	// Register SQL cleanup as soon as the pool exists. Ent owns that same pool
+	// after construction, so this defer selects one closer before container
+	// removal, including failures during migration setup.
 	defer func() {
-		if err := integrationEntClient.Close(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+		var closeErr error
+		if integrationEntClient != nil {
+			closeErr = integrationEntClient.Close()
+		} else {
+			closeErr = integrationDB.Close()
+		}
+		if closeErr != nil {
+			fmt.Fprintf(os.Stderr, "failed to close postgres client: %v\n", closeErr)
+			if exitCode == 0 {
+				exitCode = 1
+			}
 		}
 	}()
+	integrationEntClient = dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, integrationDB)))
 	if err := postgresinfra.ApplyMigrations(ctx, integrationDB, migrations.FS); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
