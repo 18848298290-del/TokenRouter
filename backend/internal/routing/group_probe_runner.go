@@ -237,6 +237,7 @@ func (s *GroupAvailabilityProbeRunnerService) runProbeAttempt(ctx context.Contex
 	// history; returned test metadata can replace those wall-clock measurements
 	// with its own recorded timing.
 	startedAt := s.now()
+	due.Config = probeConfig
 	target, err := s.executor.Select(ctx, due, probeConfig.ModelID)
 	if err != nil {
 		finishedAt := s.now()

@@ -224,7 +224,7 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 		RequirePrivacySet:           true,
 		DefaultMappedModel:          "gpt-5.4",
 		ModelsListConfig:            routing.GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5.4", "gpt-5-mini"}},
-		AvailabilityProbeConfig:     routing.GroupAvailabilityProbeConfig{Enabled: true, ModelID: "gpt-5.4", Prompt: "ping", TimeoutSeconds: 15},
+		AvailabilityProbeConfig:     routing.GroupAvailabilityProbeConfig{Enabled: true, ModelID: "gpt-5.4", Prompt: "ping", TimeoutSeconds: 15, Protocol: protocol.ProtocolOpenAIResponses},
 		RPMLimit:                    99,
 		MaxReasoningEffort:          "medium",
 		MaxReasoningEffortOverLimit: routing.ReasoningEffortOverLimitDeny,

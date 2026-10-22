@@ -638,3 +638,57 @@ it.each(['create', 'edit'] as const)(
     }
   },
 )
+
+// Both editor modes intersect configured entries with backend probe capabilities. Saved
+// selections survive an admission change, and submission reports the mismatch without resetting them.
+it.each(['create', 'edit'] as const)('%s 探针协议按允许范围展示并校验失效选择', async (mode) => {
+  const wrapper = await open(mode, 'mixed', {
+    allowed_protocols: ['openai_responses', 'openai_embeddings', 'openai_images_generations'],
+    availability_probe_config: { enabled: true, model_id: 'gpt-test', prompt: 'hi' },
+  })
+  const settings = wrapper.findComponent(GroupSettingsForm)
+  settings.vm.$emit('patch', {
+    allowed_protocols: ['openai_responses', 'openai_embeddings', 'openai_images_generations'],
+    availability_probe_enabled: true,
+    availability_probe_model_id: 'gpt-test',
+    availability_probe_prompt: 'hi',
+  })
+  await flushPromises()
+  await tab(wrapper, 'scheduling')
+  const selector = wrapper
+    .findAllComponents(Select)
+    .find((item) => item.attributes('id') === `${mode}-group-probe-protocol`)!
+  expect(selector.props('modelValue')).toBe('')
+  expect(selector.props('options').map((item: { value: string }) => item.value)).toEqual([
+    '',
+    'openai_responses',
+    'openai_images_generations',
+  ])
+  selector.vm.$emit('update:modelValue', 'openai_responses')
+  await flushPromises()
+  await wrapper.get(`#${mode}-group-form`).trigger('submit')
+  await flushPromises()
+  const payload =
+    mode === 'create' ? groups.create.mock.lastCall?.[0] : groups.update.mock.lastCall?.[1]
+  expect(payload.availability_probe_config.protocol).toBe('openai_responses')
+  expect(payload.availability_probe_protocol).toBeUndefined()
+
+  const reopened = await open('edit', 'mixed', {
+    ...payload,
+    allowed_protocols: ['openai_images_generations'],
+  })
+  await tab(reopened, 'scheduling')
+  const saved = reopened
+    .findAllComponents(Select)
+    .find((item) => item.attributes('id') === 'edit-group-probe-protocol')!
+  expect(saved.props('modelValue')).toBe('openai_responses')
+  expect(reopened.get('[data-group-field="probe-protocol"] [role="alert"]').text()).toBe(
+    'admin.groups.availabilityProbe.protocolUnavailable',
+  )
+  const before = groups.update.mock.calls.length
+  await reopened.get('#edit-group-form').trigger('submit')
+  await flushPromises()
+  expect(groups.update.mock.calls).toHaveLength(before)
+  expect(showError).toHaveBeenLastCalledWith('admin.groups.availabilityProbe.protocolUnavailable')
+  expect(saved.props('modelValue')).toBe('openai_responses')
+})

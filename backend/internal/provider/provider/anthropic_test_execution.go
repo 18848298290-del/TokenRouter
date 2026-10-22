@@ -445,8 +445,14 @@ func mappedTestModel(value *providercore.Record, model string) string {
 // applyModelAttributes removes sampling fields whose resolved service
 // capability is false from the mutable payload. It uses the selected Anthropic
 // model and group; absent capability flags leave existing temperature and
-// top_p fields intact. Profile lookup errors propagate before payload changes.
+// top_p fields intact. Routed probes also validate text output on their selected
+// endpoint. Profile lookup errors propagate before payload changes.
 func (s *AnthropicProviderTest) applyModelAttributes(ctx context.Context, value *providercore.Record, groupID int64, model string, payload map[string]any) error {
+	if providercore.TestProtocolRouteFromContext(ctx).ClientProtocol != "" {
+		if _, err := resolveProbeType(ctx, s.Attributes, value, groupID, model, "anthropic_messages", providercore.ProviderTestTypeText); err != nil {
+			return err
+		}
+	}
 	resolved := modelcatalog.View{}.Resolve(value.ModelAttributeTarget(model, "anthropic_messages"), modelcatalog.Attributes{})
 	if s.Attributes != nil {
 		var err error

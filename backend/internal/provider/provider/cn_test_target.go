@@ -37,7 +37,8 @@ func (t cnTestTarget) Information() provider.TestTargetInfo {
 // Execute routes the prepared CN request through adaptive, shared Responses, or
 // fixed execution. An explicit adaptive protocol narrows coverage; the run
 // carries automatic identity and returns platform and retained sink failures
-// together.
+// together. A routed group probe executes only its resolved upstream protocol,
+// regardless of the record's inferred standalone test family.
 func (t cnTestTarget) Execute(ctx context.Context, request provider.PreparedTestRequest, sink provider.TestEventSink) error {
 	run := NewTestRun(ctx, make(http.Header), sink)
 	run.GroupID = request.GroupID
@@ -45,6 +46,11 @@ func (t cnTestTarget) Execute(ctx context.Context, request provider.PreparedTest
 	run.Headers.Set("User-Agent", request.UserAgent)
 	defer run.Cancel()
 	var err error
+	if request.ProtocolRoute.UpstreamProtocol != "" {
+		// Group routing already chose one enabled endpoint. Narrow adaptive execution
+		// to that endpoint so the record's other protocols cannot add requests.
+		return run.Result(t.executor.ExecuteAdaptive(run, t.record, request.Model, request.Prompt, request.ProtocolRoute.UpstreamProtocol))
+	}
 	switch request.Route {
 	case provider.TestRouteCNAdaptive:
 		// Adaptive preparation distinguishes an omitted protocol from a selected one.

@@ -305,6 +305,28 @@
           v-if="form.availability_probe_enabled"
           class="grid gap-4 rounded-surface border border-gray-200 bg-gray-50/50 p-4 dark:border-dark-600 dark:bg-dark-800/40 md:grid-cols-2"
         >
+          <div data-group-field="probe-protocol">
+            <label :for="`${idPrefix}-probe-protocol`" class="input-label">{{
+              t('admin.groups.availabilityProbe.protocol')
+            }}</label>
+            <Select
+              :id="`${idPrefix}-probe-protocol`"
+              v-model="form.availability_probe_protocol"
+              :aria-label="t('admin.groups.availabilityProbe.protocol')"
+              :options="probeProtocolOptions"
+            >
+              <template v-if="probeProtocolUnavailable" #selected>
+                {{ savedProbeProtocolLabel }}
+              </template>
+            </Select>
+            <p
+              v-if="probeProtocolUnavailable"
+              class="input-hint text-red-600 dark:text-red-400"
+              role="alert"
+            >
+              {{ t('admin.groups.availabilityProbe.protocolUnavailable') }}
+            </p>
+          </div>
           <div>
             <label :for="`${idPrefix}-probe-model`" class="input-label">{{
               t('admin.groups.availabilityProbe.model')
@@ -457,6 +479,7 @@
 </template>
 
 <script setup lang="ts">
+import { protocolCatalog } from '@/api/admin/protocolCapabilities'
 import LocalizedFieldsEditor from '@/components/common/LocalizedFieldsEditor.vue'
 import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -579,6 +602,36 @@ const form = computed(
       },
     }),
 )
+// probeProtocolOptions intersects the saved test capability catalog with the current group
+// draft. Automatic routing stays available while explicit choices follow catalog order.
+const probeProtocolOptions = computed(() => [
+  { value: '', label: t('admin.groups.availabilityProbe.automatic') },
+  ...(protocolCatalog.value?.protocols ?? [])
+    .filter(
+      (entry) =>
+        form.value.allowed_protocols.includes(entry.id) &&
+        (protocolCatalog.value?.groups[0]?.probe_protocols ?? []).includes(entry.id),
+    )
+    .map((entry) => ({ value: entry.id, label: entry.name })),
+])
+// probeProtocolUnavailable keeps a disabled saved selection visible as a validation error.
+// The draft value survives protocol edits so the administrator chooses its replacement.
+const probeProtocolUnavailable = computed(
+  () =>
+    !!form.value.availability_probe_protocol &&
+    !probeProtocolOptions.value.some(
+      (option) => option.value === form.value.availability_probe_protocol,
+    ),
+)
+// savedProbeProtocolLabel names an unavailable saved entry without adding it to selectable
+// options. Unknown identifiers remain visible so an administrator can identify the rejected value.
+const savedProbeProtocolLabel = computed(
+  () =>
+    protocolCatalog.value?.protocols.find(
+      (entry) => entry.id === form.value.availability_probe_protocol,
+    )?.name ?? form.value.availability_probe_protocol,
+)
+
 // showMarketplaceMaxDiscount and showMarketplaceRateMultiplier translate stored hide flags
 // into display switches. Missing flags show the tags for existing groups; each setter copies
 // the feature map and replaces the policy through the parent-owned draft's patch event.

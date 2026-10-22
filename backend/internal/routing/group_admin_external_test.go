@@ -2337,3 +2337,27 @@ func (r *groupPlatformRepoStub) Update(_ context.Context, group *routing.Group) 
 // InvalidateCache increments the observed pricing-cache request count for
 // administrative assertions.
 func (s *pricingConfigCacheInvalidatorSpy) InvalidateCache() { s.calls++ }
+
+// TestAdminServiceProbeProtocolValidatesMergedGroup removes an entry from an existing probe group.
+// Updating only group protocols must reject the resulting mismatch, while disabling the probe permits the same update.
+func TestAdminServiceProbeProtocolValidatesMergedGroup(t *testing.T) {
+	for _, disable := range []bool{false, true} {
+		existing := &routing.Group{
+			ID: 7, Name: "probe", Status: billing.StatusActive,
+			AllowedProtocols:        []protocol.ProtocolID{protocol.ProtocolOpenAIResponses},
+			AvailabilityProbeConfig: routing.GroupAvailabilityProbeConfig{Enabled: true, ModelID: "alias", Prompt: "hi", Protocol: protocol.ProtocolOpenAIResponses},
+		}
+		repo := &groupRepoStubForAdmin{getByID: existing}
+		input := &routing.UpdateGroupInput{AllowedProtocols: ptrGroupClientProtocols([]protocol.ProtocolID{protocol.ProtocolAnthropicMessages})}
+		if disable {
+			input.AvailabilityProbeConfig = &routing.GroupAvailabilityProbeConfig{Enabled: false}
+		}
+		_, err := newGroupAdminForTest(repo, nil, nil).UpdateGroup(t.Context(), existing.ID, input)
+		if disable {
+			require.NoError(t, err)
+		} else {
+			require.Equal(t, routing.InvalidGroupAvailabilityProbeConfigReason, apperror.Reason(err))
+			require.Nil(t, repo.updated)
+		}
+	}
+}

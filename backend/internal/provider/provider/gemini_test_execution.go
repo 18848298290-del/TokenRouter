@@ -28,7 +28,8 @@ import (
 //
 // Automatic test types come from declared output modalities, while explicit
 // image probes require positive capability and explicit text retains its route. API-key and
-// service-account mappings choose the model before payload construction. Code
+// service-account mappings choose the model before payload construction. Routed
+// group probes use the shared one-hop mapping for all credential types. Code
 // Assist wraps the same payload with its project and model identifiers, while
 // the other routes send the payload directly to their model-action endpoint.
 
@@ -60,7 +61,8 @@ type GeminiProviderTest struct {
 
 // Execute prepares and streams a Gemini text or image probe for one provider.
 // A blank model uses the platform test default. API-key and service-account
-// models apply exact saved mappings; OAuth keeps the supplied name. Transport
+// models apply exact saved mappings; standalone OAuth keeps the supplied name.
+// Routed group probes apply the shared provider mapping for every credential type. Transport
 // responses are closed on return, and non-200 bodies become test errors before
 // the shared Gemini event reader is invoked.
 func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, modelID string, prompt string, testTypes ...string) error {
@@ -71,10 +73,12 @@ func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		testModelID = geminicli.DefaultTestModel
 	}
 
-	// These direct credential routes use exact saved aliases in the probe. OAuth
-	// route construction retains the requested name, so it does not take this
-	// mapping path.
-	if value.Type == capability.ProviderTypeAPIKey || value.Type == capability.ProviderTypeServiceAccount {
+	// Routed probes apply the same one-hop provider rules used during selection,
+	// including wildcard aliases and OAuth mappings. Standalone tests retain their
+	// credential-specific model preparation below.
+	if c.ProtocolRoute.ClientProtocol != "" {
+		testModelID = mappedTestModel(value, testModelID)
+	} else if value.Type == capability.ProviderTypeAPIKey || value.Type == capability.ProviderTypeServiceAccount {
 		mapping := providercore.ResolveModelMapping(value, ModelDefaults())
 		if len(mapping) > 0 {
 			if mappedModel, exists := mapping[testModelID]; exists {

@@ -113,7 +113,7 @@ func provideRoutingGroupAdmin(catalog *catalogprovider.Service, store *routingpo
 // and selection. Valid configured timezone replaces time.Local; absent or
 // invalid configuration retains the process location, and the runner gets a
 // generated instance identity for coordination.
-func provideGroupProbeRunner(repo routing.GroupAvailabilityProbeRepository, tests *provider.TestService, gateway *selection.Generic, openai *selection.Compatible, gemini *selection.Gemini, cfg *config.Config) *routing.GroupAvailabilityProbeRunnerService {
+func provideGroupProbeRunner(repo routing.GroupAvailabilityProbeRepository, tests *provider.TestService, gateway *selection.Generic, openai *selection.Compatible, gemini *selection.Gemini, cfg *config.Config, attributes *routing.ModelAttributeService) *routing.GroupAvailabilityProbeRunnerService {
 	location := time.Local
 	if cfg != nil {
 		// A failed configured-zone lookup retains the initialized process location.
@@ -123,6 +123,7 @@ func provideGroupProbeRunner(repo routing.GroupAvailabilityProbeRepository, test
 		}
 	}
 	executor := selection.NewProbe(tests, gateway, openai, gemini)
+	executor.Attributes = attributes
 	return routing.NewGroupAvailabilityProbeRunnerService(repo, executor, routing.GroupProbeOptions{InstanceID: uuid.NewString(), Now: time.Now, Schedule: routingadapter.NewGroupProbeSchedule(location), Observe: func(format string, args ...any) {
 		logging.LegacyPrintf("service.group_availability_probe", format, args...)
 	}})

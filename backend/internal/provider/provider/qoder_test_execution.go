@@ -61,6 +61,9 @@ type qoderProviderTestOAuthClient interface {
 // QoderProviderTest runs upstream probes using the injected shared session
 // provider.
 type QoderProviderTest struct {
+	// Attributes resolves the final model for routed group probes. A nil callback
+	// skips profile lookup, leaving declared output and sampling permissions unknown.
+	Attributes ModelAttributeLookup
 	// Sessions supplies cached or built provider identity. Nil constructs a local
 	// default token provider for this call; PAT probes invalidate it when
 	// supported.
@@ -117,6 +120,17 @@ func (s *QoderProviderTest) Execute(c *TestRun, value *providercore.Record, mode
 	testPrompt := strings.TrimSpace(prompt)
 	if testPrompt == "" {
 		testPrompt = "hi"
+	}
+
+	if c.ProtocolRoute.ClientProtocol != "" {
+		site, err := qoderSiteForRecord(value)
+		if err != nil {
+			return (TestStreamOutput{}).Error(c, err.Error())
+		}
+		model := qoder.ResolveQoderModelForSite(site, mappedTestModel(value, testModelID)).Key
+		if _, err := resolveProbeType(ctx, s.Attributes, value, c.GroupID, model, "qoder_chat", providercore.ProviderTestTypeText); err != nil {
+			return (TestStreamOutput{}).Error(c, err.Error())
+		}
 	}
 
 	sessionProvider := s.Sessions

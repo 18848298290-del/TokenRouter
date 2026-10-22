@@ -46,6 +46,7 @@ func (t qoderTestTarget) Execute(ctx context.Context, request provider.PreparedT
 	headers.Set("User-Agent", request.UserAgent)
 	headers.Set("originator", request.Originator)
 	run := NewTestRun(ctx, headers, sink)
+	run.GroupID = request.GroupID
 	defer run.Cancel()
 	return run.Result(t.executor.Execute(run, t.record, request.Model, request.Prompt))
 }

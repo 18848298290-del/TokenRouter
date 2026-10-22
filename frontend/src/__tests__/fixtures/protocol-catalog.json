@@ -714,7 +714,15 @@
         "openai_responses_websocket": ["openai_responses"],
         "systemone": []
       },
-      "default_fallbacks": {}
+      "default_fallbacks": {},
+      "probe_protocols": [
+        "anthropic_messages",
+        "openai_responses",
+        "openai_chat_completions",
+        "gemini_generate_content",
+        "systemone",
+        "openai_images_generations"
+      ]
     }
   ],
   "auxiliary_operations": [

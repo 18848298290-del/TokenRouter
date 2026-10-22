@@ -20,6 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	providerhttp "github.com/TokenFlux/TokenRouter/internal/provider/httpapi"
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
@@ -254,6 +255,93 @@ func TestProviderTestAssemblyMatchesTextAttributeProtocol(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "custom-text-final", gjson.GetBytes(body, "model").String())
 			require.Contains(t, repo.groups, int64(59))
+		})
+	}
+}
+
+// TestProviderTestAssemblyExecutesGroupProtocolRoutes uses protocol-scoped profiles and conflicting provider defaults.
+// Each test sends exactly one request to its resolved endpoint with one provider mapping and reads the group profile once.
+func TestProviderTestAssemblyExecutesGroupProtocolRoutes(t *testing.T) {
+	f := newDatabaseFixture(t)
+	store := providerpostgres.NewProviderStore(f.client, f.db, providerpostgres.ProviderStoreOptions{})
+	transport := &nativeProviderTestTransport{}
+	manager := lifecycle.New()
+	t.Cleanup(func() { require.NoError(t, manager.Stop(context.Background())) })
+	outputs := []string{"text"}
+	disabled := false
+	repo := &probeAttributeRepository{config: &routing.ModelAttributeConfig{Status: "active", Rules: []routing.ModelAttributeRule{{Models: []string{"final-model"}, Attributes: modelcatalog.Attributes{OutputModalities: &outputs, Temperature: &disabled, TopP: &disabled}}}}}
+	attributes := &routing.ModelAttributeService{Repo: repo, Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
+	core := provideProviderTests(store, nil, nil, nil, nil, transport, &config.Config{}, nil, nil, nil, nil, manager, nil, attributes)
+	for _, tc := range []struct {
+		name     string // route scenario name
+		platform string // provider platform identity
+		entry    string // selected client entry
+		upstream string // resolved upstream endpoint
+		path     string // expected request path
+		body     string // fixture response body
+	}{
+		{"messages to responses", "openai", "anthropic_messages", "openai_responses", "/v1/responses", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n"},
+		{"responses to chat", "openai", "openai_responses", "openai_chat_completions", "/v1/chat/completions", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"},
+		{"chat to messages", "anthropic", "openai_chat_completions", "anthropic_messages", "/v1/messages", "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"},
+		{"gemini", "gemini", "gemini_generate_content", "gemini_generate_content", "/v1beta/models/final-model:streamGenerateContent", "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}]}\n\ndata: [DONE]\n\n"},
+		{"cn messages", "kimi", "openai_chat_completions", "anthropic_messages", "/v1/messages", "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"},
+		{"cn chat", "kimi", "anthropic_messages", "openai_chat_completions", "/v1/chat/completions", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"},
+		{"systemone", "jev", "systemone", "systemone", "/v1/systemone", `{"model":"final-model","answers":{"available":{"type":"noul","noul":1}},"usage":{"input_tokens":1,"output_tokens":1}}`},
+		{"images", "openai", "openai_images_generations", "openai_images_generations", "/v1/images/generations", `{"data":[{"b64_json":"aGVsbG8="}]}`},
+		{"oauth images", "openai", "openai_images_generations", "openai_responses", "/backend-api/codex/responses", "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"image_generation_call\",\"result\":\"aGVsbG8=\"}]}}\n\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outputs = []string{"text"}
+			if tc.name == "responses to chat" {
+				outputs = []string{"text", "image"}
+			}
+			if tc.entry == "openai_images_generations" {
+				outputs = []string{"image"}
+			}
+			repo.config.Rules[0].Match = &routing.ModelAttributeMatch{ClientProtocol: tc.entry, UpstreamProtocol: tc.upstream}
+			repo.groups = nil
+			transport.requests = nil
+			transport.body = tc.body
+			kind := "apikey"
+			if tc.name == "oauth images" {
+				kind = "oauth"
+			}
+			row, err := f.client.Provider.Create().SetName("route-" + tc.name).SetPlatform(tc.platform).SetType(kind).SetExtra(map[string]any{provider.ExtraKeyTextRouteMode: string(provider.TextRouteModeForceResponses)}).SetCredentials(map[string]any{
+				"api_key": "fixture-key", "access_token": "fixture-access", "base_url": "https://upstream.example", "api_base_urls": map[string]any{"anthropic": "https://upstream.example", "chat_completions": "https://upstream.example", "responses": "https://upstream.example"},
+				"upstream_protocols": []string{tc.upstream}, "model_mapping": map[string]any{"alias*": "final-model", "final-model": "wrong-second-hop"},
+			}).Save(t.Context())
+			require.NoError(t, err)
+			request := provider.TestRequest{ProviderID: row.ID, GroupID: 59, Model: "alias", Prompt: "hi", ProtocolRoute: provider.TestProtocolRoute{ClientProtocol: protocol.ProtocolID(tc.entry), UpstreamProtocol: protocol.ProtocolID(tc.upstream)}}
+			result, err := core.RunTestBackgroundRequest(t.Context(), request)
+			require.NoError(t, err)
+			require.Equal(t, "success", result.Status, result.ErrorMessage)
+			require.Len(t, transport.requests, 1)
+			require.Equal(t, tc.path, transport.requests[0].URL.Path)
+			body, err := io.ReadAll(transport.requests[0].Body)
+			require.NoError(t, err)
+			if tc.name == "oauth images" {
+				require.Equal(t, "final-model", gjson.GetBytes(body, "tools.0.model").String())
+			} else if tc.platform != "gemini" {
+				require.Equal(t, "final-model", gjson.GetBytes(body, "model").String())
+			}
+			require.False(t, gjson.GetBytes(body, "temperature").Exists())
+			require.False(t, gjson.GetBytes(body, "top_p").Exists())
+			require.Equal(t, []int64{59}, repo.groups)
+			transport.requests = nil
+			if tc.entry != "systemone" {
+				outputs = []string{}
+				result, err = core.RunTestBackgroundRequest(t.Context(), request)
+				require.NoError(t, err)
+				require.Equal(t, "failed", result.Status)
+				require.Contains(t, result.ErrorMessage, "MODEL_CAPABILITY_UNSUPPORTED")
+				require.Empty(t, transport.requests)
+			}
+			request.GroupID = 61
+			result, err = core.RunTestBackgroundRequest(t.Context(), request)
+			require.NoError(t, err)
+			require.Equal(t, "failed", result.Status)
+			require.Contains(t, result.ErrorMessage, "MODEL_ATTRIBUTES_UNAVAILABLE")
+			require.Empty(t, transport.requests)
 		})
 	}
 }

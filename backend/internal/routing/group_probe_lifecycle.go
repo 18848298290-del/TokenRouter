@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
 // group_probe_lifecycle.go coordinates availability probe startup, round
@@ -51,8 +53,14 @@ type ProbeExecutionResult struct {
 // GroupProbeTarget identifies a selected provider and its group-mapped
 // execution model.
 type GroupProbeTarget struct {
-	GroupID    int64 // selected probe group identifier
-	ProviderID int64 // selected provider row ID
+	// Attributes retains the selected attempt's catalogue and group profile for
+	// provider testing. Automatic probes leave it nil and initialize testing normally.
+	Attributes *ModelAttributeSession
+	// ProtocolRoute carries the selected entry and resolved upstream endpoint.
+	// Its zero value keeps legacy automatic tests independent of explicit routing.
+	ProtocolRoute provider.TestProtocolRoute
+	GroupID       int64 // selected probe group identifier
+	ProviderID    int64 // selected provider row ID
 	// ModelID is the selector's group-mapped model sent to the test service. That
 	// service applies provider mapping; history keeps the configured request model
 	// separately.

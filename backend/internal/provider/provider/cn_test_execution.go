@@ -26,14 +26,17 @@ import (
 // cn_test_execution.go constructs and executes fixed-protocol CN API-key
 // probes with a mapped test model. CN API-key probes derive a platform default
 // model when the supplied name is blank, then apply one provider mapping. The
-// record's protocol selects Messages, Responses, or Chat request construction
+// selected group route or record protocol selects Messages, Responses, or Chat request construction
 // and matching stream parsing, with allowed header overrides applied after
 // authentication.
 
 // CNProviderTest prepares fixed and adaptive native-protocol probes for CN
 // API-key records.
 type CNProviderTest struct {
-	Transport QoderTransport // provider-aware native probe sender
+	// Attributes resolves the final model for routed group probes. A nil callback
+	// skips profile lookup, leaving declared output and sampling permissions unknown.
+	Attributes ModelAttributeLookup
+	Transport  QoderTransport // provider-aware native probe sender
 	// Profiles optionally resolves native request fingerprints. A missing service
 	// sends no selected TLS profile through the shared transport.
 	Profiles    *egressprovider.TLSProfiles
@@ -70,7 +73,8 @@ func defaultCNProviderTestModel(platform string) string {
 // Execute runs the record's fixed native-protocol probe and emits test events.
 // It requires an API-key record and nonblank key, applies a platform default
 // and one model mapping, and closes the response after protocol-specific
-// parsing.
+// parsing. A routed test uses its resolved protocol and checks that route
+// against group attributes before preparing the upstream request.
 func (s *CNProviderTest) Execute(
 	c *TestRun,
 	value *providercore.Record,
@@ -94,7 +98,12 @@ func (s *CNProviderTest) Execute(
 	}
 
 	ctx := c.Context
-	protocol := (providercore.ProtocolTarget{Record: value}).GetAPIProtocol()
+	protocol := (providercore.ProtocolTarget{Record: value, Protocol: c.ProtocolRoute.UpstreamProtocol}).GetAPIProtocol()
+	if c.ProtocolRoute.ClientProtocol != "" {
+		if _, err := resolveProbeType(ctx, s.Attributes, value, c.GroupID, testModelID, string(c.ProtocolRoute.UpstreamProtocol), providercore.ProviderTestTypeText); err != nil {
+			return (TestStreamOutput{}).Error(c, err.Error())
+		}
+	}
 	var (
 		apiURL  string
 		payload any
@@ -114,7 +123,7 @@ func (s *CNProviderTest) Execute(
 			return (TestStreamOutput{}).Error(c, "Failed to create test payload")
 		}
 	case providercore.APIProtocolResponses:
-		baseURL, err := s.ValidateURL((providercore.ProtocolTarget{Record: value}).GetOpenAIBaseURL())
+		baseURL, err := s.ValidateURL((providercore.ProtocolTarget{Record: value, Protocol: c.ProtocolRoute.UpstreamProtocol}).GetOpenAIBaseURL())
 		if err != nil {
 			return (TestStreamOutput{}).Error(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
@@ -126,12 +135,17 @@ func (s *CNProviderTest) Execute(
 		responsesPayload["store"] = false
 		payload = responsesPayload
 	default:
-		baseURL, err := s.ValidateURL((providercore.ProtocolTarget{Record: value}).GetOpenAIBaseURL())
+		baseURL, err := s.ValidateURL((providercore.ProtocolTarget{Record: value, Protocol: c.ProtocolRoute.UpstreamProtocol}).GetOpenAIBaseURL())
 		if err != nil {
 			return (TestStreamOutput{}).Error(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
 		apiURL = httpclient.BuildOpenAIEndpointURL(baseURL, "/v1/chat/completions")
 		payload = openai.TestChatCompletionsPayload(testModelID, prompt)
+	}
+	if object, ok := payload.(map[string]any); ok {
+		if err := applyProbeSampling(c, s.Attributes, value, testModelID, string(c.ProtocolRoute.UpstreamProtocol), object); err != nil {
+			return (TestStreamOutput{}).Error(c, err.Error())
+		}
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {

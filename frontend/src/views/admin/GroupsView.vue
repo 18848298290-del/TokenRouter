@@ -1211,6 +1211,7 @@ const createForm = reactive({
   reasoning_effort_mappings: [] as ReasoningEffortMappingRow[],
   // Active probe settings used to construct the nested availability-probe API configuration
   // during submission.
+  availability_probe_protocol: '' as ProtocolID | '',
   availability_probe_enabled: false,
   availability_probe_model_id: '',
   availability_probe_prompt: 'hi',
@@ -1471,12 +1472,13 @@ const isAvailabilityProbeModelAvailable = (
 }
 
 // resetAvailabilityProbeFormState loads saved probe values or their editing defaults. Missing
-// settings disable the probe and initialize its prompt, period, timeout, retry count, and text
+// settings disable the probe, select automatic routing, and initialize its prompt, period, timeout, retry count, and text
 // inputs for the form.
 const resetAvailabilityProbeFormState = (
   form: typeof createForm | typeof editForm,
   config?: GroupAvailabilityProbeConfig | null,
 ) => {
+  form.availability_probe_protocol = config?.protocol ?? ''
   form.availability_probe_enabled = config?.enabled ?? false
   form.availability_probe_model_id = config?.model_id ?? ''
   form.availability_probe_prompt = config?.prompt ?? 'hi'
@@ -1486,9 +1488,23 @@ const resetAvailabilityProbeFormState = (
   form.availability_probe_user_agent = config?.user_agent ?? ''
 }
 
+// isAvailabilityProbeProtocolAvailable checks the current draft against loaded test capabilities.
+// An empty selection keeps automatic behavior; unavailable explicit selections remain in the
+// draft so validation can reveal the protocol control without silently changing the route.
+const isAvailabilityProbeProtocolAvailable = (
+  form: typeof createForm | typeof editForm,
+): boolean => {
+  const protocol = form.availability_probe_protocol
+  return (
+    !protocol ||
+    (form.allowed_protocols.includes(protocol) &&
+      (protocolCatalog.value?.groups[0]?.probe_protocols ?? []).includes(protocol))
+  )
+}
+
 // buildAvailabilityProbeConfig constructs the probe payload from the active group draft.
 // Disabled probes emit only enabled false; enabled probes require a trimmed model and prompt
-// and throw localized errors when either is missing. Falsy interval and timeout conversions use
+// and reject unavailable selected protocols. Missing input produces localized errors. Falsy interval and timeout conversions use
 // thirty.
 //
 // Retry count is converted directly, retaining zero as an explicit no-retry setting. The
@@ -1501,6 +1517,9 @@ const buildAvailabilityProbeConfig = (
     return { enabled: false }
   }
 
+  if (!isAvailabilityProbeProtocolAvailable(form)) {
+    throw new Error(t('admin.groups.availabilityProbe.protocolUnavailable'))
+  }
   const modelID = form.availability_probe_model_id.trim()
   const prompt = form.availability_probe_prompt.trim()
   if (!modelID) {
@@ -1512,6 +1531,7 @@ const buildAvailabilityProbeConfig = (
 
   return {
     enabled: true,
+    protocol: form.availability_probe_protocol || undefined,
     model_id: modelID,
     prompt,
     interval_minutes: Number(form.availability_probe_interval_minutes) || 30,
@@ -1632,6 +1652,7 @@ const editForm = reactive({
   reasoning_effort_mappings: [] as ReasoningEffortMappingRow[],
   // Active probe settings used to construct the nested availability-probe API configuration
   // during submission.
+  availability_probe_protocol: '' as ProtocolID | '',
   availability_probe_enabled: false,
   availability_probe_model_id: '',
   availability_probe_prompt: 'hi',
@@ -1961,7 +1982,7 @@ const closeCreateModal = () => {
 
 // validateGroupForm checks the selected form and reveals the first failed business field. Child
 // validation runs first, then the group name and probe configuration are checked. Probe
-// exceptions choose the model or prompt field according to which value is missing.
+// exceptions reveal an unavailable protocol first, then the missing model or prompt field.
 const validateGroupForm = async (target: 'create' | 'edit'): Promise<boolean> => {
   // form owns editable fields for the open dialog, keeping pending changes separate from the
   // displayed server records.
@@ -1978,9 +1999,11 @@ const validateGroupForm = async (target: 'create' | 'edit'): Promise<boolean> =>
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error))
     await tabs?.revealField(
-      form.availability_probe_model_id.trim()
-        ? '[data-group-field="probe-prompt"]'
-        : '[data-group-field="probe-model"]',
+      !isAvailabilityProbeProtocolAvailable(form)
+        ? '[data-group-field="probe-protocol"]'
+        : form.availability_probe_model_id.trim()
+          ? '[data-group-field="probe-prompt"]'
+          : '[data-group-field="probe-model"]',
     )
     return false
   }
@@ -2024,6 +2047,7 @@ const handleCreateGroup = async () => {
       ),
       reasoning_effort_mappings: reasoningEffortMappingsToAPI(createForm.reasoning_effort_mappings),
     }
+    delete (requestData as any).availability_probe_protocol
     delete (requestData as any).availability_probe_enabled
     delete (requestData as any).availability_probe_model_id
     delete (requestData as any).availability_probe_prompt
@@ -2197,6 +2221,7 @@ const handleUpdateGroup = async () => {
       ),
       reasoning_effort_mappings: reasoningEffortMappingsToAPI(editForm.reasoning_effort_mappings),
     }
+    delete (payload as any).availability_probe_protocol
     delete (payload as any).availability_probe_enabled
     delete (payload as any).availability_probe_model_id
     delete (payload as any).availability_probe_prompt

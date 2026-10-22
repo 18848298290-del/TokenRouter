@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
@@ -31,8 +32,9 @@ type ProtocolProviderProfile struct {
 // ProtocolGroupProfile supplies generic group admission choices and ordered
 // conversion defaults.
 type ProtocolGroupProfile struct {
-	Protocols []protocol.ProtocolID `json:"protocols"` // available client protocol choices
-	Defaults  []protocol.ProtocolID `json:"defaults"`  // new group admission defaults
+	ProbeProtocols []protocol.ProtocolID `json:"probe_protocols"` // supported availability probe entries
+	Protocols      []protocol.ProtocolID `json:"protocols"`       // available client protocol choices
+	Defaults       []protocol.ProtocolID `json:"defaults"`        // new group admission defaults
 	// FallbackTargets lists available single-step conversions for each source;
 	// target order supplies the automatic selection order used by group editors.
 	FallbackTargets map[protocol.ProtocolID][]protocol.ProtocolID `json:"fallback_targets"` // ordered allowed conversion targets
@@ -99,7 +101,7 @@ func AdminProtocolCatalog(endpoints map[protocol.ProtocolID]string) ProtocolCata
 	for _, source := range supported {
 		targets[source] = capability.AutomaticProtocolFallbackTargets(source)
 	}
-	groups = append(groups, ProtocolGroupProfile{Protocols: supported, Defaults: capability.DefaultGroupClientProtocols(""), FallbackTargets: targets, DefaultFallbacks: capability.DefaultProtocolFallbacks("")})
+	groups = append(groups, ProtocolGroupProfile{Protocols: supported, ProbeProtocols: provider.GroupProbeProtocols(), Defaults: capability.DefaultGroupClientProtocols(""), FallbackTargets: targets, DefaultFallbacks: capability.DefaultProtocolFallbacks("")})
 
 	return ProtocolCatalogResponse{
 		Protocols: publicProtocols(endpoints), Providers: providers, Groups: groups,

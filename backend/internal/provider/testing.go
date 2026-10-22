@@ -20,7 +20,8 @@ import (
 // while explicit image selection resets compact mode and checks platform support
 // before execution. Legacy argument spellings retain their selected kind and
 // mode during normalization, and protocol selection is checked against provider
-// metadata.
+// metadata. Group probes retain their resolved entry and upstream protocols,
+// revalidate provider enablement, and choose their operation from the entry.
 //
 // Execution writes through one guarded sink. Its first output failure cancels
 // the test context and is exposed even when a target ignores the write error.
@@ -75,6 +76,9 @@ type TestEvent struct {
 // test. Its pointed kind and SystemOne bytes remain caller-owned and stable
 // until Test returns.
 type TestRequest struct {
+	// ProtocolRoute fixes a group probe's entry and upstream endpoint together.
+	// Its zero value retains the standalone Protocol selector and type inference.
+	ProtocolRoute TestProtocolRoute
 	// SystemOne carries structured decision input by shared byte storage. Nonempty
 	// input requires a Jev provider, and the caller keeps its bytes stable through
 	// execution.
@@ -171,6 +175,9 @@ type TestEventSink interface {
 // TestOptions supplies background timing and optional service failure diagnostic
 // callbacks.
 type TestOptions struct {
+	// PrepareContext creates per-test attribute state before loading the target.
+	// Nil retains the supplied context; the callback must preserve cancellation.
+	PrepareContext func(context.Context) context.Context
 	// Now is required by background test methods and sampled around the whole Test
 	// call. Its owner supports concurrent calls when tests share this service.
 	Now func() time.Time
@@ -312,6 +319,9 @@ func NewTestService(loader TestLoader, options TestOptions) *TestService {
 // cannot match the retained write error in the target result, Test joins that
 // error into the returned chain; a matching target result is returned unchanged.
 func (s *TestService) Test(ctx context.Context, request TestRequest, sink TestEventSink) error {
+	if s.options.PrepareContext != nil {
+		ctx = s.options.PrepareContext(ctx)
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	guarded := &testGuardedSink{next: sink, cancel: cancel}
@@ -336,7 +346,8 @@ func (s *TestService) Test(ctx context.Context, request TestRequest, sink TestEv
 // protocol check. Other selected protocols use testProtocolAllowed. CN routing
 // uses APIProtocol: adaptive, Responses, and Chat select their dedicated
 // families, while other values select Messages. Remaining platforms choose their
-// family with Anthropic as the default. Target execution receives the original
+// family with Anthropic as the default. Routed probes validate the exact endpoint
+// and retain its protocol pair in the execution context. Target execution receives the original
 // borrowed payload storage.
 func (s *TestService) execute(ctx context.Context, request TestRequest, sink TestEventSink) error {
 	if request.Protocol != "" && TestProtocolID(request.Protocol) == "" {
@@ -361,6 +372,25 @@ func (s *TestService) execute(ctx context.Context, request TestRequest, sink Tes
 		return s.fail(ctx, sink, "Provider not found")
 	}
 	info := target.Information()
+	if request.ProtocolRoute != (TestProtocolRoute{}) {
+		if request.Protocol != "" || mode != ProviderTestModeDefault || !request.ProtocolRoute.SupportsProvider(info.ProviderSnapshot) {
+			return s.fail(ctx, sink, fmt.Sprintf("Provider test cannot execute route %s -> %s", request.ProtocolRoute.ClientProtocol, request.ProtocolRoute.UpstreamProtocol))
+		}
+		ctx = context.WithValue(ctx, testProtocolRouteKey{}, request.ProtocolRoute)
+		// Routed probes select their operation from the client entry. Text entries
+		// cannot switch to an Images endpoint because a model also declares images.
+		kind, explicit = ProviderTestTypeText, true
+		switch request.ProtocolRoute.ClientProtocol {
+		case capability.ProtocolImagesGenerations:
+			kind = ProviderTestTypeImage
+		case capability.ProtocolSystemOne:
+			kind = ProviderTestTypeDecision
+		case capability.ProtocolGeminiGenerateContent:
+			if info.Platform == PlatformGemini {
+				kind, explicit = "", false
+			}
+		}
+	}
 	if (kind == ProviderTestTypeDecision || len(request.SystemOne) > 0) && info.Platform != PlatformJev {
 		return s.fail(ctx, sink, "Decision tests require a Jev provider")
 	}

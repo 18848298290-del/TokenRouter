@@ -6,8 +6,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// group_probe_runner_test.go checks attempt identity, timing, retries, and round admission.
 // A configured probe model can differ from the execution model returned by
 // provider selection. The mapped executor checks the selected target and
 // forwarded prompt while the result assertion retains the administrator's
@@ -34,7 +38,7 @@ type mappedProbeExecutor struct {
 func TestGroupProbeAttemptUsesMappedTargetAndRecordsRequestedModel(t *testing.T) {
 	runner := NewGroupAvailabilityProbeRunnerService(nil, mappedProbeExecutor{t: t}, GroupProbeOptions{})
 	result := runner.runProbeAttempt(context.Background(), GroupAvailabilityProbeDueGroup{GroupID: 59}, GroupAvailabilityProbeConfig{
-		ModelID: "gemini-3.8-flash", Prompt: "hi", UserAgent: "probe-client",
+		ModelID: "gemini-3.8-flash", Prompt: "hi", UserAgent: "probe-client", Protocol: protocol.ProtocolOpenAIChatCompletions,
 	})
 	require.True(t, result.Success)
 	require.Equal(t, "gemini-3.8-flash", result.ModelID)
@@ -222,7 +226,8 @@ func TestRunGroupAvailabilityProbeAttemptsStopsAfterParentCancellation(t *testin
 func (e mappedProbeExecutor) Select(_ context.Context, due GroupAvailabilityProbeDueGroup, model string) (GroupProbeTarget, error) {
 	require.Equal(e.t, int64(59), due.GroupID)
 	require.Equal(e.t, "gemini-3.8-flash", model)
-	return GroupProbeTarget{GroupID: due.GroupID, ProviderID: 3678, ModelID: "gemini-3.8-flash-tiered"}, nil
+	require.Equal(e.t, protocol.ProtocolOpenAIChatCompletions, due.Config.Protocol)
+	return GroupProbeTarget{GroupID: due.GroupID, ProviderID: 3678, ModelID: "gemini-3.8-flash-tiered", ProtocolRoute: provider.TestProtocolRoute{ClientProtocol: due.Config.Protocol, UpstreamProtocol: protocol.ProtocolGeminiGenerateContent}}, nil
 }
 
 // Test asserts the selected provider, mapped model, prompt, and User-Agent
@@ -233,6 +238,7 @@ func (e mappedProbeExecutor) Test(_ context.Context, target GroupProbeTarget, pr
 	require.Equal(e.t, int64(59), target.GroupID)
 	require.Equal(e.t, int64(3678), target.ProviderID)
 	require.Equal(e.t, "gemini-3.8-flash-tiered", target.ModelID)
+	require.Equal(e.t, provider.TestProtocolRoute{ClientProtocol: protocol.ProtocolOpenAIChatCompletions, UpstreamProtocol: protocol.ProtocolGeminiGenerateContent}, target.ProtocolRoute)
 	require.Equal(e.t, "hi", prompt)
 	require.Equal(e.t, "probe-client", userAgent)
 	return &ProbeExecutionResult{Status: GroupAvailabilityProbeStatusSuccess}, nil

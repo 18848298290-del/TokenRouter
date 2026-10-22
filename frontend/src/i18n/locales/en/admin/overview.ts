@@ -1026,6 +1026,10 @@ export default {
       empty: 'No displayable models',
     },
     availabilityProbe: {
+      protocol: 'Probe Protocol',
+      automatic: 'Automatic',
+      protocolUnavailable:
+        'Select a supported protocol allowed by this group, or disable the probe.',
       title: 'Group Availability Probe',
       hint: 'Send lightweight active probes to this group on a fixed interval. The marketplace shows availability using the configured public window.',
       model: 'Probe Model',

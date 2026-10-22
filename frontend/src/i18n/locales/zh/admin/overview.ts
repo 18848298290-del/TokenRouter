@@ -1001,6 +1001,9 @@ export default {
       empty: '暂无可展示模型',
     },
     availabilityProbe: {
+      protocol: '探针协议',
+      automatic: '自动',
+      protocolUnavailable: '请选择分组允许且支持测试的协议，或关闭探针。',
       title: '分组可用性探测',
       hint: '按固定间隔对该分组主动发起轻量请求，模型广场将按配置的公开窗口展示可用率。',
       model: '探测模型',

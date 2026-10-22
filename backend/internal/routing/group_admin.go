@@ -295,6 +295,9 @@ func (s *GroupAdmin) CreateGroup(ctx context.Context, input *CreateGroupInput) (
 	if err := NormalizeGroupProtocolPolicy(group, legacy); err != nil {
 		return nil, err
 	}
+	if err := ValidateGroupProbeProtocol(group); err != nil {
+		return nil, err
+	}
 
 	// Filter copied memberships using credential type before binding; API-key
 	// source records cannot be carried into a group configured for OAuth-only
@@ -687,6 +690,9 @@ func (s *GroupAdmin) UpdateGroup(ctx context.Context, id int64, input *UpdateGro
 		}
 	}
 	if err := NormalizeGroupProtocolPolicy(group, legacy); err != nil {
+		return nil, err
+	}
+	if err := ValidateGroupProbeProtocol(group); err != nil {
 		return nil, err
 	}
 

@@ -2,9 +2,11 @@ package routing
 
 import (
 	"errors"
+	"slices"
 	"strings"
 
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
+	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
 // group_availability_probe_config.go validates enabled probe settings and
@@ -12,7 +14,8 @@ import (
 // Enabled group probes require a model, prompt, a User-Agent without control
 // bytes, and bounded scheduling values. Disabled configuration is discarded,
 // while a missing legacy retry count becomes three additional attempts and an
-// explicit zero retains a single initial attempt.
+// explicit zero retains a single initial attempt. Explicit protocols come from
+// the test capability catalog and must remain admitted by the complete group.
 
 // Probe defaults and bounds constrain stored intervals, attempt timeouts, retry
 // counts, and User-Agent byte length before administrative configuration is
@@ -39,10 +42,13 @@ const (
 // nonblank model and prompt, apply interval and timeout defaults, and preserve
 // explicit zero retries through separate pointer storage. User-Agent control
 // checks apply after trimming, so surrounding spaces and tabs are removed
-// before validation.
+// before validation. A nonempty protocol must belong to the group probe catalog.
 func NormalizeGroupAvailabilityProbeConfig(cfg GroupAvailabilityProbeConfig) (GroupAvailabilityProbeConfig, error) {
 	if !cfg.Enabled {
 		return GroupAvailabilityProbeConfig{}, nil
+	}
+	if cfg.Protocol != "" && !slices.Contains(provider.GroupProbeProtocols(), cfg.Protocol) {
+		return GroupAvailabilityProbeConfig{}, errors.New("availability_probe_config.protocol is not supported by group probes")
 	}
 
 	cfg.ModelID = strings.TrimSpace(cfg.ModelID)
@@ -102,6 +108,21 @@ func NormalizeGroupAvailabilityProbeConfigForAdminWrite(cfg GroupAvailabilityPro
 		return GroupAvailabilityProbeConfig{}, infraerrors.BadRequest(InvalidGroupAvailabilityProbeConfigReason, err.Error())
 	}
 	return normalized, nil
+}
+
+// ValidateGroupProbeProtocol checks an enabled probe against the group's entry policy.
+// Call after merging and normalizing the complete group update, including when
+// the update changes allowed protocols without supplying new probe settings.
+func ValidateGroupProbeProtocol(group *Group) error {
+	cfg := group.AvailabilityProbeConfig
+	if !cfg.Enabled || cfg.Protocol == "" {
+		return nil
+	}
+	if !slices.Contains(provider.GroupProbeProtocols(), cfg.Protocol) || !group.AllowsClientProtocol(cfg.Protocol) {
+		return infraerrors.BadRequest(InvalidGroupAvailabilityProbeConfigReason,
+			"availability_probe_config.protocol must be allowed by the group and supported by group probes")
+	}
+	return nil
 }
 
 // HasInvalidHTTPHeaderValueByte reports whether the probe User-Agent contains a

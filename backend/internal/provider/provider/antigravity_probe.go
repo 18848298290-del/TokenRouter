@@ -23,6 +23,9 @@ import (
 // AntigravityProbe runs a selected-provider probe through platform retries and
 // the application attempt gate.
 type AntigravityProbe struct {
+	// Attributes resolves the final model for routed group probes. A nil callback
+	// skips profile lookup, leaving declared output and sampling permissions unknown.
+	Attributes ModelAttributeLookup
 	// Tokens supplies OAuth access credentials. A nil source returns a
 	// configuration
 	// error before project resolution or any platform request is attempted.
@@ -43,6 +46,18 @@ type AntigravityProbe struct {
 // supplied UserAgent. The platform probe closes its final response and releases
 // an optional application attempt registration.
 func (s *AntigravityProbe) Execute(ctx context.Context, value *provider.Record, request provider.PreparedTestRequest) (*antigravity.TestConnectionResult, error) {
+	var model string
+	if request.ProtocolRoute.ClientProtocol != "" {
+		// Routed probes validate their final model and profile before acquiring
+		// credentials, so a failed profile cannot trigger an upstream generation.
+		model = MapAntigravityModel(value, request.Model)
+		if model == "" {
+			return nil, fmt.Errorf("model %s not in whitelist", request.Model)
+		}
+		if _, err := resolveProbeType(ctx, s.Attributes, value, request.GroupID, model, "gemini_generate_content", provider.ProviderTestTypeText); err != nil {
+			return nil, err
+		}
+	}
 	if s.Tokens == nil {
 		return nil, errors.New("antigravity token provider not configured")
 	}
@@ -54,9 +69,11 @@ func (s *AntigravityProbe) Execute(ctx context.Context, value *provider.Record, 
 	if err != nil {
 		return nil, err
 	}
-	model := MapAntigravityModel(value, request.Model)
 	if model == "" {
-		return nil, fmt.Errorf("model %s not in whitelist", request.Model)
+		model = MapAntigravityModel(value, request.Model)
+		if model == "" {
+			return nil, fmt.Errorf("model %s not in whitelist", request.Model)
+		}
 	}
 	prompt := "."
 	if strings.TrimSpace(request.Prompt) != "" {

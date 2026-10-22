@@ -39,6 +39,7 @@ export interface GroupSettingsDraft {
   // fallback_group_id_on_invalid_request selects invalid-request recovery. Null clears
   // selection and the update payload sends zero to remove the saved reference.
   fallback_group_id_on_invalid_request: number | null
+  availability_probe_protocol: ProtocolID | '' // empty selects automatic routing
   availability_probe_enabled: boolean // active probe enablement
   availability_probe_model_id: string // probe model identifier
   availability_probe_interval_minutes: number // probe interval minutes

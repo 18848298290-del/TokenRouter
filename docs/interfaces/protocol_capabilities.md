@@ -9,6 +9,7 @@
 
 - 提供商 profile 按平台、类型和认证方式列出原生选项。
 - `groups` 是数组，只有一个不带 `platform` 的通用 profile，列出所有分组可用的入口、默认集合、转换目标和默认映射。`defaults` 只包含 Messages、Responses、Chat 三个文本入口，`default_fallbacks` 为 `{}`。
+- 分组 profile 的 `probe_protocols` 来自提供商测试能力，包含 Messages、Responses、Chat Completions、Gemini GenerateContent、SystemOne 和图片生成。探针协议下拉取它与分组当前 `allowed_protocols` 的交集，并提供「自动」选项；Compact 等专项测试不在这个集合中。
 - 目录里没有凭据。前端共用这份只读结果，不维护自己的平台白名单。
 
 Responses WebSocket 的客户端许可在分组协议控制中设置，提供商协议集合声明上游能力。连接方式和在线调参见 [Responses 长连接与在线参数](openai_upstream.md#responses_ws_runtime)。

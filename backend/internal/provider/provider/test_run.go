@@ -27,6 +27,7 @@ import (
 // TestRun retains cancellation, event output, and per-probe request and
 // execution state.
 type TestRun struct {
+	ProtocolRoute provider.TestProtocolRoute // selected group probe route
 	// GroupID selects model attributes for this probe. Zero uses catalogue defaults;
 	// the synchronous executor reads this value after its target initializes it.
 	GroupID int64
@@ -69,13 +70,14 @@ type TestRun struct {
 
 // NewTestRun derives a cancellable probe context and retains headers and sink.
 // Nil headers create a new map; supplied headers remain shared with the caller,
-// who cancels the run after execution and supplies a nonnil sink.
+// who cancels the run after execution and supplies a nonnil sink. Validated test
+// protocol metadata is copied from ctx for endpoint and attribute preparation.
 func NewTestRun(ctx context.Context, headers http.Header, sink provider.TestEventSink) *TestRun {
 	ctx, cancel := context.WithCancel(ctx)
 	if headers == nil {
 		headers = make(http.Header)
 	}
-	return &TestRun{Context: ctx, Cancel: cancel, Headers: headers, sink: sink}
+	return &TestRun{Context: ctx, Cancel: cancel, Headers: headers, sink: sink, ProtocolRoute: provider.TestProtocolRouteFromContext(ctx)}
 }
 
 // GetHeader returns the current value from the run's request headers.

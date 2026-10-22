@@ -61,6 +61,7 @@ export interface ProtocolCatalog {
    * records.
    */
   groups: {
+    probe_protocols: ProtocolID[] // Supported availability probe entries.
     protocols: ProtocolID[] // Protocol identifier list.
     defaults: ProtocolID[] // Default protocol choices.
     fallback_targets: Partial<Record<ProtocolID, ProtocolID[]>> // Permitted target protocol map.

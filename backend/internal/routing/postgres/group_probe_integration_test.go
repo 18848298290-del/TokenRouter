@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
+// group_probe_integration_test.go checks leased configurations and availability history in PostgreSQL.
 // The latest probe can lie outside the availability window, and equal start
 // times need a deterministic winner. PostgreSQL fixtures separate recent counts
 // from latest status and include a group with no history to exercise the
@@ -57,4 +59,23 @@ func TestGroupProbeLatestResults(t *testing.T) {
 	require.Equal(t, "failed", got[ids[1]].LastStatus)
 	require.Zero(t, got[ids[1]].TotalCount)
 	require.Nil(t, got[ids[2]].LastCheckedAt)
+}
+
+// TestGroupProbeClaimRetainsProtocol leases old and protocol-specific configurations from JSON storage.
+// Claimed settings keep the explicit entry while records saved before protocol selection remain automatic.
+func TestGroupProbeClaimRetainsProtocol(t *testing.T) {
+	db := postgrescontainer.New(t)
+	for index, config := range []string{
+		`{"enabled":true,"model_id":"alias","prompt":"hi"}`,
+		`{"enabled":true,"model_id":"alias","prompt":"hi","protocol":"openai_chat_completions"}`,
+	} {
+		_, err := db.Exec(`INSERT INTO groups(name, availability_probe_config) VALUES($1, $2::jsonb)`, fmt.Sprintf("probe-%d", index), config)
+		require.NoError(t, err)
+	}
+	now := time.Now().UTC()
+	claimed, err := NewGroupAvailabilityProbeRepository(db).ClaimDue(t.Context(), now, now.Add(time.Minute), "test", 10)
+	require.NoError(t, err)
+	require.Len(t, claimed, 2)
+	require.Empty(t, claimed[0].Config.Protocol)
+	require.EqualValues(t, "openai_chat_completions", claimed[1].Config.Protocol)
 }

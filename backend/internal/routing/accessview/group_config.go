@@ -154,11 +154,14 @@ type GroupAdvancedSchedulerOverrides = policy.GroupAdvancedSchedulerOverrides
 // GroupAvailabilityProbeConfig records the model, schedule, and attempt budget
 // for probes.
 type GroupAvailabilityProbeConfig struct {
-	Enabled         bool   `json:"enabled"`                    // active probe scheduling switch
-	IntervalMinutes int    `json:"interval_minutes,omitempty"` // minutes
-	ModelID         string `json:"model_id,omitempty"`         // probe request model identifier
-	Prompt          string `json:"prompt,omitempty"`           // probe request prompt text
-	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`  // seconds
+	// Protocol selects a group entry for every attempt. Empty retains automatic
+	// provider selection and test inference for configurations saved without it.
+	Protocol        protocol.ProtocolID `json:"protocol,omitempty"`
+	Enabled         bool                `json:"enabled"`                    // active probe scheduling switch
+	IntervalMinutes int                 `json:"interval_minutes,omitempty"` // minutes
+	ModelID         string              `json:"model_id,omitempty"`         // probe request model identifier
+	Prompt          string              `json:"prompt,omitempty"`           // probe request prompt text
+	TimeoutSeconds  int                 `json:"timeout_seconds,omitempty"`  // seconds
 	// MaxRetries counts attempts after the first failed probe. Nil selects the
 	// server default, while a supplied zero executes only the first attempt.
 	MaxRetries *int   `json:"max_retries,omitempty"`

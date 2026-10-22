@@ -103,9 +103,20 @@ func provideProviderTests(store *providerpostgres.ProviderStore, geminiToken *pr
 		modelAttributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: catalog.CapabilityView}}
 	}
 	probeAttributes := func(ctx context.Context, value *provider.Record, groupID int64, model, protocol string) (modelcatalog.Resolution, error) {
+		route := provider.TestProtocolRouteFromContext(ctx)
+		if route.UpstreamProtocol != "" {
+			protocol = string(route.UpstreamProtocol)
+		}
 		target := value.ModelAttributeTarget(model, protocol)
 		target.ClientProtocol = protocol
-		return modelAttributes.NewSession().Resolve(ctx, groupID, target)
+		if route.ClientProtocol != "" {
+			target.ClientProtocol = string(route.ClientProtocol)
+		}
+		session := routing.ModelAttributesFromContext(ctx)
+		if session == nil {
+			session = modelAttributes.NewSession()
+		}
+		return session.Resolve(ctx, groupID, target)
 	}
 	openaiTest := &provideradapter.OpenAIProviderTest{Attributes: probeAttributes, Store: store, Transport: transport, ValidateURL: urlPolicy.Validate, Prepare: probePolicy.Prepare, ApplyRouting: probePolicy.ApplyTestRouting, ResolveTLS: probePolicy.ResolveTestTLS, EnsureTask: tasks.Ensure}
 	geminiTest := &provideradapter.GeminiProviderTest{Attributes: probeAttributes, Tokens: geminiToken, Transport: transport, Profiles: profiles, ValidateURL: urlPolicy.Validate}
@@ -116,16 +127,23 @@ func provideProviderTests(store *providerpostgres.ProviderStore, geminiToken *pr
 	qoderSessions.SetHTTPUpstream(transport, profiles)
 	manager.Register(lifecycle.Hook{Name: "ProviderTestQoderSessions", StopOrder: 26, Stop: qoderSessions.StopContext})
 	targets := &provideradapter.TestTargets{
-		Jev:  &provideradapter.JevProviderTest{Transport: transport, ValidateURL: urlPolicy.Validate},
+		Jev:  &provideradapter.JevProviderTest{Attributes: probeAttributes, Transport: transport, ValidateURL: urlPolicy.Validate},
 		Read: store.GetByID, OpenAI: openaiTest, Gemini: geminiTest, Anthropic: anthropicTest,
-		Qoder: &provideradapter.QoderProviderTest{Sessions: qoderSessions, Client: qoder.NewClient(qoder.APIBaseURL), Transport: transport, Profiles: profiles, RewriteModel: openaiprotocol.ReplaceModelInBody},
+		Qoder: &provideradapter.QoderProviderTest{Attributes: probeAttributes, Sessions: qoderSessions, Client: qoder.NewClient(qoder.APIBaseURL), Transport: transport, Profiles: profiles, RewriteModel: openaiprotocol.ReplaceModelInBody},
 		Grok:  &provideradapter.GrokProviderTest{Attributes: probeAttributes, Tokens: grokToken, Transport: transport, Store: store, OperatorValidator: urlPolicy.Validate, DefaultBaseURL: gatewayprovider.GrokDefaultBaseURLReader(settings)},
-		CN:    &provideradapter.CNProviderTest{Transport: transport, Profiles: profiles, Store: store, ValidateURL: urlPolicy.Validate, Responses: openaiTest},
+		CN:    &provideradapter.CNProviderTest{Attributes: probeAttributes, Transport: transport, Profiles: profiles, Store: store, ValidateURL: urlPolicy.Validate, Responses: openaiTest},
 		Antigravity: &provideradapter.AntigravityProviderTest{Probe: func(ctx context.Context, value *provider.Record, request provider.PreparedTestRequest) (*antigravity.TestConnectionResult, error) {
-			return ag.Execute(ctx, value, request)
+			probe := *ag
+			probe.Attributes = probeAttributes
+			return probe.Execute(ctx, value, request)
 		}},
 	}
-	core := provider.NewTestService(targets, provider.TestOptions{Now: time.Now, Error: func(message string) { log.Printf("Provider test error: %s", message) }, WriteError: func(err error) { log.Printf("failed to write SSE event: %v", err) }})
+	core := provider.NewTestService(targets, provider.TestOptions{Now: time.Now, PrepareContext: func(ctx context.Context) context.Context {
+		if routing.ModelAttributesFromContext(ctx) != nil {
+			return ctx
+		}
+		return routing.WithModelAttributes(ctx, modelAttributes)
+	}, Error: func(message string) { log.Printf("Provider test error: %s", message) }, WriteError: func(err error) { log.Printf("failed to write SSE event: %v", err) }})
 	return core
 }
 

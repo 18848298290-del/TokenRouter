@@ -151,11 +151,19 @@ func (s *ModelAttributeService) NewSession() *ModelAttributeSession {
 	return &ModelAttributeSession{service: s, view: s.view(), groups: map[int64]attributeGroupResult{}}
 }
 
+// WithContext attaches this session to a new phase of the same request.
+// The destination context keeps its cancellation and deadline. Selection and
+// background execution share the pinned catalogue, group profile, and cached
+// failures through this session; independent requests create a new session.
+func (s *ModelAttributeSession) WithContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, modelAttributeContextKey{}, s)
+}
+
 // WithModelAttributes attaches a new attribute session to the supplied context
 // and pins its catalogue. Callers create separate sessions for independent
 // background work and each WebSocket turn that should observe updates.
 func WithModelAttributes(ctx context.Context, service *ModelAttributeService) context.Context {
-	return context.WithValue(ctx, modelAttributeContextKey{}, service.NewSession())
+	return service.NewSession().WithContext(ctx)
 }
 
 // ModelAttributesFromContext returns the attribute session stored under the

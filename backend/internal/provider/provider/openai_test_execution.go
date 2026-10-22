@@ -216,6 +216,9 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		upstreamTestModelID = strings.TrimSpace(testModelID)
 	}
 	payload := openai.TestResponsesPayload(upstreamTestModelID, prompt, isOAuth)
+	if err := applyProbeSampling(c, s.Attributes, value, upstreamTestModelID, "openai_responses", payload); err != nil {
+		return (TestStreamOutput{}).Error(c, err.Error())
+	}
 	// Platform probe payloads contain JSON-compatible strings, numbers, and
 	// collections. Their fixed shape allows direct encoding before the request
 	// body is constructed.
@@ -349,6 +352,9 @@ func (s *OpenAIProviderTest) executeChat(
 	c.Begin(true)
 
 	payload := openai.TestChatCompletionsPayload(testModelID, prompt)
+	if err := applyProbeSampling(c, s.Attributes, value, testModelID, "openai_chat_completions", payload); err != nil {
+		return (TestStreamOutput{}).Error(c, err.Error())
+	}
 	// Platform probe payloads contain JSON-compatible strings, numbers, and
 	// collections. Their fixed shape allows direct encoding before the request
 	// body is constructed.

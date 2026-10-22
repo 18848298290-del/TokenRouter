@@ -547,7 +547,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	subscriptionExpiryService := provideSubscriptionExpiry(subscriptionStore, store, notificationEmailService, leaderLock, db)
 	announcementExpiryService := provideAnnouncementExpiry(announcementRepository)
 	scheduledTestRunnerService := provideScheduledTestRunner(scheduledTestPlanRepository, scheduledTestService, testService, recoveryService, cfg)
-	groupAvailabilityProbeRunnerService := provideGroupProbeRunner(groupAvailabilityProbeRepository, testService, generic, compatible, gemini, cfg)
+	groupAvailabilityProbeRunnerService := provideGroupProbeRunner(groupAvailabilityProbeRepository, testService, generic, compatible, gemini, cfg, modelAttributeService)
 	appMaintenanceRuntimeReady := provideMaintenanceRuntime(backgroundRefreshService, expiryService, proxyExpiryService, subscriptionExpiryService, announcementExpiryService, scheduledTestRunnerService, groupAvailabilityProbeRunnerService, cfg, manager, concurrencyService, userMessageQueueService)
 	opsMetricsCollector := provideOpsCollector(opsRepository, store, providerStore, concurrencyService, db, redisClient, opsOptions)
 	opsAlertEvaluatorService := provideOpsEvaluator(opsService, opsRepository, mailer, notificationEmailService, redisClient, opsOptions, proxyStore)

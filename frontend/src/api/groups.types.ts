@@ -36,6 +36,9 @@ export interface GroupAdvancedSchedulerOverrides {
 // GroupAvailabilityProbeConfig configures recurring requests used to measure group
 // availability.
 export interface GroupAvailabilityProbeConfig {
+  // Omission or an empty value keeps automatic probe routing. Selected entries must be
+  // allowed by the group and supported by the backend test capabilities.
+  protocol?: ProtocolID | ''
   enabled: boolean // Feature activation switch.
   interval_minutes?: number // Minutes between scheduled checks.
   model_id?: string // Selected model identifier.

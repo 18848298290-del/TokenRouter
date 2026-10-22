@@ -29,6 +29,9 @@ import (
 // JevProviderTest prepares native SystemOne probes through the shared upstream
 // request transport.
 type JevProviderTest struct {
+	// Attributes resolves the final model for routed decision probes. A nil
+	// callback skips profile lookup before the native SystemOne request is sent.
+	Attributes  ModelAttributeLookup
 	Transport   httpclient.UpstreamTransport // SystemOne HTTP request sender
 	ValidateURL func(string) (string, error) // configured upstream root validator
 }
@@ -81,6 +84,11 @@ func (t jevTestTarget) Execute(ctx context.Context, request provider.PreparedTes
 		model = "jev-latest"
 	}
 	model = mappedTestModel(t.record, model)
+	if request.ProtocolRoute.ClientProtocol != "" && t.executor.Attributes != nil {
+		if _, err := t.executor.Attributes(ctx, t.record, request.GroupID, model, string(request.ProtocolRoute.UpstreamProtocol)); err != nil {
+			return output.Error(run, err.Error())
+		}
+	}
 	proxy := ""
 	if t.record.Proxy != nil {
 		proxy = t.record.Proxy.URL()
