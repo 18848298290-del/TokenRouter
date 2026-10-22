@@ -653,6 +653,12 @@ export default {
     settings: {
       allowedModels: 'Allowed models',
       billingAndStatus: 'Billing & status',
+      marketplace: 'Model marketplace display',
+      showMaxDiscount: 'Show maximum discount tag',
+      showMaxDiscountHint:
+        'Show the maximum discount in the marketplace group header when a discount is available.',
+      showRateMultiplier: 'Show multiplier tag',
+      showRateMultiplierHint: 'Show the group multiplier in the marketplace group header.',
       providerSelection: 'Provider sources & filters',
       scheduling: 'Scheduling & sessions',
       fallbacks: 'Group fallbacks',

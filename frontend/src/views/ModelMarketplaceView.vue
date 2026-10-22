@@ -183,9 +183,11 @@
                     <ProviderIcon :brand="groupBrandSource(group)" size="14px" />
                     {{ groupBrandLabel(group) }}
                   </span>
-                  <!-- Show the official-price discount only when valid; its explanation supports both click and hover activation. -->
+                  <!-- A group can hide its discount tag; visible discounts require a valid ratio and offer click or hover explanations. -->
                   <HelpTooltip
-                    v-if="formatMaxDiscountOff(group.official_price_ratio)"
+                    v-if="
+                      !group.hide_max_discount && formatMaxDiscountOff(group.official_price_ratio)
+                    "
                     trigger="both"
                     width-class="w-72"
                     :closable="false"
@@ -201,6 +203,7 @@
                     </template>
                   </HelpTooltip>
                   <HelpTooltip
+                    v-if="!group.hide_rate_multiplier"
                     trigger="both"
                     width-class="w-72"
                     :closable="false"

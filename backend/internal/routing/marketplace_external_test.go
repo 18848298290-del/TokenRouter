@@ -22,11 +22,11 @@ import (
 	settingscore "github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Public marketplace assembly keeps model identity, pricing identity, route
-// attributes, and observations separate. The batch fixture returns one alias
-// for two visible groups, exposing which identities reach pricing and
-// attribute callbacks and which groups receive optional capacity and
-// probe-history reads.
+// marketplace_external_test.go verifies public marketplace assembly of model
+// identity, pricing identity, route attributes, and observations. The batch
+// fixture returns one alias for two visible groups, exposing which identities
+// reach pricing and attribute callbacks and which groups receive optional
+// capacity and probe-history reads.
 //
 // Pricing scenarios use the shared production resolver with offline catalog
 // data or explicit configuration cards, covering missing prices, free
@@ -104,6 +104,43 @@ type marketplaceSettingRepoStub struct {
 	// assembly uses GetMultiple; calling another promoted repository method panics.
 	settingscore.Repository                   // unused settings repository methods
 	settings                map[string]string // supplied stored setting strings
+}
+
+// TestMarketplaceHeaderTagVisibility decodes stored display flags and lists a
+// public group. Only boolean true hides each tag, and quote requests continue
+// to receive the configured group multiplier for every flag combination.
+func TestMarketplaceHeaderTagVisibility(t *testing.T) {
+	for _, test := range []struct {
+		name           string // named visibility scenario
+		features       string // saved feature JSON
+		hideDiscount   bool   // expected discount visibility flag
+		hideMultiplier bool   // expected multiplier visibility flag
+	}{
+		{"missing", `{}`, false, false},
+		{"explicit false", `{"hide_marketplace_max_discount":false,"hide_marketplace_rate_multiplier":false}`, false, false},
+		{"discount", `{"hide_marketplace_max_discount":true}`, true, false},
+		{"multiplier", `{"hide_marketplace_rate_multiplier":true}`, false, true},
+		{"both", `{"hide_marketplace_max_discount":true,"hide_marketplace_rate_multiplier":true}`, true, true},
+		{"invalid values", `{"hide_marketplace_max_discount":"true","hide_marketplace_rate_multiplier":1}`, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			policy := routing.DecodeGroupRoutingPolicy([]byte(`{"features_config":` + test.features + `}`))
+			groups := &marketplaceGroupRepoStub{groups: []routing.Group{{
+				ID: 1, ActiveProviderCount: 1, RateMultiplier: 2, RoutingPolicy: policy,
+			}}}
+			prices := &marketplaceLoadingPrices{}
+			svc := routing.NewMarketplace(groups, nil, marketplaceLoadingModels{}, routing.RequestableResolver{}, prices, nil, nil, routing.MarketplaceOptions{})
+			result, err := svc.ListPublic(context.Background(), routing.MarketplaceListOptions{})
+			require.NoError(t, err)
+			require.Len(t, result, 1)
+			require.Equal(t, test.hideDiscount, result[0].HideMaxDiscount)
+			require.Equal(t, test.hideMultiplier, result[0].HideRateMultiplier)
+			require.Equal(t, 2.0, result[0].RateMultiplier)
+			require.Len(t, prices.requests, 1)
+			require.Equal(t, 2.0, prices.requests[0].RateMultiplier)
+			require.Equal(t, 2.0, result[0].Models[0].Pricing.InputPricePerToken)
+		})
+	}
 }
 
 // TestMarketplaceBatchAttributesAndOptionalCapacity varies attribute failure

@@ -17,8 +17,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
-// Group duplication needs a saved operation identity for retries and a unique
-// display name for separate copies. The in-memory repository records those
+// group_duplicate_test.go verifies copied group configuration, retry identity,
+// and unique display names. The in-memory repository records those
 // identities beside group values and source provider bindings, then returns a
 // reloaded response with fixture-derived membership counts.
 //
@@ -174,8 +174,8 @@ func groupDuplicateTestPointer[T any](value T) *T { return &value }
 // TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState duplicates
 // an active source with two seeded memberships and compares selected saved
 // fields and inactive status. Mutations then check independence of the
-// routing slices, fallback and scheduler pointers, scopes, protocols, names,
-// and effort mappings exercised here.
+// routing slices, marketplace display flags, fallback and scheduler pointers,
+// scopes, protocols, names, and effort mappings exercised here.
 func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 1, 2, 3, 4, 0, time.UTC)
 	source := &routing.Group{
@@ -187,6 +187,13 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 			StickyWeightedEnabled: groupDuplicateTestPointer(true),
 			LBTopK:                groupDuplicateTestPointer(3),
 			WeightPriority:        groupDuplicateTestPointer(4.5),
+		},
+		RoutingPolicy: routing.GroupRoutingPolicy{
+			Enabled: true,
+			FeaturesConfig: map[string]any{
+				"hide_marketplace_max_discount":    true,
+				"hide_marketplace_rate_multiplier": false,
+			},
 		},
 		DisplayBrand:                    "OpenAI",
 		RateMultiplier:                  1.75,
@@ -250,6 +257,7 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	require.Equal(t, source.DisplayBrand, duplicate.DisplayBrand)
 	require.Equal(t, source.SessionIsolationEnabled, duplicate.SessionIsolationEnabled)
 	require.Equal(t, source.RateMultiplier, duplicate.RateMultiplier)
+	require.Equal(t, source.RoutingPolicy, duplicate.RoutingPolicy)
 	require.Equal(t, source.ForceOpenAIFast, duplicate.ForceOpenAIFast)
 	require.Equal(t, source.FallbackGroupID, duplicate.FallbackGroupID)
 	require.Equal(t, source.UnavailableFallbackGroupID, duplicate.UnavailableFallbackGroupID)
@@ -271,6 +279,8 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	}, repo.createdBindings[duplicate.ID])
 
 	duplicate.ModelRouting["gpt-*"][0] = 999
+	duplicate.RoutingPolicy.FeaturesConfig["hide_marketplace_max_discount"] = false
+	duplicate.RoutingPolicy.FeaturesConfig["hide_marketplace_rate_multiplier"] = true
 	duplicate.SupportedModelScopes[0] = "changed"
 	duplicate.AllowedProtocols[0] = protocol.ProtocolOpenAIResponses
 	duplicate.ModelsListConfig.Models[0] = "changed"
@@ -279,6 +289,8 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	*duplicate.AdvancedSchedulerOverrides.LBTopK = 99
 	*duplicate.AdvancedSchedulerOverrides.WeightPriority = 99
 	require.Equal(t, int64(13), source.ModelRouting["gpt-*"][0])
+	require.Equal(t, true, source.RoutingPolicy.FeaturesConfig["hide_marketplace_max_discount"])
+	require.Equal(t, false, source.RoutingPolicy.FeaturesConfig["hide_marketplace_rate_multiplier"])
 	require.Equal(t, "claude", source.SupportedModelScopes[0])
 	require.Equal(t, protocol.ProtocolAnthropicMessages, source.AllowedProtocols[0])
 	require.Equal(t, "gpt-5.4", source.ModelsListConfig.Models[0])

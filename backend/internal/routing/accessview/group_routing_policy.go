@@ -38,7 +38,7 @@ type GroupRoutingPolicy struct {
 	AllowedModels []string `json:"allowed_models"`
 
 	Features string `json:"features"` // retained legacy feature text
-	// FeaturesConfig stores feature options read by their gateway consumers.
+	// FeaturesConfig stores feature options read by gateway and marketplace consumers.
 	// Snapshot copies isolate the map and recognized nested value shapes through
 	// DeepCopyFeaturesConfig.
 	FeaturesConfig map[string]any `json:"features_config"`

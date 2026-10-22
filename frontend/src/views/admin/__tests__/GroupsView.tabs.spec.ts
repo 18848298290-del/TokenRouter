@@ -149,6 +149,63 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+// Both editor modes start with visible marketplace tags. Saving and reopening carries each
+// independent switch through payload and hydration, while edits retain unrelated compatibility settings.
+it.each(['create', 'edit'] as const)('%s 保存并重新打开模型广场标签开关', async (mode) => {
+  const policy = {
+    ...defaultRoutingPolicy(),
+    features_config: { web_search_emulation: { anthropic: true } },
+  }
+  const wrapper = await open(mode, 'mixed', { routing_policy: policy })
+  const discount = wrapper.get('[data-setting="show_marketplace_max_discount"]')
+  const multiplier = wrapper.get('[data-setting="show_marketplace_rate_multiplier"]')
+  expect(discount.attributes('aria-checked')).toBe('true')
+  expect(multiplier.attributes('aria-checked')).toBe('true')
+  await discount.trigger('click')
+  expect(discount.attributes('aria-checked')).toBe('false')
+  expect(multiplier.attributes('aria-checked')).toBe('true')
+  await wrapper.get(`#${mode}-group-form`).trigger('submit')
+  await flushPromises()
+  const payload =
+    mode === 'create' ? groups.create.mock.calls[0][0] : groups.update.mock.calls[0][1]
+  expect(payload.routing_policy.features_config.hide_marketplace_max_discount).toBe(true)
+  expect(policy.features_config).toEqual({ web_search_emulation: { anthropic: true } })
+  if (mode === 'edit') {
+    expect(payload.routing_policy.features_config.web_search_emulation).toEqual({ anthropic: true })
+  }
+
+  const reopened = await open('edit', 'mixed', { routing_policy: payload.routing_policy })
+  const savedDiscount = reopened.get('[data-setting="show_marketplace_max_discount"]')
+  const savedMultiplier = reopened.get('[data-setting="show_marketplace_rate_multiplier"]')
+  expect(savedDiscount.attributes('aria-checked')).toBe('false')
+  expect(savedMultiplier.attributes('aria-checked')).toBe('true')
+  await savedMultiplier.trigger('click')
+  await savedDiscount.trigger('click')
+  await reopened.get('#edit-group-form').trigger('submit')
+  await flushPromises()
+  expect(groups.update.mock.lastCall?.[1].routing_policy.features_config).toMatchObject({
+    hide_marketplace_max_discount: false,
+    hide_marketplace_rate_multiplier: true,
+  })
+})
+
+// A failed group update leaves the marketplace display draft open for retry.
+// The selected hidden tags remain in the form after the request is rejected.
+it('保存失败后保留模型广场标签开关的草稿', async () => {
+  const wrapper = await open('edit', 'mixed')
+  const discount = wrapper.get('[data-setting="show_marketplace_max_discount"]')
+  const multiplier = wrapper.get('[data-setting="show_marketplace_rate_multiplier"]')
+  await discount.trigger('click')
+  await multiplier.trigger('click')
+  groups.update.mockRejectedValueOnce(new Error('Save failed'))
+  await wrapper.get('#edit-group-form').trigger('submit')
+  await flushPromises()
+  expect(showError).toHaveBeenCalled()
+  expect(wrapper.find('#edit-group-form').exists()).toBe(true)
+  expect(discount.attributes('aria-checked')).toBe('false')
+  expect(multiplier.attributes('aria-checked')).toBe('false')
+})
+
 // A historical disabled routing policy is opened for editing. Opening performs no update, while
 // saving emits an enabled policy together with the edited group settings.
 it('编辑历史停用策略后保存即应用，打开表单时不提前更新服务端', async () => {
@@ -228,10 +285,9 @@ describe.each(['create', 'edit'] as const)('GroupsView %s tabs', (mode) => {
     }
   })
 
-  // Several mapping rows remain incomplete while another tab changes compatibility settings.
-  // The draft retains those rows and validation returns to the model tab instead of submitting
-  // an incomplete mapping.
-  it('多个未完成映射跨页修改兼容功能后仍保留，校验会返回模型页', async () => {
+  // Incomplete mapping rows coexist with marketplace display and compatibility edits in other
+  // tabs. Validation returns to the model tab, and completing the rows saves every policy edit.
+  it('跨页修改展示和兼容功能后保留未完成映射，补全后一起保存', async () => {
     const wrapper = await open(mode, 'mixed', {
       routing_policy: {
         ...defaultRoutingPolicy(),
@@ -249,6 +305,9 @@ describe.each(['create', 'edit'] as const)('GroupsView %s tabs', (mode) => {
     const targets = wrapper.findAll('input[aria-label="admin.groups.routingPolicy.target"]')
     await targets[0].setValue('first-target')
     await targets[1].setValue('second-target')
+    await tab(wrapper, 'general')
+    await wrapper.get('[data-setting="show_marketplace_max_discount"]').trigger('click')
+    await wrapper.get('[data-setting="show_marketplace_rate_multiplier"]').trigger('click')
     await tab(wrapper, 'request')
     await wrapper.get('[data-setting="web_search_emulation"]').trigger('click')
     await tab(wrapper, 'models')
@@ -274,6 +333,10 @@ describe.each(['create', 'edit'] as const)('GroupsView %s tabs', (mode) => {
       'second-alias': 'second-target',
     })
     expect(payload.routing_policy.features_config.web_search_emulation).toEqual({ anthropic: true })
+    expect(payload.routing_policy.features_config).toMatchObject({
+      hide_marketplace_max_discount: true,
+      hide_marketplace_rate_multiplier: true,
+    })
     if (mode === 'edit') {
       expect(payload.routing_policy.features).toBe('历史说明')
       expect(payload.routing_policy.features_config.untouched).toEqual({ openai: false })

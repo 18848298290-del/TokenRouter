@@ -208,6 +208,11 @@ type ModelMarketplaceGroup struct {
 	DisplayBrand   string  `json:"display_brand"`   // resolved group display brand
 	SortOrder      int     `json:"sort_order"`      // manual group display order
 	RateMultiplier float64 `json:"rate_multiplier"` // group user quote multiplier
+	// HideMaxDiscount and HideRateMultiplier independently suppress the group's
+	// marketplace header tags. False keeps each tag eligible for display while
+	// pricing and currency metadata remain available.
+	HideMaxDiscount    bool `json:"hide_max_discount"`    // hide discount header tag
+	HideRateMultiplier bool `json:"hide_rate_multiplier"` // hide multiplier header tag
 	// OfficialPriceRatio and OfficialPriceRMBEquivalent require valid unit-price
 	// and USD-exchange settings. They carry rate-scaled conversion values for
 	// price display; unavailable, nonpositive, or nonfinite conversion results
@@ -258,6 +263,8 @@ func ModelMarketplaceGroupsFromRouting(groups []routing.ModelMarketplaceGroup) [
 			DisplayBrand:               group.DisplayBrand,
 			SortOrder:                  group.SortOrder,
 			RateMultiplier:             group.RateMultiplier,
+			HideMaxDiscount:            group.HideMaxDiscount,
+			HideRateMultiplier:         group.HideRateMultiplier,
 			OfficialPriceRatio:         group.OfficialPriceRatio,
 			OfficialPriceRMBEquivalent: group.OfficialPriceRMBEquivalent,
 			Capacity:                   modelMarketplaceCapacityFromRouting(group.Capacity),

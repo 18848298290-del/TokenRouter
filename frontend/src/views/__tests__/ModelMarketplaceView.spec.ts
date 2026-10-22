@@ -350,6 +350,29 @@ describe('ModelMarketplaceView', () => {
     ).toBe(true)
   })
 
+  // Four groups use every combination of the two display flags, including absent flags.
+  // Each header hides its selected tags while the group's model cards remain available.
+  it('最高优惠和倍率标签按分组独立关闭，旧配置默认显示', async () => {
+    const fixture = marketplaceFixture()
+    fixture[0] = { ...fixture[0], hide_max_discount: true, hide_rate_multiplier: false }
+    fixture[1] = { ...fixture[1], hide_max_discount: false, hide_rate_multiplier: true }
+    fixture[2] = { ...fixture[2], hide_max_discount: true, hide_rate_multiplier: true }
+    getMarketplaceModels.mockResolvedValue(fixture)
+
+    const wrapper = await mountMarketplace()
+    const sections = wrapper.findAll('[data-testid="marketplace-group-section"]')
+    expect(
+      sections.map((section) => section.find('[data-testid="group-max-discount-tag"]').exists()),
+    ).toEqual([false, true, false, true])
+    expect(
+      sections.map((section) => section.find('[data-testid="group-rate-multiplier-tag"]').exists()),
+    ).toEqual([true, false, false, true])
+    for (const section of sections) {
+      expect(section.text()).toContain('GPT 5.5')
+    }
+    wrapper.unmount()
+  })
+
   // A priced model combines an omitted zero-price default interval with a paid successor.
   // Its card summary retains the free amount and both context-range labels.
   it('模型卡片摘要保留免费默认区间', async () => {

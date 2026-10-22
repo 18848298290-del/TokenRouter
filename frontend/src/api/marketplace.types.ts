@@ -145,6 +145,10 @@ export interface MarketplaceGroup {
   display_brand: string // Displayed provider brand.
   sort_order: number // Display sorting position.
   rate_multiplier: number // Applied billing multiplier.
+  // hide_max_discount and hide_rate_multiplier independently suppress group header tags.
+  // Absent flags keep both tags eligible for display when reading older server responses.
+  hide_max_discount?: boolean // Hide discount header tag.
+  hide_rate_multiplier?: boolean // Hide multiplier header tag.
   official_price_ratio?: number // Official price ratio.
   official_price_rmb_equivalent?: number // Official price rmb equivalent.
   capacity?: MarketplaceGroupCapacity // Aggregated group load.

@@ -12,6 +12,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// marketplace_test.go verifies JSON conversion of public model quotes and group
+// metadata. Tests distinguish free prices from missing fields and confirm that
+// visibility settings and protocol attributes survive the routing response mapper.
+
+// TestMarketplaceHeaderTagVisibilityJSON converts each combination of group
+// display flags. The public response carries both booleans and retains the
+// configured multiplier and official-price comparison metadata.
+func TestMarketplaceHeaderTagVisibilityJSON(t *testing.T) {
+	for _, hideDiscount := range []bool{false, true} {
+		for _, hideMultiplier := range []bool{false, true} {
+			ratio := 0.2
+			result := ModelMarketplaceGroupsFromRouting([]routing.ModelMarketplaceGroup{{
+				ID: 1, RateMultiplier: 2, OfficialPriceRatio: &ratio,
+				HideMaxDiscount: hideDiscount, HideRateMultiplier: hideMultiplier,
+			}})
+			body, err := json.Marshal(result[0])
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal(body, &fields))
+			require.Equal(t, hideDiscount, fields["hide_max_discount"])
+			require.Equal(t, hideMultiplier, fields["hide_rate_multiplier"])
+			require.Equal(t, 2.0, fields["rate_multiplier"])
+			require.Equal(t, ratio, fields["official_price_ratio"])
+		}
+	}
+}
+
 // TestImagePriceJSONPreservesFreeAndMissingSizes serializes a quote with two
 // declared sizes and one absent size. It checks that zero-valued 1K remains
 // free in JSON, 2K keeps its amount, and 4K is omitted.

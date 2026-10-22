@@ -55,6 +55,11 @@ type ModelMarketplaceGroup struct {
 	DisplayBrand   string  // resolved product brand label
 	SortOrder      int     // saved administrative display position
 	RateMultiplier float64 // base group price scaling factor
+	// HideMaxDiscount and HideRateMultiplier suppress independent group header
+	// tags. Only saved boolean true values hide tags; absent feature options keep
+	// the corresponding tag visible.
+	HideMaxDiscount    bool // hide discount header tag
+	HideRateMultiplier bool // hide multiplier header tag
 	// OfficialPriceRatio and OfficialPriceRMBEquivalent are emitted only when both
 	// currency settings are valid. They derive from the group factor, with nil
 	// representing unavailable conversion metadata.
@@ -328,6 +333,10 @@ func (s *Marketplace) ListPublic(ctx context.Context, options MarketplaceListOpt
 			officialPriceRMBEquivalent = discountConfig.officialPriceRMBEquivalent(group.RateMultiplier)
 		}
 		display, resolution := GroupDisplay(group, locale.FromContext(ctx))
+		// Missing or non-boolean display options keep tags visible so historical
+		// feature maps continue to produce the default marketplace header.
+		hideMaxDiscount, _ := group.RoutingPolicy.FeaturesConfig["hide_marketplace_max_discount"].(bool)
+		hideRateMultiplier, _ := group.RoutingPolicy.FeaturesConfig["hide_marketplace_rate_multiplier"].(bool)
 		out = append(out, ModelMarketplaceGroup{
 			SearchTerms: GroupSearchTexts(group), Resolution: resolution,
 			ID:          group.ID,
@@ -337,6 +346,8 @@ func (s *Marketplace) ListPublic(ctx context.Context, options MarketplaceListOpt
 			DisplayBrand:               marketplaceGroupDisplayBrand(group),
 			SortOrder:                  group.SortOrder,
 			RateMultiplier:             group.RateMultiplier,
+			HideMaxDiscount:            hideMaxDiscount,
+			HideRateMultiplier:         hideRateMultiplier,
 			OfficialPriceRatio:         officialPriceRatio,
 			OfficialPriceRMBEquivalent: officialPriceRMBEquivalent,
 			Capacity:                   marketplaceGroupCapacity(capacityMap, group.ID),

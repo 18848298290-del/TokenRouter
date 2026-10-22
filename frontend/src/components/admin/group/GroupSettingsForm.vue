@@ -100,6 +100,22 @@
           data-tour="group-form-exclusive"
         />
       </SettingsSection>
+      <SettingsSection :title="t('admin.groups.settings.marketplace')">
+        <SettingToggleRow
+          :id="`${idPrefix}-marketplace-max-discount`"
+          v-model="showMarketplaceMaxDiscount"
+          :label="t('admin.groups.settings.showMaxDiscount')"
+          :hint="t('admin.groups.settings.showMaxDiscountHint')"
+          setting="show_marketplace_max_discount"
+        />
+        <SettingToggleRow
+          :id="`${idPrefix}-marketplace-rate-multiplier`"
+          v-model="showMarketplaceRateMultiplier"
+          :label="t('admin.groups.settings.showRateMultiplier')"
+          :hint="t('admin.groups.settings.showRateMultiplierHint')"
+          setting="show_marketplace_rate_multiplier"
+        />
+      </SettingsSection>
     </template>
 
     <template #models>
@@ -563,6 +579,33 @@ const form = computed(
       },
     }),
 )
+// showMarketplaceMaxDiscount and showMarketplaceRateMultiplier translate stored hide flags
+// into display switches. Missing flags show the tags for existing groups; each setter copies
+// the feature map and replaces the policy through the parent-owned draft's patch event.
+const showMarketplaceMaxDiscount = computed({
+  get: () => form.value.routing_policy.features_config.hide_marketplace_max_discount !== true,
+  set: (show: boolean) => {
+    form.value.routing_policy = {
+      ...form.value.routing_policy,
+      features_config: {
+        ...form.value.routing_policy.features_config,
+        hide_marketplace_max_discount: !show,
+      },
+    }
+  },
+})
+const showMarketplaceRateMultiplier = computed({
+  get: () => form.value.routing_policy.features_config.hide_marketplace_rate_multiplier !== true,
+  set: (show: boolean) => {
+    form.value.routing_policy = {
+      ...form.value.routing_policy,
+      features_config: {
+        ...form.value.routing_policy.features_config,
+        hide_marketplace_rate_multiplier: !show,
+      },
+    }
+  },
+})
 // providerBrandOptions, statusOptions, schedulerOptions, and fastOptions supply the supported
 // values shown by the general and scheduling controls.
 const providerBrandOptions = defaultProviderBrandOptions
