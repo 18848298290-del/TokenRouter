@@ -124,11 +124,20 @@ func requestSchema(t reflect.Type, visited map[reflect.Type]bool) *jsonschema.Sc
 			if description := field.Tag.Get("jsonschema"); description != "" {
 				property.Description = description
 			}
+			omitEmpty := false
 			for rule := range strings.SplitSeq(field.Tag.Get("binding"), ",") {
+				if rule == "omitempty" {
+					omitEmpty = true
+				}
 				if rule == "required" {
 					schema.Required = append(schema.Required, name)
 				}
 				if values, ok := strings.CutPrefix(rule, "oneof="); ok && field.Type.Kind() == reflect.String {
+					// Gin skips subsequent rules for a zero value only after omitempty;
+					// retaining that empty string keeps partial-update defaults reachable through MCP.
+					if omitEmpty {
+						property.Enum = append(property.Enum, "")
+					}
 					for value := range strings.FieldsSeq(values) {
 						property.Enum = append(property.Enum, value)
 					}
@@ -199,7 +208,19 @@ func (c *Catalog) OpenAPI() map[string]any {
 			}
 		}
 		entry := map[string]any{"operationId": op.ID, "summary": op.Title, "description": op.Description, "tags": []string{op.Module}, "parameters": parameters, "responses": map[string]any{strconv.Itoa(200): map[string]any{"description": "Management operation result"}}, "x-tokenrouter-read-only": op.ReadOnly, "x-tokenrouter-confirmation": op.Sensitive, "x-tokenrouter-response": op.Response}
-		if op.Output != nil {
+		if op.Alias != "" {
+			entry["x-tokenrouter-mcp-alias"] = op.Alias
+		}
+		if op.StepUpWhen != nil {
+			entry["x-tokenrouter-step-up-when"] = op.StepUpWhen
+		}
+		if op.HTTPUpgrade != "" {
+			entry["responses"] = map[string]any{"101": map[string]any{
+				"description": "Switch protocols to " + op.HTTPUpgrade,
+				"headers":     map[string]any{"Upgrade": map[string]any{"schema": map[string]any{"type": "string", "enum": []string{op.HTTPUpgrade}}}},
+			}}
+			entry["x-tokenrouter-http-upgrade"] = op.HTTPUpgrade
+		} else if op.Output != nil {
 			entry["responses"] = map[string]any{"200": map[string]any{"description": "Management operation result", "content": map[string]any{"application/json": map[string]any{"schema": op.Output}}}}
 		}
 		if body := op.Input.Properties["body"]; body != nil {

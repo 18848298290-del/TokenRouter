@@ -159,6 +159,7 @@ func RegisterProviderRoutes(admin *gin.RouterGroup, endpoints ProviderRouteEndpo
 		adminapi.Register(providers, ManagementOperations["providers.clear_error.create"], endpoints.ProviderManagement.ClearError)
 		adminapi.Register(providers, ManagementOperations["providers.revert_proxy_fallback.create"], endpoints.ProviderManagement.RevertProxyFallback)
 		adminapi.Register(providers, ManagementOperations["providers.usage.list"], endpoints.ProviderOAuthUsage.GetUsage)
+		adminapi.Register(providers, ManagementOperations["providers.usage.passive.list"], endpoints.ProviderOAuthUsage.GetPassiveUsage)
 		adminapi.Register(providers, ManagementOperations["providers.today_stats.list"], endpoints.ProviderOAuthUsage.GetTodayStats)
 		adminapi.Register(providers, ManagementOperations["providers.usage.batch.create"], endpoints.ProviderOAuthUsage.GetBatchUsage)
 		adminapi.Register(providers, ManagementOperations["providers.today_stats.batch.create"], endpoints.ProviderOAuthUsage.GetBatchTodayStats)

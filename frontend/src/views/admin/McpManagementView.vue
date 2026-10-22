@@ -189,7 +189,7 @@
               <button
                 v-if="!row.revoked_at"
                 type="button"
-                :disabled="busyToken === row.id"
+                :disabled="busyTokens.has(row.id)"
                 class="flex flex-col items-center gap-0.5 rounded-control p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
                 @click="openEditor(row)"
                 ><Icon name="edit" size="sm" /><span class="text-xs">{{
@@ -199,7 +199,7 @@
               <button
                 v-if="!row.revoked_at && !isExpired(row)"
                 type="button"
-                :disabled="busyToken === row.id"
+                :disabled="busyTokens.has(row.id)"
                 :class="[
                   'flex flex-col items-center gap-0.5 rounded-control p-1.5 transition-colors',
                   row.enabled
@@ -222,6 +222,7 @@
                     actionToken?.id === row.id,
                 }"
                 aria-haspopup="menu"
+                :disabled="busyTokens.has(row.id)"
                 :aria-expanded="actionToken?.id === row.id"
                 :aria-controls="
                   actionToken?.id === row.id ? `mcp-action-menu-${row.id}` : undefined
@@ -544,7 +545,7 @@
       :message="t('admin.mcp.revokeMessage', { name: revoking?.name })"
       :confirm-text="t('admin.mcp.revoke')"
       danger
-      :loading="busyToken === revoking?.id"
+      :loading="!!revoking && busyTokens.has(revoking.id)"
       @confirm="revoke"
       @cancel="revoking = null"
     />
@@ -614,7 +615,10 @@ const credential = ref('')
 const saving = ref(false)
 const approving = ref(false)
 const downloading = ref(false)
-const busyToken = ref<number | null>(null)
+// Each token retains its own mutation lock until write and readback finish;
+// another row's completion cannot unlock this token or expose an obsolete editor snapshot.
+const busyTokens = ref(new Set<number>())
+const editingVersion = ref<string | undefined>()
 // Copy feedback and menu state belong to this page; disposal releases timers and listeners.
 const copyingTokenID = ref<number | null>(null)
 const copiedTokenID = ref<number | null>(null)
@@ -711,14 +715,8 @@ function operationLabel(operation: MCPOperation): string {
   return locale.value.startsWith('zh') && operation.title_zh ? operation.title_zh : operation.title
 }
 
-// formattedPreview expands the server's redacted JSON for review without interpreting its contents.
-const formattedPreview = computed(() => {
-  try {
-    return JSON.stringify(JSON.parse(confirmation.value?.preview ?? '{}'), null, 2)
-  } catch {
-    return confirmation.value?.preview ?? ''
-  }
-})
+// formattedPreview displays the server's formatted, redacted text without decoding numeric identifiers.
+const formattedPreview = computed(() => confirmation.value?.preview ?? '')
 
 // messageOf chooses server feedback when present and otherwise uses a local translated message.
 function messageOf(err: unknown, fallback: string): string {
@@ -796,6 +794,7 @@ async function copyToken(token: MCPToken) {
 // floating-panel geometry. Reopening the same trigger dismisses its menu, and
 // revoked rows display only their audit action.
 function openActionMenu(token: MCPToken, event: MouseEvent) {
+  if (busyTokens.value.has(token.id)) return
   if (actionToken.value?.id === token.id) return closeActionMenu()
   const target = event.currentTarget as HTMLElement | null
   if (!target) return
@@ -823,6 +822,7 @@ function closeActionMenu() {
 
 // requestRevoke transfers the chosen row to the existing destructive-action confirmation dialog.
 function requestRevoke() {
+  if (!actionToken.value || busyTokens.value.has(actionToken.value.id)) return
   revoking.value = actionToken.value
   closeActionMenu()
 }
@@ -848,6 +848,8 @@ function localDate(value: string): string {
 // Removed operation identifiers are omitted and reported in the form; selecting
 // a module later affects matching visible operations without expanding future grants.
 function openEditor(token?: MCPToken) {
+  if (token && busyTokens.value.has(token.id)) return
+  editingVersion.value = token?.updated_at
   editingID.value = token?.id ?? null
   form.name = token?.name ?? ''
   form.enabled = token?.enabled ?? true
@@ -901,16 +903,19 @@ function selectGroup(items: MCPOperation[]) {
   selected.value = next
 }
 
-// save persists the complete token draft and refreshes the saved list. A failed write keeps
-// every field and selection available for correction. When creation succeeds, its complete
-// credential is published before list readback so a failed refresh cannot discard the only
-// complete value.
+// save persists the editor draft with its observed configuration version, then
+// refreshes the list. A stale version returns a conflict instead of replacing a
+// completed status or permission change. Failed writes keep the entered fields
+// available, and successful creation publishes its credential before list readback
+// so an unrelated refresh failure cannot interrupt immediate client setup.
 //
-// The saving guard prevents concurrent submissions from the same form. A response arriving
-// after component disposal cannot restore the secret to view state, while closing an idle
-// delivery dialog clears the value already displayed.
+// The form submission guard and per-token lock remain held through readback.
+// Other rows keep their own locks, and a response after component disposal cannot
+// restore the creation credential into view state.
 async function save() {
-  if (saving.value) return
+  const tokenID = editingID.value
+  if (saving.value || (tokenID !== null && busyTokens.value.has(tokenID))) return
+  if (tokenID !== null) busyTokens.value.add(tokenID)
   saving.value = true
   formError.value = ''
   try {
@@ -921,7 +926,8 @@ async function save() {
       skip_browser_confirmation: form.skipBrowserConfirmation,
       expires_at: form.expiry ? new Date(form.expiry).toISOString() : null,
     }
-    if (editingID.value) await api.updateToken(editingID.value, input)
+    if (tokenID !== null)
+      await api.updateToken(tokenID, { ...input, expected_updated_at: editingVersion.value })
     else {
       const created = await api.createToken(input)
       if (!disposed) credential.value = created.credential
@@ -932,6 +938,9 @@ async function save() {
   } catch (err) {
     formError.value = messageOf(err, t('admin.mcp.saveFailed'))
   } finally {
+    // Release this token only after its own mutation and list readback settle;
+    // other rows keep their independent locks during concurrent operations.
+    if (tokenID !== null) busyTokens.value.delete(tokenID)
     saving.value = false
   }
 }
@@ -940,7 +949,8 @@ async function save() {
 // The current row remains unchanged on failure, and the subsequent readback
 // confirms the persistent state used by MCP authentication.
 async function toggleToken(token: MCPToken, enabled: boolean) {
-  busyToken.value = token.id
+  if (busyTokens.value.has(token.id)) return
+  busyTokens.value.add(token.id)
   try {
     await api.updateToken(token.id, {
       name: token.name,
@@ -948,12 +958,13 @@ async function toggleToken(token: MCPToken, enabled: boolean) {
       enabled,
       skip_browser_confirmation: token.skip_browser_confirmation,
       expires_at: token.expires_at,
+      expected_updated_at: token.updated_at,
     })
     await load()
   } catch (err) {
     error.value = messageOf(err, t('admin.mcp.saveFailed'))
   } finally {
-    busyToken.value = null
+    busyTokens.value.delete(token.id)
   }
 }
 
@@ -961,16 +972,17 @@ async function toggleToken(token: MCPToken, enabled: boolean) {
 // that selection and displays the server error; success closes the dialog and refreshes the
 // owner's list.
 async function revoke() {
-  if (!revoking.value) return
-  busyToken.value = revoking.value.id
+  const token = revoking.value
+  if (!token || busyTokens.value.has(token.id)) return
+  busyTokens.value.add(token.id)
   try {
-    await api.revokeToken(revoking.value.id)
+    await api.revokeToken(token.id)
     revoking.value = null
     await load()
   } catch (err) {
     error.value = messageOf(err, t('admin.mcp.requestFailed'))
   } finally {
-    busyToken.value = null
+    busyTokens.value.delete(token.id)
   }
 }
 
@@ -998,7 +1010,7 @@ async function download() {
   downloading.value = true
   try {
     const file = await stepUp.run(() => api.downloadFile(fileID.value))
-    saveAs(file, 'tokenrouter-mcp-result')
+    saveAs(file.blob, file.filename)
   } catch (err) {
     if (!isStepUpCancelled(err)) error.value = messageOf(err, t('admin.mcp.requestFailed'))
   } finally {

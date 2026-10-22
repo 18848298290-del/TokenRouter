@@ -3,10 +3,10 @@ package httpapi
 import (
 	"encoding/base64"
 	"encoding/json"
+	"mime"
 	"net/http"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -402,8 +402,8 @@ func (h *Handler) approveConfirmation(c *gin.Context) {
 	if !browserSession(c) {
 		return
 	}
-	approval, op, ok := h.ownedApproval(c)
-	if !ok || op.StepUp && !h.checkBrowserStepUp(c) {
+	approval, _, ok := h.ownedApproval(c)
+	if !ok || approval.StepUp && !h.checkBrowserStepUp(c) {
 		return
 	}
 	principal, _ := authctx.GetPrincipal(c)
@@ -491,7 +491,7 @@ func (h *Handler) downloadFile(c *gin.Context) {
 		return
 	}
 	c.Header("Cache-Control", "no-store")
-	c.Header("Content-Disposition", "attachment; filename="+strconv.Quote(strings.ReplaceAll(filepath.Base(file.Name), "\n", "")))
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(file.Name)}))
 	c.Data(http.StatusOK, file.ContentType, file.Data)
 }
 

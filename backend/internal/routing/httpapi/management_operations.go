@@ -574,21 +574,11 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		Input:       adminapi.Arguments("/api/v1/admin/pricing/defaults/model", []string{"model"}, nil),
 	}),
 	"pricing.defaults.update.create": adminapi.Define(adminapi.Operation{
-		ID:     "pricing.defaults.update.create",
-		Module: "pricing",
-		Title:  "Update Default Pricing",
-		Description: "Update strictly decodes supplied changes for the route's numeric group ID and returns its " +
-			"administrator DTO. Optional request values preserve unchanged settings, false values, and " +
-			"empty collections for GroupAdmin to interpret.  A legacy text protocol selection is used " +
-			"when the complete protocol field is absent, and the compatibility marker lets GroupAdmin " +
-			"retain non-text entry permissions. Supplied complete protocol input takes precedence over " +
-			"the legacy selection. Omitted body fields follow the HTTP handler defaults; explicit null " +
-			"and empty collections retain their documented meanings.",
-		Method:      "POST",
-		Path:        "/api/v1/admin/pricing/defaults/update",
-		Response:    "json",
-		BrowserPath: "/admin/pricing",
-		Input:       adminapi.Arguments("/api/v1/admin/pricing/defaults/update", []string{}, (*UpdateGroupRequest)(nil)),
+		ID: "pricing.defaults.update.create", Module: "pricing",
+		Title: "Refresh default pricing catalogue", TitleZH: "刷新默认价格目录",
+		Description: "Download the configured default pricing catalogue and replace the local catalogue snapshot. This action accepts no body and returns updated=true after refresh; download or refresh failures return the existing HTTP error.",
+		Method:      "POST", Path: "/api/v1/admin/pricing/defaults/update", Response: "json", BrowserPath: "/admin/pricing",
+		Input: adminapi.Arguments("/api/v1/admin/pricing/defaults/update", nil, nil),
 	}),
 }
 

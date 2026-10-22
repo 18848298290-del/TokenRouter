@@ -220,10 +220,9 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		Title:  "Query Quota",
 		Description: "QueryQuota returns the quota service's live Grok observation for a decimal provider " +
 			"identifier. A nil service returns 400, while query eligibility and upstream maintenance " +
-			"belong to the shared quota use case. This operation is available through read_operation.",
+			"belong to the shared quota use case. Active queries may update provider status or quota scheduling; use execute_operation.",
 		Method:      "GET",
 		Path:        "/api/v1/admin/grok/providers/:id/quota",
-		ReadOnly:    true,
 		Response:    "json",
 		BrowserPath: "/admin/grok",
 		Input:       adminapi.Arguments("/api/v1/admin/grok/providers/:id/quota", []string{}, nil),
@@ -1272,14 +1271,18 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		Description: "GetBatchUsage normalizes selected provider IDs before active usage maintenance and returns " +
 			"result and error maps. An empty normalized selection succeeds with two empty objects; Force " +
 			"is forwarded to the usage use case. Omitted body fields follow the HTTP handler defaults; " +
-			"explicit null and empty collections retain their documented meanings. This operation is " +
-			"available through read_operation.",
+			"explicit null and empty collections retain their documented meanings. Active queries may update provider status or quota scheduling; use execute_operation.",
 		Method:      "POST",
 		Path:        "/api/v1/admin/providers/usage/batch",
-		ReadOnly:    true,
 		Response:    "json",
 		BrowserPath: "/admin/providers",
 		Input:       adminapi.Arguments("/api/v1/admin/providers/usage/batch", []string{}, (*BatchUsageRequest)(nil)),
+	}),
+	"providers.usage.passive.list": adminapi.Define(adminapi.Operation{
+		ID: "providers.usage.passive.list", Module: "providers", Title: "Read stored usage", TitleZH: "查询已采集用量",
+		Description: "Read stored passive observations for Anthropic OAuth or SetupToken providers. This query does not refresh upstream usage or recover provider status. Unsupported provider types return the existing passive-usage error; active refresh uses providers.usage.list through execute_operation.",
+		Method:      "GET", Path: "/api/v1/admin/providers/:id/usage/passive", ReadOnly: true, Response: "json", BrowserPath: "/admin/providers",
+		Input: adminapi.Arguments("/api/v1/admin/providers/:id/usage/passive", nil, nil),
 	}),
 	"providers.usage.list": adminapi.Define(adminapi.Operation{
 		ID:     "providers.usage.list",
@@ -1287,10 +1290,9 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		Title:  "Get Usage",
 		Description: "GetUsage returns passive observations when source equals passive exactly, and otherwise " +
 			"requests active usage. Force is enabled only by the exact query text true; the use case owns " +
-			"refresh and eligibility. This operation is available through read_operation.",
+			"refresh and eligibility. Active queries may update provider status or quota scheduling; use execute_operation.",
 		Method:      "GET",
 		Path:        "/api/v1/admin/providers/:id/usage",
-		ReadOnly:    true,
 		Response:    "json",
 		BrowserPath: "/admin/providers",
 		Input:       adminapi.Arguments("/api/v1/admin/providers/:id/usage", []string{"force", "source"}, nil),

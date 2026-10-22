@@ -48,8 +48,28 @@ describe('MCP protected downloads', () => {
       data: new Uint8Array([0, 255, 31]).buffer,
     })
     const result = await downloadFile('owned-file')
-    expect(result).toBeInstanceOf(Blob)
-    expect(result.type).toBe('application/gzip')
-    expect(result.size).toBe(3)
+    expect(result.blob).toBeInstanceOf(Blob)
+    expect(result.blob.type).toBe('application/gzip')
+    expect(result.blob.size).toBe(3)
+  })
+
+  // Download headers carry the filename separately from binary response bytes.
+  // Ordinary and UTF-8 names survive API conversion, while malformed extended values retain the ordinary suggestion.
+  it.each([
+    ['attachment; filename="backup.sql.gz"', 'backup.sql.gz'],
+    ["attachment; filename*=UTF-8''%E4%BC%98%E6%83%A0%E7%A0%81.json", '优惠码.json'],
+    ["attachment; filename*=UTF-8''%ZZ; filename=backup.sql.gz", 'backup.sql.gz'],
+    ['', 'tokenrouter-mcp-result'],
+  ])('preserves download name from %s', async (header, filename) => {
+    apiClient.defaults.adapter = async (config) => ({
+      config,
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/gzip', 'content-disposition': header },
+      data: new Uint8Array([0, 255, 31]).buffer,
+    })
+    const result = await downloadFile('named-file')
+    expect(result.filename).toBe(filename)
+    expect(result.blob.size).toBe(3)
   })
 })

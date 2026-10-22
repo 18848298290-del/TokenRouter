@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,6 +20,12 @@ type schemaFixtureInput struct {
 	Enabled  *bool          `json:"enabled"`                 // optional admission switch
 	Settings map[string]any `json:"settings"`                // dynamic provider settings
 	IDs      []int64        `json:"ids"`                     // optional linked resource identifiers
+}
+
+// enumBindingInput mirrors optional HTTP string enums used by partial updates.
+type enumBindingInput struct {
+	Mode    string `json:"mode" binding:"omitempty,oneof=none direct"`    // optional fallback selection
+	Ordered string `json:"ordered" binding:"oneof=none direct,omitempty"` // validation before empty omission
 }
 
 // TestArgumentsRetainHTTPBindingRules checks omission, null, scalar types, and extra
@@ -62,4 +70,44 @@ func TestCatalogRejectsMissingRoutesAndInvalidAliases(t *testing.T) {
 		_, err = NewCatalog([]*Operation{operation})
 		require.Error(t, err)
 	}
+}
+
+// TestOptionalEnumsMatchHTTPBinding compares actual Gin validation with catalogue admission.
+// Empty optional values stay valid, while invalid nonempty values and later omitempty rules retain HTTP rejection.
+func TestOptionalEnumsMatchHTTPBinding(t *testing.T) {
+	op := &Operation{ID: "enum.update", Input: Arguments("/api/v1/admin/enum", nil, (*enumBindingInput)(nil))}
+	for _, value := range []string{"", "none", "direct", "invalid"} {
+		input := enumBindingInput{Mode: value, Ordered: "none"}
+		httpErr := binding.Validator.ValidateStruct(input)
+		mcpErr := op.Validate(map[string]any{"body": map[string]any{"mode": value, "ordered": "none"}})
+		require.Equal(t, httpErr == nil, mcpErr == nil, value)
+	}
+	require.Error(t, op.Validate(map[string]any{"body": map[string]any{"mode": "none", "ordered": ""}}))
+	require.NoError(t, op.Validate(map[string]any{"body": map[string]any{"ordered": "direct"}}))
+}
+
+// TestConditionalStepUpAndUpgradeDescription verifies input-sensitive requirements and original HTTP upgrade documentation.
+// MCP aliases retain their ordinary query target without describing the WebSocket route as a JSON response.
+func TestConditionalStepUpAndUpgradeDescription(t *testing.T) {
+	condition := &jsonschema.Schema{Type: "object", Required: []string{"body"}, Properties: map[string]*jsonschema.Schema{
+		"body": {Type: "object", Required: []string{"role"}, Properties: map[string]*jsonschema.Schema{"role": {Enum: []any{"admin"}}}},
+	}}
+	op := &Operation{ID: "users.change", Input: Arguments("/api/v1/admin/users", nil, nil), StepUpWhen: condition}
+	require.True(t, op.RequiresStepUp(nil))
+	require.False(t, op.RequiresStepUp(map[string]any{}))
+	require.False(t, op.RequiresStepUp(map[string]any{"body": map[string]any{"role": "user"}}))
+	require.True(t, op.RequiresStepUp(map[string]any{"body": map[string]any{"role": "admin"}}))
+	target := &Operation{ID: "stats.get", Method: "GET", Path: "/api/v1/admin/stats", ReadOnly: true, Input: Arguments("/api/v1/admin/stats", nil, nil), Output: JSONResponse(nil)}
+	upgrade := &Operation{ID: "stats.ws", Method: "GET", Path: "/api/v1/admin/stats/ws", ReadOnly: true, Alias: target.ID, HTTPUpgrade: "websocket", Input: Arguments("/api/v1/admin/stats/ws", nil, nil), Output: JSONResponse(nil)}
+	catalogue, err := NewCatalog([]*Operation{target, upgrade})
+	require.NoError(t, err)
+	paths, ok := catalogue.OpenAPI()["paths"].(map[string]any)
+	require.True(t, ok)
+	route, ok := paths[upgrade.Path].(map[string]any)
+	require.True(t, ok)
+	entry, ok := route["get"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, target.ID, entry["x-tokenrouter-mcp-alias"])
+	require.Contains(t, entry["responses"], "101")
+	require.NotContains(t, entry["responses"], "200")
 }

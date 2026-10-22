@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -106,8 +108,12 @@ func (h *Handler) operationResult(ctx context.Context, token *identity.MCPToken,
 	}
 	requestID := response.header.Get("X-Request-ID")
 	var decoded any
-	if response.body.Len() > 0 {
-		_ = json.Unmarshal(response.body.Bytes(), &decoded)
+	if response.body.Len() > 0 && json.Valid(response.body.Bytes()) {
+		// Keep identifiers and decimal amounts in their original JSON number form;
+		// conversion to float64 would change the result before it reaches the model.
+		decoder := json.NewDecoder(bytes.NewReader(response.body.Bytes()))
+		decoder.UseNumber()
+		_ = decoder.Decode(&decoded)
 	}
 	if status >= 300 {
 		outcome := "failed"
@@ -143,7 +149,7 @@ func (h *Handler) operationResult(ctx context.Context, token *identity.MCPToken,
 	}
 	if op.Response == adminapi.ResponseFile || response.body.Len() > maxInlineResultBytes || decoded == nil && response.body.Len() > 0 {
 		file := h.newArtifact(token, op.ID)
-		file.Name = op.ID + ".bin"
+		file.Name = artifactFilename(op.ID, response.header)
 		file.ContentType = response.header.Get("Content-Type")
 		file.Data = bytes.Clone(response.body.Bytes())
 		if err := h.state.SaveArtifact(ctx, file); err != nil {
@@ -162,7 +168,8 @@ func (h *Handler) operationResult(ctx context.Context, token *identity.MCPToken,
 // A missing terminal or malformed stream cannot establish mutation failure, so
 // it returns an unknown outcome for writes. Returned event values pass through
 // shared credential redaction while retaining the operation's progress and
-// business error details.
+// business error details. Numeric event values retain their decimal spelling
+// so result rendering does not round identifiers or precise observation amounts.
 func (h *Handler) streamResult(op *adminapi.Operation, raw []byte, requestID string) *mcp.CallToolResult {
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	scanner.Buffer(make([]byte, 4096), maxResultBytes)
@@ -176,7 +183,13 @@ func (h *Handler) streamResult(op *adminapi.Operation, raw []byte, requestID str
 		data := strings.Join(lines, "\n")
 		lines = nil
 		var event map[string]any
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
+		if !json.Valid([]byte(data)) {
+			malformed = true
+			return
+		}
+		decoder := json.NewDecoder(strings.NewReader(data))
+		decoder.UseNumber()
+		if err := decoder.Decode(&event); err != nil {
 			malformed = true
 			return
 		}
@@ -210,4 +223,21 @@ func (h *Handler) streamResult(op *adminapi.Operation, raw []byte, requestID str
 	result := toolResult(map[string]any{"status": state, "request_id": requestID, "events": events})
 	result.IsError = failed
 	return result
+}
+
+// artifactFilename retains a handler's suggested filename for protected delivery.
+// Responses without a filename use an operation-derived name; JSON media types
+// receive a JSON extension so exported structured results remain recognizable.
+func artifactFilename(operation string, header http.Header) string {
+	_, parameters, err := mime.ParseMediaType(header.Get("Content-Disposition"))
+	if err == nil && parameters["filename"] != "" {
+		return filepath.Base(parameters["filename"])
+	}
+	// Ordinary JSON handlers omit Content-Disposition. Derive the extension
+	// from their response media type rather than presenting those exports as opaque binary files.
+	mediaType, _, _ := mime.ParseMediaType(header.Get("Content-Type"))
+	if mediaType == "application/json" || strings.HasSuffix(mediaType, "+json") {
+		return operation + ".json"
+	}
+	return operation + ".bin"
 }

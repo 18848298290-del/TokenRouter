@@ -320,3 +320,34 @@ func invokeOpsAlertRuleHTTP(t *testing.T, handler *OpsHandler, method, id, body 
 	}
 	return c, recorder
 }
+
+// TestAlertRuleCatalogueMatchesNullControls applies one HTTP-valid null request to both catalogue entries.
+// Schema admission and actual create/update handling retain false booleans and normalized defaults rather than dropping those members.
+func TestAlertRuleCatalogueMatchesNullControls(t *testing.T) {
+	raw := `{"name":"rule","metric_type":"error_rate","operator":">","threshold":null,"enabled":null,"notify_email":null,"severity":null,"cooldown_minutes":null,"description":null}`
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		id := "ops.alert_rules.create"
+		if method == http.MethodPut {
+			id = "ops.alert_rules.update"
+		}
+		var body map[string]any
+		require.NoError(t, json.Unmarshal([]byte(raw), &body))
+		arguments := map[string]any{"body": body}
+		if method == http.MethodPut {
+			arguments["path"] = map[string]any{"id": "42"}
+		}
+		require.NoError(t, ManagementOperations[id].Validate(arguments))
+		repo := &opsAlertRuleRepoCapture{updated: &ops.OpsAlertRule{ID: 42}}
+		handler := NewOpsHandler(ops.BuildOpsService(repo, nil, nil, nil, nil, nil, nil, nil))
+		_, recorder := invokeOpsAlertRuleHTTP(t, handler, method, "42", raw)
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		saved := repo.created
+		if method == http.MethodPut {
+			saved = repo.updated
+		}
+		require.False(t, saved.Enabled)
+		require.False(t, saved.NotifyEmail)
+		require.Equal(t, "P2", saved.Severity)
+		require.Zero(t, saved.Threshold)
+	}
+}

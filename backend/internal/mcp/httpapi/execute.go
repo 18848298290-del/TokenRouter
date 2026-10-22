@@ -38,7 +38,7 @@ import (
 // call validates a granted operation and dispatches its canonical HTTP
 // request. Query calls reject mutations, and browser-only operations return a
 // continuation before business execution. Sensitive calls follow the token's
-// review preference and the route's recent-TOTP policy.
+// review preference and the route's recent-TOTP policy for those arguments.
 //
 // Approval is consumed immediately before dispatch, so concurrent retries
 // cannot execute the same approved request twice. Handler or delivery
@@ -96,7 +96,7 @@ func (h *Handler) call(ctx context.Context, req *mcp.CallToolRequest, readOnly b
 		return toolResult(result)
 	}
 	var approved *control.Approval
-	if h.requiresConfirmation(ctx, token, op) {
+	if h.requiresConfirmation(ctx, token, op, arguments) {
 		approved, err = h.confirmation(ctx, token, op, input, arguments)
 		if err != nil {
 			return toolFailure(err)
@@ -153,11 +153,12 @@ func (h *Handler) call(ctx context.Context, req *mcp.CallToolRequest, readOnly b
 // A missing settings reader keeps strong authentication required. Permission and
 // owner checks still happen independently, and direct sensitive dispatch binds
 // the observed token version so a concurrent preference change cannot be ignored.
-func (h *Handler) requiresConfirmation(ctx context.Context, token *identity.MCPToken, op *adminapi.Operation) bool {
+// Nil arguments are discovery queries and conservatively report conditional verification.
+func (h *Handler) requiresConfirmation(ctx context.Context, token *identity.MCPToken, op *adminapi.Operation, arguments any) bool {
 	if !op.Sensitive || op.Response == adminapi.ResponseBrowser {
 		return false
 	}
-	return !token.SkipBrowserConfirmation || op.StepUp && (h.settings == nil || h.settings.IsStepUpEnabled(ctx))
+	return !token.SkipBrowserConfirmation || op.RequiresStepUp(arguments) && (h.settings == nil || h.settings.IsStepUpEnabled(ctx))
 }
 
 // callArguments builds the path, query, and body objects consumed by schema
@@ -229,8 +230,14 @@ func (h *Handler) confirmation(ctx context.Context, token *identity.MCPToken, op
 	if input.ConfirmationID == "" {
 		previewData, _ := json.Marshal(arguments)
 		preview := h.redactor.RedactBody(previewData, "application/json")
+		// Indent the redacted bytes without decoding numbers again. Oversized-body
+		// omission markers remain readable even though they are deliberately not JSON documents.
+		var formatted bytes.Buffer
+		if json.Indent(&formatted, []byte(preview), "", "  ") == nil {
+			preview = formatted.String()
+		}
 		now := time.Now().UTC()
-		approval := &control.Approval{ID: uuid.NewString(), UserID: token.UserID, TokenID: token.ID, OperationID: op.ID, TokenVersion: version, Digest: digest, Preview: preview, State: "pending", CreatedAt: now, ExpiresAt: now.Add(confirmationTTL)}
+		approval := &control.Approval{ID: uuid.NewString(), UserID: token.UserID, TokenID: token.ID, OperationID: op.ID, TokenVersion: version, Digest: digest, Preview: preview, StepUp: op.RequiresStepUp(arguments), State: "pending", CreatedAt: now, ExpiresAt: now.Add(confirmationTTL)}
 		if err := h.state.CreateApproval(ctx, approval); err != nil {
 			return nil, errors.New("confirmation storage is unavailable")
 		}
@@ -243,7 +250,7 @@ func (h *Handler) confirmation(ctx context.Context, token *identity.MCPToken, op
 	if approval.State == "consumed" {
 		return nil, errors.New("confirmation was already consumed; the earlier operation may have executed")
 	}
-	if approval.State == "approved" && op.StepUp && (h.settings == nil || h.settings.IsStepUpEnabled(ctx)) {
+	if approval.State == "approved" && approval.StepUp && (h.settings == nil || h.settings.IsStepUpEnabled(ctx)) {
 		granted, err := h.totp.HasStepUpGrant(ctx, token.UserID, approval.SessionID)
 		if err != nil || !granted {
 			return nil, errors.New("recent two-factor verification expired; request a new confirmation")
@@ -350,6 +357,9 @@ func (h *Handler) redact(value any, depth int) any {
 		result := make(map[string]any, len(current))
 		for key, child := range current {
 			_, number := child.(float64)
+			if _, exact := child.(json.Number); exact {
+				number = true
+			}
 			_, boolean := child.(bool)
 			if h.redactor.IsSensitiveKey(key) && !number && !boolean {
 				result[key] = "***"

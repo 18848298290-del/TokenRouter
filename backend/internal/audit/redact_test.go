@@ -32,3 +32,13 @@ func TestMaskAuditCredential(t *testing.T) {
 		})
 	}
 }
+
+// TestRedactBodyRetainsExactNumbers covers identifiers beyond floating-point integer precision and precise decimal text.
+// Redaction must preserve their original spelling so stored audit text and confirmation previews describe the submitted values.
+func TestRedactBodyRetainsExactNumbers(t *testing.T) {
+	raw := []byte(`{"user_ids":[9007199254740993],"amount":1234567890.123456789}`)
+	got := NewRedactor(nil).RedactBody(raw, "application/json")
+	if !strings.Contains(got, "9007199254740993") || !strings.Contains(got, "1234567890.123456789") {
+		t.Fatalf("numeric values changed: %s", got)
+	}
+}

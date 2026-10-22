@@ -63,6 +63,9 @@ type MCPTokenInput struct {
 	// remain false and existing recent-TOTP requirements still govern those routes.
 	SkipBrowserConfirmation bool       `json:"skip_browser_confirmation"`
 	ExpiresAt               *time.Time `json:"expires_at"` // nil permits no expiry
+	// ExpectedUpdatedAt makes updates conditional on the last observed configuration.
+	// Nil keeps ordinary replacement semantics; creation does not consult this update precondition.
+	ExpectedUpdatedAt *time.Time `json:"expected_updated_at,omitempty"`
 }
 
 // MCPTokenRepository persists token metadata and reads uncached authorization grants.

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"github.com/google/jsonschema-go/jsonschema"
+
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
@@ -107,7 +109,7 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		Path:        "/api/v1/admin/ops/alert-rules",
 		Response:    "json",
 		BrowserPath: "/admin/ops",
-		Input:       adminapi.Arguments("/api/v1/admin/ops/alert-rules", []string{}, (*ops.OpsAlertRule)(nil)),
+		Input:       alertRuleArguments("/api/v1/admin/ops/alert-rules"),
 	}),
 	"ops.alert_rules.delete": adminapi.Define(adminapi.Operation{
 		ID:     "ops.alert_rules.delete",
@@ -153,7 +155,7 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		Path:        "/api/v1/admin/ops/alert-rules/:id",
 		Response:    "json",
 		BrowserPath: "/admin/ops",
-		Input:       adminapi.Arguments("/api/v1/admin/ops/alert-rules/:id", []string{}, (*ops.OpsAlertRule)(nil)),
+		Input:       alertRuleArguments("/api/v1/admin/ops/alert-rules/:id"),
 	}),
 	"ops.alert_silences.create": adminapi.Define(adminapi.Operation{
 		ID:     "ops.alert_silences.create",
@@ -779,6 +781,7 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		Response:    "json",
 		BrowserPath: "/admin/ops",
 		Alias:       "ops.realtime_traffic.list",
+		HTTPUpgrade: "websocket",
 		Input:       adminapi.Arguments("/api/v1/admin/ops/ws/qps", []string{"window", "platform", "group_id"}, nil),
 	}),
 	"system.check_updates.list": adminapi.Define(adminapi.Operation{
@@ -905,4 +908,18 @@ type CreateAlertSilenceRequest struct {
 // UpdateAlertEventStatusRequest carries the administrative request decoded by its existing HTTP handler.
 type UpdateAlertEventStatusRequest struct {
 	Status string `json:"status"` // requested resolution state
+}
+
+// alertRuleArguments supplements the persisted rule type with HTTP raw-member rules.
+// Required member presence and explicit null differ from the typed Go defaults;
+// the handler still validates ranges, supported metrics, and nonempty required strings.
+func alertRuleArguments(route string) *jsonschema.Schema {
+	input := adminapi.Arguments(route, nil, (*ops.OpsAlertRule)(nil))
+	body := input.Properties["body"]
+	body.Required = []string{"name", "metric_type", "operator", "threshold"}
+	input.Required = append(input.Required, "body")
+	for _, name := range []string{"enabled", "notify_email", "severity", "description", "cooldown_minutes", "threshold"} {
+		body.Properties[name] = &jsonschema.Schema{AnyOf: []*jsonschema.Schema{body.Properties[name], {Type: "null"}}}
+	}
+	return input
 }

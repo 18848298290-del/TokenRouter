@@ -20,9 +20,13 @@ const api = vi.hoisted(() => ({
   downloadFile: vi.fn(),
 }))
 vi.mock('@/api/admin/mcp', () => api)
+// Route fixtures select incoming confirmation or file workflows before mounting the page.
+const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+const saveAs = vi.hoisted(() => vi.fn())
+vi.mock('file-saver', () => ({ saveAs }))
 vi.mock('vue-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('vue-router')>()),
-  useRoute: () => ({ query: {} }),
+  useRoute: () => route,
   RouterLink: { name: 'RouterLink', props: ['to'], template: '<a><slot /></a>' },
 }))
 vi.mock('vue-i18n', async (importOriginal) => ({
@@ -123,6 +127,7 @@ async function clickText(wrapper: VueWrapper, label: string) {
 describe('MCP token management', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    route.query = {}
     copyToClipboard.mockResolvedValue(true)
     api.listTokens.mockResolvedValue([])
     api.listOperations.mockResolvedValue(catalogue)
@@ -353,5 +358,124 @@ describe('MCP token management', () => {
     resolve('tr_mcp_late_fixture')
     await flushPromises()
     expect(copyToClipboard).not.toHaveBeenCalled()
+  })
+
+  // Concurrent changes on separate rows keep their own locks through write and readback.
+  // Completing the first disable must not unlock the other row or permit an editor to capture its old enabled state.
+  it('keeps each row locked until its own mutation settles', async () => {
+    const a = {
+      id: 31,
+      name: 'A',
+      prefix: 'a',
+      permissions: [],
+      enabled: true,
+      skip_browser_confirmation: false,
+      expires_at: null,
+      revoked_at: null,
+      updated_at: '2026-10-22T09:00:00Z',
+    }
+    const b = { ...a, id: 32, name: 'B', prefix: 'b' }
+    api.listTokens.mockResolvedValue([a, b])
+    let finishA!: () => void
+    let finishB!: () => void
+    api.updateToken
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishA = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishB = resolve
+          }),
+      )
+    const wrapper = page()
+    await flushPromises()
+    const disable = wrapper.findAll('button').filter((button) => button.text() === 'keys.disable')
+    await disable[0]!.trigger('click')
+    await disable[1]!.trigger('click')
+    let edit = wrapper.findAll('button').filter((button) => button.text() === 'common.edit')
+    expect(edit.every((button) => button.attributes('disabled') !== undefined)).toBe(true)
+    await edit[0]!.trigger('click')
+    expect(wrapper.find('#mcp-token-form').exists()).toBe(false)
+    api.listTokens.mockResolvedValue([{ ...a, enabled: false }, b])
+    finishA()
+    await flushPromises()
+    edit = wrapper.findAll('button').filter((button) => button.text() === 'common.edit')
+    expect(edit[0]!.attributes('disabled')).toBeUndefined()
+    expect(edit[1]!.attributes('disabled')).toBeDefined()
+    expect(api.updateToken).toHaveBeenCalledWith(
+      31,
+      expect.objectContaining({ enabled: false, expected_updated_at: a.updated_at }),
+    )
+    finishB()
+    await flushPromises()
+    wrapper.unmount()
+  })
+
+  // An editor snapshot can become stale after it opens in another session.
+  // Its version is submitted unchanged, and a conflict preserves the administrator's entered name for recovery.
+  it('submits the editor version and retains input after a stale-write conflict', async () => {
+    const token = {
+      id: 35,
+      name: 'Versioned',
+      prefix: 'v',
+      permissions: [],
+      enabled: true,
+      skip_browser_confirmation: false,
+      expires_at: null,
+      revoked_at: null,
+      updated_at: '2026-10-22T09:00:00.123456Z',
+    }
+    api.listTokens.mockResolvedValue([token])
+    api.updateToken.mockRejectedValue(new Error('Token changed; reload before saving'))
+    const wrapper = page()
+    await flushPromises()
+    await clickText(wrapper, 'common.edit')
+    await wrapper.get('input[required]').setValue('My edited name')
+    await wrapper.get('#mcp-token-form').trigger('submit')
+    await flushPromises()
+    expect(api.updateToken).toHaveBeenCalledWith(
+      token.id,
+      expect.objectContaining({ expected_updated_at: token.updated_at }),
+    )
+    expect((wrapper.get('input[required]').element as HTMLInputElement).value).toBe(
+      'My edited name',
+    )
+    expect(wrapper.text()).toContain('Token changed; reload before saving')
+    wrapper.unmount()
+  })
+
+  // Confirmation previews arrive as already formatted strings containing exact numeric identifiers.
+  // The browser must display those bytes without rounding them through JavaScript numeric parsing.
+  it('displays the server confirmation preview without rounding large identifiers', async () => {
+    route.query = { confirmation_id: 'preview' }
+    api.getConfirmation.mockResolvedValue({
+      id: 'preview',
+      state: 'pending',
+      operation: catalogue[1],
+      preview: '{\n  "user_ids": [9007199254740993]\n}',
+    })
+    const wrapper = page()
+    await flushPromises()
+    expect(wrapper.text()).toContain('9007199254740993')
+    expect(wrapper.text()).not.toContain('9007199254740992')
+    wrapper.unmount()
+  })
+
+  // Protected bytes and their suggested filename travel through the same download response.
+  // Saving uses that filename after any step-up retry rather than discarding the extension.
+  it('saves a protected download with its server filename', async () => {
+    route.query = { file_id: 'archive' }
+    const blob = new Blob(['archive'], { type: 'application/gzip' })
+    api.downloadFile.mockResolvedValue({ blob, filename: 'backup.sql.gz' })
+    const wrapper = page()
+    await flushPromises()
+    await clickText(wrapper, 'admin.mcp.download')
+    await flushPromises()
+    expect(saveAs).toHaveBeenCalledWith(blob, 'backup.sql.gz')
+    wrapper.unmount()
   })
 })

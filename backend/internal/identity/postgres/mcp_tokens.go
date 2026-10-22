@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/TokenFlux/TokenRouter/internal/identity"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
 // mcp_tokens.go persists MCP credential digests, ciphertext, and operation grants.
@@ -102,13 +103,26 @@ func (s *MCPTokenStore) FindHash(ctx context.Context, digest string) (*identity.
 
 // Update replaces the complete settings of one owned, unrevoked credential.
 // The conditional write prevents a concurrent revocation from being undone;
-// missing or ineligible rows use the same not-found error.
+// an optional observed timestamp also prevents stale forms from replacing a newer
+// configuration. Conditional misses return conflict so callers can reload their draft.
 func (s *MCPTokenStore) Update(ctx context.Context, userID, id int64, input identity.MCPTokenInput) (*identity.MCPToken, error) {
 	permissions, err := json.Marshal(input.Permissions)
 	if err != nil {
 		return nil, err
 	}
-	return scanMCPToken(s.db.QueryRowContext(ctx, `UPDATE mcp_access_tokens SET name=$3,permissions=$4,enabled=$5,expires_at=$6,skip_browser_confirmation=$7,updated_at=NOW() WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL RETURNING `+mcpTokenColumns, id, userID, input.Name, string(permissions), input.Enabled, input.ExpiresAt, input.SkipBrowserConfirmation))
+	stored, err := scanMCPToken(s.db.QueryRowContext(ctx, `
+        UPDATE mcp_access_tokens SET name=$3,permissions=$4,enabled=$5,expires_at=$6,
+            skip_browser_confirmation=$7,updated_at=NOW()
+        WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL
+            AND ($8::timestamptz IS NULL OR updated_at=$8)
+        RETURNING `+mcpTokenColumns,
+		id, userID, input.Name, string(permissions), input.Enabled, input.ExpiresAt,
+		input.SkipBrowserConfirmation, input.ExpectedUpdatedAt,
+	))
+	if errors.Is(err, identity.ErrMCPTokenNotFound) && input.ExpectedUpdatedAt != nil {
+		return nil, apperror.Conflict("MCP_TOKEN_CHANGED", "Token changed or is unavailable; reload before saving")
+	}
+	return stored, err
 }
 
 // Revoke disables one owned token and retains its first revocation timestamp.

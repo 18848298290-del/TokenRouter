@@ -14,6 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// default_pricing_test.go exercises manual catalogue refresh separately from reads.
+// Counting callbacks establish the HTTP behavior, while operation schema checks
+// keep the MCP description consistent with a refresh that accepts no configuration body.
+
 // TestDefaultPricingManualUpdateIsSeparateFromQuery serves catalog reads and
 // explicit refreshes with counting callbacks. It checks that GET reads
 // without updating, POST updates without reading, and updater failure or
@@ -78,4 +82,12 @@ func TestDefaultPricingFiltersPaginationAndZero(t *testing.T) {
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/admin/pricing/defaults?search=A-IMAGE", nil))
 	require.Equal(t, int64(1), gjson.Get(response.Body.String(), "data.total").Int())
+}
+
+// TestDefaultPricingRefreshCatalogueRejectsGroupUpdates checks the operation's actual bodyless HTTP behavior.
+// A refresh remains callable without arguments, while unrelated group configuration cannot be silently accepted by MCP.
+func TestDefaultPricingRefreshCatalogueRejectsGroupUpdates(t *testing.T) {
+	op := ManagementOperations["pricing.defaults.update.create"]
+	require.NoError(t, op.Validate(map[string]any{}))
+	require.Error(t, op.Validate(map[string]any{"body": map[string]any{"rate_multiplier": float64(2)}}))
 }

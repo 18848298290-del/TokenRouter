@@ -32,6 +32,7 @@ type Approval struct {
 	TokenVersion string    `json:"token_version"` // token settings timestamp
 	Digest       string    `json:"digest"`        // normalized request SHA256
 	Preview      string    `json:"preview"`       // redacted JSON argument display
+	StepUp       bool      `json:"step_up"`       // verification required for this request
 	State        string    `json:"state"`         // pending approved or consumed
 	SessionID    string    `json:"session_id"`    // verified approving browser session
 	CreatedAt    time.Time `json:"created_at"`    // confirmation creation instant

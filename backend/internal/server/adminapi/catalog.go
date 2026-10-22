@@ -3,6 +3,7 @@ package adminapi
 import (
 	"fmt"
 	"maps"
+	"net/http"
 	"path"
 	"slices"
 	"strings"
@@ -43,25 +44,30 @@ var (
 
 // Operation describes one permission-bearing management action and its HTTP representation.
 type Operation struct {
-	ID            string               `json:"operation_id"`              // stable permission identifier
-	Module        string               `json:"module"`                    // management feature category
-	Title         string               `json:"title"`                     // short operation label
-	TitleZH       string               `json:"title_zh,omitempty"`        // optional Chinese operation label
-	Description   string               `json:"description"`               // argument and behavior guidance
-	Method        string               `json:"method"`                    // registered HTTP verb
-	Path          string               `json:"path"`                      // absolute Gin route pattern
-	ReadOnly      bool                 `json:"read_only"`                 // declared absence of mutations
-	Sensitive     bool                 `json:"sensitive"`                 // browser confirmation requirement
-	StepUp        bool                 `json:"step_up"`                   // existing recent TOTP requirement
-	Response      string               `json:"response_mode"`             // shared response handling
-	TerminalEvent string               `json:"terminal_event,omitempty"`  // required successful SSE terminal
-	BrowserPath   string               `json:"browser_path,omitempty"`    // same-site interactive destination
-	Alias         string               `json:"alias,omitempty"`           // equivalent registered operation
-	Idempotent    bool                 `json:"idempotent"`                // existing response idempotency support
-	Input         *jsonschema.Schema   `json:"input_schema"`              // path query body definition
-	Output        *jsonschema.Schema   `json:"response_schema,omitempty"` // original HTTP JSON response shape
-	Examples      []map[string]any     `json:"examples,omitempty"`        // illustrative operation argument sets
-	resolved      *jsonschema.Resolved // immutable compiled input validator
+	ID          string `json:"operation_id"`       // stable permission identifier
+	Module      string `json:"module"`             // management feature category
+	Title       string `json:"title"`              // short operation label
+	TitleZH     string `json:"title_zh,omitempty"` // optional Chinese operation label
+	Description string `json:"description"`        // argument and behavior guidance
+	Method      string `json:"method"`             // registered HTTP verb
+	Path        string `json:"path"`               // absolute Gin route pattern
+	ReadOnly    bool   `json:"read_only"`          // declared absence of mutations
+	Sensitive   bool   `json:"sensitive"`          // browser confirmation requirement
+	StepUp      bool   `json:"step_up"`            // existing recent TOTP requirement
+	// StepUpWhen matches normalized path/query/body arguments that trigger an
+	// existing conditional HTTP requirement; nil leaves only the unconditional StepUp flag.
+	StepUpWhen     *jsonschema.Schema   `json:"step_up_when,omitempty"`
+	HTTPUpgrade    string               `json:"http_upgrade,omitempty"`    // original HTTP upgrade protocol
+	Response       string               `json:"response_mode"`             // shared response handling
+	TerminalEvent  string               `json:"terminal_event,omitempty"`  // required successful SSE terminal
+	BrowserPath    string               `json:"browser_path,omitempty"`    // same-site interactive destination
+	Alias          string               `json:"alias,omitempty"`           // equivalent registered operation
+	Idempotent     bool                 `json:"idempotent"`                // existing response idempotency support
+	Input          *jsonschema.Schema   `json:"input_schema"`              // path query body definition
+	Output         *jsonschema.Schema   `json:"response_schema,omitempty"` // original HTTP JSON response shape
+	Examples       []map[string]any     `json:"examples,omitempty"`        // illustrative operation argument sets
+	resolved       *jsonschema.Resolved // immutable compiled input validator
+	stepUpResolved *jsonschema.Resolved // compiled conditional verification rule
 }
 
 // Catalog contains the operations mounted on one application router instance.
@@ -82,7 +88,7 @@ func Define(op Operation) *Operation {
 	if op.Response == "" {
 		op.Response = ResponseJSON
 	}
-	if op.Output == nil && op.Response == ResponseJSON {
+	if op.Output == nil && op.Response == ResponseJSON && op.HTTPUpgrade == "" {
 		op.Output = JSONResponse(nil)
 	}
 	if op.Response == ResponseBrowser {
@@ -97,6 +103,12 @@ func Define(op Operation) *Operation {
 		panic(fmt.Sprintf("operation %s schema: %v", op.ID, err))
 	}
 	op.resolved = resolved
+	if op.StepUpWhen != nil {
+		op.stepUpResolved, err = op.StepUpWhen.Resolve(nil)
+		if err != nil {
+			panic(fmt.Sprintf("operation %s step-up condition: %v", op.ID, err))
+		}
+	}
 	declarationsMu.Lock()
 	defer declarationsMu.Unlock()
 	key := op.Method + " " + op.Path
@@ -149,6 +161,14 @@ func FromRoutes(routes gin.RoutesInfo) (*Catalog, error) {
 func NewCatalog(operations []*Operation) (*Catalog, error) {
 	c := &Catalog{byID: make(map[string]*Operation), ordered: slices.Clone(operations)}
 	for _, op := range operations {
+		if op.HTTPUpgrade != "" && (op.HTTPUpgrade != "websocket" || op.Method != http.MethodGet) {
+			return nil, fmt.Errorf("unsupported HTTP upgrade: %s", op.ID)
+		}
+		if op.StepUpWhen != nil {
+			if _, err := op.StepUpWhen.Resolve(nil); err != nil {
+				return nil, fmt.Errorf("invalid step-up condition: %s: %w", op.ID, err)
+			}
+		}
 		switch op.Response {
 		case "", ResponseJSON, ResponseFile:
 		case ResponseSSE:
@@ -172,7 +192,7 @@ func NewCatalog(operations []*Operation) (*Catalog, error) {
 			continue
 		}
 		target := c.byID[op.Alias]
-		if target == nil || target.Alias != "" || !target.ReadOnly || !op.ReadOnly || target.Sensitive || target.StepUp {
+		if target == nil || target.Alias != "" || !target.ReadOnly || !op.ReadOnly || target.Sensitive || target.StepUp || target.StepUpWhen != nil {
 			return nil, fmt.Errorf("invalid management alias: %s", op.ID)
 		}
 	}
@@ -207,4 +227,30 @@ func (o *Operation) Validate(arguments any) error {
 		return fmt.Errorf("arguments do not match the schema for %s; use describe_operation", o.ID)
 	}
 	return nil
+}
+
+// RequiresStepUp evaluates the route's unconditional or input-dependent verification rule.
+// Nil arguments mean discovery has no concrete request yet, so a conditional
+// rule is reported as potentially required. Execution passes validated arguments.
+func (o *Operation) RequiresStepUp(arguments any) bool {
+	if o.StepUp {
+		return true
+	}
+	if o.StepUpWhen == nil {
+		return false
+	}
+	if arguments == nil {
+		return true
+	}
+	resolved := o.stepUpResolved
+	if resolved == nil {
+		// Isolated catalogue fixtures can supply unregistered descriptions. Resolve
+		// their condition locally while keeping shared operation descriptions immutable during calls.
+		var err error
+		resolved, err = o.StepUpWhen.Resolve(nil)
+		if err != nil {
+			return true
+		}
+	}
+	return resolved.Validate(arguments) == nil
 }

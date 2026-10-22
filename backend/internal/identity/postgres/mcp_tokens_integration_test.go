@@ -114,3 +114,30 @@ func TestMCPTokenPersistenceAndLiveAuthorization(t *testing.T) {
 	_, err = repo.Get(ctx, token.ID)
 	require.ErrorIs(t, err, identity.ErrMCPTokenNotFound)
 }
+
+// TestMCPTokenUpdateRejectsStaleConfiguration creates a draft before another operation disables its token.
+// The database compare prevents that draft from restoring enabled state or replacing the newer permission set.
+func TestMCPTokenUpdateRejectsStaleConfiguration(t *testing.T) {
+	db := postgrescontainer.New(t)
+	ctx := t.Context()
+	var userID int64
+	require.NoError(t, db.QueryRowContext(ctx, `INSERT INTO users(email,password_hash,role,status) VALUES ('mcp-version@example.invalid','fixture','admin','active') RETURNING id`).Scan(&userID))
+	repo := NewMCPTokenStore(db)
+	cipher, err := crypto.NewAESEncryptor(bytes.Repeat([]byte{21}, 32))
+	require.NoError(t, err)
+	service := identity.NewMCPTokenService(repo, mcpAccountReader{db}, cipher)
+	token, _, err := service.Create(ctx, userID, identity.MCPTokenInput{Name: "original", Enabled: true, Permissions: []string{"groups.list"}})
+	require.NoError(t, err)
+	observed := token.UpdatedAt
+	_, err = db.ExecContext(ctx, `UPDATE mcp_access_tokens SET enabled=false,permissions='[]',updated_at=updated_at+INTERVAL '1 second' WHERE id=$1`, token.ID)
+	require.NoError(t, err)
+	_, err = service.Update(ctx, userID, token.ID, identity.MCPTokenInput{Name: "stale", Enabled: true, Permissions: []string{"groups.list"}, ExpectedUpdatedAt: &observed})
+	require.ErrorContains(t, err, "MCP_TOKEN_CHANGED")
+	current, err := repo.Get(ctx, token.ID)
+	require.NoError(t, err)
+	require.False(t, current.Enabled)
+	require.Empty(t, current.Permissions)
+	require.Equal(t, "original", current.Name)
+	_, err = service.Update(ctx, userID, token.ID, identity.MCPTokenInput{Name: "fresh", Enabled: false, ExpectedUpdatedAt: &current.UpdatedAt})
+	require.NoError(t, err)
+}

@@ -166,6 +166,7 @@
   "GET /api/v1/admin/providers/:id/today-stats",
   "GET /api/v1/admin/providers/:id/upstream-balance-alert",
   "GET /api/v1/admin/providers/:id/usage",
+  "GET /api/v1/admin/providers/:id/usage/passive",
   "GET /api/v1/admin/providers/antigravity/default-model-mapping",
   "GET /api/v1/admin/providers/data",
   "GET /api/v1/admin/providers/ollama-cloud-usage/settings",

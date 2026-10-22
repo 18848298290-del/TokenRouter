@@ -43,6 +43,8 @@ export interface MCPTokenInput {
   enabled: boolean // Requested admission switch.
   skip_browser_confirmation: boolean // Opt-in MCP confirmation bypass.
   expires_at: string | null // Null permits no expiry.
+  // expected_updated_at rejects replacement when another operation has changed the token since this snapshot.
+  expected_updated_at?: string
 }
 
 // MCPCreation carries a freshly issued credential for immediate client setup.
@@ -112,30 +114,65 @@ export async function approveConfirmation(id: string): Promise<void> {
   await apiClient.post(`/admin/mcp/confirmations/${encodeURIComponent(id)}/approve`)
 }
 
+// MCPDownload pairs the returned bytes with the server's suggested download filename.
+export interface MCPDownload {
+  blob: Blob // Original downloaded result bytes.
+  filename: string // Suggested local download filename.
+}
+
+// downloadFilename reads UTF-8 extended or ordinary Content-Disposition filenames.
+// Malformed extended values fall back to the ordinary parameter. A basename
+// keeps server suggestions compatible with file saving, with a default for absent names.
+function downloadFilename(disposition: string): string {
+  let name = ''
+  const extended = /(?:^|;)\s*filename\*=UTF-8'[^']*'([^;]+)/i.exec(disposition)
+  if (extended) {
+    try {
+      name = decodeURIComponent(extended[1]!.trim())
+    } catch {
+      // An invalid encoded filename must not prevent downloading valid bytes;
+      // the ordinary filename parameter below can still provide the server's usable suggestion.
+    }
+  }
+  if (!name) {
+    const plain = /(?:^|;)\s*filename=(?:"([^"]*)"|([^;]*))/i.exec(disposition)
+    name = (plain?.[1] ?? plain?.[2] ?? '').trim()
+  }
+  return (
+    name
+      .split(/[\\/]/)
+      .pop()
+      ?.replace(/[\r\n]/g, '') || 'tokenrouter-mcp-result'
+  )
+}
+
 // downloadFile reads a protected result with the normal administrator JWT header.
 // Error bytes are decoded before the shared interceptor so expiry and TOTP
 // responses retain their structured reason. Successful downloads remain binary
 // and use the existing archive timeout for large results.
-export async function downloadFile(id: string): Promise<Blob> {
-  const { data } = await apiClient.get<Blob>(`/admin/mcp/files/${encodeURIComponent(id)}`, {
-    responseType: 'arraybuffer',
-    timeout: 300000,
-    transformResponse: [
-      (bytes, headers, status) => {
-        if (status && status >= 400) {
-          try {
-            return JSON.parse(new TextDecoder().decode(bytes))
-          } catch {
-            return {}
+export async function downloadFile(id: string): Promise<MCPDownload> {
+  const { data, headers } = await apiClient.get<Blob>(
+    `/admin/mcp/files/${encodeURIComponent(id)}`,
+    {
+      responseType: 'arraybuffer',
+      timeout: 300000,
+      transformResponse: [
+        (bytes, headers, status) => {
+          if (status && status >= 400) {
+            try {
+              return JSON.parse(new TextDecoder().decode(bytes))
+            } catch {
+              return {}
+            }
           }
-        }
-        return new Blob([bytes], {
-          type: String(headers['content-type'] || 'application/octet-stream'),
-        })
-      },
-    ],
-  })
-  return data
+          return new Blob([bytes], {
+            type: String(headers['content-type'] || 'application/octet-stream'),
+          })
+        },
+      ],
+    },
+  )
+  return { blob: data, filename: downloadFilename(String(headers['content-disposition'] ?? '')) }
 }
 
 // downloadSpecification reads the authenticated OpenAPI export as a downloadable document.

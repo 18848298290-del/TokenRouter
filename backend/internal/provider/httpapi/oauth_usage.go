@@ -71,17 +71,30 @@ func NewOAuthUsageHandler(core *provider.OAuthUsageService, stats *provider.Loca
 // text true; the use case owns refresh and eligibility.
 // GET /api/v1/admin/providers/:id/usage?source=passive|active&force=true
 func (h *OAuthUsageHandler) GetUsage(c *gin.Context) {
+	h.getUsage(c, c.Query("source") == "passive")
+}
+
+// GetPassiveUsage returns stored Anthropic observations through a dedicated query route.
+// Query parameters cannot select active maintenance on this endpoint. Unsupported
+// provider types retain the passive service's existing error response.
+func (h *OAuthUsageHandler) GetPassiveUsage(c *gin.Context) {
+	h.getUsage(c, true)
+}
+
+// getUsage reads the selected provider through the caller's chosen observation mode.
+// Passive mode uses stored samples; active mode honors the existing force query
+// switch and can update provider health or quota observations.
+func (h *OAuthUsageHandler) getUsage(c *gin.Context, passive bool) {
 	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid provider ID")
 		return
 	}
 
-	source := c.DefaultQuery("source", "active")
 	force := c.Query("force") == "true"
 
 	var usage *provider.UsageInfo
-	if source == "passive" {
+	if passive {
 		usage, err = h.core.GetPassiveUsage(c.Request.Context(), providerID)
 	} else {
 		usage, err = h.core.GetUsage(c.Request.Context(), providerID, force)

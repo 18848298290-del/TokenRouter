@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bytes"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -104,7 +105,11 @@ func (r *Redactor) RedactBody(raw []byte, contentType string) string {
 	}
 
 	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	// Request identifiers can exceed float64 precision. Preserve their decimal
+	// spelling so audit records and administrator confirmation previews name the actual requested objects.
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
 		// An unexpected decode failure still omits the raw bytes, because recording
 		// them would bypass the sensitive-key traversal performed on decoded values.
 		return "<unparsable body omitted>"

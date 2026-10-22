@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"github.com/google/jsonschema-go/jsonschema"
+
 	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
@@ -282,6 +284,7 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		Method:      "POST",
 		Path:        "/api/v1/admin/users",
 		Sensitive:   true,
+		StepUpWhen:  administratorRoleStepUp(),
 		Response:    "json",
 		BrowserPath: "/admin/users",
 		Input:       adminapi.Arguments("/api/v1/admin/users", []string{}, (*CreateUserRequest)(nil)),
@@ -379,6 +382,7 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		Method:      "PUT",
 		Path:        "/api/v1/admin/users/:id",
 		Sensitive:   true,
+		StepUpWhen:  administratorRoleStepUp(),
 		Response:    "json",
 		BrowserPath: "/admin/users",
 		Input:       adminapi.Arguments("/api/v1/admin/users/:id", []string{}, (*UpdateUserRequest)(nil)),
@@ -397,4 +401,16 @@ var ManagementOperations = map[string]*adminapi.Operation{
 		BrowserPath: "/admin/users",
 		Input:       adminapi.Arguments("/api/v1/admin/users/:id/usage", []string{"period"}, nil),
 	}),
+}
+
+// administratorRoleStepUp describes the user handlers' role-dependent verification rule.
+// Requests that omit role or select user retain their ordinary flow; each
+// operation owns its condition schema for immutable catalogue publication.
+func administratorRoleStepUp() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type: "object", Required: []string{"body"},
+		Properties: map[string]*jsonschema.Schema{
+			"body": {Type: "object", Required: []string{"role"}, Properties: map[string]*jsonschema.Schema{"role": {Enum: []any{"admin"}}}},
+		},
+	}
 }

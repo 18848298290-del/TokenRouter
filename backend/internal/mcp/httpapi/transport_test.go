@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -74,6 +77,12 @@ type mcpFixture struct {
 	token      *identity.MCPToken // initially issued public metadata
 	credential string             // fixture credential for negative admission tests
 	writes     atomic.Int64       // executed business mutations
+}
+
+// conditionalUsers implements the account writes reached by actual user HTTP handlers.
+type conditionalUsers struct {
+	identityhttp.UserAdministration               // unused account administration operations
+	writes                          *atomic.Int64 // borrowed successful mutation counter
 }
 
 // Create stores the issued digest and fills the fixture's generated identity.
@@ -593,4 +602,187 @@ func TestArchiveDownloadUsesCurrentBrowserGrant(t *testing.T) {
 	f.grants.granted.Store(false)
 	response = f.browser(t, "GET", "/api/v1/admin/mcp/files/"+file.ID, "browser")
 	require.Equal(t, 403, response.StatusCode)
+}
+
+// CreateUser records a successful fixture write after the handler's verification checks.
+func (u conditionalUsers) CreateUser(_ context.Context, input *identity.CreateUserInput) (*identity.User, error) {
+	u.writes.Add(1)
+	return &identity.User{ID: 9, Role: input.Role, Status: identity.StatusActive}, nil
+}
+
+// UpdateUser records a successful fixture replacement after the handler's verification checks.
+func (u conditionalUsers) UpdateUser(_ context.Context, id int64, input *identity.UpdateUserInput) (*identity.User, error) {
+	u.writes.Add(1)
+	return &identity.User{ID: id, Role: input.Role, Status: identity.StatusActive}, nil
+}
+
+// registerFixtureOperation binds a production description to its selected test handler.
+// It grants that operation to the fixture and replaces the catalogue before any
+// scenario request starts; shared production descriptions remain unchanged.
+func registerFixtureOperation(t *testing.T, f *mcpFixture, op *adminapi.Operation, handler gin.HandlerFunc) {
+	t.Helper()
+	router, ok := f.handler.router.(*gin.Engine)
+	require.True(t, ok)
+	router.Handle(op.Method, op.Path, identityhttp.MCPAdminAuth(f.handler.tokens, func(c *gin.Context) { c.AbortWithStatus(401) }), handler)
+	catalogue, err := adminapi.NewCatalog(append(f.handler.catalog.Operations(), op))
+	require.NoError(t, err)
+	f.handler.catalog = catalogue
+	f.repo.mu.Lock()
+	f.repo.token.Permissions = append(f.repo.token.Permissions, op.ID)
+	f.repo.mu.Unlock()
+}
+
+// TestConditionalAdministratorVerificationCompletesMCPFlow exercises real create/update handlers for both requested roles.
+// Conditional verification happens before approval, while ordinary user changes and disabled step-up retain their original calling rules.
+func TestConditionalAdministratorVerificationCompletesMCPFlow(t *testing.T) {
+	for _, update := range []bool{false, true} {
+		for _, role := range []string{"admin", "user"} {
+			for _, skip := range []bool{false, true} {
+				for _, enabled := range []bool{false, true} {
+					t.Run(fmt.Sprintf("update=%t/role=%s/skip=%t/policy=%t", update, role, skip, enabled), func(t *testing.T) {
+						f := newMCPFixture(t)
+						f.grants.enabled = enabled
+						f.grants.granted.Store(false)
+						f.repo.mu.Lock()
+						f.repo.token.SkipBrowserConfirmation = skip
+						f.repo.mu.Unlock()
+						handler := identityhttp.NewAdminUserHandler[struct{}](conditionalUsers{writes: &f.writes}, nil, nil, func(c *gin.Context) bool { return identityhttp.EnforceStepUp(c, f.grants, f.accounts, f.grants) })
+						op := identityhttp.ManagementOperations["users.create"]
+						action := handler.Create
+						args := map[string]any{"body": map[string]any{"email": "case@example.invalid", "password": "local-test-password", "role": role}}
+						if update {
+							op = identityhttp.ManagementOperations["users.update"]
+							action = handler.Update
+							args["path"] = map[string]string{"id": "9"}
+						}
+						args["operation_id"] = op.ID
+						registerFixtureOperation(t, f, op, action)
+						result, data := f.invoke(t, "execute_operation", args)
+						needsStepUp := role == "admin" && enabled
+						if !skip || needsStepUp {
+							require.Equal(t, "confirmation_required", data["status"])
+							require.Zero(t, f.writes.Load())
+							id := jsonTestValue[string](t, data["confirmation_id"])
+							if needsStepUp {
+								require.Equal(t, 403, f.browser(t, "POST", "/api/v1/admin/mcp/confirmations/"+id+"/approve", "browser").StatusCode)
+								approval, err := f.handler.state.GetApproval(t.Context(), id)
+								require.NoError(t, err)
+								require.Equal(t, "pending", approval.State)
+								f.grants.granted.Store(true)
+							}
+							require.Equal(t, 200, f.browser(t, "POST", "/api/v1/admin/mcp/confirmations/"+id+"/approve", "browser").StatusCode)
+							args["confirmation_id"] = id
+							result, data = f.invoke(t, "execute_operation", args)
+						}
+						require.False(t, result.IsError, data)
+						require.Equal(t, "succeeded", data["status"])
+						require.Equal(t, int64(1), f.writes.Load())
+					})
+				}
+			}
+		}
+	}
+}
+
+// TestMCPRequestSizeMatchesDeclaredUploadLimit sends ordinary JSON writes on both sides of the documented limit.
+// A five MiB request reaches the handler, while an oversized request is rejected before its business write.
+func TestMCPRequestSizeMatchesDeclaredUploadLimit(t *testing.T) {
+	f := newMCPFixture(t)
+	for _, size := range []int{5 << 20, 17 << 20} {
+		payload, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "execute_operation", "arguments": map[string]any{"operation_id": "fixture.create", "body": map[string]any{"data": strings.Repeat("x", size)}}}})
+		require.NoError(t, err)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, f.server.URL+"/mcp", bytes.NewReader(payload))
+		require.NoError(t, err)
+		request.Header.Set("Authorization", "Bearer "+f.credential)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "application/json, text/event-stream")
+		response, err := http.DefaultClient.Do(request)
+		require.NoError(t, err)
+		_, readErr := io.Copy(io.Discard, response.Body)
+		require.NoError(t, response.Body.Close())
+		require.NoError(t, readErr)
+		if size < maxRequestBytes {
+			require.Equal(t, 200, response.StatusCode)
+		} else {
+			require.Equal(t, 413, response.StatusCode)
+		}
+	}
+	require.Equal(t, int64(1), f.writes.Load())
+}
+
+// TestConfirmationPreviewRetainsLargeUserIDs compares exact request identifiers with the browser-visible approval text.
+// Schema validation may normalize numeric types, but the persisted preview and retry digest retain the submitted decimal value.
+func TestConfirmationPreviewRetainsLargeUserIDs(t *testing.T) {
+	f := newMCPFixture(t)
+	op := identityhttp.ManagementOperations["users.batch_limits.create"]
+	input := control.Call{OperationID: op.ID, Body: json.RawMessage(`{"user_ids":[9007199254740993],"concurrency":1}`)}
+	args, err := callArguments(input)
+	require.NoError(t, err)
+	require.NoError(t, op.Validate(args))
+	approval, err := f.handler.confirmation(t.Context(), f.token, op, input, args)
+	require.NoError(t, err)
+	require.Contains(t, approval.Preview, "9007199254740993")
+	require.NotContains(t, approval.Preview, "9007199254740992")
+	require.Contains(t, approval.Preview, "\n")
+}
+
+// TestGeneratedCodeFilePreservesJSONAndFilename exercises the common delivery mode used by generated promotion codes.
+// MCP returns a file reference, and the administrator download contains the original code with its JSON filename.
+func TestGeneratedCodeFilePreservesJSONAndFilename(t *testing.T) {
+	f := newMCPFixture(t)
+	op := &adminapi.Operation{ID: "fixture.promo", Method: "POST", Path: "/api/v1/admin/fixture-promo", Response: adminapi.ResponseFile, Input: adminapi.Arguments("/api/v1/admin/fixture-promo", nil, nil)}
+	registerFixtureOperation(t, f, op, func(c *gin.Context) { c.JSON(200, gin.H{"code": 0, "data": gin.H{"code": "GENERATED-FIXTURE"}}) })
+	result, data := f.invoke(t, "execute_operation", map[string]any{"operation_id": op.ID})
+	require.False(t, result.IsError)
+	require.Equal(t, "file_ready", data["status"])
+	response := f.browser(t, "GET", "/api/v1/admin/mcp/files/"+jsonTestValue[string](t, data["file_id"]), "browser")
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "GENERATED-FIXTURE")
+	require.Contains(t, response.Header.Get("Content-Disposition"), "fixture.promo.json")
+	file, err := f.handler.state.GetArtifact(t.Context(), jsonTestValue[string](t, data["file_id"]))
+	require.NoError(t, err)
+	file.Name = "优惠码.json"
+	require.NoError(t, f.handler.state.SaveArtifact(t.Context(), file))
+	response = f.browser(t, "GET", "/api/v1/admin/mcp/files/"+file.ID, "browser")
+	_, parameters, err := mime.ParseMediaType(response.Header.Get("Content-Disposition"))
+	require.NoError(t, err)
+	require.Equal(t, file.Name, parameters["filename"])
+	require.Contains(t, response.Header.Get("Content-Disposition"), "filename*=")
+	require.Equal(t, "chosen.sql.gz", artifactFilename(op.ID, http.Header{"Content-Disposition": []string{`attachment; filename="chosen.sql.gz"`}}))
+}
+
+// TestOperationResultsRetainExactNumbers checks ordinary JSON and finite SSE results with large identifiers.
+// Result conversion and text rendering must preserve the HTTP value just as confirmation previews preserve submitted parameters.
+func TestOperationResultsRetainExactNumbers(t *testing.T) {
+	f := newMCPFixture(t)
+	capture := newCapture(t.Context(), func() {})
+	defer capture.close()
+	_, err := capture.Write([]byte(`{"code":0,"data":{"id":9007199254740993,"total_tokens":9007199254740993}}`))
+	require.NoError(t, err)
+	result := f.handler.operationResult(t.Context(), f.token, &adminapi.Operation{ID: "fixture.get", ReadOnly: true}, capture)
+	encoded, err := json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"id":9007199254740993`)
+	require.Contains(t, string(encoded), `"total_tokens":9007199254740993`)
+	result = f.handler.streamResult(&adminapi.Operation{TerminalEvent: "done"}, []byte("data: {\"type\":\"done\",\"success\":true,\"id\":9007199254740993}\n\n"), "fixture")
+	encoded, err = json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"id":9007199254740993`)
+}
+
+// TestResultParsingRequiresOneCompleteJSONValue rejects treating a valid prefix as the whole handler result.
+// Non-JSON bodies retain file delivery, while malformed finite events cannot claim a successful terminal response.
+func TestResultParsingRequiresOneCompleteJSONValue(t *testing.T) {
+	f := newMCPFixture(t)
+	capture := newCapture(t.Context(), func() {})
+	defer capture.close()
+	_, err := capture.Write([]byte(`{"code":0}{"unexpected":true}`))
+	require.NoError(t, err)
+	result := f.handler.operationResult(t.Context(), f.token, &adminapi.Operation{ID: "fixture.get", ReadOnly: true}, capture)
+	metadata := jsonTestValue[map[string]any](t, result.StructuredContent)
+	require.Equal(t, "file_ready", metadata["status"])
+	result = f.handler.streamResult(&adminapi.Operation{TerminalEvent: "done"}, []byte("data: {\"type\":\"done\",\"success\":true}{}\n\n"), "fixture")
+	require.True(t, result.IsError)
+	require.Equal(t, "outcome_unknown", jsonTestValue[map[string]any](t, result.StructuredContent)["status"])
 }

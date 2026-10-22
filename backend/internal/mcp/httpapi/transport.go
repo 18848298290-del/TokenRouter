@@ -109,7 +109,7 @@ func NewHandler(tokens *identity.MCPTokenService, state control.StateStore, totp
 	callSchema := map[string]any{"type": "object", "properties": map[string]any{"operation_id": map[string]any{"type": "string"}, "path": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}, "query": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}, "body": map[string]any{}, "idempotency_key": map[string]any{"type": "string"}, "confirmation_id": map[string]any{"type": "string"}, "file_id": map[string]any{"type": "string"}}, "required": []string{"operation_id"}, "additionalProperties": false}
 	server.AddTool(&mcp.Tool{Name: "read_operation", Description: "Execute a granted query using its described arguments. Only operations explicitly marked read_only are accepted.", InputSchema: callSchema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, h.read)
 	server.AddTool(&mcp.Tool{Name: "execute_operation", Description: "Execute a granted management action. When browser confirmation is required, retry identical arguments with confirmation_id after approval. The token preference does not bypass recent TOTP or browser authorization. Mutations are not automatically retried.", InputSchema: callSchema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false}}, h.execute)
-	h.transport = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	h.transport = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: maxRequestBytes})
 	return h
 }
 
@@ -244,7 +244,7 @@ func (h *Handler) search(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Ca
 			match = match && strings.Contains(text, word)
 		}
 		if match {
-			items = append(items, map[string]any{"operation_id": op.ID, "module": op.Module, "title": op.Title, "read_only": op.ReadOnly, "requires_confirmation": h.requiresConfirmation(ctx, token, op), "response_mode": op.Response})
+			items = append(items, map[string]any{"operation_id": op.ID, "module": op.Module, "title": op.Title, "read_only": op.ReadOnly, "requires_confirmation": h.requiresConfirmation(ctx, token, op, nil), "response_mode": op.Response})
 		}
 	}
 	start := min(input.Offset, len(items))
@@ -269,7 +269,7 @@ func (h *Handler) describe(ctx context.Context, req *mcp.CallToolRequest) (*mcp.
 	return toolResult(struct {
 		*adminapi.Operation       // immutable registered operation metadata
 		RequiresConfirmation bool `json:"requires_confirmation"` // current token confirmation requirement
-	}{op, h.requiresConfirmation(ctx, token, op)}), nil
+	}{op, h.requiresConfirmation(ctx, token, op, nil)}), nil
 }
 
 // read dispatches the query tool through the shared operation validator.
