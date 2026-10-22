@@ -73,7 +73,7 @@ func logOpenAIPassthroughInstructionsRejected(
 		zap.String("reject_reason", strings.TrimSpace(rejectReason)),
 	}
 	fields = AppendCodexRejectedRequestFields(fields, c, body)
-	logging.FromContext(ctx).With(fields...).Warn("OpenAI passthrough 本地拦截：Codex 请求缺少有效 instructions")
+	logging.FromContext(ctx).With(fields...).Warn("OpenAI passthrough rejected Codex request locally: valid instructions are missing")
 }
 
 // shouldFailoverOpenAIPassthroughResponse delegates classification using the

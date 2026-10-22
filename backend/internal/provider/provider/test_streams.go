@@ -271,7 +271,7 @@ func (s TestStreamOutput) ChatCompletions(c *TestRun, body io.Reader) error {
 		if err != nil {
 			if err == io.EOF {
 				if seenFinish {
-					s.SendEvent(c, providercore.TestEvent{Type: "status", Text: "已通过 /v1/chat/completions 验证"})
+					s.SendEvent(c, providercore.TestEvent{Type: "status", Text: "Verified through /v1/chat/completions"})
 					s.SendEvent(c, providercore.TestEvent{Type: "test_complete", Success: true})
 					return nil
 				}
@@ -290,7 +290,7 @@ func (s TestStreamOutput) ChatCompletions(c *TestRun, body io.Reader) error {
 
 		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 		if jsonStr == "[DONE]" {
-			s.SendEvent(c, providercore.TestEvent{Type: "status", Text: "已通过 /v1/chat/completions 验证"})
+			s.SendEvent(c, providercore.TestEvent{Type: "status", Text: "Verified through /v1/chat/completions"})
 			s.SendEvent(c, providercore.TestEvent{Type: "test_complete", Success: true})
 			return nil
 		}

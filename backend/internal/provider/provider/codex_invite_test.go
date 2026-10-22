@@ -107,7 +107,7 @@ func TestCodexInviteResetServiceGetStatusKeepsUsageCreditsWhenEligibilityReturns
 	require.NoError(t, err)
 	require.False(t, status.InviteAvailable)
 	require.Equal(t, "CODEX_INVITE_RESET_REFERRAL_UNAVAILABLE", status.InviteUnavailableReason)
-	require.Equal(t, "当前 Codex 推荐邀请入口暂不可用，但已有重置次数仍可使用", status.InviteUnavailableMessage)
+	require.Equal(t, "Codex referral invitations are temporarily unavailable; existing resets can still be used", status.InviteUnavailableMessage)
 	require.Equal(t, 1, status.AvailableCount)
 	require.Empty(t, status.Credits)
 	require.NotContains(t, status.InviteUnavailableMessage, "Field required")
@@ -165,7 +165,7 @@ func TestCodexInviteResetServiceSendInviteMapsUnavailableInvite(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, http.StatusForbidden, httpx.ErrorCode(err))
 	require.Equal(t, "CODEX_INVITE_RESET_REFERRAL_UNAVAILABLE", apperror.Reason(err))
-	require.Equal(t, "当前 Codex 推荐邀请入口暂不可用，但已有重置次数仍可使用", apperror.Message(err))
+	require.Equal(t, "Codex referral invitations are temporarily unavailable; existing resets can still be used", apperror.Message(err))
 	require.Equal(t, "该推荐码对应的推荐邀请不可用", apperror.FromError(err).Metadata["upstream_detail"])
 }
 

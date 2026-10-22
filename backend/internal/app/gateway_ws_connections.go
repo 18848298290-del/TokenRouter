@@ -132,7 +132,7 @@ func provideResponsesWSRuntime(cfg *config.Config, store *settings.Store, manage
 		defaults.StickySessionTTLSeconds = v.StickySessionTTLSeconds
 		defaults.StickyResponseIDTTLSeconds = v.StickyResponseIDTTLSeconds
 	}
-	runtime := ws.NewRuntime(defaults, store, func(err error) { slog.Warn("Responses WS 设置刷新失败", "error", err) })
+	runtime := ws.NewRuntime(defaults, store, func(err error) { slog.Warn("Failed to refresh Responses WS settings", "error", err) })
 	// Seal settings refresh before the next connection-close level, retaining
 	// the shared connection owner until every claimed option application has completed.
 	manager.Register(lifecycle.Hook{Name: "ResponsesWSSettings", StartOrder: 980, StopOrder: 9, Start: runtime.Start, Stop: runtime.Stop})

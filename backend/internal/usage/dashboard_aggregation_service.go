@@ -49,13 +49,13 @@ const (
 var (
 	// ErrDashboardBackfillDisabled reports that deployment configuration rejects
 	// manual historical backfill.
-	ErrDashboardBackfillDisabled = errors.New("仪表盘聚合回填已禁用")
+	ErrDashboardBackfillDisabled = errors.New("dashboard aggregation backfill is disabled")
 	// ErrDashboardBackfillTooLarge reports that the requested elapsed range
 	// exceeds its configured maximum.
-	ErrDashboardBackfillTooLarge = errors.New("回填时间跨度过大")
+	ErrDashboardBackfillTooLarge = errors.New("backfill time range is too large")
 	// errDashboardAggregationRunning reports an occupied local aggregation slot
 	// to repair retry handling.
-	errDashboardAggregationRunning = errors.New("聚合作业正在运行")
+	errDashboardAggregationRunning = errors.New("aggregation job is already running")
 )
 
 // DashboardAggregationRepository supplies dashboard rollup writes, progress
@@ -234,7 +234,7 @@ func (s *DashboardAggregationService) Start() {
 		return
 	}
 	if !s.cfg.Enabled {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 聚合作业已禁用")
+		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] Aggregation job is disabled")
 		return
 	}
 
@@ -246,9 +246,9 @@ func (s *DashboardAggregationService) Start() {
 		s.runScheduledAggregation()
 	})
 	s.runBackground(s.runScheduledAggregation)
-	s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 聚合作业启动 (scheduler_tick=%v, lookback=%ds)", dashboardAggregationSchedulerTick, s.cfg.LookbackSeconds)
+	s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] Aggregation job started (scheduler_tick=%v, lookback=%ds)", dashboardAggregationSchedulerTick, s.cfg.LookbackSeconds)
 	if !s.cfg.BackfillEnabled {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 回填已禁用，如需补齐保留窗口以外历史数据请手动回填")
+		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] Automatic backfill is disabled; manually backfill historical data outside the retention window")
 	}
 }
 
@@ -264,14 +264,14 @@ func (s *DashboardAggregationService) Start() {
 // within one UTC hour can persist equal target and cursor values.
 func (s *DashboardAggregationService) TriggerBackfill(start, end time.Time) error {
 	if s == nil || s.repo == nil {
-		return errors.New("聚合服务未初始化")
+		return errors.New("aggregation service is not initialized")
 	}
 	if !s.cfg.BackfillEnabled {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 回填被拒绝: backfill_enabled=false")
+		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] Backfill rejected: backfill_enabled=false")
 		return ErrDashboardBackfillDisabled
 	}
 	if !end.After(start) {
-		return errors.New("回填时间范围无效")
+		return errors.New("invalid backfill time range")
 	}
 	if s.cfg.BackfillMaxDays > 0 {
 		// The manual range cap measures elapsed days, including DST duration differences.
@@ -281,7 +281,7 @@ func (s *DashboardAggregationService) TriggerBackfill(start, end time.Time) erro
 		}
 	}
 	if s.analyticsRepo == nil {
-		return errors.New("多维聚合服务未初始化")
+		return errors.New("analytics aggregation service is not initialized")
 	}
 
 	ctx, cancel := context.WithTimeout(s.operationContext(), defaultDashboardAggregationTimeout)
@@ -320,10 +320,10 @@ func (s *DashboardAggregationService) TriggerBackfill(start, end time.Time) erro
 // context-aware storage, while recomputeRange controls local write admission.
 func (s *DashboardAggregationService) TriggerRecomputeRange(start, end time.Time) error {
 	if s == nil || s.repo == nil {
-		return errors.New("聚合服务未初始化")
+		return errors.New("aggregation service is not initialized")
 	}
 	if !end.After(start) {
-		return errors.New("重新计算时间范围无效")
+		return errors.New("invalid recalculation time range")
 	}
 
 	s.runBackground(func() {
@@ -338,7 +338,7 @@ func (s *DashboardAggregationService) TriggerRecomputeRange(start, end time.Time
 				return
 			}
 			if !errors.Is(err, errDashboardAggregationRunning) {
-				s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 重新计算失败: %v", err)
+				s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] Recalculation failed: %v", err)
 				return
 			}
 			// Wait between occupied-slot retries under the runtime cancellation signal
@@ -349,7 +349,7 @@ func (s *DashboardAggregationService) TriggerRecomputeRange(start, end time.Time
 			case <-time.After(5 * time.Second):
 			}
 		}
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 重新计算放弃: 聚合作业持续占用")
+		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] Recalculation abandoned: aggregation job remains busy")
 	})
 	return nil
 }
@@ -371,7 +371,7 @@ func (s *DashboardAggregationService) recomputeRecentDays() {
 	// Startup backfill reports range or admission failure and leaves later
 	// scheduled rounds available to maintain live data under their own range.
 	if err := s.backfillRange(ctx, start, now); err != nil {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 启动重算失败: %v", err)
+		s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] Failed to start recalculation: %v", err)
 		return
 	}
 }
@@ -406,7 +406,7 @@ func (s *DashboardAggregationService) recomputeRange(ctx context.Context, start,
 			return err
 		}
 	}
-	s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 重新计算完成 (start=%s end=%s duration=%s)",
+	s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] Recalculation completed (start=%s end=%s duration=%s)",
 		start.UTC().Format(time.RFC3339),
 		end.UTC().Format(time.RFC3339),
 		time.Since(jobStart).String(),
@@ -457,7 +457,7 @@ func (s *DashboardAggregationService) runScheduledAggregation() {
 	s.markAnalyticsRunStarted(ctx, now)
 	last, err := s.repo.GetAggregationWatermark(ctx)
 	if err != nil {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 读取水位失败: %v", err)
+		s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] Failed to read watermark: %v", err)
 		// An unreadable watermark leaves its range unknown. Use the epoch marker so
 		// this round starts from recent lookback and budgeted backfill handles older history.
 		last = time.Unix(0, 0).UTC()
@@ -476,7 +476,7 @@ func (s *DashboardAggregationService) runScheduledAggregation() {
 		start = now.Add(-lookback)
 	}
 	if err := s.aggregateLiveRange(ctx, start, now); err != nil {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 聚合失败: %v", err)
+		s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] Aggregation failed: %v", err)
 		s.markAnalyticsRunFailed(ctx, now, jobStart, err)
 		return
 	}
@@ -485,9 +485,9 @@ func (s *DashboardAggregationService) runScheduledAggregation() {
 	// overlapping work eligible on the next round while completed rollup data remains stored.
 	updateErr := s.repo.UpdateAggregationWatermark(ctx, now)
 	if updateErr != nil {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 更新水位失败: %v", updateErr)
+		s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] Failed to update watermark: %v", updateErr)
 	}
-	slog.Debug("[DashboardAggregation] 聚合完成",
+	slog.Debug("[DashboardAggregation] Aggregation completed",
 		"start", start.Format(time.RFC3339),
 		"end", now.Format(time.RFC3339),
 		"duration", time.Since(jobStart).String(),
@@ -521,7 +521,7 @@ func (s *DashboardAggregationService) backfillRange(ctx context.Context, start, 
 	startUTC := start.UTC()
 	endUTC := end.UTC()
 	if !endUTC.After(startUTC) {
-		return errors.New("回填时间范围无效")
+		return errors.New("invalid backfill time range")
 	}
 
 	// UTC-day windows begin at midnight, expanding an intraday requested start.
@@ -541,9 +541,9 @@ func (s *DashboardAggregationService) backfillRange(ctx context.Context, start, 
 	// Failed publication is logged while a later round can repeat those completed windows.
 	updateErr := s.repo.UpdateAggregationWatermark(ctx, endUTC)
 	if updateErr != nil {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 更新水位失败: %v", updateErr)
+		s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] Failed to update watermark: %v", updateErr)
 	}
-	s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 回填聚合完成 (start=%s end=%s duration=%s watermark_updated=%t)",
+	s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] Backfill aggregation completed (start=%s end=%s duration=%s watermark_updated=%t)",
 		startUTC.Format(time.RFC3339),
 		endUTC.Format(time.RFC3339),
 		time.Since(jobStart).String(),
@@ -570,7 +570,7 @@ func (s *DashboardAggregationService) aggregateRange(ctx context.Context, start,
 	// Partition preparation can fail while existing storage still accepts this
 	// range. Log the preparation error and let the subsequent aggregation write decide progress.
 	if err := s.repo.EnsureUsageLogsPartitions(ctx, end); err != nil {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 分区检查失败: %v", err)
+		s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] Partition check failed: %v", err)
 	}
 	// Complete dashboard writes before the analytics stage. An analytics error can
 	// leave this earlier work completed, so the caller advances its cursor only on full success.
@@ -599,7 +599,7 @@ func (s *DashboardAggregationService) aggregateHourlyRange(ctx context.Context, 
 	// Partition preparation can fail while existing storage still accepts this
 	// range. Log the preparation error and let the subsequent aggregation write decide progress.
 	if err := s.repo.EnsureUsageLogsPartitions(ctx, end); err != nil {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 分区检查失败: %v", err)
+		s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] Partition check failed: %v", err)
 	}
 	// Complete dashboard writes before the analytics stage. An analytics error can
 	// leave this earlier work completed, so the caller advances its cursor only on full success.
@@ -688,21 +688,21 @@ func (s *DashboardAggregationService) maybeCleanupRetention(ctx context.Context,
 	// outcomes jointly decide whether the shared success timestamp can advance.
 	aggErr := s.repo.CleanupAggregates(ctx, hourlyCutoff, dailyCutoff)
 	if aggErr != nil {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 聚合保留清理失败: %v", aggErr)
+		s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] Aggregation retention cleanup failed: %v", aggErr)
 	}
 	if s.analyticsRepo != nil {
 		if analyticsErr := s.analyticsRepo.CleanupUsageAnalytics(ctx, hourlyCutoff, dailyCutoff); analyticsErr != nil {
-			s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] 多维聚合保留清理失败: %v", analyticsErr)
+			s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] Analytics aggregation retention cleanup failed: %v", analyticsErr)
 			aggErr = analyticsErr
 		}
 	}
 	usageErr := s.repo.CleanupUsageLogs(ctx, usageCutoff)
 	if usageErr != nil {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] usage_logs 保留清理失败: %v", usageErr)
+		s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] usage_logs retention cleanup failed: %v", usageErr)
 	}
 	dedupErr := s.repo.CleanupUsageBillingDedup(ctx, dedupCutoff)
 	if dedupErr != nil {
-		s.logMessage("service.dashboard_aggregation", "[DashboardAggregation] usage_billing_dedup 保留清理失败: %v", dedupErr)
+		s.logMessage("service.dashboard_aggregation", "[INFO] [DashboardAggregation] usage_billing_dedup retention cleanup failed: %v", dedupErr)
 	}
 	// Publish the shared retention timestamp only after every selected cleanup
 	// succeeds. Any failed operation leaves the next admitted round eligible to retry cleanup.
@@ -973,7 +973,7 @@ func (s *DashboardAggregationService) runHistoricalBackfill(ctx context.Context,
 					s.pauseHistoricalBackfill(ctx, state, started)
 					return
 				}
-				timeoutErr := fmt.Errorf("单个小时回填超过 %s 工作预算", budget)
+				timeoutErr := fmt.Errorf("backfill for one hour exceeded the %s work budget", budget)
 				s.markAnalyticsRunFailed(ctx, time.Now().UTC(), started, timeoutErr)
 				return
 			}
@@ -1064,7 +1064,7 @@ func (s *DashboardAggregationService) runManualHistoricalBackfill(ctx context.Co
 					s.pauseHistoricalBackfill(ctx, state, started)
 					return
 				}
-				timeoutErr := fmt.Errorf("单个小时回填超过 %s 工作预算", budget)
+				timeoutErr := fmt.Errorf("backfill for one hour exceeded the %s work budget", budget)
 				s.markAnalyticsRunFailed(ctx, time.Now().UTC(), started, timeoutErr)
 				return
 			}

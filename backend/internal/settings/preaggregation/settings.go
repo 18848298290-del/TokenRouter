@@ -248,7 +248,7 @@ func (s *PreAggregationSettingsService) Get(ctx context.Context) (PreAggregation
 	}
 	settings, ok := value.(PreAggregationSettings)
 	if !ok {
-		return defaults, errors.New("预聚合设置加载结果类型无效")
+		return defaults, errors.New("invalid pre-aggregation settings load result type")
 	}
 	return settings, nil
 }
@@ -266,7 +266,7 @@ func (s *PreAggregationSettingsService) Resolve(ctx context.Context) PreAggregat
 	if cached := s.cache.Load(); cached != nil {
 		return cached.settings
 	}
-	log.Printf("[PreAggregation] 读取运行时配置失败，使用部署默认值: %v", err)
+	log.Printf("[INFO] [PreAggregation] Failed to read runtime configuration, using deployment defaults: %v", err)
 	return s.defaults()
 }
 
@@ -282,7 +282,7 @@ func (s *PreAggregationSettingsService) Resolve(ctx context.Context) PreAggregat
 // synchronous. Concurrent Get loads can still publish an earlier read afterward.
 func (s *PreAggregationSettingsService) Update(ctx context.Context, next PreAggregationSettings) (PreAggregationSettings, error) {
 	if s == nil || s.settingRepo == nil {
-		return PreAggregationSettings{}, errors.New("预聚合配置服务不可用")
+		return PreAggregationSettings{}, errors.New("pre-aggregation configuration service is unavailable")
 	}
 	s.updateMu.Lock()
 	defer s.updateMu.Unlock()
@@ -291,12 +291,12 @@ func (s *PreAggregationSettingsService) Update(ctx context.Context, next PreAggr
 	next = s.normalize(next)
 	payload, err := json.Marshal(next)
 	if err != nil {
-		return PreAggregationSettings{}, fmt.Errorf("编码预聚合配置: %w", err)
+		return PreAggregationSettings{}, fmt.Errorf("encode pre-aggregation configuration: %w", err)
 	}
 	// Save the normalized replacement before publishing next or notifying listeners.
 	// A failed write skips those phases after previous settings were resolved.
 	if err := s.settingRepo.Set(ctx, SettingKeyPreAggregationSettings, string(payload)); err != nil {
-		return PreAggregationSettings{}, fmt.Errorf("保存预聚合配置: %w", err)
+		return PreAggregationSettings{}, fmt.Errorf("save pre-aggregation configuration: %w", err)
 	}
 	// Publish after storage succeeds and before listeners run so ordinary cached
 	// reads can use the replacement; independent Get loads can still republish an earlier read.
@@ -423,7 +423,7 @@ func (s *PreAggregationSettingsService) notify(previous, next PreAggregationSett
 func parsePreAggregationSettings(raw string, defaults PreAggregationSettings) (PreAggregationSettings, error) {
 	var persisted persistedPreAggregationSettings
 	if err := json.Unmarshal([]byte(raw), &persisted); err != nil {
-		return PreAggregationSettings{}, fmt.Errorf("解析预聚合配置: %w", err)
+		return PreAggregationSettings{}, fmt.Errorf("parse pre-aggregation configuration: %w", err)
 	}
 	result := defaults
 	if persisted.Usage != nil {

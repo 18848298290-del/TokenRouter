@@ -1272,7 +1272,7 @@ func TestBuildContentModerationLog_RedactsInputExcerpt(t *testing.T) {
 	log := svc.buildTextLogForTest(input, cfg, ContentModerationActionAllow, true, "sexual", 0.8, map[string]float64{"sexual": 0.8}, "hello sk-proj-1234567890abcdef", nil, nil, "")
 
 	require.NotContains(t, log.InputExcerpt, "sk-proj-1234567890abcdef")
-	require.Contains(t, log.InputExcerpt, "[已脱敏]")
+	require.Contains(t, log.InputExcerpt, "[REDACTED]")
 }
 
 // TestContentModerationConfigNormalize_NonHitRetentionMaxThreeDays supplies a
@@ -3028,7 +3028,7 @@ func TestContentModerationRecordCyberWarning_DefaultRecordsWithoutBan(t *testing
 	require.Contains(t, repo.cyberWarnings[0].WarningText, "token=abc123456789xyz")
 	require.Contains(t, repo.cyberWarnings[0].PromptExcerpt, "inspect target")
 	require.Contains(t, repo.cyberWarnings[0].PromptExcerpt, "sk-proj-1234567890abcdef")
-	require.NotContains(t, repo.cyberWarnings[0].PromptExcerpt, "[已脱敏]")
+	require.NotContains(t, repo.cyberWarnings[0].PromptExcerpt, "[REDACTED]")
 	require.Equal(t, 1, repo.cyberWarnings[0].ViolationCount)
 	require.False(t, repo.cyberWarnings[0].AutoBanned)
 	require.Empty(t, userRepo.updated)

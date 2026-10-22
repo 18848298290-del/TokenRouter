@@ -33,7 +33,7 @@ const (
 	codexInviteResetReferralKey        = "codex_referral_persistent_invite"
 	codexInviteResetMaxEmails          = 5
 	codexInviteResetUnavailable        = "CODEX_INVITE_RESET_REFERRAL_UNAVAILABLE"
-	codexInviteResetUnavailableMessage = "当前 Codex 推荐邀请入口暂不可用，但已有重置次数仍可使用"
+	codexInviteResetUnavailableMessage = "Codex referral invitations are temporarily unavailable; existing resets can still be used"
 )
 
 // codexInviteResetEmailPattern recognizes the basic address shape accepted for
@@ -418,7 +418,7 @@ func normalizeCodexInviteEmails(emails []string) ([]string, error) {
 			// Count unique accepted addresses after case-insensitive deduplication,
 			// so repeating an existing spelling cannot consume the per-request limit.
 			if len(result) > codexInviteResetMaxEmails {
-				return nil, apperror.BadRequest("CODEX_INVITE_RESET_EMAIL_LIMIT", fmt.Sprintf("最多一次邀请 %d 个邮箱", codexInviteResetMaxEmails))
+				return nil, apperror.BadRequest("CODEX_INVITE_RESET_EMAIL_LIMIT", fmt.Sprintf("At most %d email addresses can be invited at once", codexInviteResetMaxEmails))
 			}
 		}
 	}

@@ -98,18 +98,18 @@ func NewQoderOAuthHandler(qoderOAuthService QoderAuthorizationUseCase) *QoderOAu
 func (h *QoderOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	var req QoderGenerateAuthURLRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求无效: "+err.Error())
+		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
 
 	site, err := h.qoderOAuthService.ValidateSite(req.Site)
 	if err != nil {
-		response.BadRequest(c, "请求无效: "+err.Error())
+		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
 	result, err := h.qoderOAuthService.GenerateAuthURLForSite(c.Request.Context(), site, req.ProxyID)
 	if err != nil {
-		response.InternalError(c, "生成授权链接失败: "+err.Error())
+		response.InternalError(c, "Failed to generate authorization URL: "+err.Error())
 		return
 	}
 
@@ -124,7 +124,7 @@ func (h *QoderOAuthHandler) GenerateAuthURL(c *gin.Context) {
 func (h *QoderOAuthHandler) ExchangeCode(c *gin.Context) {
 	var req QoderExchangeCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求无效: "+err.Error())
+		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
 
@@ -136,7 +136,7 @@ func (h *QoderOAuthHandler) ExchangeCode(c *gin.Context) {
 		ProxyID:     req.ProxyID,
 	})
 	if err != nil {
-		response.BadRequest(c, "Token 交换失败: "+err.Error())
+		response.BadRequest(c, "Failed to exchange token: "+err.Error())
 		return
 	}
 
@@ -150,13 +150,13 @@ func (h *QoderOAuthHandler) ExchangeCode(c *gin.Context) {
 func (h *QoderOAuthHandler) Poll(c *gin.Context) {
 	var req QoderPollRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求无效: "+err.Error())
+		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
 
 	result, err := h.qoderOAuthService.Poll(c.Request.Context(), req.SessionID, req.State, req.ProxyID)
 	if err != nil {
-		response.BadRequest(c, "授权状态检查失败: "+err.Error())
+		response.BadRequest(c, "Failed to check authorization status: "+err.Error())
 		return
 	}
 

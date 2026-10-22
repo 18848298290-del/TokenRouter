@@ -2360,7 +2360,7 @@ func TestOpenAIGatewayService_Forward_LogsInstructionsRequiredDetails(t *testing
 	require.Equal(t, "instructions", gjson.Get(rec.Body.String(), "error.param").String())
 	require.Contains(t, err.Error(), "upstream error: 400")
 
-	require.True(t, logSink.ContainsMessageAtLevel("OpenAI 上游返回 Instructions are required，已记录请求详情用于排查", "warn"))
+	require.True(t, logSink.ContainsMessageAtLevel("OpenAI upstream returned Instructions are required; request details logged for investigation", "warn"))
 	require.True(t, logSink.ContainsFieldValue("request_user_agent", "codex_cli_rs/0.1.0"))
 	require.True(t, logSink.ContainsFieldValue("request_model", "gpt-5.1-codex"))
 	require.True(t, logSink.ContainsFieldValue("request_headers", "openai-beta"))
@@ -6114,7 +6114,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_WarnOnTimeoutHeadersForStream(t *
 
 	_, err := svc.Forward(context.Background(), c, provider, originalBody)
 	require.NoError(t, err)
-	require.True(t, logSink.ContainsMessage("检测到超时相关请求头，将按配置过滤以降低断流风险"))
+	require.True(t, logSink.ContainsMessage("detected timeout headers and will filter them as configured to reduce early stream termination"))
 	require.True(t, logSink.ContainsFieldValue("timeout_headers", "x-stainless-timeout=10000"))
 }
 
@@ -6160,8 +6160,8 @@ func TestOpenAIGatewayService_OAuthPassthrough_InfoWhenStreamEndsWithoutDone(t *
 
 	_, err := svc.Forward(context.Background(), c, provider, originalBody)
 	require.EqualError(t, err, "stream usage incomplete: missing terminal event")
-	require.True(t, logSink.ContainsMessage("上游流在未收到 [DONE] 时结束，疑似断流"))
-	require.True(t, logSink.ContainsMessageAtLevel("上游流在未收到 [DONE] 时结束，疑似断流", "info"))
+	require.True(t, logSink.ContainsMessage("upstream stream ended without [DONE], possible interrupted stream"))
+	require.True(t, logSink.ContainsMessageAtLevel("upstream stream ended without [DONE], possible interrupted stream", "info"))
 	require.True(t, logSink.ContainsFieldValue("upstream_request_id", "rid-truncate"))
 }
 

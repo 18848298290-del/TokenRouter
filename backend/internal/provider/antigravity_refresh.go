@@ -116,17 +116,17 @@ func (r *AntigravityRefreshRules) Refresh(ctx context.Context, provider *Record)
 		}
 	}
 
-	// Warn on project discovery failure while retaining the refreshed tokens.
+	// Report project discovery failure while retaining the refreshed tokens.
 	// A later refresh can retry discovery after a transient network failure.
 	// The token exchange itself has already succeeded.
 	if tokenInfo.ProjectIDMissing {
 		if tokenInfo.ProjectID != "" {
 			// Discovery failed, but an existing project ID remains available.
-			r.Logf("[AntigravityTokenRefresher] Provider %d: LoadCodeAssist 临时失败，保留旧 project_id", provider.ID)
+			r.Logf("[INFO] [AntigravityTokenRefresher] Provider %d: LoadCodeAssist temporarily failed, retaining existing project_id", provider.ID)
 		} else {
 			// Allow future discovery attempts when no project ID
 			// has ever been obtained.
-			r.Logf("[AntigravityTokenRefresher] Provider %d: LoadCodeAssist 失败，project_id 缺失，但 token 已更新，将在下次刷新时重试", provider.ID)
+			r.Logf("[INFO] [AntigravityTokenRefresher] Provider %d: LoadCodeAssist failed and project_id is missing; token updated, will retry on next refresh", provider.ID)
 		}
 	}
 

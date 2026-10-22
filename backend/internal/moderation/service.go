@@ -1729,10 +1729,10 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 	if err := validateContentModerationAPIKeyInputs(input.APIKeyEntries, input.APIKeyUpdates); err != nil {
 		return nil, err
 	}
-	if err := validateContentModerationAuditTextLimit(input.AuditUserTextMaxChars, "用户文本"); err != nil {
+	if err := validateContentModerationAuditTextLimit(input.AuditUserTextMaxChars, "user text"); err != nil {
 		return nil, err
 	}
-	if err := validateContentModerationAuditTextLimit(input.AuditToolOutputMaxChars, "工具结果"); err != nil {
+	if err := validateContentModerationAuditTextLimit(input.AuditToolOutputMaxChars, "tool output"); err != nil {
 		return nil, err
 	}
 	if input.Enabled != nil {
@@ -3175,15 +3175,15 @@ func (s *ContentModerationService) ListLogs(ctx context.Context, filter ContentM
 // records to not found.
 func (s *ContentModerationService) GetLog(ctx context.Context, id int64) (*ContentModerationLog, error) {
 	if id <= 0 {
-		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_LOG_ID", "审计记录 ID 无效")
+		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_LOG_ID", "Invalid audit record ID")
 	}
 	repo, ok := s.repo.(ContentModerationReviewRepository)
 	if !ok {
-		return nil, infraerrors.InternalServer("CONTENT_MODERATION_REVIEW_UNAVAILABLE", "完整复审材料仓储不可用")
+		return nil, infraerrors.InternalServer("CONTENT_MODERATION_REVIEW_UNAVAILABLE", "Full review material repository is unavailable")
 	}
 	item, err := repo.GetLog(ctx, id)
 	if s.runtime.MissingRow != nil && s.runtime.MissingRow(err) {
-		return nil, infraerrors.NotFound("CONTENT_MODERATION_LOG_NOT_FOUND", "审计记录不存在")
+		return nil, infraerrors.NotFound("CONTENT_MODERATION_LOG_NOT_FOUND", "Audit record not found")
 	}
 	return item, err
 }
@@ -3361,15 +3361,15 @@ func (s *ContentModerationService) ListCyberWarnings(ctx context.Context, filter
 // absent-row errors to not found.
 func (s *ContentModerationService) GetCyberWarning(ctx context.Context, id int64) (*ContentModerationCyberWarning, error) {
 	if id <= 0 {
-		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_CYBER_WARNING_ID", "Cyber 记录 ID 无效")
+		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_CYBER_WARNING_ID", "Invalid Cyber record ID")
 	}
 	repo, ok := s.repo.(ContentModerationReviewRepository)
 	if !ok {
-		return nil, infraerrors.InternalServer("CONTENT_MODERATION_REVIEW_UNAVAILABLE", "完整复审材料仓储不可用")
+		return nil, infraerrors.InternalServer("CONTENT_MODERATION_REVIEW_UNAVAILABLE", "Full review material repository is unavailable")
 	}
 	item, err := repo.GetCyberWarning(ctx, id)
 	if s.runtime.MissingRow != nil && s.runtime.MissingRow(err) {
-		return nil, infraerrors.NotFound("CONTENT_MODERATION_CYBER_WARNING_NOT_FOUND", "Cyber 记录不存在")
+		return nil, infraerrors.NotFound("CONTENT_MODERATION_CYBER_WARNING_NOT_FOUND", "Cyber record not found")
 	}
 	return item, err
 }
@@ -3380,21 +3380,21 @@ func (s *ContentModerationService) GetCyberWarning(ctx context.Context, id int64
 // as unavailable media.
 func (s *ContentModerationService) GetMediaContent(ctx context.Context, id int64) (*ContentModerationMedia, error) {
 	if id <= 0 {
-		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_MEDIA_ID", "媒体 ID 无效")
+		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_MEDIA_ID", "Invalid media ID")
 	}
 	repo, ok := s.repo.(ContentModerationReviewRepository)
 	if !ok {
-		return nil, infraerrors.InternalServer("CONTENT_MODERATION_REVIEW_UNAVAILABLE", "完整复审材料仓储不可用")
+		return nil, infraerrors.InternalServer("CONTENT_MODERATION_REVIEW_UNAVAILABLE", "Full review material repository is unavailable")
 	}
 	item, err := repo.GetMediaContent(ctx, id)
 	if s.runtime.MissingRow != nil && s.runtime.MissingRow(err) {
-		return nil, infraerrors.NotFound("CONTENT_MODERATION_MEDIA_NOT_FOUND", "媒体不存在")
+		return nil, infraerrors.NotFound("CONTENT_MODERATION_MEDIA_NOT_FOUND", "Media not found")
 	}
 	if err != nil {
 		return nil, err
 	}
 	if item.SnapshotStatus != "ready" || len(item.Content) == 0 {
-		return nil, infraerrors.NotFound("CONTENT_MODERATION_MEDIA_NOT_READY", "媒体快照不可用")
+		return nil, infraerrors.NotFound("CONTENT_MODERATION_MEDIA_NOT_READY", "Media snapshot is unavailable")
 	}
 	return item, nil
 }
@@ -3420,15 +3420,15 @@ func (s *ContentModerationService) GetCyberSummary(ctx context.Context, filter C
 // result and no rollback relationship with the status write.
 func (s *ContentModerationService) UnbanUser(ctx context.Context, userID int64) (*ContentModerationUnbanUserResult, error) {
 	if s == nil || s.userRepo == nil {
-		return nil, infraerrors.InternalServer("CONTENT_MODERATION_USER_REPOSITORY_UNAVAILABLE", "用户仓储不可用")
+		return nil, infraerrors.InternalServer("CONTENT_MODERATION_USER_REPOSITORY_UNAVAILABLE", "User repository is unavailable")
 	}
 	if userID <= 0 {
-		return nil, infraerrors.BadRequest("INVALID_USER_ID", "用户 ID 无效")
+		return nil, infraerrors.BadRequest("INVALID_USER_ID", "Invalid user ID")
 	}
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		if s.runtime.MissingUser != nil && s.runtime.MissingUser(err) {
-			return nil, infraerrors.NotFound("USER_NOT_FOUND", "用户不存在")
+			return nil, infraerrors.NotFound("USER_NOT_FOUND", "User not found")
 		}
 		return nil, fmt.Errorf("get content moderation unban user: %w", err)
 	}
@@ -3457,10 +3457,10 @@ func (s *ContentModerationService) UnbanUser(ctx context.Context, userID int64) 
 func (s *ContentModerationService) DeleteFlaggedInputHash(ctx context.Context, inputHash string) (*ContentModerationDeleteHashResult, error) {
 	inputHash = normalizeContentModerationHash(inputHash)
 	if inputHash == "" {
-		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_HASH", "风险输入哈希无效")
+		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_HASH", "Invalid risk input hash")
 	}
 	if s == nil || s.hashCache == nil {
-		return nil, infraerrors.InternalServer("CONTENT_MODERATION_HASH_CACHE_UNAVAILABLE", "内容审计哈希缓存不可用")
+		return nil, infraerrors.InternalServer("CONTENT_MODERATION_HASH_CACHE_UNAVAILABLE", "Content moderation hash cache is unavailable")
 	}
 	deleted, err := s.hashCache.DeleteFlaggedInputHash(ctx, inputHash)
 	if err != nil {
@@ -3478,7 +3478,7 @@ func (s *ContentModerationService) DeleteFlaggedInputHash(ctx context.Context, i
 // the count is not an atomic removed-member total.
 func (s *ContentModerationService) ClearFlaggedInputHashes(ctx context.Context) (*ContentModerationClearHashesResult, error) {
 	if s == nil || s.hashCache == nil {
-		return nil, infraerrors.InternalServer("CONTENT_MODERATION_HASH_CACHE_UNAVAILABLE", "内容审计哈希缓存不可用")
+		return nil, infraerrors.InternalServer("CONTENT_MODERATION_HASH_CACHE_UNAVAILABLE", "Content moderation hash cache is unavailable")
 	}
 	deleted, err := s.hashCache.ClearFlaggedInputHashes(ctx)
 	if err != nil {
@@ -3676,7 +3676,7 @@ func parseContentModerationConfig(raw string) (*ContentModerationConfig, error) 
 		return cfg, nil
 	}
 	if err := json.Unmarshal([]byte(raw), cfg); err != nil {
-		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_CONFIG", "内容审计配置不是有效 JSON")
+		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_CONFIG", "Content moderation configuration is not valid JSON")
 	}
 	cfg.normalize()
 	return cfg, nil
@@ -3906,36 +3906,36 @@ func (s *ContentModerationService) isRiskControlEnabled(ctx context.Context) boo
 // only when selected groups and a group repository are available.
 func (s *ContentModerationService) validateConfig(ctx context.Context, cfg *ContentModerationConfig) error {
 	if cfg == nil {
-		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_CONFIG", "内容审计配置不能为空")
+		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_CONFIG", "Content moderation configuration is required")
 	}
 	cfg.normalize()
 	switch cfg.Mode {
 	case ContentModerationModeOff, ContentModerationModeObserve, ContentModerationModePreBlock:
 	default:
-		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_MODE", "内容审计模式无效")
+		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_MODE", "Invalid content moderation mode")
 	}
 	if _, err := url.ParseRequestURI(cfg.BaseURL); err != nil {
-		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_BASE_URL", "OpenAI Base URL 无效")
+		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_BASE_URL", "Invalid OpenAI base URL")
 	}
 	if cfg.ProxyID != nil {
 		if s.proxyRepo == nil {
-			return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_PROXY", "代理仓储不可用")
+			return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_PROXY", "Proxy repository is unavailable")
 		}
 		if _, err := s.proxyRepo.Lookup(ctx, *cfg.ProxyID, time.Now()); err != nil {
-			return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_PROXY", fmt.Sprintf("代理服务器不存在: %d", *cfg.ProxyID))
+			return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_PROXY", fmt.Sprintf("Proxy server not found: %d", *cfg.ProxyID))
 		}
 	}
 	// Require an error response class for locally rejected requests.
 	if cfg.BlockStatus < 400 || cfg.BlockStatus > 599 {
-		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_BLOCK_STATUS", "拦截 HTTP 状态码必须在 400-599 之间")
+		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_BLOCK_STATUS", "Block HTTP status code must be between 400 and 599")
 	}
 	if cfg.ModelFilter.Type != ContentModerationModelFilterAll && len(cfg.ModelFilter.Models) == 0 {
-		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_MODEL_FILTER", "指定或排除模型时至少需要配置 1 个模型")
+		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_MODEL_FILTER", "At least one model is required when including or excluding models")
 	}
 	if !cfg.AllGroups && len(cfg.GroupIDs) > 0 && s.groupRepo != nil {
 		for _, groupID := range cfg.GroupIDs {
 			if err := s.groupRepo.CheckGroup(ctx, groupID); err != nil {
-				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_GROUP", fmt.Sprintf("审计分组不存在: %d", groupID))
+				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_GROUP", fmt.Sprintf("Moderation group not found: %d", groupID))
 			}
 		}
 	}
@@ -5215,7 +5215,7 @@ func buildModerationTestInput(prompt string, images []string) (any, int, error) 
 		}
 		// Reject later probe images beyond the supported per-request count.
 		if len(normalizedImages) >= maxContentModerationTestImages {
-			return nil, 0, infraerrors.BadRequest("TOO_MANY_MODERATION_TEST_IMAGES", fmt.Sprintf("最多上传 %d 张测试图片", maxContentModerationTestImages))
+			return nil, 0, infraerrors.BadRequest("TOO_MANY_MODERATION_TEST_IMAGES", fmt.Sprintf("At most %d test images can be uploaded", maxContentModerationTestImages))
 		}
 		if err := validateModerationTestImageDataURL(image); err != nil {
 			return nil, 0, err
@@ -5267,22 +5267,22 @@ func contentModerationTestHasAuditInput(prompt string, images []string) bool {
 func validateModerationTestImageDataURL(value string) error {
 	// Reject oversized encoded input before allocating decoded probe bytes.
 	if len(value) > maxContentModerationTestImageDataURLBytes {
-		return infraerrors.BadRequest("MODERATION_TEST_IMAGE_TOO_LARGE", "测试图片不能超过 8MB")
+		return infraerrors.BadRequest("MODERATION_TEST_IMAGE_TOO_LARGE", "Test images must not exceed 8MB")
 	}
 	if !strings.HasPrefix(value, "data:image/") {
-		return infraerrors.BadRequest("INVALID_MODERATION_TEST_IMAGE", "测试图片必须是 data:image/* base64")
+		return infraerrors.BadRequest("INVALID_MODERATION_TEST_IMAGE", "Test images must use data:image/* base64 encoding")
 	}
 	parts := strings.SplitN(value, ",", 2)
 	if len(parts) != 2 || !strings.Contains(parts[0], ";base64") {
-		return infraerrors.BadRequest("INVALID_MODERATION_TEST_IMAGE", "测试图片必须是 base64 data URL")
+		return infraerrors.BadRequest("INVALID_MODERATION_TEST_IMAGE", "Test images must be base64 data URLs")
 	}
 	raw, err := base64.StdEncoding.DecodeString(parts[1])
 	if err != nil {
-		return infraerrors.BadRequest("INVALID_MODERATION_TEST_IMAGE", "测试图片 base64 无效")
+		return infraerrors.BadRequest("INVALID_MODERATION_TEST_IMAGE", "Invalid test image base64 encoding")
 	}
 	// Decoded bytes have their own cap despite encoded-length acceptance.
 	if len(raw) > maxContentModerationTestImageBytes {
-		return infraerrors.BadRequest("MODERATION_TEST_IMAGE_TOO_LARGE", "测试图片不能超过 8MB")
+		return infraerrors.BadRequest("MODERATION_TEST_IMAGE_TOO_LARGE", "Test images must not exceed 8MB")
 	}
 	return nil
 }
@@ -5774,7 +5774,7 @@ func applyContentModerationAPIKeyMetadataUpdates(cfg *ContentModerationConfig, u
 	for _, update := range updates {
 		hash := normalizeContentModerationHash(update.KeyHash)
 		if _, ok := configured[hash]; !ok {
-			return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY", "要更新的审核 Key 不存在")
+			return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY", "Moderation key to update not found")
 		}
 		metadata[hash] = ContentModerationAPIKeyMetadata{
 			KeyHash:  hash,
@@ -5820,23 +5820,23 @@ func validateContentModerationAPIKeyInputs(entries *[]ContentModerationAPIKeyEnt
 	if entries != nil {
 		for _, item := range *entries {
 			if item.Priority < 0 || item.Priority > maxContentModerationAPIKeyPriority {
-				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY_PRIORITY", "审核 Key 优先级必须在 1-1000 之间")
+				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY_PRIORITY", "Moderation key priority must be between 1 and 1000")
 			}
 			if utf8.RuneCountInString(strings.TrimSpace(item.Note)) > maxContentModerationAPIKeyNoteRunes {
-				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY_NOTE", "审核 Key 备注不能超过 200 个字符")
+				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY_NOTE", "Moderation key note must not exceed 200 characters")
 			}
 		}
 	}
 	if updates != nil {
 		for _, item := range *updates {
 			if item.Priority <= 0 || item.Priority > maxContentModerationAPIKeyPriority {
-				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY_PRIORITY", "审核 Key 优先级必须在 1-1000 之间")
+				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY_PRIORITY", "Moderation key priority must be between 1 and 1000")
 			}
 			if normalizeContentModerationHash(item.KeyHash) == "" {
-				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY", "审核 Key 标识无效")
+				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY", "Invalid moderation key identifier")
 			}
 			if utf8.RuneCountInString(strings.TrimSpace(item.Note)) > maxContentModerationAPIKeyNoteRunes {
-				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY_NOTE", "审核 Key 备注不能超过 200 个字符")
+				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_API_KEY_NOTE", "Moderation key note must not exceed 200 characters")
 			}
 		}
 	}
@@ -5853,7 +5853,7 @@ func validateContentModerationAuditTextLimit(limit *int, label string) error {
 	}
 	// Require a positive budget before normalization can substitute its fallback.
 	if *limit <= 0 || *limit > maxContentModerationAuditTextChars {
-		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_AUDIT_TEXT_LIMIT", fmt.Sprintf("%s审核字符数必须在 1-%d 之间", label, maxContentModerationAuditTextChars))
+		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_AUDIT_TEXT_LIMIT", fmt.Sprintf("%s moderation character limit must be between 1 and %d", label, maxContentModerationAuditTextChars))
 	}
 	return nil
 }

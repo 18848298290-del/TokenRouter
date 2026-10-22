@@ -266,7 +266,7 @@ func (s *OpenAILiveExecutor) createUpstreamLiveCall(ctx context.Context, provide
 // message.
 func logLiveCreateStageFailure(ctx context.Context, providerID int64, stage string, err error) {
 	logging.FromContext(ctx).Warn(
-		"OpenAI Live 创建阶段失败",
+		"OpenAI Live creation failed",
 		zap.Int64("provider_id", providerID),
 		zap.String("stage", stage),
 		zap.String("error_type", fmt.Sprintf("%T", err)),
@@ -309,7 +309,7 @@ func logLiveUpstreamFailure(
 	// Limit normalized source prefixes to 120 bytes and message text to 300 bytes
 	// before adding the ellipsis, keeping each rejection diagnostic field bounded.
 	logging.FromContext(ctx).Warn(
-		"OpenAI Live 上游拒绝请求",
+		"OpenAI Live upstream rejected request",
 		zap.Int64("provider_id", providerID),
 		zap.Int("upstream_status_code", statusCode),
 		zap.String("upstream_error_type", gatewayprovider.TruncateOpenAIWSLogValue(errorType, 120)),

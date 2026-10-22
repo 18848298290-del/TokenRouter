@@ -232,7 +232,7 @@ func (s *AlertDelivery) SendBalanceLowEmails(recipients []string, userID int64, 
 		}
 		cancel()
 		if err != nil {
-			slog.Error("余额提醒发送失败", "user_id", userID, "error", err)
+			slog.Error("Failed to send balance alert", "user_id", userID, "error", err)
 		}
 	}
 }

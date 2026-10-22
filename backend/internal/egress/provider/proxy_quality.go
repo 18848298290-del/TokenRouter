@@ -68,7 +68,7 @@ func RunProxyQualityTarget(ctx context.Context, client *http.Client, target egre
 	req, err := http.NewRequestWithContext(ctx, target.Method, target.URL, nil)
 	if err != nil {
 		item.Status = "fail"
-		item.Message = fmt.Sprintf("构建请求失败: %v", err)
+		item.Message = fmt.Sprintf("failed to build request: %v", err)
 		return item
 	}
 	req.Header.Set("Accept", "application/json,text/html,*/*")
@@ -79,7 +79,7 @@ func RunProxyQualityTarget(ctx context.Context, client *http.Client, target egre
 	if err != nil {
 		item.Status = "fail"
 		item.LatencyMs = time.Since(start).Milliseconds()
-		item.Message = fmt.Sprintf("请求失败: %v", err)
+		item.Message = fmt.Sprintf("request failed: %v", err)
 		return item
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -89,7 +89,7 @@ func RunProxyQualityTarget(ctx context.Context, client *http.Client, target egre
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, egress.ProxyQualityMaxBodyBytes+1))
 	if readErr != nil {
 		item.Status = "fail"
-		item.Message = fmt.Sprintf("读取响应失败: %v", readErr)
+		item.Message = fmt.Sprintf("failed to read response: %v", readErr)
 		return item
 	}
 	// Quality classification accepts a bounded prefix rather than a complete
@@ -105,7 +105,7 @@ func RunProxyQualityTarget(ctx context.Context, client *http.Client, target egre
 	if egress.IsCloudflareChallengeResponse(resp.StatusCode, resp.Header, body) {
 		item.Status = "challenge"
 		item.CFRay = egress.ExtractCloudflareRayID(resp.Header, body)
-		item.Message = "命中 Cloudflare challenge"
+		item.Message = "Cloudflare challenge detected"
 		return item
 	}
 
@@ -117,18 +117,18 @@ func RunProxyQualityTarget(ctx context.Context, client *http.Client, target egre
 		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 			item.Message = fmt.Sprintf("HTTP %d", resp.StatusCode)
 		} else {
-			item.Message = fmt.Sprintf("HTTP %d（目标可达）", resp.StatusCode)
+			item.Message = fmt.Sprintf("HTTP %d (target reachable)", resp.StatusCode)
 		}
 		return item
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {
 		item.Status = "warn"
-		item.Message = "目标返回 429，可能存在频控"
+		item.Message = "Target returned 429, possible rate limiting"
 		return item
 	}
 
 	item.Status = "fail"
-	item.Message = fmt.Sprintf("非预期状态码: %d", resp.StatusCode)
+	item.Message = fmt.Sprintf("unexpected status code: %d", resp.StatusCode)
 	return item
 }

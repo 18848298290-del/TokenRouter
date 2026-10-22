@@ -99,7 +99,10 @@ function injectPublicSettings(backendUrl: string): Plugin {
         } catch (e) {
           // The browser can fetch public settings after startup, so a failed
           // development-time injection is logged and returns the unmodified template.
-          console.warn('[vite] 无法获取公开配置，将回退到 API 调用:', (e as Error).message)
+          console.warn(
+            '[vite] Failed to fetch public settings, the browser will request them through the API:',
+            (e as Error).message,
+          )
         }
         return html
       },

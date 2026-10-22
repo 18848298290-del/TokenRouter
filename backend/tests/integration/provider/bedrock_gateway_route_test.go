@@ -180,9 +180,9 @@ func TestBedrockRegionRouting_InvalidRouteStopsBeforeUpstream(t *testing.T) {
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tc.region)
 			if tc.hint {
-				require.Contains(t, err.Error(), "可开启“强制全局”")
+				require.Contains(t, err.Error(), "enable Force Global")
 			} else {
-				require.NotContains(t, err.Error(), "可开启")
+				require.NotContains(t, err.Error(), "enable Force Global")
 			}
 			require.Empty(t, upstream.requests)
 			require.Equal(t, billing.StatusActive, provider.Record.Status)

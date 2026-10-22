@@ -155,7 +155,7 @@ func (r *Store) logUsageAnalyticsFallback(operation string, err error) {
 	if err == nil || !shouldLogUsageAnalyticsFallback(operation, time.Now()) {
 		return
 	}
-	slog.Warn("预聚合查询失败，已透明回退使用记录原始表", "operation", operation, "error", err)
+	slog.Warn("Pre-aggregation query failed, querying raw usage logs", "operation", operation, "error", err)
 }
 
 // shouldLogUsageAnalyticsFallback claims the next warning slot for an operation.

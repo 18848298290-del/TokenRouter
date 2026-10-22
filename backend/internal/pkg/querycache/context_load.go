@@ -163,7 +163,7 @@ func (c *Cache) runContextLoad(key string, flight *contextLoad, load func(contex
 		// error. Later publication executes after this recovery point, before
 		// notifying waiters.
 		if recovered := recover(); recovered != nil {
-			err = fmt.Errorf("缓存查询加载异常: %v", recovered)
+			err = fmt.Errorf("query cache load panicked: %v", recovered)
 		}
 		c.loadMu.Lock()
 		defer c.loadMu.Unlock()

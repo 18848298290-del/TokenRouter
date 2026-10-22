@@ -201,17 +201,17 @@ func (s *AntigravityAuthorization) generateAuthURL(ctx context.Context, proxyID 
 	// exchange.
 	state, err := s.Options.GenerateState()
 	if err != nil {
-		return nil, fmt.Errorf("生成 state 失败: %w", err)
+		return nil, fmt.Errorf("failed to generate state: %w", err)
 	}
 
 	codeVerifier, err := s.Options.GenerateCodeVerifier()
 	if err != nil {
-		return nil, fmt.Errorf("生成 code_verifier 失败: %w", err)
+		return nil, fmt.Errorf("failed to generate code_verifier: %w", err)
 	}
 
 	sessionID, err := s.Options.GenerateSessionID()
 	if err != nil {
-		return nil, fmt.Errorf("生成 session_id 失败: %w", err)
+		return nil, fmt.Errorf("failed to generate session_id: %w", err)
 	}
 
 	// New proof has no saved transport to recover. An unavailable selected
@@ -254,11 +254,11 @@ func (s *AntigravityAuthorization) generateAuthURL(ctx context.Context, proxyID 
 func (s *AntigravityAuthorization) exchangeCode(ctx context.Context, input *AntigravityExchangeCodeInput) (*AntigravityTokenInfo, error) {
 	session, ok := s.Store.Get(input.SessionID)
 	if !ok {
-		return nil, fmt.Errorf("session 不存在或已过期")
+		return nil, fmt.Errorf("session not found or expired")
 	}
 
 	if strings.TrimSpace(input.State) == "" || input.State != session.State {
-		return nil, fmt.Errorf("state 无效")
+		return nil, fmt.Errorf("invalid state")
 	}
 
 	// A resolved request proxy overrides saved transport. Unavailable lookup
@@ -281,7 +281,7 @@ func (s *AntigravityAuthorization) exchangeCode(ctx context.Context, input *Anti
 	// exchange.
 	tokenResp, err := client.ExchangeCode(ctx, input.Code, session.CodeVerifier)
 	if err != nil {
-		return nil, fmt.Errorf("token 交换失败: %w", err)
+		return nil, fmt.Errorf("failed to exchange token: %w", err)
 	}
 
 	// Consume proof before account metadata work so discovery failures cannot
@@ -305,7 +305,7 @@ func (s *AntigravityAuthorization) exchangeCode(ctx context.Context, input *Anti
 	// account hint, allowing project and privacy discovery to continue afterward.
 	userInfo, err := client.GetUserInfo(ctx, tokenResp.AccessToken)
 	if err != nil {
-		s.Options.Printf("[AntigravityOAuth] 警告: 获取用户信息失败: %v\n", err)
+		s.Options.Printf("[AntigravityOAuth] Warning: failed to get user information: %v\n", err)
 	} else {
 		result.Email = userInfo.Email
 	}
@@ -315,7 +315,7 @@ func (s *AntigravityAuthorization) exchangeCode(ctx context.Context, input *Anti
 	// handling.
 	loadResult, loadErr := s.loadProjectIDWithRetry(ctx, tokenResp.AccessToken, proxyURL, 3)
 	if loadErr != nil {
-		s.Options.Printf("[AntigravityOAuth] 警告: 获取 project_id 失败（重试后）: %v\n", loadErr)
+		s.Options.Printf("[AntigravityOAuth] Warning: failed to get project_id after retries: %v\n", loadErr)
 		result.ProjectIDMissing = true
 	}
 	if loadResult != nil {
@@ -383,7 +383,7 @@ func (s *AntigravityAuthorization) refreshToken(ctx context.Context, refreshToke
 		lastErr = err
 	}
 
-	return nil, fmt.Errorf("token 刷新失败 (重试后): %w", lastErr)
+	return nil, fmt.Errorf("failed to refresh token after retries: %w", lastErr)
 }
 
 // validateRefreshToken renews a credential before querying its email, project,
@@ -421,7 +421,7 @@ func (s *AntigravityAuthorization) validateRefreshToken(ctx context.Context, ref
 	}
 	userInfo, err := client.GetUserInfo(ctx, tokenInfo.AccessToken)
 	if err != nil {
-		s.Options.Printf("[AntigravityOAuth] 警告: 获取用户信息失败: %v\n", err)
+		s.Options.Printf("[AntigravityOAuth] Warning: failed to get user information: %v\n", err)
 	} else {
 		tokenInfo.Email = userInfo.Email
 	}
@@ -431,7 +431,7 @@ func (s *AntigravityAuthorization) validateRefreshToken(ctx context.Context, ref
 	// discovery from renewal failure.
 	loadResult, loadErr := s.loadProjectIDWithRetry(ctx, tokenInfo.AccessToken, proxyURL, 3)
 	if loadErr != nil {
-		s.Options.Printf("[AntigravityOAuth] 警告: 获取 project_id 失败（重试后）: %v\n", loadErr)
+		s.Options.Printf("[AntigravityOAuth] Warning: failed to get project_id after retries: %v\n", loadErr)
 		tokenInfo.ProjectIDMissing = true
 	}
 	if loadResult != nil {
@@ -480,12 +480,12 @@ func IsNonRetryableAntigravityOAuthError(err error) bool {
 // metadata for caller persistence and does not run privacy setup itself.
 func (s *AntigravityAuthorization) refreshProviderToken(ctx context.Context, provider *Record) (*AntigravityTokenInfo, error) {
 	if provider.Platform != PlatformAntigravity || provider.Type != ProviderTypeOAuth {
-		return nil, fmt.Errorf("非 Antigravity OAuth 提供商")
+		return nil, fmt.Errorf("provider is not an Antigravity OAuth provider")
 	}
 
 	refreshToken := provider.GetCredential("refresh_token")
 	if strings.TrimSpace(refreshToken) == "" {
-		return nil, fmt.Errorf("无可用的 refresh_token")
+		return nil, fmt.Errorf("no refresh_token available")
 	}
 
 	// Without saved transport, an unavailable selected proxy leaves an empty
@@ -596,9 +596,9 @@ func (s *AntigravityAuthorization) loadProjectIDWithRetry(ctx context.Context, a
 		if err != nil {
 			lastErr = err
 		} else if loadResp == nil {
-			lastErr = fmt.Errorf("LoadCodeAssist 返回空响应")
+			lastErr = fmt.Errorf("LoadCodeAssist returned an empty response")
 		} else {
-			lastErr = fmt.Errorf("LoadCodeAssist 返回空 project_id")
+			lastErr = fmt.Errorf("LoadCodeAssist returned an empty project_id")
 		}
 	}
 
@@ -606,9 +606,9 @@ func (s *AntigravityAuthorization) loadProjectIDWithRetry(ctx context.Context, a
 	// Callers can persist that independently useful account observation despite
 	// incomplete discovery.
 	if lastSubscription != nil {
-		return &loadCodeAssistResult{Subscription: lastSubscription}, fmt.Errorf("获取 project_id 失败 (重试 %d 次后): %w", maxRetries, lastErr)
+		return &loadCodeAssistResult{Subscription: lastSubscription}, fmt.Errorf("failed to get project_id after %d retries: %w", maxRetries, lastErr)
 	}
-	return nil, fmt.Errorf("获取 project_id 失败 (重试 %d 次后): %w", maxRetries, lastErr)
+	return nil, fmt.Errorf("failed to get project_id after %d retries: %w", maxRetries, lastErr)
 }
 
 // tryOnboardProjectID delegates onboarding with the raw response default tier.
@@ -618,12 +618,12 @@ func (s *AntigravityAuthorization) loadProjectIDWithRetry(ctx context.Context, a
 func tryOnboardProjectID(ctx context.Context, client AntigravityAuthorizationClient, accessToken string, loadRaw map[string]any) (string, error) {
 	tierID := ResolveAntigravityDefaultTierID(loadRaw)
 	if tierID == "" {
-		return "", fmt.Errorf("loadCodeAssist 未返回可用的默认 tier")
+		return "", fmt.Errorf("loadCodeAssist returned no usable default tier")
 	}
 
 	projectID, err := client.OnboardUser(ctx, accessToken, tierID)
 	if err != nil {
-		return "", fmt.Errorf("onboardUser 失败 (tier=%s): %w", tierID, err)
+		return "", fmt.Errorf("onboardUser failed (tier=%s): %w", tierID, err)
 	}
 	return projectID, nil
 }

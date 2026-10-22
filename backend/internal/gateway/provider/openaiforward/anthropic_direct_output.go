@@ -285,7 +285,7 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 						fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
-					o.Log("[CN Anthropic 直通] SSE line too long: provider=%d max_size=%d error=%v", o.ProviderID, maxLineSize, ev.err)
+					o.Log("[CN Anthropic passthrough] SSE line too long: provider=%d max_size=%d error=%v", o.ProviderID, maxLineSize, ev.err)
 					return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), ev.err
 				}
 				return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
@@ -315,10 +315,10 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 				restored := string(o.ReverseTools([]byte(line)))
 				if _, err := io.WriteString(w, restored); err != nil {
 					clientDisconnected = true
-					o.Log("[CN Anthropic 直通] Client disconnected during streaming, continue draining upstream for usage: provider=%d", o.ProviderID)
+					o.Log("[CN Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: provider=%d", o.ProviderID)
 				} else if _, err := io.WriteString(w, "\n"); err != nil {
 					clientDisconnected = true
-					o.Log("[CN Anthropic 直通] Client disconnected during streaming, continue draining upstream for usage: provider=%d", o.ProviderID)
+					o.Log("[CN Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: provider=%d", o.ProviderID)
 				} else if line == "" {
 					// A blank line completes the SSE frame; flush then refresh keepalive
 					// spacing so heartbeats are measured from completed client output.
@@ -343,7 +343,7 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 				return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
 					fmt.Errorf("stream usage incomplete after timeout")
 			}
-			o.Log("[CN Anthropic 直通] Stream data interval timeout: provider=%d model=%s interval=%s", o.ProviderID, upstreamModel, streamInterval)
+			o.Log("[CN Anthropic passthrough] Stream data interval timeout: provider=%d model=%s interval=%s", o.ProviderID, upstreamModel, streamInterval)
 			o.HandleTimeout(ctx, upstreamModel)
 			return NativeAnthropicStreamResult(resp, usage, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
 				fmt.Errorf("stream data interval timeout")
@@ -364,7 +364,7 @@ func NativeAnthropicStreaming(ctx context.Context, resp *http.Response, c *upstr
 			}
 			if _, err := fmt.Fprint(w, "event: ping\ndata: {\"type\": \"ping\"}\n\n"); err != nil {
 				clientDisconnected = true
-				o.Log("[CN Anthropic 直通] Client disconnected during keepalive ping, continue draining upstream for usage: provider=%d", o.ProviderID)
+				o.Log("[CN Anthropic passthrough] Client disconnected during keepalive ping, continue draining upstream for usage: provider=%d", o.ProviderID)
 				continue
 			}
 			flusher.Flush()

@@ -100,14 +100,16 @@ export function buildModelMappingObject(
       // Skip invalid source patterns before constructing the persisted mapping so the
       // editor uses the same wildcard placement rules as validation.
       if (!isValidWildcardPattern(from)) {
-        console.warn(`[buildModelMappingObject] 无效的通配符格式，跳过: ${from}`)
+        console.warn(`[buildModelMappingObject] Skipping invalid wildcard pattern: ${from}`)
         continue
       }
 
       // Targets identify concrete forwarded model names; skipping wildcard targets
       // prevents storing a pattern where a resolved model is required.
       if (to.includes('*')) {
-        console.warn(`[buildModelMappingObject] 目标模型不能包含通配符，跳过: ${from} -> ${to}`)
+        console.warn(
+          `[buildModelMappingObject] Skipping target model containing a wildcard: ${from} -> ${to}`,
+        )
         continue
       }
       mapping[from] = to

@@ -366,7 +366,7 @@ func TestProviderTestService_AdaptiveChatOnlyProvidersTestChatAndAnthropicEndpoi
 	require.Equal(t, "sk-adaptive-test", anthropic.GetHeaderRaw(upstream.requests[1].Header, "x-api-key"))
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), `"type":"test_start"`))
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), `"type":"test_complete"`))
-	require.Contains(t, recorder.Body.String(), "已通过原生 /v1/messages 验证")
+	require.Contains(t, recorder.Body.String(), "Verified through native /v1/messages")
 }
 
 // TestProviderTestService_AdaptiveDeepSeekAlsoTestsResponsesEndpoint runs
@@ -394,7 +394,7 @@ func TestProviderTestService_AdaptiveDeepSeekAlsoTestsResponsesEndpoint(t *testi
 	require.False(t, gjson.GetBytes(upstream.bodies[2], "store").Bool())
 	require.False(t, gjson.GetBytes(upstream.bodies[2], "instructions").Exists())
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), `"type":"test_complete"`))
-	require.Contains(t, recorder.Body.String(), "已通过原生 /responses 验证")
+	require.Contains(t, recorder.Body.String(), "Verified through native /responses")
 }
 
 // TestProviderTestService_AdaptiveKimiAlsoTestsResponsesEndpoint runs adaptive
@@ -422,7 +422,7 @@ func TestProviderTestService_AdaptiveKimiAlsoTestsResponsesEndpoint(t *testing.T
 	require.False(t, gjson.GetBytes(upstream.bodies[2], "store").Bool())
 	require.False(t, gjson.GetBytes(upstream.bodies[2], "instructions").Exists())
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), `"type":"test_complete"`))
-	require.Contains(t, recorder.Body.String(), "已通过原生 /responses 验证")
+	require.Contains(t, recorder.Body.String(), "Verified through native /responses")
 }
 
 // TestProviderTestService_AdaptiveStopsAndNamesFailingEndpoint injects a
@@ -2179,7 +2179,7 @@ func TestProviderTestService_OpenAIAPIKeySelectedChatUsesChatCompletionsPath(t *
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 	body := recorder.Body.String()
 	require.Contains(t, body, "pong")
-	require.Contains(t, body, "已通过 /v1/chat/completions 验证")
+	require.Contains(t, body, "Verified through /v1/chat/completions")
 	require.Contains(t, body, `"success":true`)
 	require.NotContains(t, body, "当前测试接口仅支持 Responses API 路径")
 }

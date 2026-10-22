@@ -157,7 +157,7 @@ func TestInit_FileOutputFailureDowngrade(t *testing.T) {
 	// its selected output handle.
 	_ = stderrW.Close()
 	stderrBytes, _ := io.ReadAll(stderrR)
-	if !strings.Contains(string(stderrBytes), "日志文件输出初始化失败") {
+	if !strings.Contains(string(stderrBytes), "Failed to initialize file logging") {
 		t.Fatalf("stderr should contain fallback warning, got: %s", string(stderrBytes))
 	}
 }
@@ -259,10 +259,10 @@ func TestLegacyPrintfCaller(t *testing.T) {
 	}
 }
 
-// TestInferStdLogLevel supplies ordinary, debug-prefixed, warning, failure,
-// and retry messages to severity inference. It requires the selected zap
-// levels, including info for a reconnect log containing numeric retry
-// metadata.
+// TestInferStdLogLevel supplies ordinary, explicitly leveled, failure, and
+// retry messages to severity inference. Explicit levels must override failure
+// words in English diagnostic messages, while unmarked messages retain the
+// keyword-based selection used by legacy callers.
 func TestInferStdLogLevel(t *testing.T) {
 	cases := []struct {
 		msg  string // supplied legacy message text
@@ -274,6 +274,11 @@ func TestInferStdLogLevel(t *testing.T) {
 		{msg: "[OpenAI WS Mode] reconnect_retry provider_id=22 retry=1 max_retries=5", want: LevelInfo},
 		{msg: "service started", want: LevelInfo},
 		{msg: "debug: cache miss", want: LevelDebug},
+		{msg: "[INFO] [PreAggregation] Failed to read runtime configuration, using deployment defaults: context deadline exceeded", want: LevelInfo},
+		{msg: "[info] refresh failed: upstream error", want: LevelInfo},
+		{msg: "info: operation failed with a warning", want: LevelInfo},
+		{msg: "[WARN] refresh failed: upstream error", want: LevelWarn},
+		{msg: "[DEBUG] refresh failed: upstream error", want: LevelDebug},
 	}
 
 	for _, tc := range cases {
@@ -300,7 +305,8 @@ func TestNormalizeStdLogMessage(t *testing.T) {
 // TestStdLogBridgeRoutesLevels sends ordinary, warning, and failed
 // standard-log messages after Init. It requires severity-specific captured
 // streams and the legacy_stdlog marker on warning/error output after pipe
-// writers close.
+// writers close. An explicit info prefix keeps a translated failure and its
+// error detail on stdout.
 func TestStdLogBridgeRoutesLevels(t *testing.T) {
 	// This serial fixture owns the process stream replacement until cleanup
 	// restores stdout and stderr. Its logger core retains the pipe writer
@@ -343,6 +349,7 @@ func TestStdLogBridgeRoutesLevels(t *testing.T) {
 	log.Printf("service started")
 	log.Printf("Warning: queue full")
 	log.Printf("Forward request failed: timeout")
+	log.Printf("[INFO] [PreAggregation] Failed to read runtime configuration: %s", "upstream error")
 	// Close both pipe writers so captured reads can reach EOF. The logger keeps
 	// the handles selected during Init, and Windows Sync can wait inside
 	// FlushFileBuffers until a pipe consumer reads its buffered bytes.
@@ -356,6 +363,9 @@ func TestStdLogBridgeRoutesLevels(t *testing.T) {
 
 	if !strings.Contains(stdoutText, "service started") {
 		t.Fatalf("stdout missing info log: %s", stdoutText)
+	}
+	if !strings.Contains(stdoutText, "[INFO] [PreAggregation] Failed to read runtime configuration: upstream error") || strings.Contains(stderrText, "[PreAggregation]") {
+		t.Fatalf("explicit info log routed incorrectly: stdout=%s stderr=%s", stdoutText, stderrText)
 	}
 	if !strings.Contains(stderrText, "Warning: queue full") {
 		t.Fatalf("stderr missing warn log: %s", stderrText)
@@ -371,7 +381,8 @@ func TestStdLogBridgeRoutesLevels(t *testing.T) {
 // TestLegacyPrintfRoutesLevels sends ordinary, warning, and failed printf
 // messages through one component label. It requires severity routing,
 // legacy_printf markers, and that component attribute in captured
-// warning/error output.
+// warning/error output. An explicit info prefix keeps translated cache
+// failures on stdout even when their formatted detail contains error keywords.
 func TestLegacyPrintfRoutesLevels(t *testing.T) {
 	// This serial fixture owns the process stream replacement until cleanup
 	// restores stdout and stderr. Its logger core retains the pipe writer
@@ -414,6 +425,7 @@ func TestLegacyPrintfRoutesLevels(t *testing.T) {
 	LegacyPrintf("service.test", "request started")
 	LegacyPrintf("service.test", "Warning: queue full")
 	LegacyPrintf("service.test", "forward failed: timeout")
+	LegacyPrintf("service.test", "[INFO] [Dashboard] Failed to read dashboard cache: %s", "upstream error")
 	// Close both pipe writers so captured reads can reach EOF. The logger keeps
 	// the handles selected during Init, and Windows Sync can wait inside
 	// FlushFileBuffers until a pipe consumer reads its buffered bytes.
@@ -427,6 +439,9 @@ func TestLegacyPrintfRoutesLevels(t *testing.T) {
 
 	if !strings.Contains(stdoutText, "request started") {
 		t.Fatalf("stdout missing info log: %s", stdoutText)
+	}
+	if !strings.Contains(stdoutText, "[INFO] [Dashboard] Failed to read dashboard cache: upstream error") || strings.Contains(stderrText, "[Dashboard]") {
+		t.Fatalf("explicit info log routed incorrectly: stdout=%s stderr=%s", stdoutText, stderrText)
 	}
 	if !strings.Contains(stderrText, "Warning: queue full") {
 		t.Fatalf("stderr missing warn log: %s", stderrText)

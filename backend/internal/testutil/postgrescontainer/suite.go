@@ -59,7 +59,7 @@ type Suite struct {
 func (s *Suite) Run(m *testing.M) int {
 	code := m.Run()
 	if err := s.Close(); err != nil {
-		fmt.Fprintln(os.Stderr, "清理测试数据库失败:", err)
+		fmt.Fprintln(os.Stderr, "failed to clean up test database:", err)
 		return 1
 	}
 	return code
@@ -77,7 +77,7 @@ func (s *Suite) Run(m *testing.M) int {
 // after an initialization failure.
 func (s *Suite) initialize(ctx context.Context, migrationFS fs.FS) error {
 	if s.closed {
-		return errors.New("测试数据库已关闭")
+		return errors.New("test database is closed")
 	}
 	if s.admin != nil {
 		return nil
@@ -151,7 +151,7 @@ func (s *Suite) New(t *testing.T) *sql.DB {
 	if err := s.initialize(ctx, migrations.FS); err != nil {
 		s.closed = true
 		s.mu.Unlock()
-		t.Fatalf("初始化测试数据库: %v", err)
+		t.Fatalf("initialize test database: %v", err)
 	}
 	// Allocate the clone name while initialization and creation share the suite lock.
 	// Parallel New calls then clone the completed template into separate database identities.
@@ -161,7 +161,7 @@ func (s *Suite) New(t *testing.T) *sql.DB {
 	dsn := s.databaseDSN(name)
 	s.mu.Unlock()
 	if err != nil {
-		t.Fatalf("创建测试数据库: %v", err)
+		t.Fatalf("create test database: %v", err)
 	}
 	var db *sql.DB
 	// Register before opening the clone pool so a later construction failure still
@@ -169,18 +169,18 @@ func (s *Suite) New(t *testing.T) *sql.DB {
 	t.Cleanup(func() {
 		if db != nil {
 			if err := db.Close(); err != nil {
-				t.Errorf("关闭测试数据库连接: %v", err)
+				t.Errorf("close test database connection: %v", err)
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := s.drop(ctx, name); err != nil {
-			t.Errorf("清理测试数据库: %v", err)
+			t.Errorf("clean up test database: %v", err)
 		}
 	})
 	db, err = sql.Open("postgres", dsn)
 	if err != nil {
-		t.Fatalf("连接测试数据库: %v", err)
+		t.Fatalf("connect to test database: %v", err)
 	}
 	return db
 }

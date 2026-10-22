@@ -53,7 +53,7 @@ func APIKeyPassthrough(ctx context.Context, p PassthroughPorts, in MessageInput,
 
 	p.ResolveProxy()
 
-	p.Log(fmt.Sprintf("[Anthropic 自动透传] 命中 API Key 透传分支: provider=%d name=%s model=%s stream=%v",
+	p.Log(fmt.Sprintf("[Anthropic auto passthrough] Selected API key passthrough: provider=%d name=%s model=%s stream=%v",
 		in.ProviderID, in.ProviderName, input.RequestModel, input.RequestStream))
 
 	p.MarkPassthrough()

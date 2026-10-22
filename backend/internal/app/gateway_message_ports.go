@@ -30,7 +30,7 @@ func provideRetryCooldown(store *providerpostgres.ProviderStore) *provider.Retry
 	return provider.NewRetryCooldown(source, provider.RetryCooldownOptions{
 		Logf: log.Printf,
 		LookupError: func(id int64, err error) {
-			logging.LegacyPrintf("service.gateway", "查询重试耗尽提供商失败: provider=%d error=%v", id, err)
+			logging.LegacyPrintf("service.gateway", "Failed to look up provider after retry exhaustion: provider=%d error=%v", id, err)
 		},
 	})
 }

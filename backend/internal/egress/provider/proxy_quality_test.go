@@ -84,7 +84,7 @@ func TestRunProxyQualityTarget_AllowedStatusPassForUnauthorized(t *testing.T) {
 	item := RunProxyQualityTarget(context.Background(), server.Client(), target)
 	require.Equal(t, "pass", item.Status)
 	require.Equal(t, http.StatusUnauthorized, item.HTTPStatus)
-	require.Contains(t, item.Message, "目标可达")
+	require.Contains(t, item.Message, "target reachable")
 }
 
 // TestProxyQualityTargets_IncludesGrok locates the configured Grok target in
@@ -131,5 +131,5 @@ func TestRunProxyQualityTarget_GrokUnauthorizedPasses(t *testing.T) {
 	require.Equal(t, "grok", item.Target)
 	require.Equal(t, "pass", item.Status)
 	require.Equal(t, http.StatusUnauthorized, item.HTTPStatus)
-	require.Contains(t, item.Message, "目标可达")
+	require.Contains(t, item.Message, "target reachable")
 }

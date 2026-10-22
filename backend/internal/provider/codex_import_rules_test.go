@@ -247,7 +247,7 @@ func TestNormalizeCodexImportRejectsExpiredAccessToken(t *testing.T) {
 	if err == nil {
 		t.Fatal("NormalizeCodexImportEntry error = nil, want expired token error")
 	}
-	if !strings.Contains(err.Error(), "已过期") {
+	if !strings.Contains(err.Error(), "has expired") {
 		t.Fatalf("error = %v, want expired token message", err)
 	}
 }
@@ -299,7 +299,7 @@ func TestResolveCodexImportExpiryForNoRefreshTokenRequiresExpiry(t *testing.T) {
 	if err == nil {
 		t.Fatal("ResolveCodexImportExpiry error = nil, want missing expiry error")
 	}
-	if !strings.Contains(err.Error(), "无法解析 accessToken 过期时间") {
+	if !strings.Contains(err.Error(), "accessToken expiry could not be parsed") {
 		t.Fatalf("error = %v, want missing expiry message", err)
 	}
 }
@@ -433,7 +433,7 @@ func TestCodexImportInjectedClockAndExpiryBoundaries(t *testing.T) {
 			token := "e30." + base64.RawURLEncoding.EncodeToString(payload) + "."
 			item, err := NormalizeCodexImportEntry(CodexImportEntry{Index: 1, Value: map[string]any{"access_token": token, "refresh_token": "fixture-refresh"}}, options)
 			if delta < -120 {
-				require.ErrorContains(t, err, "access_token 已过期")
+				require.ErrorContains(t, err, "access_token has expired")
 				return
 			}
 			require.NoError(t, err)
@@ -441,7 +441,7 @@ func TestCodexImportInjectedClockAndExpiryBoundaries(t *testing.T) {
 			item.RefreshToken = ""
 			_, _, _, _, err = ResolveCodexImportExpiry(CodexSessionImportRequest{}, item, options.Now)
 			if delta <= -120 {
-				require.ErrorContains(t, err, "过期时间已过期")
+				require.ErrorContains(t, err, "expiry time is in the past")
 			} else {
 				require.NoError(t, err)
 			}

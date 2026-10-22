@@ -41,7 +41,7 @@ func (TeamMembership) Mixin() []ent.Mixin {
 func (TeamMembership) Fields() []ent.Field {
 	validateNonNegative := func(value float64) error {
 		if value < 0 {
-			return fmt.Errorf("团队成员限额和用量不能为负数")
+			return fmt.Errorf("team member quotas and usage must not be negative")
 		}
 		return nil
 	}
@@ -60,7 +60,7 @@ func (TeamMembership) Fields() []ent.Field {
 		// It is distinct from the user's global administrator or user role.
 		field.String("role").MaxLen(20).Default("member").Validate(func(value string) error {
 			if value != "owner" && value != "member" {
-				return fmt.Errorf("团队角色必须为 owner 或 member")
+				return fmt.Errorf("team role must be owner or member")
 			}
 			return nil
 		}),

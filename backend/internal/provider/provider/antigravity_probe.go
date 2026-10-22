@@ -63,7 +63,7 @@ func (s *AntigravityProbe) Execute(ctx context.Context, value *provider.Record, 
 	}
 	token, err := s.Tokens.GetAccessToken(ctx, value)
 	if err != nil {
-		return nil, fmt.Errorf("获取 access_token 失败: %w", err)
+		return nil, fmt.Errorf("failed to get access_token: %w", err)
 	}
 	project, err := provider.ResolveAntigravityProjectID(value, antigravity.ErrProjectIDRequired)
 	if err != nil {
@@ -89,7 +89,7 @@ func (s *AntigravityProbe) Execute(ctx context.Context, value *provider.Record, 
 		body, err = antigravity.BuildClaudeTestRequest(project, model, prompt)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("构建请求失败: %w", err)
+		return nil, fmt.Errorf("failed to build request: %w", err)
 	}
 	proxy := ""
 	if value.ProxyID != nil && value.Proxy != nil {

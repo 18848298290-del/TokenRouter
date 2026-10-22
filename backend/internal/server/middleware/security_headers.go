@@ -231,7 +231,7 @@ func SecurityHeaders(cfg httpconfig.CSPConfig, getFrameSrcOrigins func() []strin
 				// If the nonce helper returns an error, this branch substitutes
 				// unsafe-inline for placeholder positions. Go 1.27.3 entropy-reader failure
 				// terminates before this branch can run.
-				log.Printf("[SecurityHeaders] %v — 降级为无 nonce 的 CSP", err)
+				log.Printf("[SecurityHeaders] %v; using CSP without a nonce", err)
 				c.Header("Content-Security-Policy", strings.ReplaceAll(finalPolicy, NonceTemplate, "'unsafe-inline'"))
 			} else {
 				// Publish the nonce before downstream frontend rendering. A

@@ -53,7 +53,7 @@ func SanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 			updated = b
 			changed = true
 		} else {
-			logger.LegacyPrintf("service.gateway", "[CtxMgmtSanitize] 删除 context_management 失败: %v (body len=%d)", err, len(body))
+			logger.LegacyPrintf("service.gateway", "[INFO] [CtxMgmtSanitize] Failed to remove context_management: %v (body len=%d)", err, len(body))
 		}
 	}
 	// Final beta selection controls the fast-speed extension independently of
@@ -64,7 +64,7 @@ func SanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 			updated = b
 			changed = true
 		} else {
-			logger.LegacyPrintf("service.gateway", "[FastModeSanitize] 删除 speed 失败: %v (body len=%d)", err, len(body))
+			logger.LegacyPrintf("service.gateway", "[INFO] [FastModeSanitize] Failed to remove speed: %v (body len=%d)", err, len(body))
 		}
 	}
 	// The fallback list and credit value have different accepted-token sets;
@@ -95,7 +95,7 @@ func StripAnthropicBodyFieldUnlessBeta(body []byte, field, anthropicBetaHeader s
 	// or replace its working bytes for this gate.
 	b, err := sjson.DeleteBytes(body, field)
 	if err != nil {
-		logger.LegacyPrintf("service.gateway", "[BetaFieldSanitize] 删除 %s 失败: %v (body len=%d)", field, err, len(body))
+		logger.LegacyPrintf("service.gateway", "[INFO] [BetaFieldSanitize] Failed to remove %s: %v (body len=%d)", field, err, len(body))
 		return body, false
 	}
 	return b, true

@@ -42,7 +42,7 @@ func (Team) Mixin() []ent.Mixin {
 func (Team) Fields() []ent.Field {
 	validateDefaultLimit := func(value float64) error {
 		if value < 0 {
-			return fmt.Errorf("团队成员默认限额不能为负数")
+			return fmt.Errorf("default team member quota must not be negative")
 		}
 		return nil
 	}
@@ -56,7 +56,7 @@ func (Team) Fields() []ent.Field {
 		// admission. The team lifecycle checks this value when authenticating keys.
 		field.String("status").MaxLen(20).Default("active").Validate(func(value string) error {
 			if value != "active" && value != "suspended" {
-				return fmt.Errorf("团队状态必须为 active 或 suspended")
+				return fmt.Errorf("team status must be active or suspended")
 			}
 			return nil
 		}),

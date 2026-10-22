@@ -96,7 +96,7 @@ func NewTeamInvitationLimiter(redisClient *redis.Client) team.TeamInvitationLimi
 // and only admission value one is accepted.
 func (l *TeamInvitationLimiter) CheckAndRecord(ctx context.Context, teamID int64, email string) (bool, time.Duration, error) {
 	if l == nil || l.redis == nil {
-		return false, 0, fmt.Errorf("团队邀请 Redis 未配置")
+		return false, 0, fmt.Errorf("team invitation Redis is not configured")
 	}
 	// Hash lowercased trimmed mailbox text for a team-specific recipient key,
 	// sharing cooldown across case/spacing variants while the separate hourly
@@ -117,7 +117,7 @@ func (l *TeamInvitationLimiter) CheckAndRecord(ctx context.Context, teamID int64
 	// Require the Lua admission flag and retry-millisecond pair before decoding.
 	parts, ok := value.([]any)
 	if !ok || len(parts) != 2 {
-		return false, 0, fmt.Errorf("团队邀请限流返回值无效")
+		return false, 0, fmt.Errorf("invalid team invitation rate limit result")
 	}
 	allowed, err := RedisInt64(parts[0])
 	if err != nil {
@@ -146,6 +146,6 @@ func RedisInt64(value any) (int64, error) {
 		_, err := fmt.Sscan(typed, &parsed)
 		return parsed, err
 	default:
-		return 0, fmt.Errorf("redis 整数类型无效: %T", value)
+		return 0, fmt.Errorf("invalid Redis integer type: %T", value)
 	}
 }

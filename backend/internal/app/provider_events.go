@@ -115,7 +115,7 @@ func providerSchedulerEventName(event providerpostgres.ProviderEvent) string {
 	case providerpostgres.ProviderBulkChanged:
 		return scheduler.SchedulerOutboxEventProviderBulkChanged
 	default:
-		panic("未知提供商事件")
+		panic("unknown provider event")
 	}
 }
 

@@ -1331,5 +1331,5 @@ func MapTeamConstraintError(err error) error {
 	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
 		return team.ErrTeamAlreadyJoined
 	}
-	return fmt.Errorf("团队数据约束失败: %w", err)
+	return fmt.Errorf("team data constraint failed: %w", err)
 }

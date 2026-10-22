@@ -505,7 +505,7 @@ func (s *ProxyAdmin) CheckProxyQuality(ctx context.Context, id int64) (*ProxyQua
 		result.Items = append(result.Items, ProxyQualityCheckItem{
 			Target:  "base_connectivity",
 			Status:  "fail",
-			Message: "代理探测服务未配置",
+			Message: "Proxy probe service is not configured",
 		})
 		result.FailedCount++
 		finalizeProxyQualityResult(result)
@@ -535,7 +535,7 @@ func (s *ProxyAdmin) CheckProxyQuality(ctx context.Context, id int64) (*ProxyQua
 		Target:    "base_connectivity",
 		Status:    "pass",
 		LatencyMs: latencyMs,
-		Message:   "代理出口连通正常",
+		Message:   "Proxy egress connection is healthy",
 	})
 	result.PassedCount++
 
@@ -544,7 +544,7 @@ func (s *ProxyAdmin) CheckProxyQuality(ctx context.Context, id int64) (*ProxyQua
 		result.Items = append(result.Items, ProxyQualityCheckItem{
 			Target:  "http_client",
 			Status:  "fail",
-			Message: fmt.Sprintf("创建检测客户端失败: %v", err),
+			Message: fmt.Sprintf("failed to create probe client: %v", err),
 		})
 		result.FailedCount++
 		finalizeProxyQualityResult(result)
@@ -591,7 +591,7 @@ func finalizeProxyQualityResult(result *ProxyQualityCheckResult) {
 	result.Score = score
 	result.Grade = proxyQualityGrade(score)
 	result.Summary = fmt.Sprintf(
-		"通过 %d 项，告警 %d 项，失败 %d 项，挑战 %d 项",
+		"Passed: %d, warnings: %d, failed: %d, challenges: %d",
 		result.PassedCount,
 		result.WarnCount,
 		result.FailedCount,

@@ -580,7 +580,7 @@ func TestLogOpenAIInstructionsRequiredDebug_LogsRequestDetails(t *testing.T) {
 		[]byte(`{"error":{"message":"Instructions are required","type":"invalid_request_error","param":"instructions","code":"missing_required_parameter"}}`),
 	)
 
-	require.True(t, logSink.ContainsMessageAtLevel("OpenAI 上游返回 Instructions are required，已记录请求详情用于排查", "warn"))
+	require.True(t, logSink.ContainsMessageAtLevel("OpenAI upstream returned Instructions are required; request details logged for investigation", "warn"))
 	require.True(t, logSink.ContainsFieldValue("request_user_agent", "curl/8.0"))
 	require.True(t, logSink.ContainsFieldValue("request_model", "gpt-5.1-codex"))
 	require.True(t, logSink.ContainsFieldValue("request_query", "trace=1"))
@@ -616,7 +616,7 @@ func TestLogOpenAIInstructionsRequiredDebug_NonTargetErrorSkipped(t *testing.T) 
 		[]byte(`{"error":{"message":"forbidden"}}`),
 	)
 
-	require.False(t, logSink.ContainsMessage("OpenAI 上游返回 Instructions are required，已记录请求详情用于排查"))
+	require.False(t, logSink.ContainsMessage("OpenAI upstream returned Instructions are required; request details logged for investigation"))
 }
 
 // TestIsOpenAITransientProcessingError compares the listed processing,

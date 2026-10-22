@@ -593,7 +593,7 @@ func CNUsageBalanceBelowThreshold(result *UpstreamUsageQueryResult, threshold fl
 // CNUsageMonitorReason embeds the query fingerprint in the persisted
 // low-balance reason.
 func CNUsageMonitorReason(identityHash string) string {
-	return cnUsageMonitorReasonPrefix + identityHash + ": 余额低于监控阈值"
+	return cnUsageMonitorReasonPrefix + identityHash + ": balance is below the monitoring threshold"
 }
 
 // CNUsageMonitorSnapshotFromExtra decodes the stored monitor value through a

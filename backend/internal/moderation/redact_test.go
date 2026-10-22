@@ -18,5 +18,5 @@ func TestRedactContentModerationSecrets_LongHexAndTokens(t *testing.T) {
 	require.NotContains(t, out, "abc123456789xyz")
 	require.NotContains(t, out, "eyJhbGciOiJIUzI1NiJ9")
 	require.NotContains(t, out, "https://example.com/private/path")
-	require.Contains(t, out, "[已脱敏]")
+	require.Contains(t, out, "[REDACTED]")
 }

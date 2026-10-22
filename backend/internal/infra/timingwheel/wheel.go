@@ -80,7 +80,7 @@ func (w *Wheel) Start() error {
 		}
 	})
 	if err != nil {
-		return fmt.Errorf("创建 timing wheel 失败: %w", err)
+		return fmt.Errorf("failed to create timing wheel: %w", err)
 	}
 	w.tw = tw
 	for _, t := range w.tasks {

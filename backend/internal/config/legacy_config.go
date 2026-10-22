@@ -117,7 +117,7 @@ func warnLegacyResponsesWSSettings() {
 		// registering presence lookup so retired environment variables can still produce operator warnings.
 		_ = viper.BindEnv(key)
 		if viper.IsSet(key) {
-			slog.Warn("旧 Responses WS 参数已停用，请在分组协议中设置客户端权限，在网关设置中调整连接参数", "key", key)
+			slog.Warn("Legacy Responses WS parameters are disabled; configure client permissions in group protocols and connection parameters in gateway settings", "key", key)
 		}
 	}
 }

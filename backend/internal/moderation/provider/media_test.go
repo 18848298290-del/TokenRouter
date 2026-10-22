@@ -80,5 +80,5 @@ func TestContentModerationRemoteSnapshotRejectsPrivateAddress(t *testing.T) {
 	_, _, err := fetchContentModerationImage(context.Background(), "http://127.0.0.1/private.png")
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "私网")
+	require.Contains(t, err.Error(), "private or local image addresses")
 }

@@ -494,7 +494,7 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete after disconnect: %w", err)
 		}
 		options.RecordDisconnect(err, upstreamRequestID)
-		options.Logf("[OpenAI passthrough] 流读取异常中断: provider=%d request_id=%s err=%v",
+		options.Logf("[INFO] [OpenAI passthrough] Stream read interrupted by an error: provider=%d request_id=%s err=%v",
 			options.ProviderID,
 			upstreamRequestID,
 			err,

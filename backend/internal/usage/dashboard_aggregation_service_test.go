@@ -885,7 +885,7 @@ func TestDashboardAggregationServiceFirstChunkTimeoutIsError(t *testing.T) {
 	svc.runHistoricalBackfill(context.Background(), cursor)
 
 	require.Equal(t, "error", analyticsRepo.state.Phase)
-	require.Contains(t, analyticsRepo.state.LastError, "单个小时回填超过 20ms 工作预算")
+	require.Contains(t, analyticsRepo.state.LastError, "backfill for one hour exceeded the 20ms work budget")
 	require.NotNil(t, analyticsRepo.state.LastErrorAt)
 	require.Equal(t, cursor, *analyticsRepo.state.BackfillCursor)
 }

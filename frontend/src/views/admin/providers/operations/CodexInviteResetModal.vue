@@ -315,7 +315,8 @@ import Icon from '@/components/icons/Icon.vue'
  * consent required when the server omits that setting. Partial invitation failures retain input
  * for inspection. Credit consumption distinguishes a completed reset from other
  * success-response codes, emits updated only for a reset, and reloads status afterward while
- * retaining the action message. Hidden-dialog cleanup clears local input and selection.
+ * retaining the action message. Known invitation failures use interface translations, while
+ * unknown failures retain server explanations. Hidden-dialog cleanup clears local input and selection.
  */
 
 /**
@@ -472,16 +473,33 @@ const canConsume = computed(() => {
 })
 
 /**
- * Invitation availability supplies an upstream explanation when present, while canSendInvite
- * requires loaded status and no explicit server prohibition or active invite request.
+ * localizedInviteUnavailableMessage resolves the known invitation failure in the active
+ * interface language. Unknown reasons return undefined so status and action callers can
+ * retain server details or choose their own translated default.
+ */
+const localizedInviteUnavailableMessage = (reason: unknown): string | undefined => {
+  if (reason === 'CODEX_INVITE_RESET_REFERRAL_UNAVAILABLE') {
+    return t('admin.providers.inviteResetInviteUnavailable')
+  }
+  return undefined
+}
+
+/**
+ * inviteUnavailableMessage translates the known referral-unavailable reason in the active
+ * interface language. Unknown reasons retain the server explanation, with a translated
+ * default when the server supplies no message.
  */
 const inviteUnavailableMessage = computed(() => {
   if (!status.value || status.value.invite_available !== false) return ''
   return (
-    status.value.invite_unavailable_message || t('admin.providers.inviteResetInviteUnavailable')
+    localizedInviteUnavailableMessage(status.value.invite_unavailable_reason) ||
+    status.value.invite_unavailable_message ||
+    t('admin.providers.inviteResetInviteUnavailable')
   )
 })
 
+// canSendInvite requires loaded status, an available invitation service, and no
+// active status load or invitation request before enabling the send action.
 const canSendInvite = computed(() => {
   return (
     Boolean(status.value) &&
@@ -615,7 +633,7 @@ const selectDefaultCredit = () => {
 /**
  * loadStatus refreshes invitation and credit observations, optionally clearing the prior action
  * message. Success reconciles credit selection; failure clears status and reports both inline
- * and toast feedback for the request.
+ * and toast feedback for the request, translating known invitation failures by reason.
  */
 const loadStatus = async (clearMessage = true) => {
   if (!props.provider) return
@@ -629,8 +647,12 @@ const loadStatus = async (clearMessage = true) => {
     selectDefaultCredit()
   } catch (error: any) {
     status.value = null
-    setMessage('error', error?.message || t('admin.providers.inviteResetLoadFailed'))
-    appStore.showError(error?.message || t('admin.providers.inviteResetLoadFailed'))
+    const text =
+      localizedInviteUnavailableMessage(error?.reason) ||
+      error?.message ||
+      t('admin.providers.inviteResetLoadFailed')
+    setMessage('error', text)
+    appStore.showError(text)
   } finally {
     loading.value = false
   }
@@ -639,7 +661,8 @@ const loadStatus = async (clearMessage = true) => {
 /**
  * handleSendInvite validates availability, email input, and required consent before sending
  * invitations. Partial failures retain the input and show failed addresses; full success clears
- * email text and reports completion.
+ * email text and reports completion. Known invitation errors use the current interface language
+ * when availability changes between the status read and invitation submission.
  */
 const handleSendInvite = async () => {
   if (!props.provider || sendingInvite.value) return
@@ -669,7 +692,12 @@ const handleSendInvite = async () => {
     setMessage('success', result.message || t('admin.providers.inviteResetInviteSuccess'))
     appStore.showSuccess(t('admin.providers.inviteResetInviteSuccess'))
   } catch (error: any) {
-    setMessage('error', error?.message || t('admin.providers.inviteResetInviteFailed'))
+    setMessage(
+      'error',
+      localizedInviteUnavailableMessage(error?.reason) ||
+        error?.message ||
+        t('admin.providers.inviteResetInviteFailed'),
+    )
   } finally {
     sendingInvite.value = false
   }
@@ -690,7 +718,8 @@ const consumeSuccessMessage = (code?: string) => {
 /**
  * handleConsume submits the selected credit or lets the server choose when no identifier is
  * available. A reset emits updated, while other outcome codes remain inline feedback; status
- * reload preserves that message.
+ * reload preserves that message. Known invitation failures are translated by reason, and other
+ * failures retain the server explanation or use the translated consume default.
  */
 const handleConsume = async () => {
   if (!props.provider || !canConsume.value) return
@@ -710,7 +739,12 @@ const handleConsume = async () => {
     // server responses that report nothing was reset.
     await loadStatus(false)
   } catch (error: any) {
-    setMessage('error', error?.message || t('admin.providers.inviteResetConsumeFailed'))
+    setMessage(
+      'error',
+      localizedInviteUnavailableMessage(error?.reason) ||
+        error?.message ||
+        t('admin.providers.inviteResetConsumeFailed'),
+    )
   } finally {
     consuming.value = false
   }

@@ -752,7 +752,7 @@ const loadEndpointStats = async (source: EndpointSource, force = false) => {
     // Ignore superseded or aborted raw-source failures; a current failure leaves its cache
     // flag unset so later selection can retry.
     if (seq !== endpointReqSeq || controller.signal.aborted) return
-    console.error('加载端点统计失败:', error)
+    console.error('Failed to load endpoint statistics:', error)
   } finally {
     if (seq === endpointReqSeq) rawEndpointLoading.value = false
   }
@@ -790,7 +790,7 @@ const loadStats = async (force = false) => {
     // Only the current summary failure clears inbound counts; previously displayed summary
     // totals remain until another successful summary response arrives.
     if (seq !== statsReqSeq) return
-    console.error('加载用量统计失败:', error)
+    console.error('Failed to load usage statistics:', error)
     inboundEndpointStats.value = []
   } finally {
     if (seq === statsReqSeq) inboundEndpointLoading.value = false

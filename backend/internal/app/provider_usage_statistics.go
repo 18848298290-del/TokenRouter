@@ -54,7 +54,7 @@ func (r providerLocalStats) GetProviderWindowStatsPair(ctx context.Context, id i
 	// The display caller owns separate-window fallback. Return a concrete error
 	// when the source lacks combined querying so it can choose that recovery path.
 	if !ok {
-		return nil, nil, errors.New("用量读取器不支持双窗口查询")
+		return nil, nil, errors.New("usage reader does not support dual-window queries")
 	}
 	a, b, err := reader.GetProviderWindowStatsPair(ctx, id, first, second)
 	return localWindowStats(a), localWindowStats(b), err

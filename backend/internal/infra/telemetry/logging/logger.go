@@ -348,7 +348,7 @@ func buildLogger(options InitOptions) (*zap.Logger, zap.AtomicLevel, error) {
 		if fileErr != nil {
 			// Report file setup failure directly before this logger exists. Keep
 			// surviving output cores, or let the later empty-core guard select stdout.
-			_, _ = fmt.Fprintf(os.Stderr, "time=%s level=WARN msg=\"日志文件输出初始化失败，降级为仅标准输出\" path=%s err=%v\n",
+			_, _ = fmt.Fprintf(os.Stderr, "time=%s level=WARN msg=\"Failed to initialize file logging, using standard output only\" path=%s err=%v\n",
 				time.Now().Format(time.RFC3339Nano),
 				filePath,
 				fileErr,
@@ -544,7 +544,8 @@ func normalizeStdLogMessage(raw string) string {
 }
 
 // inferStdLogLevel selects severity from normalized message prefixes, then
-// ordered error and warning substrings. Empty or unmatched text selects info;
+// ordered error and warning substrings. Explicit prefixes override words in
+// the message and interpolated values. Empty or unmatched text selects info;
 // error hints win over warning hints and fatal/panic text is logged as error.
 func inferStdLogLevel(msg string) Level {
 	lower := strings.ToLower(strings.TrimSpace(msg))
@@ -554,6 +555,9 @@ func inferStdLogLevel(msg string) Level {
 
 	if strings.HasPrefix(lower, "[debug]") || strings.HasPrefix(lower, "debug:") {
 		return LevelDebug
+	}
+	if strings.HasPrefix(lower, "[info]") || strings.HasPrefix(lower, "info:") {
+		return LevelInfo
 	}
 	if strings.HasPrefix(lower, "[warn]") || strings.HasPrefix(lower, "[warning]") || strings.HasPrefix(lower, "warn:") || strings.HasPrefix(lower, "warning:") {
 		return LevelWarn

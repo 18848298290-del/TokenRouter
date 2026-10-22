@@ -66,7 +66,7 @@ type CredentialRefreshWriter interface {
 }
 
 // String returns a fixed redacted label for the captured credential details.
-func (CredentialMutationSnapshot) String() string { return "CredentialMutationSnapshot{已脱敏}" }
+func (CredentialMutationSnapshot) String() string { return "CredentialMutationSnapshot{redacted}" }
 
 // GoString uses the redacted String representation for Go-syntax diagnostic
 // formatting.

@@ -67,7 +67,7 @@ describe('fetchAllProviderIds', () => {
       pages: 1,
     })
 
-    await expect(fetchAllProviderIds(fetchPage, {})).rejects.toThrow('提供商列表结果不完整')
+    await expect(fetchAllProviderIds(fetchPage, {})).rejects.toThrow('Provider list is incomplete')
   })
 
   /**

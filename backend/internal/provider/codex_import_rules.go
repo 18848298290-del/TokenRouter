@@ -96,7 +96,7 @@ func parseCodexSessionImportContent(content string) ([]any, error) {
 					return lineValues, nil
 				}
 			}
-			return nil, fmt.Errorf("JSON 解析失败: %w", err)
+			return nil, fmt.Errorf("failed to parse JSON: %w", err)
 		}
 		return flattenCodexImportValues(values), nil
 	}
@@ -118,7 +118,7 @@ func parseCodexSessionImportLines(content string) ([]any, error) {
 		if looksLikeJSON(line) {
 			lineValues, err := decodeCodexJSONStream(line)
 			if err != nil {
-				return nil, fmt.Errorf("第 %d 行 JSON 解析失败: %w", len(values)+1, err)
+				return nil, fmt.Errorf("failed to parse JSON on line %d: %w", len(values)+1, err)
 			}
 			values = append(values, flattenCodexImportValues(lineValues)...)
 			continue
@@ -150,7 +150,7 @@ func decodeCodexJSONStream(content string) ([]any, error) {
 		values = append(values, value)
 	}
 	if len(values) == 0 {
-		return nil, errors.New("空 JSON 内容")
+		return nil, errors.New("empty JSON content")
 	}
 	return values, nil
 }
@@ -220,13 +220,13 @@ func NormalizeCodexImportEntry(entry CodexImportEntry, options CodexImportOption
 			item.PlanType = firstCodexString(agentIdentity, []string{"plan_type"}, []string{"planType"})
 			item.AgentFedRAMP = firstCodexBool(agentIdentity, []string{"chatgpt_account_is_fedramp"}, []string{"chatgptAccountIsFedramp"})
 			if item.AgentRuntimeID == "" || item.AgentPrivateKey == "" || item.ProviderID == "" || item.UserID == "" {
-				return nil, errors.New("agent identity 缺少必要字段")
+				return nil, errors.New("agent identity is missing required fields")
 			}
 			// Replace validator-specific diagnostics with the fixed import field
 			// failure. The enclosing batch reports this item failure and can continue
 			// processing other source entries.
 			if err := validateCodexPrivateKey(options.ValidatePrivateKey, item.AgentPrivateKey); err != nil {
-				return nil, errors.New("agent identity private key 格式无效")
+				return nil, errors.New("invalid agent identity private key format")
 			}
 			item.Credentials["auth_mode"] = OpenAIAuthModeAgentIdentity
 			item.Credentials["agent_runtime_id"] = item.AgentRuntimeID
@@ -238,7 +238,7 @@ func NormalizeCodexImportEntry(entry CodexImportEntry, options CodexImportOption
 			setCodexCredentialIfNotEmpty(item.Credentials, "email", item.Email)
 			setCodexCredentialIfNotEmpty(item.Credentials, "plan_type", item.PlanType)
 			if item.AgentTaskID == "" {
-				item.WarningTexts = append(item.WarningTexts, "未包含 task_id，首次请求会使用现有 runtime 注册新 task")
+				item.WarningTexts = append(item.WarningTexts, "task_id is missing; the first request will register a new task using the existing runtime")
 			}
 			item.IdentityKeys = BuildCodexAgentIdentityKeys(item.ProviderID)
 			item.Name = buildCodexImportProviderName(item, entry.Index)
@@ -302,7 +302,7 @@ func NormalizeCodexImportEntry(entry CodexImportEntry, options CodexImportOption
 		// as renewal material would misrepresent this import mode.
 		if sessionToken := firstCodexString(raw, []string{"session_token"}, []string{"sessionToken"}); sessionToken != "" {
 			item.Extra["session_token_present"] = true
-			item.WarningTexts = append(item.WarningTexts, "sessionToken 已忽略，不会作为 OAuth refresh_token 存储")
+			item.WarningTexts = append(item.WarningTexts, "sessionToken was ignored and will not be stored as an OAuth refresh_token")
 		}
 		if sessionExpiresAt, ok := codexTimeAt(raw, []string{"expires"}); ok {
 			// Store session display time at second precision,
@@ -319,7 +319,7 @@ func NormalizeCodexImportEntry(entry CodexImportEntry, options CodexImportOption
 			[]string{"expiresAt"},
 		); ok {
 			if tokenExpiresAt.Unix() <= now.Unix()-codexImportClockSkewSeconds {
-				return nil, fmt.Errorf("access_token 已过期: %s", tokenExpiresAt.Format(time.RFC3339))
+				return nil, fmt.Errorf("access_token has expired: %s", tokenExpiresAt.Format(time.RFC3339))
 			}
 			item.TokenExpiresAt = &tokenExpiresAt
 			item.Credentials["expires_at"] = tokenExpiresAt.Format(time.RFC3339)
@@ -330,14 +330,14 @@ func NormalizeCodexImportEntry(entry CodexImportEntry, options CodexImportOption
 		copyCodexExtraString(raw, item.Extra, "account_residency_region", []string{"account", "residencyRegion"})
 		copyCodexExtraString(raw, item.Extra, "compute_residency", []string{"account", "computeResidency"})
 	default:
-		return nil, fmt.Errorf("第 %d 条格式不支持", entry.Index)
+		return nil, fmt.Errorf("unsupported format for entry %d", entry.Index)
 	}
 
 	if item.IsAgentIdentity {
 		return item, nil
 	}
 	if item.AccessToken == "" {
-		return nil, errors.New("缺少 accessToken/access_token")
+		return nil, errors.New("missing accessToken/access_token")
 	}
 	item.Credentials["access_token"] = item.AccessToken
 	if item.RefreshToken != "" {
@@ -355,10 +355,10 @@ func NormalizeCodexImportEntry(entry CodexImportEntry, options CodexImportOption
 		return nil, err
 	}
 	if _, ok := item.Credentials["expires_at"]; !ok {
-		item.WarningTexts = append(item.WarningTexts, "无法从 accessToken 解析过期时间，导入后需自行确认令牌有效性")
+		item.WarningTexts = append(item.WarningTexts, "Could not parse accessToken expiry; verify token validity after importing")
 	}
 	if item.RefreshToken == "" {
-		item.WarningTexts = append(item.WarningTexts, "未包含 refresh_token，accessToken 过期后无法自动续期")
+		item.WarningTexts = append(item.WarningTexts, "refresh_token is missing; automatic renewal is unavailable after accessToken expires")
 	}
 
 	setCodexCredentialIfNotEmpty(item.Credentials, "email", item.Email)
@@ -392,7 +392,7 @@ func enrichCodexImportProviderFromJWT(item *CodexImportProvider, token string, v
 	claims, err := decodeCodexJWTClaims(token)
 	if err != nil {
 		if validateExpiry {
-			item.WarningTexts = append(item.WarningTexts, "accessToken 不是可解析 JWT，无法校验过期时间和提供商身份")
+			item.WarningTexts = append(item.WarningTexts, "accessToken is not a parseable JWT; expiry and provider identity cannot be verified")
 		}
 		return nil
 	}
@@ -401,7 +401,7 @@ func enrichCodexImportProviderFromJWT(item *CodexImportProvider, token string, v
 	// access-only provider expiry check that rejects its inclusive boundary.
 	if validateExpiry && claims.Exp > 0 {
 		if now.Unix() > claims.Exp+codexImportClockSkewSeconds {
-			return fmt.Errorf("access_token 已过期: %s", time.Unix(claims.Exp, 0).UTC().Format(time.RFC3339))
+			return fmt.Errorf("access_token has expired: %s", time.Unix(claims.Exp, 0).UTC().Format(time.RFC3339))
 		}
 		expiresAt := time.Unix(claims.Exp, 0).UTC()
 		item.TokenExpiresAt = &expiresAt
@@ -536,7 +536,7 @@ func buildCodexCreateProviderName(base string, item *CodexImportProvider, index,
 // the returned pause pointer stable when it is borrowed from the request.
 func ResolveCodexImportExpiry(req CodexSessionImportRequest, item *CodexImportProvider, now func() time.Time) (*int64, *time.Time, *bool, []string, error) {
 	if item == nil {
-		return nil, nil, nil, nil, errors.New("导入项为空")
+		return nil, nil, nil, nil, errors.New("import entry is empty")
 	}
 	// Agent Identity runtime/task recovery is managed upstream and has no OAuth
 	// access-token expiry.
@@ -566,14 +566,14 @@ func ResolveCodexImportExpiry(req CodexSessionImportRequest, item *CodexImportPr
 			credentialExpiresAt = earlierCodexTime(credentialExpiresAt, requestExpiresAt)
 		}
 		if providerExpiresAt == nil {
-			return nil, nil, nil, nil, errors.New("未包含 refresh_token，且无法解析 accessToken 过期时间；请在第一步设置过期时间后再导入")
+			return nil, nil, nil, nil, errors.New("refresh_token is missing and accessToken expiry could not be parsed; set an expiry time in the first step before importing")
 		}
 		if providerExpiresAt.Unix() <= now().UTC().Unix()-codexImportClockSkewSeconds {
-			return nil, nil, nil, nil, fmt.Errorf("过期时间已过期: %s", providerExpiresAt.Format(time.RFC3339))
+			return nil, nil, nil, nil, fmt.Errorf("expiry time is in the past: %s", providerExpiresAt.Format(time.RFC3339))
 		}
-		warnings = append(warnings, "未包含 refresh_token，已按 accessToken/提供商过期时间设置自动停止调度")
+		warnings = append(warnings, "refresh_token is missing; scheduling will stop automatically at accessToken/provider expiry")
 		if req.AutoPauseOnExpired != nil && !*req.AutoPauseOnExpired {
-			warnings = append(warnings, "未包含 refresh_token，已强制开启过期自动暂停")
+			warnings = append(warnings, "refresh_token is missing; automatic suspension on expiry has been enabled")
 		}
 		autoPause := true
 		expiresAtUnix := providerExpiresAt.Unix()

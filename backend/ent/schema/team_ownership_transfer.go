@@ -55,7 +55,7 @@ func (TeamOwnershipTransfer) Fields() []ent.Field {
 			case "pending", "accepted", "declined", "cancelled", "expired":
 				return nil
 			default:
-				return fmt.Errorf("无效的所有权转让状态")
+				return fmt.Errorf("invalid ownership transfer status")
 			}
 		}),
 		// Transfer validity endpoint.

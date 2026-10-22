@@ -68,7 +68,7 @@ func (h *CodexImportHandler) ImportCodexSession(c *gin.Context) {
 		return
 	}
 	if len(entries) == 0 {
-		response.BadRequest(c, "请输入 accessToken 或 Codex session JSON")
+		response.BadRequest(c, "Enter an accessToken or Codex session JSON")
 		return
 	}
 

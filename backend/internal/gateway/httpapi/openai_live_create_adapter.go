@@ -143,7 +143,7 @@ func (t *liveCreateTarget) AllowsClient(ctx context.Context, identity session.Li
 	t.router = t.service.matchLiveTLSFingerprintRouter(t.provider, identity.UserAgent)
 	result := t.service.liveClientPolicyResult(ctx, t.provider, identity, t.router)
 	if result.Enabled && !result.Matched {
-		logging.FromContext(ctx).Warn("OpenAI Live 客户端策略拒绝候选提供商", zap.Int64("provider_id", t.provider.Record.ID), zap.String("policy", result.Policy), zap.String("reason", result.Reason))
+		logging.FromContext(ctx).Warn("OpenAI Live client policy rejected candidate provider", zap.Int64("provider_id", t.provider.Record.ID), zap.String("policy", result.Policy), zap.String("reason", result.Reason))
 		return false
 	}
 	return true

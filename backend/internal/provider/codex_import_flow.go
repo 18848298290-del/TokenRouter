@@ -110,7 +110,7 @@ func (h *CodexImporter) Import(ctx context.Context, req CodexSessionImportReques
 		}
 
 		if duplicateIndex, ok := FirstSeenCodexIdentity(seenIdentity, item.IdentityKeys, item.UserID); ok {
-			message := fmt.Sprintf("与第 %d 条导入项重复，已跳过", duplicateIndex)
+			message := fmt.Sprintf("Duplicate of import entry %d, skipped", duplicateIndex)
 			result.Skipped++
 			result.Items = append(result.Items, CodexSessionImportItem{
 				Index:   entry.Index,
@@ -137,7 +137,7 @@ func (h *CodexImporter) Import(ctx context.Context, req CodexSessionImportReques
 				result.Warnings = append(result.Warnings, CodexSessionImportMessage{
 					Index:   entry.Index,
 					Name:    providerName,
-					Message: "已有提供商未记录 chatgpt_user_id，已按共享的 chatgpt_account_id 匹配并回填，请确认两者属于同一用户",
+					Message: "Existing provider was matched by shared chatgpt_account_id and its missing chatgpt_user_id was filled in. Verify that both belong to the same user",
 				})
 			}
 			preserveExistingRefresh := item.RefreshToken == "" &&
@@ -149,7 +149,7 @@ func (h *CodexImporter) Import(ctx context.Context, req CodexSessionImportReques
 				result.Warnings = append(result.Warnings, CodexSessionImportMessage{
 					Index:   entry.Index,
 					Name:    providerName,
-					Message: "已有提供商包含 refresh_token，本次 accessToken-only 导入已保留自动续期凭据",
+					Message: "Existing provider has a refresh_token; this accessToken-only import retained it for automatic renewal",
 				})
 				effectiveExpiresAt = nil
 				autoPauseOnExpired = nil

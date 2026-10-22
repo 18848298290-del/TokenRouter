@@ -37,6 +37,9 @@ export default {
     systemLogs: {
       host: 'Host',
       empty: 'No system logs',
+      loadFailed: 'Failed to load system logs',
+      saveConfigFailed: 'Failed to save logging configuration',
+      resetConfigFailed: 'Failed to reset logging configuration',
       cleanupFilterRequired:
         'Cleanup requires at least one filter condition (start/end time or another field)',
       cleanupFailed: 'Failed to clean up system logs',

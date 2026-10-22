@@ -290,21 +290,21 @@ func BedrockRoutingDiagnostic(err error) string {
 	if !errors.As(err, &failure) {
 		return err.Error()
 	}
-	mode := "地域推理"
+	mode := "geographic inference"
 	if failure.ForceGlobal {
-		mode = "全局推理"
+		mode = "global inference"
 	}
 	var message string
 	switch failure.Reason {
 	case BedrockRoutingInvalidModel:
-		message = fmt.Sprintf("无法解析 Bedrock 模型 %q", failure.ModelID)
+		message = fmt.Sprintf("could not resolve Bedrock model %q", failure.ModelID)
 	case BedrockRoutingUnsupportedRegion:
-		message = fmt.Sprintf("Bedrock 模型 %q 在来源区域 %q 不支持%s", failure.ModelID, failure.SourceRegion, mode)
+		message = fmt.Sprintf("Bedrock model %q in source region %q does not support %s", failure.ModelID, failure.SourceRegion, mode)
 	default:
-		message = fmt.Sprintf("尚未核实 Bedrock 模型 %q 在来源区域 %q 的%s ID，请核对 AWS 推理配置", failure.ModelID, failure.SourceRegion, mode)
+		message = fmt.Sprintf("Bedrock model %q in source region %q has no verified %s ID; check the AWS inference configuration", failure.ModelID, failure.SourceRegion, mode)
 	}
 	if !failure.ForceGlobal && failure.GlobalAvailable {
-		message += "；该来源区域支持此模型的全局推理，可开启“强制全局”"
+		message += "; this source region supports global inference for this model; enable Force Global to use it"
 	}
 	return message
 }

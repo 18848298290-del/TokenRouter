@@ -205,14 +205,14 @@ func (s *BackupService) StartContext(ctx context.Context) error {
 	if err != nil {
 		// Schedule loading is allowed to degrade startup. Report this error and leave
 		// cron without a backup entry rather than withholding the rest of the backup service.
-		s.log("service.backup", "[Backup] 加载定时备份配置失败: %v", err)
+		s.log("service.backup", "[INFO] [Backup] Failed to load scheduled backup configuration: %v", err)
 		return nil
 	}
 	if schedule.Enabled && schedule.CronExpr != "" {
 		if err := s.applyCronSchedule(schedule); err != nil {
 			// Invalid or unapplied schedule state is observable but does not fail the
 			// service lifetime, allowing administrators to repair its persisted configuration after startup.
-			s.log("service.backup", "[Backup] 应用定时备份配置失败: %v", err)
+			s.log("service.backup", "[INFO] [Backup] Failed to apply scheduled backup configuration: %v", err)
 		}
 	}
 	return nil
@@ -309,7 +309,7 @@ func (s *BackupService) saveFinal(record *BackupRecord) error {
 	defer cancel()
 	err := s.saveRecord(ctx, record)
 	if err != nil {
-		s.log("service.backup", "[Backup] 保存收尾记录失败 %s: %v", record.ID, err)
+		s.log("service.backup", "[INFO] [Backup] Failed to save final record %s: %v", record.ID, err)
 	}
 	return err
 }

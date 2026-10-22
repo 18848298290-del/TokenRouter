@@ -55,7 +55,7 @@ func (TeamInvitation) Fields() []ent.Field {
 			case "pending", "accepted", "declined", "revoked", "expired":
 				return nil
 			default:
-				return fmt.Errorf("无效的团队邀请状态")
+				return fmt.Errorf("invalid team invitation status")
 			}
 		}),
 		// Invitation validity endpoint.

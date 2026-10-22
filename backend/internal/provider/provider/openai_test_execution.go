@@ -361,7 +361,7 @@ func (s *OpenAIProviderTest) executeChat(
 	payloadBytes, _ := json.Marshal(payload)
 
 	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "test_start", Model: testModelID})
-	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "正在通过 /v1/chat/completions 测试连接"})
+	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "Testing connection through /v1/chat/completions"})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {

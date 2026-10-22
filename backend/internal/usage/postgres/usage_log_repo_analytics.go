@@ -354,7 +354,7 @@ func (r *Store) getUserDashboardStatsFromAnalytics(ctx context.Context, userID i
 			return todayErr
 		}
 		if !todayOK {
-			return errors.New("今日用量不在预聚合覆盖范围内")
+			return errors.New("today's usage is outside pre-aggregation coverage")
 		}
 		return nil
 	})

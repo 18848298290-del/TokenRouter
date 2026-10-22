@@ -99,10 +99,10 @@ func LogCodexCLIOnlyDetection(ctx context.Context, c *gin.Context, provider *gat
 	}
 	log := logging.FromContext(ctx).With(fields...)
 	if result.Matched {
-		log.Info("OpenAI codex_cli_only 放行请求")
+		log.Info("OpenAI codex_cli_only allowed request")
 		return
 	}
-	log.Warn("OpenAI codex_cli_only 拒绝非官方客户端请求")
+	log.Warn("OpenAI codex_cli_only rejected unofficial client request")
 }
 
 // EnforceClient rejects a disallowed OAuth client and records a local-policy

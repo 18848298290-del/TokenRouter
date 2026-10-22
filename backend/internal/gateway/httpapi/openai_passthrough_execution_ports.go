@@ -297,9 +297,9 @@ func (p *openAIPassthroughExecutionAdapter) WarnTimeoutHeaders(ctx context.Conte
 	if h := collectOpenAIPassthroughTimeoutHeaders(p.c.Request.Header); len(h) > 0 {
 		log := logging.FromContext(ctx).With(zap.String("component", "service.openai_gateway"), zap.Int64("provider_id", p.provider.Record.ID), zap.Strings("timeout_headers", h))
 		if p.s.Requests.AllowTimeoutHeaders() {
-			log.Warn("OpenAI passthrough 透传请求包含超时相关请求头，且当前配置为放行，可能导致上游提前断流")
+			log.Warn("OpenAI passthrough is forwarding timeout headers as configured; the upstream may end the stream early")
 		} else {
-			log.Warn("OpenAI passthrough 检测到超时相关请求头，将按配置过滤以降低断流风险")
+			log.Warn("OpenAI passthrough detected timeout headers and will filter them as configured to reduce early stream termination")
 		}
 	}
 }

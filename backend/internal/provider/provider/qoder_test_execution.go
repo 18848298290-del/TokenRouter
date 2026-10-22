@@ -190,7 +190,7 @@ func (s *QoderProviderTest) Execute(c *TestRun, value *providercore.Record, mode
 			return (TestStreamOutput{}).Error(c, err.Error())
 		}
 	}
-	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "正在通过 Qoder COSY 测试连接"})
+	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "Testing connection through Qoder COSY"})
 
 	client, err := qoderTestClient(s.Client, value)
 	if err != nil {

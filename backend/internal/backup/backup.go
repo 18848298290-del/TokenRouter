@@ -471,7 +471,7 @@ func (s *BackupService) saveRecoveredRecord(record *BackupRecord) {
 	// Suppress this persistence error after logging so other stale records can
 	// still be examined even when one recovery update cannot be stored.
 	if err := s.saveRecord(ctx, record); err != nil {
-		s.log("service.backup", "[Backup] 保存恢复后的备份记录失败 %s: %v", record.ID, err)
+		s.log("service.backup", "[INFO] [Backup] Failed to save restored backup record %s: %v", record.ID, err)
 	}
 }
 
@@ -809,7 +809,7 @@ func (s *BackupService) applyCronSchedule(cfg *BackupScheduleConfig) error {
 		return infraerrors.BadRequest("INVALID_CRON", fmt.Sprintf("failed to schedule: %v", err))
 	}
 	s.cronEntryID = entryID
-	s.log("service.backup", "[Backup] 定时备份已启用: %s", cfg.CronExpr)
+	s.log("service.backup", "[Backup] Scheduled backup enabled: %s", cfg.CronExpr)
 	return nil
 }
 
@@ -824,7 +824,7 @@ func (s *BackupService) removeCronSchedule() {
 	if s.cronSched != nil && s.cronEntryID != 0 {
 		s.cronSched.Remove(s.cronEntryID)
 		s.cronEntryID = 0
-		s.log("service.backup", "[Backup] 定时备份已停用")
+		s.log("service.backup", "[Backup] Scheduled backup disabled")
 	}
 }
 
@@ -858,17 +858,17 @@ func (s *BackupService) runScheduledBackup() {
 		expireDays = schedule.RetainDays
 	}
 
-	s.log("service.backup", "[Backup] 开始执行定时备份, 过期天数: %d", expireDays)
+	s.log("service.backup", "[Backup] Starting scheduled backup, expiration days: %d", expireDays)
 	record, err := s.createBackup(ctx, "scheduled", expireDays)
 	if err != nil {
 		if errors.Is(err, ErrBackupInProgress) {
-			s.log("service.backup", "[Backup] 定时备份跳过: 已有备份正在进行中")
+			s.log("service.backup", "[Backup] Scheduled backup skipped: a backup is already in progress")
 		} else {
-			s.log("service.backup", "[Backup] 定时备份失败: %v", err)
+			s.log("service.backup", "[INFO] [Backup] Scheduled backup failed: %v", err)
 		}
 		return
 	}
-	s.log("service.backup", "[Backup] 定时备份完成: id=%s size=%d", record.ID, record.SizeBytes)
+	s.log("service.backup", "[Backup] Scheduled backup completed: id=%s size=%d", record.ID, record.SizeBytes)
 
 	// Run retention only after the backup returned success, using the policy
 	// already read for this callback rather than mixing in a later settings update.
@@ -878,7 +878,7 @@ func (s *BackupService) runScheduledBackup() {
 	// Cleanup failure is reported separately because this run has already
 	// completed its archive; deletion errors keep affected metadata available for another attempt.
 	if err := s.cleanupOldBackups(ctx, schedule); err != nil {
-		s.log("service.backup", "[Backup] 清理过期备份失败: %v", err)
+		s.log("service.backup", "[INFO] [Backup] Failed to clean up expired backups: %v", err)
 	}
 }
 
@@ -962,7 +962,7 @@ func (s *BackupService) createBackup(ctx context.Context, triggeredBy string, ex
 	// Archive production succeeded before this save. Log metadata failure while
 	// returning the completed in-memory result, leaving the written artifact intact.
 	if err := s.saveRecord(ctx, record); err != nil {
-		s.log("service.backup", "[Backup] 保存备份记录失败: %v", err)
+		s.log("service.backup", "[INFO] [Backup] Failed to save backup record: %v", err)
 	}
 
 	return record, nil
@@ -1152,7 +1152,7 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	// Keep the completed archive outcome if persistence fails; this log reports
 	// stale recorded status after object writing rather than attempting archive compensation.
 	if err := s.saveFinal(record); err != nil {
-		s.log("service.backup", "[Backup] 保存备份记录失败: %v", err)
+		s.log("service.backup", "[INFO] [Backup] Failed to save backup record: %v", err)
 	}
 }
 
@@ -1347,7 +1347,7 @@ func (s *BackupService) completeRestore(record *BackupRecord) {
 	// Restoration already returned success. Report this later metadata error
 	// while the database contents remain outside the final-record persistence operation's control.
 	if err := s.saveFinal(record); err != nil {
-		s.log("service.backup", "[Backup] 保存恢复记录失败: %v", err)
+		s.log("service.backup", "[INFO] [Backup] Failed to save restore record: %v", err)
 	}
 }
 
@@ -1571,7 +1571,7 @@ func (s *BackupService) loadStorageConfig(ctx context.Context) (*BackupStorageCo
 		if err != nil {
 			// Retain stored text for legacy plaintext compatibility when decryption
 			// fails; unusable ciphertext can also survive here and fail a subsequent connection.
-			s.log("service.backup", "[Backup] 存储配置 S3 SecretAccessKey 解密失败（可能是旧的未加密数据）: %v", err)
+			s.log("service.backup", "[INFO] [Backup] Failed to decrypt storage configuration S3 SecretAccessKey (possibly legacy unencrypted data): %v", err)
 		} else {
 			cfg.S3.SecretAccessKey = decrypted
 		}
@@ -1753,7 +1753,7 @@ func (s *BackupService) loadS3Config(ctx context.Context) (*BackupS3Config, erro
 		if err != nil {
 			// Retain the stored value when decoding fails so legacy plaintext remains
 			// usable; this compatibility path can also return invalid ciphertext to later connection attempts.
-			s.log("service.backup", "[Backup] S3 SecretAccessKey 解密失败（可能是旧的未加密数据）: %v", err)
+			s.log("service.backup", "[INFO] [Backup] Failed to decrypt S3 SecretAccessKey (possibly legacy unencrypted data): %v", err)
 		} else {
 			cfg.SecretAccessKey = decrypted
 		}
@@ -2047,7 +2047,7 @@ func (s *BackupService) cleanupOldBackups(ctx context.Context, schedule *BackupS
 		if err := s.saveRecordsLocked(ctx, toKeep); err != nil {
 			return errors.Join(append(cleanupErrs, err)...)
 		}
-		s.log("service.backup", "[Backup] 自动清理了 %d 个过期备份", deletedCount)
+		s.log("service.backup", "[Backup] Automatically cleaned up %d expired backups", deletedCount)
 	}
 	return errors.Join(cleanupErrs...)
 }

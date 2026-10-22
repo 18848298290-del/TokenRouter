@@ -236,9 +236,9 @@ func TestResolveBedrockModelRoute_RegionMatrix(t *testing.T) {
 			require.Equal(t, tc.globalHint, failure.GlobalAvailable)
 			require.NotContains(t, err.Error(), tc.region)
 			if tc.globalHint {
-				require.Contains(t, bedrock.BedrockRoutingDiagnostic(err), "可开启“强制全局”")
+				require.Contains(t, bedrock.BedrockRoutingDiagnostic(err), "enable Force Global")
 			} else {
-				require.NotContains(t, bedrock.BedrockRoutingDiagnostic(err), "可开启")
+				require.NotContains(t, bedrock.BedrockRoutingDiagnostic(err), "enable Force Global")
 			}
 		})
 	}

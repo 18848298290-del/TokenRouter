@@ -37,6 +37,9 @@ export default {
     systemLogs: {
       host: 'Host',
       empty: '暂无系统日志',
+      loadFailed: '系统日志加载失败',
+      saveConfigFailed: '保存日志配置失败',
+      resetConfigFailed: '回滚日志配置失败',
       cleanupFilterRequired: '清理需要至少一个筛选条件（起止时间或其他字段）',
       cleanupFailed: '清理系统日志失败',
     },

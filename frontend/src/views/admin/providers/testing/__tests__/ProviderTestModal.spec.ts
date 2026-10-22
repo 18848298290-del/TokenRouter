@@ -700,7 +700,7 @@ describe('ProviderTestModal', () => {
       .mockResolvedValue(
         createStreamResponse([
           'data: {"type":"test_start","model":"gpt-5.4-mapped"}\n',
-          'data: {"type":"status","text":"正在通过 /v1/chat/completions 测试连接"}\n',
+          'data: {"type":"status","text":"Testing connection through /v1/chat/completions"}\n',
           'data: {"type":"content","text":"hello"}\n',
           'data: {"type":"test_complete","success":true}\n',
         ]),

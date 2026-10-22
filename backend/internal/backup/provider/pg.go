@@ -123,7 +123,7 @@ func (d *PgDumper) Restore(ctx context.Context, data io.Reader) error {
 	// before a psql process can execute the derived-table removal prefix against the database.
 	archive := bufio.NewReader(data)
 	if _, err := archive.Peek(1); err != nil {
-		return fmt.Errorf("读取备份归档: %w", err)
+		return fmt.Errorf("read backup archive: %w", err)
 	}
 	args := []string{
 		"-h", d.cfg.Host,

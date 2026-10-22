@@ -760,7 +760,7 @@ func (s *TeamService) AdminCreate(ctx context.Context, ownerUserID int64, name s
 		limit = *memberLimit
 	}
 	if limit < 0 {
-		return nil, infraerrors.BadRequest("TEAM_MEMBER_LIMIT_INVALID", "团队成员上限不能为负数")
+		return nil, infraerrors.BadRequest("TEAM_MEMBER_LIMIT_INVALID", "Team member limit must not be negative")
 	}
 	return s.repo.Create(ctx, name, ownerUserID, limit)
 }
@@ -808,7 +808,7 @@ func (s *TeamService) UpdateDefaultMemberLimits(ctx context.Context, userID int6
 		return nil, err
 	}
 	if daily < 0 || weekly < 0 || monthly < 0 {
-		return nil, infraerrors.BadRequest("TEAM_DEFAULT_MEMBER_LIMIT_INVALID", "成员默认限额不能为负数")
+		return nil, infraerrors.BadRequest("TEAM_DEFAULT_MEMBER_LIMIT_INVALID", "Default member quota must not be negative")
 	}
 	// Save future-join defaults before readback, leaving existing member
 	// ceilings unchanged; context read failure can follow a completed default
@@ -825,7 +825,7 @@ func (s *TeamService) UpdateDefaultMemberLimits(ctx context.Context, userID int6
 // silently and readback can fail after the status write.
 func (s *TeamService) SetStatus(ctx context.Context, userID int64, status string) (*TeamContext, error) {
 	if status != TeamStatusActive && status != TeamStatusSuspended {
-		return nil, infraerrors.BadRequest("TEAM_STATUS_INVALID", "无效的团队状态")
+		return nil, infraerrors.BadRequest("TEAM_STATUS_INVALID", "Invalid team status")
 	}
 	teamCtx, err := s.requireOwnerIncludingSuspended(ctx, userID)
 	if err != nil {
@@ -1184,7 +1184,7 @@ func (s *TeamService) CheckInvitationRate(ctx context.Context, teamID int64, ema
 	}
 	allowed, retryAfter, err := s.inviteLimiter.CheckAndRecord(ctx, teamID, email)
 	if err != nil {
-		slog.Warn("团队邀请限流器不可用", "team_id", teamID, "error", err)
+		slog.Warn("Team invitation rate limiter is unavailable", "team_id", teamID, "error", err)
 		return ErrTeamInvitationUnavailable
 	}
 	if allowed {
@@ -1303,7 +1303,7 @@ func (s *TeamService) UpdateMemberLimits(ctx context.Context, ownerUserID, membe
 		return err
 	}
 	if daily < 0 || weekly < 0 || monthly < 0 {
-		return infraerrors.BadRequest("TEAM_MEMBER_LIMIT_INVALID", "成员限额不能为负数")
+		return infraerrors.BadRequest("TEAM_MEMBER_LIMIT_INVALID", "Member quota must not be negative")
 	}
 	// Replace the member's complete quota triple before invalidation so future
 	// authentication snapshots can reload its accepted ceiling values rather
@@ -1325,7 +1325,7 @@ func (s *TeamService) ResetMemberUsage(ctx context.Context, ownerUserID, memberU
 		return err
 	}
 	if !daily && !weekly && !monthly {
-		return infraerrors.BadRequest("TEAM_USAGE_RESET_EMPTY", "至少选择一个需要重置的周期")
+		return infraerrors.BadRequest("TEAM_USAGE_RESET_EMPTY", "Select at least one period to reset")
 	}
 	// Persist selected billing-period resets before invalidation, keeping future
 	// authentication snapshots tied to the participant's completed usage/window
@@ -1473,10 +1473,10 @@ func (s *TeamService) AdminUpdate(ctx context.Context, teamID int64, update Team
 		update.Name = &name
 	}
 	if update.Status != nil && *update.Status != TeamStatusActive && *update.Status != TeamStatusSuspended {
-		return nil, infraerrors.BadRequest("TEAM_STATUS_INVALID", "无效的团队状态")
+		return nil, infraerrors.BadRequest("TEAM_STATUS_INVALID", "Invalid team status")
 	}
 	if update.MemberLimit != nil && *update.MemberLimit < 0 {
-		return nil, infraerrors.BadRequest("TEAM_MEMBER_LIMIT_INVALID", "团队成员上限不能为负数")
+		return nil, infraerrors.BadRequest("TEAM_MEMBER_LIMIT_INVALID", "Team member limit must not be negative")
 	}
 	if update.Name == nil && update.Status == nil && update.MemberLimit == nil {
 		return s.repo.GetContextByTeamID(ctx, teamID)
@@ -1690,7 +1690,7 @@ func NormalizeTeamName(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	// Match the stored name capacity with Unicode-character validation.
 	if name == "" || len([]rune(name)) > 100 {
-		return "", infraerrors.BadRequest("TEAM_NAME_INVALID", "团队名称长度必须为 1 到 100 个字符")
+		return "", infraerrors.BadRequest("TEAM_NAME_INVALID", "Team name must be between 1 and 100 characters")
 	}
 	return name, nil
 }
@@ -1710,7 +1710,7 @@ func NormalizeTeamEmail(email string) (string, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	parsed, err := mail.ParseAddress(email)
 	if err != nil || !strings.EqualFold(parsed.Address, email) {
-		return "", infraerrors.BadRequest("TEAM_INVITATION_EMAIL_INVALID", "请输入有效的邮箱地址")
+		return "", infraerrors.BadRequest("TEAM_INVITATION_EMAIL_INVALID", "Enter a valid email address")
 	}
 	// Convert the validated bare mailbox to the registration alias identity, so
 	// invitation rate/storage and current-account confirmation share
@@ -1726,7 +1726,7 @@ func NewTeamToken() (string, string, error) {
 	// Use a 256-bit random secret before hexadecimal token encoding.
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
-		return "", "", fmt.Errorf("生成团队令牌失败: %w", err)
+		return "", "", fmt.Errorf("failed to generate team token: %w", err)
 	}
 	token := hex.EncodeToString(raw)
 	return token, HashTeamToken(token), nil

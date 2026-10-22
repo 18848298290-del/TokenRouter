@@ -48,10 +48,10 @@ func TestLogCodexCLIOnlyDetection_NilSafety(t *testing.T) {
 	})
 }
 
-// TestLogCodexCLIOnlyDetection_OnlyLogsRejected records matched and rejected
-// client decisions. It checks the rejection message is present and the legacy
-// acceptance message is absent from the captured sink.
-func TestLogCodexCLIOnlyDetection_OnlyLogsRejected(t *testing.T) {
+// TestLogCodexCLIOnlyDetection_LogsDecisionLevels records matched and rejected
+// client decisions. It checks that acceptance is logged at info level and
+// rejection at warning level using the corresponding English diagnostic messages.
+func TestLogCodexCLIOnlyDetection_LogsDecisionLevels(t *testing.T) {
 	logSink, restore := captureHandlerStructuredLog(t)
 	defer restore()
 
@@ -67,8 +67,8 @@ func TestLogCodexCLIOnlyDetection_OnlyLogsRejected(t *testing.T) {
 		Reason:  providerpolicy.CodexClientRestrictionReasonNotMatchedUA,
 	}, nil)
 
-	require.False(t, logSink.ContainsMessage("OpenAI codex_cli_only 允许官方客户端请求"))
-	require.True(t, logSink.ContainsMessage("OpenAI codex_cli_only 拒绝非官方客户端请求"))
+	require.True(t, logSink.ContainsMessageAtLevel("OpenAI codex_cli_only allowed request", "info"))
+	require.True(t, logSink.ContainsMessageAtLevel("OpenAI codex_cli_only rejected unofficial client request", "warn"))
 }
 
 // TestLogCodexCLIOnlyDetection_RejectedIncludesRequestDetails rejects a request

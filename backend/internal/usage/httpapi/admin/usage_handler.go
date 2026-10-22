@@ -553,11 +553,11 @@ func (h *UsageHandler) ListCleanupTasks(c *gin.Context) {
 		operator = subject.UserID
 	}
 	page, pageSize := response.ParsePagination(c)
-	logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 请求清理任务列表: operator=%d page=%d page_size=%d", operator, page, pageSize)
+	logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] Listing cleanup tasks: operator=%d page=%d page_size=%d", operator, page, pageSize)
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	tasks, result, err := h.cleanupService.ListTasks(c.Request.Context(), params)
 	if err != nil {
-		logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 查询清理任务列表失败: operator=%d page=%d page_size=%d err=%v", operator, page, pageSize, err)
+		logger.LegacyPrintf("handler.admin.usage", "[INFO] [UsageCleanup] Failed to list cleanup tasks: operator=%d page=%d page_size=%d err=%v", operator, page, pageSize, err)
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -565,7 +565,7 @@ func (h *UsageHandler) ListCleanupTasks(c *gin.Context) {
 	for i := range tasks {
 		out = append(out, *dto.CleanupFromUsage(&tasks[i]))
 	}
-	logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 返回清理任务列表: operator=%d total=%d items=%d page=%d page_size=%d", operator, result.Total, len(out), page, pageSize)
+	logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] Returning cleanup task list: operator=%d total=%d items=%d page=%d page_size=%d", operator, result.Total, len(out), page, pageSize)
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
@@ -687,7 +687,7 @@ func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 	// The persisted task is created inside the idempotent command callback before
 	// the response DTO is returned, allowing command replay to reuse the recorded result.
 	h.ExecuteAdminIdempotentJSON(c, "admin.usage.cleanup_tasks.create", idempotencyPayload, h.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 请求创建清理任务: operator=%d start=%s end=%s user_id=%v api_key_id=%v provider_id=%v group_id=%v model=%v request_type=%v stream=%v billing_type=%v tz=%q",
+		logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] Creating cleanup task: operator=%d start=%s end=%s user_id=%v api_key_id=%v provider_id=%v group_id=%v model=%v request_type=%v stream=%v billing_type=%v tz=%q",
 			subject.UserID,
 			filters.StartTime.Format(time.RFC3339),
 			filters.EndTime.Format(time.RFC3339),
@@ -704,10 +704,10 @@ func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 
 		task, err := h.cleanupService.CreateTask(ctx, filters, subject.UserID)
 		if err != nil {
-			logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 创建清理任务失败: operator=%d err=%v", subject.UserID, err)
+			logger.LegacyPrintf("handler.admin.usage", "[INFO] [UsageCleanup] Failed to create cleanup task: operator=%d err=%v", subject.UserID, err)
 			return nil, err
 		}
-		logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 清理任务已创建: task=%d operator=%d status=%s", task.ID, subject.UserID, task.Status)
+		logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] Cleanup task created: task=%d operator=%d status=%s", task.ID, subject.UserID, task.Status)
 		return dto.CleanupFromUsage(task), nil
 	})
 }
@@ -732,13 +732,13 @@ func (h *UsageHandler) CancelCleanupTask(c *gin.Context) {
 		response.BadRequest(c, "Invalid task id")
 		return
 	}
-	logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 请求取消清理任务: task=%d operator=%d", taskID, subject.UserID)
+	logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] Cancelling cleanup task: task=%d operator=%d", taskID, subject.UserID)
 	if err := h.cleanupService.CancelTask(c.Request.Context(), taskID, subject.UserID); err != nil {
-		logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 取消清理任务失败: task=%d operator=%d err=%v", taskID, subject.UserID, err)
+		logger.LegacyPrintf("handler.admin.usage", "[INFO] [UsageCleanup] Failed to cancel cleanup task: task=%d operator=%d err=%v", taskID, subject.UserID, err)
 		response.ErrorFrom(c, err)
 		return
 	}
-	logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 清理任务已取消: task=%d operator=%d", taskID, subject.UserID)
+	logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] Cleanup task cancelled: task=%d operator=%d", taskID, subject.UserID)
 	response.Success(c, gin.H{"id": taskID, "status": usage.UsageCleanupStatusCanceled})
 }
 

@@ -122,16 +122,16 @@ func (p BillingSettingsPatch) Apply(s *pricing.BillingSettings) error {
 	// reservation-versus-settlement ordering.
 	for _, v := range []float64{s.PeakRateMultiplier, s.BatchImageDiscountMultiplier, s.BatchImageHoldMultiplier} {
 		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
-			return infraerrors.BadRequest("INVALID_BILLING_SETTINGS", "倍率必须为非负有限数值")
+			return infraerrors.BadRequest("INVALID_BILLING_SETTINGS", "Multipliers must be finite nonnegative numbers")
 		}
 	}
 	for _, v := range []*float64{s.WebSearchPricePerCall, s.SearchPricePer1k, s.AudioRealtimePricePerMin, s.AudioTTSPricePerMillionChars, s.AudioSTTPricePerHour} {
 		if v != nil && (math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0) {
-			return infraerrors.BadRequest("INVALID_BILLING_SETTINGS", "价格必须为非负有限数值")
+			return infraerrors.BadRequest("INVALID_BILLING_SETTINGS", "Prices must be finite nonnegative numbers")
 		}
 	}
 	if s.BatchImageHoldMultiplier < s.BatchImageDiscountMultiplier {
-		return infraerrors.BadRequest("INVALID_BILLING_SETTINGS", "预扣倍率不能低于折扣倍率")
+		return infraerrors.BadRequest("INVALID_BILLING_SETTINGS", "Precharge multiplier must not be lower than the discount multiplier")
 	}
 	s.PeakRateEnabled, s.PeakStart, s.PeakEnd, s.PeakRateMultiplier = NormalizePeakRateConfig(s.PeakRateEnabled, s.PeakStart, s.PeakEnd, s.PeakRateMultiplier)
 	if err := ValidatePeakRateConfig(s.PeakRateEnabled, s.PeakStart, s.PeakEnd, s.PeakRateMultiplier); err != nil {
@@ -185,21 +185,21 @@ func ValidatePeakRateConfig(enabled bool, start, end string, multiplier float64)
 		return nil
 	}
 	if start == "" || end == "" {
-		return errors.New("peak_rate_enabled 为 true 时 peak_start 与 peak_end 必填")
+		return errors.New("peak_start and peak_end are required when peak_rate_enabled is true")
 	}
 	st, okStart := ParseMinutes(start)
 	if !okStart {
-		return fmt.Errorf("peak_start 格式应为 HH:MM，got %q", start)
+		return fmt.Errorf("peak_start must use HH:MM format, got %q", start)
 	}
 	en, okEnd := ParseMinutes(end)
 	if !okEnd {
-		return fmt.Errorf("peak_end 格式应为 HH:MM，got %q", end)
+		return fmt.Errorf("peak_end must use HH:MM format, got %q", end)
 	}
 	if st >= en {
-		return errors.New("peak_end 必须大于 peak_start（不支持跨天区间，如 22:00-02:00）")
+		return errors.New("peak_end must be after peak_start; overnight ranges such as 22:00-02:00 are not supported")
 	}
 	if multiplier < 0 {
-		return errors.New("peak_rate_multiplier 不能为负")
+		return errors.New("peak_rate_multiplier must not be negative")
 	}
 	return nil
 }

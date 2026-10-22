@@ -130,7 +130,7 @@ func (s *CNProviderTest) executeAdaptiveAnthropic(c *TestRun, value *providercor
 	// protocol preparation.
 	payloadBytes, _ := json.Marshal(payload)
 
-	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "正在通过原生 /v1/messages 测试自适应 Anthropic 端点"})
+	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "Testing adaptive Anthropic endpoint through native /v1/messages"})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create adaptive Anthropic request")
@@ -168,7 +168,7 @@ func (s *CNProviderTest) executeAdaptiveAnthropic(c *TestRun, value *providercor
 	if err := (TestStreamOutput{}).AdaptiveAnthropic(c, resp.Body); err != nil {
 		return err
 	}
-	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "已通过原生 /v1/messages 验证"})
+	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "Verified through native /v1/messages"})
 	return nil
 }
 
@@ -203,7 +203,7 @@ func (s *CNProviderTest) executeAdaptiveResponses(c *TestRun, value *providercor
 		payloadBytes = openaiprotocol.StatelessResponsesRequest(payloadBytes)
 	}
 
-	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "正在通过原生 /responses 测试自适应 Responses 端点"})
+	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "Testing adaptive Responses endpoint through native /responses"})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create adaptive Responses request")
@@ -238,7 +238,7 @@ func (s *CNProviderTest) executeAdaptiveResponses(c *TestRun, value *providercor
 	if err := (TestStreamOutput{}).Responses(c, resp.Body); err != nil {
 		return err
 	}
-	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "已通过原生 /responses 验证"})
+	(TestStreamOutput{}).SendEvent(c, providercore.TestEvent{Type: "status", Text: "Verified through native /responses"})
 	return nil
 }
 

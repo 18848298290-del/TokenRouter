@@ -205,7 +205,7 @@ func (r *Store) GetDashboardStatsWithRange(ctx context.Context, start, end time.
 	startUTC := start.UTC()
 	endUTC := end.UTC()
 	if !endUTC.After(startUTC) {
-		return nil, errors.New("统计时间范围无效")
+		return nil, errors.New("invalid statistics time range")
 	}
 
 	stats := &DashboardStats{}

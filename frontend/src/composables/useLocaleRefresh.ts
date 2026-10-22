@@ -20,7 +20,7 @@ export function useLocaleRefresh(refresh: () => Promise<unknown> | void): void {
       // Refresh failure is reported through the console so a locale-change event does not
       // produce an unhandled promise rejection.
       .catch((error) => {
-        console.warn('语言切换后刷新展示数据失败', error)
+        console.warn('Failed to refresh display data after locale change', error)
       })
   }
   window.addEventListener('locale-changed', listener)

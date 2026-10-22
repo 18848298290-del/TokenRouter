@@ -55,11 +55,11 @@ func redactContentModerationSecrets(text string) string {
 	for idx, pattern := range contentModerationSecretPatterns {
 		switch idx {
 		case 1:
-			out = pattern.ReplaceAllString(out, `${1}${2}[已脱敏]`)
+			out = pattern.ReplaceAllString(out, `${1}${2}[REDACTED]`)
 		case 2:
-			out = pattern.ReplaceAllString(out, `${1}[已脱敏]`)
+			out = pattern.ReplaceAllString(out, `${1}[REDACTED]`)
 		default:
-			out = pattern.ReplaceAllString(out, `[已脱敏]`)
+			out = pattern.ReplaceAllString(out, `[REDACTED]`)
 		}
 	}
 	return out

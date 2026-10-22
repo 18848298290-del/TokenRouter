@@ -139,7 +139,7 @@ func (p *OpenAIResponseOutput) PassthroughOptions(ctx context.Context, c *gin.Co
 			gatewaytelemetry.SuccessMissingUsage(ctx, id, resp.StatusCode, usage, event, disconnected)
 		},
 		MissingTerminal: func(id string) {
-			logging.FromContext(ctx).With(zap.String("component", "service.openai_gateway"), zap.Int64("provider_id", provider.Record.ID), zap.String("upstream_request_id", id)).Info("OpenAI passthrough 上游流在未收到 [DONE] 时结束，疑似断流")
+			logging.FromContext(ctx).With(zap.String("component", "service.openai_gateway"), zap.Int64("provider_id", provider.Record.ID), zap.String("upstream_request_id", id)).Info("OpenAI passthrough upstream stream ended without [DONE], possible interrupted stream")
 		},
 		PassthroughFailoverWithModel: func(id string, body []byte, message, model string) error {
 			return p.NewStreamFailureWithModel(c, provider, true, id, body, message, model)

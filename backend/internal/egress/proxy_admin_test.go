@@ -364,10 +364,10 @@ func TestFinalizeProxyQualityResult_ScoreAndGrade(t *testing.T) {
 
 	require.Equal(t, 38, result.Score)
 	require.Equal(t, "F", result.Grade)
-	require.Contains(t, result.Summary, "通过 2 项")
-	require.Contains(t, result.Summary, "告警 1 项")
-	require.Contains(t, result.Summary, "失败 1 项")
-	require.Contains(t, result.Summary, "挑战 1 项")
+	require.Contains(t, result.Summary, "Passed: 2")
+	require.Contains(t, result.Summary, "warnings: 1")
+	require.Contains(t, result.Summary, "failed: 1")
+	require.Contains(t, result.Summary, "challenges: 1")
 }
 
 // GetByID returns a shallow struct copy of the fixture's current proxy for

@@ -34,7 +34,7 @@ const (
 	CodexInviteDefaultUserAgent        = "Codex Desktop/0.0.0 (Linux; x86_64)"
 	codexBackendAPIBaseURL             = "https://chatgpt.com/backend-api"
 	codexInviteResetUnavailable        = "CODEX_INVITE_RESET_REFERRAL_UNAVAILABLE"
-	codexInviteResetUnavailableMessage = "当前 Codex 推荐邀请入口暂不可用，但已有重置次数仍可使用"
+	codexInviteResetUnavailableMessage = "Codex referral invitations are temporarily unavailable; existing resets can still be used"
 )
 
 // CodexInviteClient holds credentials and callbacks for ChatGPT invitation

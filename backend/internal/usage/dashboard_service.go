@@ -36,7 +36,7 @@ const (
 
 // ErrDashboardStatsCacheMiss identifies an absent or unusable cached
 // dashboard snapshot for the service's synchronous read path.
-var ErrDashboardStatsCacheMiss = errors.New("仪表盘缓存未命中")
+var ErrDashboardStatsCacheMiss = errors.New("dashboard cache miss")
 
 // DashboardStatsCache reads and updates serialized administrator dashboard
 // statistics for service caching.
@@ -258,7 +258,7 @@ func (s *DashboardService) GetDashboardStats(ctx context.Context) (*DashboardSta
 			return cached, nil
 		}
 		if err != nil && !errors.Is(err, ErrDashboardStatsCacheMiss) {
-			s.logMessage("service.dashboard", "[Dashboard] 仪表盘缓存读取失败: %v", err)
+			s.logMessage("service.dashboard", "[INFO] [Dashboard] Failed to read dashboard cache: %v", err)
 		}
 	}
 
@@ -472,7 +472,7 @@ func (s *DashboardService) getCachedDashboardStats(ctx context.Context) (*Dashbo
 	// A valid JSON envelope can still lack statistics. Remove that unusable entry
 	// before the caller rebuilds its data through the same cache-miss query path.
 	if entry.Stats == nil {
-		s.evictDashboardStatsCache(errors.New("仪表盘缓存缺少统计数据"))
+		s.evictDashboardStatsCache(errors.New("dashboard cache is missing statistics"))
 		return nil, false, ErrDashboardStatsCacheMiss
 	}
 
@@ -528,7 +528,7 @@ func (s *DashboardService) refreshDashboardStatsAsync() {
 		// available until its expiration. Log the refresh failure and end this
 		// admitted callback before attempting cache publication.
 		if err != nil {
-			s.logMessage("service.dashboard", "[Dashboard] 仪表盘缓存异步刷新失败: %v", err)
+			s.logMessage("service.dashboard", "[INFO] [Dashboard] Failed to refresh dashboard cache asynchronously: %v", err)
 			return
 		}
 		s.applyAggregationStatus(ctx, stats)
@@ -574,7 +574,7 @@ func (s *DashboardService) saveDashboardStatsCache(ctx context.Context, stats *D
 	// current caller. Log the cache-publication error and keep later reads
 	// eligible to query or use their remaining stored entry.
 	if err != nil {
-		s.logMessage("service.dashboard", "[Dashboard] 仪表盘缓存序列化失败: %v", err)
+		s.logMessage("service.dashboard", "[INFO] [Dashboard] Failed to serialize dashboard cache: %v", err)
 		return
 	}
 
@@ -582,7 +582,7 @@ func (s *DashboardService) saveDashboardStatsCache(ctx context.Context, stats *D
 	// this response. Record the failure while later readers retain their
 	// ordinary lookup and refresh paths.
 	if err := s.cache.SetDashboardStats(ctx, string(data), s.cacheTTL); err != nil {
-		s.logMessage("service.dashboard", "[Dashboard] 仪表盘缓存写入失败: %v", err)
+		s.logMessage("service.dashboard", "[INFO] [Dashboard] Failed to write dashboard cache: %v", err)
 	}
 }
 
@@ -601,10 +601,10 @@ func (s *DashboardService) evictDashboardStatsCache(reason error) {
 	// failure so a remaining stored entry can be diagnosed while later reads
 	// continue their normal refresh handling.
 	if err := s.cache.DeleteDashboardStats(cacheCtx); err != nil {
-		s.logMessage("service.dashboard", "[Dashboard] 仪表盘缓存清理失败: %v", err)
+		s.logMessage("service.dashboard", "[INFO] [Dashboard] Failed to clear dashboard cache: %v", err)
 	}
 	if reason != nil {
-		s.logMessage("service.dashboard", "[Dashboard] 仪表盘缓存异常，已清理: %v", reason)
+		s.logMessage("service.dashboard", "[Dashboard] Invalid dashboard cache cleared: %v", reason)
 	}
 }
 
@@ -650,7 +650,7 @@ func (s *DashboardService) fetchAggregationUpdatedAt(ctx context.Context) time.T
 	// Failed watermark reads leave progress unknown. Return the same epoch marker
 	// used for absent progress so the caller reports stale statistics for this snapshot.
 	if err != nil {
-		s.logMessage("service.dashboard", "[Dashboard] 读取聚合水位失败: %v", err)
+		s.logMessage("service.dashboard", "[INFO] [Dashboard] Failed to read aggregation watermark: %v", err)
 		return time.Unix(0, 0).UTC()
 	}
 	if updatedAt.IsZero() {

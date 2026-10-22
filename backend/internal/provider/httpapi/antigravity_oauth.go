@@ -83,13 +83,13 @@ func NewAntigravityOAuthHandler(antigravityOAuthService AntigravityAuthorization
 func (h *AntigravityOAuthHandler) GenerateAuthURL(c *gin.Context) {
 	var req AntigravityGenerateAuthURLRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求无效: "+err.Error())
+		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
 
 	result, err := h.antigravityOAuthService.GenerateAuthURL(c.Request.Context(), req.ProxyID)
 	if err != nil {
-		response.InternalError(c, "生成授权链接失败: "+err.Error())
+		response.InternalError(c, "Failed to generate authorization URL: "+err.Error())
 		return
 	}
 
@@ -103,7 +103,7 @@ func (h *AntigravityOAuthHandler) GenerateAuthURL(c *gin.Context) {
 func (h *AntigravityOAuthHandler) ExchangeCode(c *gin.Context) {
 	var req AntigravityExchangeCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求无效: "+err.Error())
+		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
 
@@ -114,7 +114,7 @@ func (h *AntigravityOAuthHandler) ExchangeCode(c *gin.Context) {
 		ProxyID:   req.ProxyID,
 	})
 	if err != nil {
-		response.BadRequest(c, "Token 交换失败: "+err.Error())
+		response.BadRequest(c, "Failed to exchange token: "+err.Error())
 		return
 	}
 
@@ -129,7 +129,7 @@ func (h *AntigravityOAuthHandler) ExchangeCode(c *gin.Context) {
 func (h *AntigravityOAuthHandler) RefreshToken(c *gin.Context) {
 	var req AntigravityRefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求无效: "+err.Error())
+		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
 

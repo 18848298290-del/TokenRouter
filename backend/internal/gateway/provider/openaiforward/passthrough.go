@@ -255,7 +255,7 @@ func RunPassthrough(ctx context.Context, in PassthroughInput, p PassthroughPorts
 	}
 
 	p.Log(
-		"[OpenAI 自动透传] 命中自动透传分支: provider=%d name=%s type=%s model=%s stream=%v",
+		"[OpenAI auto passthrough] Selected automatic passthrough: provider=%d name=%s type=%s model=%s stream=%v",
 		profile.ID,
 		profile.Name,
 		profile.Type,

@@ -92,7 +92,7 @@ func (r *Runtime) bedrock(
 		proxyURL = provider.Record.Proxy.URL()
 	}
 
-	logging.LegacyPrintf("service.gateway", "[Bedrock] 命中 Bedrock 分支: provider=%d name=%s model=%s->%s stream=%v",
+	logging.LegacyPrintf("service.gateway", "[Bedrock] Selected Bedrock forwarding: provider=%d name=%s model=%s->%s stream=%v",
 		provider.Record.ID, provider.Record.Name, reqModel, mappedModel, reqStream)
 
 	var signer *bedrock.BedrockSigner

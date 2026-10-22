@@ -95,7 +95,7 @@ func ForwardNativeMessages(ctx context.Context, body []byte, defaultMappedModel 
 	body = p.StripEmpty(body)
 	body = p.FilterSearch(body, upstreamModel)
 
-	p.Log("[CN Anthropic 直通] provider=%d(%s) platform=%s model=%s upstream=%s stream=%v",
+	p.Log("[CN Anthropic passthrough] provider=%d(%s) platform=%s model=%s upstream=%s stream=%v",
 		profile.ID, profile.Name, profile.Platform, originalModel, upstreamModel, clientStream)
 
 	apiKey := strings.TrimSpace(p.ProtocolAPIKey())

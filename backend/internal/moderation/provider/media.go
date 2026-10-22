@@ -89,7 +89,7 @@ func SnapshotMedia(ctx context.Context, media []contract.ContentModerationMedia)
 				// reservation keeps these bytes out of the returned retained-content entries.
 				if !reserveContentModerationSnapshotBytes(&retainedBytes, int64(len(data))) {
 					out[index].SnapshotStatus = "error"
-					out[index].SnapshotError = "当前记录的图片快照总大小超过 256 MB 限制"
+					out[index].SnapshotError = "image snapshots for this record exceed the 256 MB limit"
 					out[index].Content = nil
 					continue
 				}
@@ -177,10 +177,10 @@ func fetchContentModerationImage(ctx context.Context, reference string) ([]byte,
 	}
 	parsed, err := url.Parse(reference)
 	if err != nil {
-		return nil, "", fmt.Errorf("图片引用无效: %w", err)
+		return nil, "", fmt.Errorf("invalid image reference: %w", err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, "", errors.New("仅支持 HTTP(S) 或 data 图片引用")
+		return nil, "", errors.New("only HTTP(S) or data image references are supported")
 	}
 	if err := validateContentModerationRemoteURL(ctx, parsed); err != nil {
 		return nil, "", err
@@ -199,18 +199,18 @@ func fetchContentModerationImage(ctx context.Context, reference string) ([]byte,
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("下载图片失败: %w", err)
+		return nil, "", fmt.Errorf("failed to download image: %w", err)
 	}
 	// Close the received body after header checks and bounded reading. Its close
 	// error is suppressed because the fetch reports the earlier validation or read result.
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("下载图片返回 HTTP %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("image download returned HTTP %d", resp.StatusCode)
 	}
 	// Reject a declared oversized response before reading, then enforce the same
 	// cap while reading because missing or incorrect length headers cannot bound allocation.
 	if resp.ContentLength > maxContentModerationSnapshotBytes {
-		return nil, "", errors.New("图片超过 20 MB 限制")
+		return nil, "", errors.New("image exceeds the 20 MB limit")
 	}
 	mimeType, err := normalizeContentModerationImageMIME(resp.Header.Get("Content-Type"))
 	if err != nil {
@@ -218,10 +218,10 @@ func fetchContentModerationImage(ctx context.Context, reference string) ([]byte,
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxContentModerationSnapshotBytes+1))
 	if err != nil {
-		return nil, "", fmt.Errorf("读取图片失败: %w", err)
+		return nil, "", fmt.Errorf("failed to read image: %w", err)
 	}
 	if len(data) > maxContentModerationSnapshotBytes {
-		return nil, "", errors.New("图片超过 20 MB 限制")
+		return nil, "", errors.New("image exceeds the 20 MB limit")
 	}
 	if err := validateContentModerationImageBytes(data, mimeType); err != nil {
 		return nil, "", err
@@ -237,7 +237,7 @@ func fetchContentModerationImage(ctx context.Context, reference string) ([]byte,
 func decodeContentModerationDataImage(reference string) ([]byte, string, error) {
 	header, payload, ok := strings.Cut(strings.TrimPrefix(reference, "data:"), ",")
 	if !ok {
-		return nil, "", errors.New("data 图片缺少内容")
+		return nil, "", errors.New("data image has no content")
 	}
 	parts := strings.Split(header, ";")
 	mimeType, err := normalizeContentModerationImageMIME(parts[0])
@@ -254,17 +254,17 @@ func decodeContentModerationDataImage(reference string) ([]byte, string, error) 
 		// Estimate unescaped bytes before allocating the decoded string; the later
 		// PathUnescape call remains responsible for rejecting malformed percent sequences.
 		if escapedContentModerationDataLength(payload) > maxContentModerationSnapshotBytes {
-			return nil, "", errors.New("图片超过 20 MB 限制")
+			return nil, "", errors.New("image exceeds the 20 MB limit")
 		}
 		var decoded string
 		decoded, err = url.PathUnescape(payload)
 		data = []byte(decoded)
 	}
 	if err != nil {
-		return nil, "", fmt.Errorf("解码 data 图片失败: %w", err)
+		return nil, "", fmt.Errorf("failed to decode data image: %w", err)
 	}
 	if len(data) > maxContentModerationSnapshotBytes {
-		return nil, "", errors.New("图片超过 20 MB 限制")
+		return nil, "", errors.New("image exceeds the 20 MB limit")
 	}
 	if err := validateContentModerationImageBytes(data, mimeType); err != nil {
 		return nil, "", err
@@ -295,11 +295,11 @@ func escapedContentModerationDataLength(payload string) int {
 func normalizeContentModerationImageMIME(value string) (string, error) {
 	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(value))
 	if err != nil {
-		return "", fmt.Errorf("图片 MIME 无效: %w", err)
+		return "", fmt.Errorf("invalid image MIME type: %w", err)
 	}
 	mediaType = strings.ToLower(mediaType)
 	if !strings.HasPrefix(mediaType, "image/") {
-		return "", errors.New("远程内容不是 image/*")
+		return "", errors.New("remote content is not image/*")
 	}
 	return mediaType, nil
 }
@@ -310,7 +310,7 @@ func normalizeContentModerationImageMIME(value string) (string, error) {
 // equality between declared and detected subtypes.
 func validateContentModerationImageBytes(data []byte, declaredMIME string) error {
 	if len(data) == 0 {
-		return errors.New("图片内容为空")
+		return errors.New("image content is empty")
 	}
 	detected := strings.ToLower(http.DetectContentType(data))
 	if strings.HasPrefix(detected, "image/") {
@@ -321,7 +321,7 @@ func validateContentModerationImageBytes(data []byte, declaredMIME string) error
 	if declaredMIME == "image/svg+xml" && (strings.Contains(string(data[:min(len(data), 512)]), "<svg") || strings.Contains(string(data[:min(len(data), 512)]), "<?xml")) {
 		return nil
 	}
-	return errors.New("图片内容与 MIME 不匹配")
+	return errors.New("image content does not match its MIME type")
 }
 
 // newContentModerationSnapshotClient constructs a direct HTTP client for
@@ -368,7 +368,7 @@ func newContentModerationSnapshotClient() *http.Client {
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// Limit successive image locations before another redirect request.
 			if len(via) >= 5 {
-				return errors.New("图片重定向次数过多")
+				return errors.New("too many image redirects")
 			}
 			return validateContentModerationRemoteURL(req.Context(), req.URL)
 		},
@@ -381,7 +381,7 @@ func newContentModerationSnapshotClient() *http.Client {
 // produce an error.
 func validateContentModerationRemoteURL(ctx context.Context, value *url.URL) error {
 	if value == nil || (value.Scheme != "http" && value.Scheme != "https") || strings.TrimSpace(value.Hostname()) == "" {
-		return errors.New("远程图片 URL 无效")
+		return errors.New("invalid remote image URL")
 	}
 	_, err := resolveContentModerationPublicIPs(ctx, value.Hostname())
 	return err
@@ -394,16 +394,16 @@ func validateContentModerationRemoteURL(ctx context.Context, value *url.URL) err
 func resolveContentModerationPublicIPs(ctx context.Context, host string) ([]net.IP, error) {
 	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
-		return nil, fmt.Errorf("解析图片主机失败: %w", err)
+		return nil, fmt.Errorf("failed to resolve image host: %w", err)
 	}
 	if len(addresses) == 0 {
-		return nil, errors.New("图片主机没有可用地址")
+		return nil, errors.New("image host has no available addresses")
 	}
 	ips := make([]net.IP, 0, len(addresses))
 	for _, address := range addresses {
 		ip := address.IP
 		if !isContentModerationPublicIP(ip) {
-			return nil, errors.New("禁止访问私网或本地图片地址")
+			return nil, errors.New("private or local image addresses are not allowed")
 		}
 		ips = append(ips, ip)
 	}

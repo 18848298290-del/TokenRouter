@@ -297,7 +297,7 @@ const fetchLogs = async () => {
     // Keep the previous log page on a failed query and report retrieval failure,
     // allowing existing recorded details to remain inspectable.
     console.error('[OpsSystemLogTable] Failed to fetch logs', err)
-    appStore.showError(err?.response?.data?.detail || '系统日志加载失败')
+    appStore.showError(err?.response?.data?.detail || t('admin.ops.systemLogs.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -355,7 +355,7 @@ const saveRuntimeConfig = async () => {
     appStore.showSuccess('日志运行时配置已生效')
   } catch (err: any) {
     console.error('[OpsSystemLogTable] Failed to save runtime log config', err)
-    appStore.showError(err?.response?.data?.detail || '保存日志配置失败')
+    appStore.showError(err?.response?.data?.detail || t('admin.ops.systemLogs.saveConfigFailed'))
   } finally {
     runtimeSaving.value = false
   }
@@ -382,7 +382,7 @@ const resetRuntimeConfig = async () => {
     await fetchHealth()
   } catch (err: any) {
     console.error('[OpsSystemLogTable] Failed to reset runtime log config', err)
-    appStore.showError(err?.response?.data?.detail || '回滚日志配置失败')
+    appStore.showError(err?.response?.data?.detail || t('admin.ops.systemLogs.resetConfigFailed'))
   } finally {
     runtimeSaving.value = false
   }
