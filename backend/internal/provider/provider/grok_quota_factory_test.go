@@ -21,7 +21,7 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// Grok quota probing combines billing GETs, one active Responses POST and
+// grok_quota_factory_test.go checks billing GETs, active Responses POSTs and
 // provider observation writes. These cases exercise grok_quota_factory.go's
 // bindings with request-recording transports, checking query identity, header
 // storage, local usage, media eligibility and the distinction between billing
@@ -449,14 +449,19 @@ func TestGrokQuotaServiceQueryQuotaPaidBillingSkipsActiveProbe(t *testing.T) {
 	}
 }
 
-// TestGrokQuotaServiceQueryQuotaCustomPaidMonthlyLimitSkipsActiveProbe
-// provides a paid
-// monthly cent limit without the ordinary weekly signal. It checks authoritative
-// billing keeps that limit and requires no active quota snapshot.
+// TestGrokQuotaServiceQueryQuotaCustomPaidMonthlyLimitSkipsActiveProbe supplies a
+// monthly limit and a fresh model cache without the ordinary weekly signal.
+// Authoritative billing retains the limit, and the completed service makes
+// exactly two billing requests without an active quota probe or model refresh.
 func TestGrokQuotaServiceQueryQuotaCustomPaidMonthlyLimitSkipsActiveProbe(t *testing.T) {
 	t.Parallel()
 
 	provider := healthyGrokQuotaOAuthProvider(57)
+	// A current model snapshot keeps auxiliary discovery out of the exact
+	// billing request count, even when its background task runs before shutdown.
+	provider.Extra = map[string]any{providercore.GrokObservedModelsExtraKey: map[string]any{
+		"models": []string{"grok-4.5"}, "fetched_at": time.Now().UTC().Format(time.RFC3339),
+	}}
 	repo := &grokQuotaProviderRepo{grokQuotaReadStore: &grokQuotaReadStore{
 		providersByID: map[int64]*providercore.Record{provider.ID: provider},
 	}}
@@ -471,12 +476,13 @@ func TestGrokQuotaServiceQueryQuotaCustomPaidMonthlyLimitSkipsActiveProbe(t *tes
 	// Compare the observed monthly limit with a narrow absolute cent tolerance.
 	require.InDelta(t, monthlyLimit, *result.Billing.MonthlyLimitCents, 1e-9)
 	require.Nil(t, result.Snapshot)
+	require.NoError(t, svc.StopContext(context.Background()))
 
 	requests, _ := upstream.snapshot()
-	require.Len(t, requests, 2)
 	for _, req := range requests {
 		require.Equal(t, "/v1/billing", req.URL.Path)
 	}
+	require.Len(t, requests, 2)
 }
 
 // TestGrokQuotaServiceProbeFlightsDeduplicateBillingAndSeparateActive holds a
