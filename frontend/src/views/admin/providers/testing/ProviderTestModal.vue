@@ -54,6 +54,19 @@
           {{ t('admin.providers.testDialog.settings') }}
         </div>
 
+        <div v-if="groupOptions.length" class="space-y-1.5">
+          <label class="input-label" for="provider-test-group">{{
+            t('admin.providers.columns.groups')
+          }}</label>
+          <Select
+            id="provider-test-group"
+            v-model="selectedGroupId"
+            :options="groupOptions"
+            :disabled="busy"
+            data-testid="provider-test-group"
+          />
+        </div>
+
         <div v-if="imageTestAvailable" class="space-y-1.5">
           <div class="input-label">{{ t('admin.providers.testDialog.type') }}</div>
           <SettingsSegmented
@@ -266,7 +279,7 @@ import { BATCH_CONCURRENCY_OPTIONS, useProviderBatchTest } from './useProviderBa
 
 /**
  * ProviderTestModal.vue owns provider connection-test controls, model loading, and single or
- * batch execution. Administrators choose the model and output type, while platform and
+ * batch execution. Administrators choose the group, model, and output type, while platform and
  * authentication rules determine which protocol selectors and compact modes are available.
  * Decision providers submit the validated SystemOne form instead of a text prompt.
  *
@@ -284,6 +297,8 @@ import { BATCH_CONCURRENCY_OPTIONS, useProviderBatchTest } from './useProviderBa
 const props = defineProps<{
   show: boolean // parent-controlled dialog visibility
   provider: Provider | null // current provider or empty selection
+  /** initialGroupId selects the initial membership when it belongs to this provider; other values use the first membership. */
+  initialGroupId?: number
 }>()
 
 /**
@@ -336,6 +351,20 @@ let singleController: AbortController | null = null
  */
 const batch = reactive(useProviderBatchTest(t))
 const busy = computed(() => singleRunning.value || batch.running)
+
+/**
+ * Group choices come from provider memberships. Opening prefers the active list filter,
+ * then the first membership; ungrouped providers submit no group override.
+ */
+const selectedGroupId = ref<number | undefined>()
+const groupOptions = computed(() => {
+  const groups = props.provider?.groups ?? []
+  const ids = props.provider?.group_ids ?? groups.map((group) => group.id)
+  return ids.map((id) => ({
+    value: id,
+    label: groups.find((group) => group.id === id)?.name || `#${id}`,
+  }))
+})
 
 /**
  * Model choices, selection, loading feedback, and prompt defaults are reset or refreshed when
@@ -532,6 +561,9 @@ watch(
   async ([open]) => {
     abortAll()
     if (open && props.provider) {
+      selectedGroupId.value =
+        groupOptions.value.find((group) => group.value === props.initialGroupId)?.value ??
+        groupOptions.value[0]?.value
       testScope.value = 'single'
       testPrompt.value = ''
       lastDefaultPrompt = ''
@@ -599,13 +631,19 @@ const loadAvailableModels = async () => {
 /**
  * buildRequestBody builds one request using the current dialog controls. Decision payloads take
  * precedence for Jev, compact requests suppress prompt text, and optional mode or protocol
- * fields follow platform selection rules.
+ * fields follow platform selection rules. Every request carries the selected group profile.
  */
 const buildRequestBody = (model: string): ProviderTestRequestBody => {
   if (isDecisionProvider.value && decisionPayload.value) {
-    return { model_id: model, test_type: 'decision', systemone: decisionPayload.value }
+    return {
+      group_id: selectedGroupId.value,
+      model_id: model,
+      test_type: 'decision',
+      systemone: decisionPayload.value,
+    }
   }
   const body: ProviderTestRequestBody = {
+    group_id: selectedGroupId.value,
     model_id: model,
     prompt: isCompactTestMode.value ? '' : testPrompt.value.trim(),
     test_type: testType.value,

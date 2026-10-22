@@ -27,6 +27,9 @@ import (
 // TestRun retains cancellation, event output, and per-probe request and
 // execution state.
 type TestRun struct {
+	// GroupID selects model attributes for this probe. Zero uses catalogue defaults;
+	// the synchronous executor reads this value after its target initializes it.
+	GroupID int64
 	// Context and Cancel refer to the derived probe lifetime. A first output
 	// failure invokes Cancel, and the target also cancels after finishing to
 	// release context resources.

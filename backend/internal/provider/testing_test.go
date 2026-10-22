@@ -260,7 +260,7 @@ func TestTestingBackgroundPreservesWireTextAndClock(t *testing.T) {
 		clockCalls++
 		return at
 	}})
-	result, err := svc.RunTestBackgroundWithPromptAndUserAgent(context.Background(), 1, "model", "prompt", "probe/1.0")
+	result, err := svc.RunTestBackgroundRequest(context.Background(), TestRequest{ProviderID: 1, GroupID: 59, Model: "model", Prompt: "prompt", UserAgent: "probe/1.0"})
 	require.NoError(t, err)
 	require.Equal(t, "success", result.Status)
 	require.Equal(t, "a\ufffd", result.ResponseText)
@@ -269,6 +269,7 @@ func TestTestingBackgroundPreservesWireTextAndClock(t *testing.T) {
 	require.Equal(t, start, result.StartedAt)
 	require.True(t, loader.request.Automatic)
 	require.Equal(t, "probe/1.0", loader.request.UserAgent)
+	require.Equal(t, int64(59), loader.request.GroupID)
 }
 
 // TestTestingRejectsProtocolOutsideProviderCapability supplies OpenAI and CN

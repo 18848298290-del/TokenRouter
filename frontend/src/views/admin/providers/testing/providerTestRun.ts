@@ -82,6 +82,8 @@ export interface ProviderTestRun {
  * endpoint.
  */
 export interface ProviderTestRequestBody {
+  /** The selected membership supplies model attributes; omission uses the default catalogue values. */
+  group_id?: number
   model_id: string // requested provider model identifier
   prompt?: string // optional test prompt text
   systemone?: SystemOneTestPayload // structured decision test payload

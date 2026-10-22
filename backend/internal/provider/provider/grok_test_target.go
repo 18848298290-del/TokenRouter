@@ -8,8 +8,8 @@ import (
 )
 
 // grok_test_target.go binds a selected Grok provider to a synchronous probe
-// with request identity headers. TestRun records event-sink failures and
-// cancels execution after an output failure; the target returns that recorded
+// with its group and request identity headers. TestRun records event-sink
+// failures and cancels execution after an output failure; the target returns that recorded
 // error together with the probe result and releases its run context.
 
 // grokTestTarget borrows the selected provider and its Grok probe event executor.
@@ -37,8 +37,8 @@ func (t grokTestTarget) Information() provider.TestTargetInfo {
 	return provider.TestTargetInfo{ProviderSnapshot: t.record.RoutingSnapshot(), APIProtocol: (provider.ProtocolTarget{Record: t.record}).GetAPIProtocol()}
 }
 
-// Execute runs one Grok probe with the supplied prompt and explicit test type.
-// It creates a TestRun carrying User-Agent and originator headers and returns
+// Execute runs one Grok probe with its prompt and optional test type.
+// It creates a TestRun carrying the group, User-Agent, and originator and returns
 // its combined execution/sink result. The run context is cancelled on every
 // return from this target.
 func (t grokTestTarget) Execute(ctx context.Context, request provider.PreparedTestRequest, sink provider.TestEventSink) error {
@@ -46,6 +46,7 @@ func (t grokTestTarget) Execute(ctx context.Context, request provider.PreparedTe
 	headers.Set("User-Agent", request.UserAgent)
 	headers.Set("originator", request.Originator)
 	run := NewTestRun(ctx, headers, sink)
+	run.GroupID = request.GroupID
 	defer run.Cancel()
 	return run.Result(t.executor.Execute(run, t.record, request.Model, request.Prompt, request.TestType))
 }

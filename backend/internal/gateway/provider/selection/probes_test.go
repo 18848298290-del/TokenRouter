@@ -13,10 +13,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// probes_test.go checks group probe selection and execution against controlled
+// provider and policy stores. The cases retain group identity and each mapping
+// stage while recording the complete request sent to background provider tests.
+
 // probePricingStore supplies empty persisted configurations for group-policy
 // probe tests.
 type probePricingStore struct {
 	routing.PricingConfigRepository // unused repository calls panic
+}
+
+// probeTestRecorder captures the complete background request passed by group probes.
+type probeTestRecorder struct {
+	request providercore.TestRequest // captured background test inputs
 }
 
 // TestProbeSelectPreservesGroupMappedModel supplies a client alias and a
@@ -65,7 +74,7 @@ func TestProbeSelectPreservesGroupMappedModel(t *testing.T) {
 				target, err := probe.Select(context.Background(), routing.GroupAvailabilityProbeDueGroup{GroupID: group.ID}, requested)
 				require.NoError(t, err)
 				// The testing service applies provider mapping after group selection.
-				require.Equal(t, routing.GroupProbeTarget{ProviderID: 3678, ModelID: groupModel}, target)
+				require.Equal(t, routing.GroupProbeTarget{GroupID: group.ID, ProviderID: 3678, ModelID: groupModel}, target)
 				if mapped {
 					_, err = probe.Select(context.Background(), routing.GroupAvailabilityProbeDueGroup{GroupID: group.ID}, groupModel)
 					require.Error(t, err)
@@ -79,4 +88,21 @@ func TestProbeSelectPreservesGroupMappedModel(t *testing.T) {
 // group-policy fixture.
 func (probePricingStore) ListAll(context.Context) ([]routing.PricingConfig, error) {
 	return nil, nil
+}
+
+// RunTestBackgroundRequest records the supplied request and returns a successful observation.
+func (r *probeTestRecorder) RunTestBackgroundRequest(_ context.Context, request providercore.TestRequest) (*providercore.ScheduledTestResult, error) {
+	r.request = request
+	return &providercore.ScheduledTestResult{Status: "success"}, nil
+}
+
+// TestProbeTestPreservesGroup verifies execution retains group identity after selection.
+// Provider mapping receives the intermediate model together with that group's attribute scope.
+func TestProbeTestPreservesGroup(t *testing.T) {
+	recorder := &probeTestRecorder{}
+	probe := Probe{ProviderTest: recorder}
+	result, err := probe.Test(t.Context(), routing.GroupProbeTarget{GroupID: 59, ProviderID: 3678, ModelID: "mapped-model"}, "draw", "probe-client")
+	require.NoError(t, err)
+	require.Equal(t, "success", result.Status)
+	require.Equal(t, providercore.TestRequest{GroupID: 59, ProviderID: 3678, Model: "mapped-model", Prompt: "draw", UserAgent: "probe-client"}, recorder.request)
 }

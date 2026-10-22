@@ -124,7 +124,7 @@ Qoder、Gemini、Grok、Anthropic、Bedrock、OpenAI 和国产平台的测试目
 
 - Qoder 共用授权会话。
 - Gemini 有 API Key、AI Studio OAuth、Code Assist 和 Vertex 四条请求路径。
-- Anthropic、Vertex 和 Bedrock 按最终服务型号读取统一目录的采样能力，再构造测试报文。认证与签名区域由各平台处理。
+- Anthropic、Vertex 和 Bedrock 按最终服务型号读取所选分组的采样属性，再构造测试报文。认证与签名区域由各平台处理。
 - Grok 区分文字和图片端点，并使用同一套健康写入规则。
 - OpenAI 有 Responses、Chat、两种 Compact 和图片分支。
 - 国产平台按固定协议和自适应的探测顺序测试。
@@ -139,9 +139,11 @@ app 直接构造一个 TestService 和 TestTargets。计划测试和分组探测
 
 ### 测试参数
 
+管理端测试可传 `group_id` 选择模型属性配置；弹窗提供所属分组选择，默认采用列表筛选的分组，无匹配筛选时选择第一个所属分组。单次、批量和决策测试都携带该选择；未分组提供商及省略 `group_id` 的调用使用默认属性。测试模型来自提供商目录，只执行提供商映射。分组后台探针携带探测分组及分组映射后的模型，测试执行器按最终上游型号读取分组属性。OpenAI API Key 和 Grok 的图片能力按图片生成端点查询，自动文字探针按实际文字端点查询，协议限定规则参与匹配。OpenAI 的属性查询与请求发送共用协议选择结果；未指定测试协议时读取提供商的文字路由配置，显式测试协议优先。Grok API Key 和 OAuth 的自动图片探针读取所选分组属性，显式文字测试保持 Responses。属性配置读取失败时终止请求。
+
 Kimi、Zhipu、DeepSeek 的连接测试，只测试提供商 `upstream_protocols` 里启用的原生端点；集合为空时，直接报告没有启用的协议，不发起上游请求。管理端可以用 `protocol=chat_completions|anthropic|responses` 只测其中一个已经启用的协议，选了没启用的协议，在请求上游之前就会失败；省略时，按 Chat、Messages、Responses 的顺序，依次验证所有已启用的协议。测试复用提供商的自定义 Base URL、代理、TLS 指纹和受保护的 Header Override。Anthropic 协议的自定义中继，在模型同步等 OpenAI 格式的请求里，只去掉末尾的 `/anthropic`，host 和之前的路径前缀都保持不变。
 
-管理端的连接测试请求，要明确选择 `test_type=text|image`，并在同一个请求里传自定义的 `prompt`。文字测试不会因为模型名里有图片标记就换端点；图片测试由 OpenAI、Gemini 或 Grok 提供商的平台图片端点执行，和模型名无关。OpenAI 的 `compact` 和 `legacy_compact` 只执行固定载荷的连接测试，不显示也不使用自定义提示词。只有没带 `test_type` 的旧调用，才按模型名判断。图片和文字的结果，分别通过 SSE 的图片事件和内容事件返回；不支持图片端点的平台，直接返回可以诊断的错误，不会悄悄改成文字测试。OpenAI API Key 和 Grok 的图片测试，同时接受 `b64_json` 和图片链接（OpenAI 只接受 `https` 或 `data:image/` 开头的链接）；上游返回了结果、但没有可以展示的图片时，测试判为失败，并附上截断的响应正文。
+管理端的连接测试请求，要明确选择 `test_type=text|image`，并在同一个请求里传自定义的 `prompt`。文字测试不会因为模型名里有图片标记就换端点；图片测试由 OpenAI、Gemini 或 Grok 提供商的平台图片端点执行，和模型名无关。OpenAI 的 `compact` 和 `legacy_compact` 只执行固定载荷的连接测试，不显示也不使用自定义提示词。未传 `test_type` 的调用按所选分组的最终模型输出属性选择文字或图片测试，输出未知时要求明确测试类型或补充属性。图片和文字的结果，分别通过 SSE 的图片事件和内容事件返回；不支持图片端点的平台，直接返回可以诊断的错误，不会悄悄改成文字测试。OpenAI API Key 和 Grok 的图片测试，同时接受 `b64_json` 和图片链接（OpenAI 只接受 `https` 或 `data:image/` 开头的链接）；上游返回了结果、但没有可以展示的图片时，测试判为失败，并附上截断的响应正文。
 
 ## 额度与能力探测
 

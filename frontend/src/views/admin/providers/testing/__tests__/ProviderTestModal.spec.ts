@@ -162,6 +162,38 @@ describe('ProviderTestModal', () => {
     vi.restoreAllMocks()
   })
 
+  // A provider belongs to two groups with different model profiles. The list filter
+  // selects the initial group, and switching the selector changes single and batch requests.
+  it('carries the selected group into single and batch tests', async () => {
+    const wrapper = mountModal({
+      id: 42,
+      name: 'Grouped provider',
+      platform: 'gemini',
+      type: 'apikey',
+      group_ids: [59, 60],
+      groups: [
+        { id: 59, name: 'Images' },
+        { id: 60, name: 'Text' },
+      ],
+    })
+    await wrapper.setProps({ show: true, initialGroupId: 60 } as any)
+    await flushPromises()
+    expect(wrapper.getComponent('[data-testid="provider-test-group"]').props('modelValue')).toBe(60)
+    await chooseModel(wrapper, 'gemini-2.5-flash-image')
+    await (wrapper.vm as any).startTest()
+    expect(JSON.parse((global.fetch as any).mock.calls[0][1].body).group_id).toBe(60)
+    wrapper.getComponent('[data-testid="provider-test-group"]').vm.$emit('update:modelValue', 59)
+    await wrapper.vm.$nextTick()
+    ;(wrapper.vm as any).startBatch(['gemini-2.5-flash-image'], false)
+    await flushPromises()
+    expect(JSON.parse((global.fetch as any).mock.calls[1][1].body).group_id).toBe(59)
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true, initialGroupId: 99 } as any)
+    await flushPromises()
+    expect(wrapper.getComponent('[data-testid="provider-test-group"]').props('modelValue')).toBe(59)
+    wrapper.unmount()
+  })
+
   // A Jev run submits mixed decision questions and returns valid usage with
   // zero output tokens. Answers retain submitted questions, and structured,
   // JSON, log, and copy views expose the response.

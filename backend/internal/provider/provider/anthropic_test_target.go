@@ -42,6 +42,7 @@ func (t anthropicTestTarget) Execute(ctx context.Context, request provider.Prepa
 	headers := make(http.Header)
 	headers.Set("User-Agent", request.UserAgent)
 	run := NewTestRun(ctx, headers, sink)
+	run.GroupID = request.GroupID
 	defer run.Cancel()
 	// Copy the executor value before changing its User-Agent. Each automatic probe
 	// keeps that string local while token, transport, and store dependencies

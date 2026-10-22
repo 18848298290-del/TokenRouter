@@ -43,6 +43,7 @@ func (t openaiTestTarget) Execute(ctx context.Context, request provider.Prepared
 	headers.Set("User-Agent", request.UserAgent)
 	headers.Set("originator", request.Originator)
 	run := NewTestRun(ctx, headers, sink)
+	run.GroupID = request.GroupID
 	defer run.Cancel()
 	run.Automatic = request.Automatic
 	run.RequestedProtocol = provider.TextProtocol(request.Protocol)

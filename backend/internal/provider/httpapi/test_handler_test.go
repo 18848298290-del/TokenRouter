@@ -63,9 +63,10 @@ func TestTestHandlerDecisionJSON(t *testing.T) {
 		status     int    // expected HTTP response status
 		loads      int    // serial target-loading invocation count
 	}{
-		{"decision", `{"model_id":"jev-latest","test_type":"decision","systemone":{"state":["ready"],"questions":{"x":{"type":"noul","instructions":"Ready?"}}}}`, http.StatusOK, 1},
+		{"decision", `{"group_id":59,"model_id":"jev-latest","test_type":"decision","systemone":{"state":["ready"],"questions":{"x":{"type":"noul","instructions":"Ready?"}}}}`, http.StatusOK, 1},
 		{"empty probe", ``, http.StatusOK, 1},
 		{"invalid", `{"systemone":`, http.StatusBadRequest, 0},
+		{"negative group", `{"group_id":-1}`, http.StatusBadRequest, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			loader := &decisionTestLoader{}
@@ -77,6 +78,7 @@ func TestTestHandlerDecisionJSON(t *testing.T) {
 			require.Equal(t, tc.loads, loader.loads)
 			if tc.name == "decision" {
 				require.Equal(t, int64(42), loader.request.ProviderID)
+				require.Equal(t, int64(59), loader.request.GroupID)
 				require.Equal(t, "decision", *loader.request.Type)
 				require.JSONEq(t, `{"state":["ready"],"questions":{"x":{"type":"noul","instructions":"Ready?"}}}`, string(loader.request.SystemOne))
 			}

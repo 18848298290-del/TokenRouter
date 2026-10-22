@@ -624,7 +624,12 @@
       @close="closeReAuthModal"
       @reauthorized="handleProviderUpdated"
     />
-    <ProviderTestModal :show="showTest" :provider="testingAcc" @close="closeTestModal" />
+    <ProviderTestModal
+      :show="showTest"
+      :provider="testingAcc"
+      :initial-group-id="Number(params.group) || undefined"
+      @close="closeTestModal"
+    />
     <ProviderStatsModal :show="showStats" :provider="statsAcc" @close="closeStatsModal" />
     <AdvancedSchedulerScoreModal
       :show="showAdvancedSchedulerScore"

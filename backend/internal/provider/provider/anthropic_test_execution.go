@@ -37,9 +37,9 @@ import (
 // AnthropicProviderTest prepares provider-authenticated Messages, Vertex, and
 // Bedrock connection probes.
 type AnthropicProviderTest struct {
-	// Attributes optionally supplies the model catalogue view used for sampling
-	// checks. A nil callback leaves resolution to the zero view.
-	Attributes func() modelcatalog.View
+	// Attributes resolves sampling permissions for the final model and probe group.
+	// A nil callback uses catalogue defaults, and lookup errors stop the request.
+	Attributes ModelAttributeLookup
 	// Tokens supplies Vertex service-account access tokens. A missing source makes
 	// the Vertex path emit a configuration failure.
 	Tokens    *providercore.ClaudeTokenSource
@@ -128,7 +128,9 @@ func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, 
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create test payload")
 	}
-	s.applyModelAttributes(value, testModelID, payload)
+	if err := s.applyModelAttributes(ctx, value, c.GroupID, testModelID, payload); err != nil {
+		return (TestStreamOutput{}).Error(c, err.Error())
+	}
 	// The probe builder returns JSON-compatible scalar and collection values.
 	// Sampling removal retains that shape, so encoding cannot encounter an
 	// unsupported value type here.
@@ -216,7 +218,9 @@ func (s *AnthropicProviderTest) executeVertex(c *TestRun, ctx context.Context, v
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create test payload")
 	}
-	s.applyModelAttributes(value, testModelID, payload)
+	if err := s.applyModelAttributes(ctx, value, c.GroupID, testModelID, payload); err != nil {
+		return (TestStreamOutput{}).Error(c, err.Error())
+	}
 	// The probe builder returns JSON-compatible scalar and collection values.
 	// Sampling removal retains that shape, so encoding cannot encounter an
 	// unsupported value type here.
@@ -326,7 +330,9 @@ func (s *AnthropicProviderTest) ExecuteBedrock(c *TestRun, ctx context.Context, 
 		"max_tokens":  256,
 		"temperature": 1,
 	}
-	s.applyModelAttributes(value, testModelID, bedrockPayload)
+	if err := s.applyModelAttributes(ctx, value, c.GroupID, testModelID, bedrockPayload); err != nil {
+		return (TestStreamOutput{}).Error(c, err.Error())
+	}
 	// The fixed Bedrock payload contains strings, numbers, and JSON collections.
 	// Sampling removal retains those supported types before the body is signed or
 	// authenticated.
@@ -438,14 +444,18 @@ func mappedTestModel(value *providercore.Record, model string) string {
 
 // applyModelAttributes removes sampling fields whose resolved service
 // capability is false from the mutable payload. It uses the selected Anthropic
-// model and request state; absent capability flags leave existing temperature
-// and top_p fields intact.
-func (s *AnthropicProviderTest) applyModelAttributes(value *providercore.Record, model string, payload map[string]any) {
-	var view modelcatalog.View
+// model and group; absent capability flags leave existing temperature and
+// top_p fields intact. Profile lookup errors propagate before payload changes.
+func (s *AnthropicProviderTest) applyModelAttributes(ctx context.Context, value *providercore.Record, groupID int64, model string, payload map[string]any) error {
+	resolved := modelcatalog.View{}.Resolve(value.ModelAttributeTarget(model, "anthropic_messages"), modelcatalog.Attributes{})
 	if s.Attributes != nil {
-		view = s.Attributes()
+		var err error
+		resolved, err = s.Attributes(ctx, value, groupID, model, "anthropic_messages")
+		if err != nil {
+			return err
+		}
 	}
-	resolved := view.Resolve(value.ModelAttributeTarget(model, "anthropic_messages"), modelcatalog.Attributes{}).ForRequest(modelcatalog.RequestState{})
+	resolved = resolved.ForRequest(modelcatalog.RequestState{})
 	// The selected service model supplies these sampling permissions. Remove
 	// explicitly disallowed fields while unknown flags retain the probe builder's
 	// defaults for that target.
@@ -455,4 +465,5 @@ func (s *AnthropicProviderTest) applyModelAttributes(value *providercore.Record,
 	if resolved.Attributes.TopP != nil && !*resolved.Attributes.TopP {
 		delete(payload, "top_p")
 	}
+	return nil
 }

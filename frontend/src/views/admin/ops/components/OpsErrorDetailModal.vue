@@ -34,7 +34,7 @@
           </span>
         </div>
         <p
-          class="mt-3 max-w-prose line-clamp-4 break-words text-base font-semibold leading-6 text-gray-900 dark:text-dark-100"
+          class="mt-3 line-clamp-4 break-words text-base font-semibold leading-6 text-gray-900 dark:text-dark-100"
         >
           {{ summaryText(summary) }}
         </p>
@@ -170,7 +170,7 @@
               }}</time>
             </div>
             <p
-              class="mt-2 max-w-prose line-clamp-2 break-words text-sm leading-6 text-gray-700 dark:text-dark-200"
+              class="mt-2 line-clamp-2 break-words text-sm leading-6 text-gray-700 dark:text-dark-200"
             >
               {{ summaryText(attempt.summary) }}
             </p>
@@ -179,55 +179,53 @@
                 :value="attempt.detail.request_id || attempt.detail.client_request_id"
                 full
               />
-              <button
-                v-if="attempt.payload"
-                type="button"
-                class="detail-action"
-                :aria-expanded="expandedAttempts.has(attempt.detail.id)"
-                :aria-controls="`${panelId}-attempt-${attempt.detail.id}`"
-                @click="toggleAttempt(attempt.detail.id)"
-              >
-                <Icon
-                  name="chevronRight"
-                  size="sm"
-                  class="transition-transform duration-normal"
-                  :class="{ 'rotate-90': expandedAttempts.has(attempt.detail.id) }"
-                />
-                {{
-                  expandedAttempts.has(attempt.detail.id)
-                    ? t('admin.ops.errorDetail.hideResponse')
-                    : t('admin.ops.errorDetail.viewResponse')
-                }}
-              </button>
+              <div v-if="attempt.payload" class="ml-auto flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  class="detail-action"
+                  :aria-expanded="expandedAttempts.has(attempt.detail.id)"
+                  :aria-controls="`${panelId}-attempt-${attempt.detail.id}`"
+                  @click="toggleAttempt(attempt.detail.id)"
+                >
+                  <Icon
+                    name="chevronRight"
+                    size="sm"
+                    class="transition-transform duration-normal"
+                    :class="{ 'rotate-90': expandedAttempts.has(attempt.detail.id) }"
+                  />
+                  {{
+                    expandedAttempts.has(attempt.detail.id)
+                      ? t('admin.ops.errorDetail.hideResponse')
+                      : t('admin.ops.errorDetail.viewResponse')
+                  }}
+                </button>
+                <button
+                  v-if="expandedAttempts.has(attempt.detail.id)"
+                  type="button"
+                  class="detail-action"
+                  @click="copyPayload(`attempt-${attempt.detail.id}`, attempt.payload)"
+                >
+                  <Icon
+                    :name="
+                      copied && copiedKey === `attempt-${attempt.detail.id}` ? 'check' : 'copy'
+                    "
+                    size="sm"
+                  />
+                  {{
+                    copied && copiedKey === `attempt-${attempt.detail.id}`
+                      ? t('common.copied')
+                      : t('common.copy')
+                  }}
+                </button>
+              </div>
             </div>
             <Collapse :open="expandedAttempts.has(attempt.detail.id)" unmount-on-hide>
               <div
                 :id="`${panelId}-attempt-${attempt.detail.id}`"
                 class="mt-2 min-w-0 rounded-control border border-gray-200 dark:border-dark-600"
               >
-                <div
-                  class="flex justify-end border-b border-gray-200 px-3 py-1 dark:border-dark-600"
-                >
-                  <button
-                    type="button"
-                    class="detail-action"
-                    @click="copyPayload(`attempt-${attempt.detail.id}`, attempt.payload)"
-                  >
-                    <Icon
-                      :name="
-                        copied && copiedKey === `attempt-${attempt.detail.id}` ? 'check' : 'copy'
-                      "
-                      size="sm"
-                    />
-                    {{
-                      copied && copiedKey === `attempt-${attempt.detail.id}`
-                        ? t('common.copied')
-                        : t('common.copy')
-                    }}
-                  </button>
-                </div>
                 <pre
-                  class="detail-payload"
+                  class="detail-payload rounded-control"
                   tabindex="0"
                   :aria-label="t('admin.ops.errorDetail.viewResponse')"
                 ><code>{{ formatErrorPayload(attempt.payload) }}</code></pre>
@@ -680,7 +678,7 @@ onBeforeUnmount(() => {
   @apply w-20 shrink-0;
 }
 .detail-action {
-  @apply inline-flex min-h-11 items-center gap-2 rounded-control px-2 text-sm font-medium text-primary-800 transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50 dark:text-primary-400 dark:hover:bg-dark-800 sm:min-h-9;
+  @apply inline-flex min-h-11 items-center gap-2 rounded-control px-2 text-sm font-medium text-primary-600 transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50 dark:text-primary-400 dark:hover:bg-dark-800 sm:min-h-9;
 }
 /* Payloads keep whitespace for diagnostic inspection and scroll within the panel limit so long stored bodies cannot expand the whole dialog. */
 .detail-payload {

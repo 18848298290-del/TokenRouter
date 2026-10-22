@@ -10,13 +10,13 @@ import (
 )
 
 // probes.go selects availability-probe targets and passes the group-mapped
-// model to provider testing.
+// model and group identity to provider testing.
 // Group availability probes choose an eligible provider using the client model,
 // but provider testing accepts the group-mapped identity. Passing a client alias
 // directly to that test would skip the group mapping; mapping an intermediate
 // name again could follow an unintended second rule.
 //
-// Selection returns the provider together with the intermediate group model,
+// Selection returns the group, provider, and intermediate group model,
 // leaving provider mapping to the testing service. Compatible selection is
 // preferred when bound, with generic selection supplying the other path.
 // The measured provider-test result is then copied into routing's observation
@@ -32,10 +32,10 @@ type Probe struct {
 
 // ProviderTester runs a test against a selected provider.
 type ProviderTester interface {
-	// RunTestBackgroundWithPromptAndUserAgent executes a provider test with model,
-	// prompt, and client metadata. The caller receives the measured result and
+	// RunTestBackgroundRequest executes a provider test with model,
+	// group, prompt, and client metadata. The caller receives the measured result and
 	// error for recording the group's availability observation.
-	RunTestBackgroundWithPromptAndUserAgent(context.Context, int64, string, string, string) (*provider.ScheduledTestResult, error)
+	RunTestBackgroundRequest(context.Context, provider.TestRequest) (*provider.ScheduledTestResult, error)
 }
 
 // NewProbe binds the provider tester and available selectors for group
@@ -53,7 +53,7 @@ func NewProbe(test ProviderTester, generic *Generic, compatible *Compatible, gem
 // therefore resolves the selected group's intermediate name through the same
 // bound selector, keeping a client alias from being sent directly or group
 // mapping from being applied twice. Callers pass the returned ModelID to
-// provider testing with its associated ProviderID.
+// provider testing with its associated GroupID and ProviderID.
 func (s Probe) Select(ctx context.Context, due routing.GroupAvailabilityProbeDueGroup, model string) (routing.GroupProbeTarget, error) {
 	provider, err := s.selectProbeProvider(ctx, due, model)
 	if err != nil {
@@ -67,14 +67,14 @@ func (s Probe) Select(ctx context.Context, due routing.GroupAvailabilityProbeDue
 	} else if s.gatewaySvc != nil {
 		routingModel = s.gatewaySvc.groupMappedModelForGroup(ctx, &due.GroupID, model)
 	}
-	return routing.GroupProbeTarget{ProviderID: provider.Record.ID, ModelID: routingModel}, nil
+	return routing.GroupProbeTarget{GroupID: due.GroupID, ProviderID: provider.Record.ID, ModelID: routingModel}, nil
 }
 
 // Test delegates one provider probe and converts its timings, status, and error
 // text to routing's result. A nil provider-test result returns nil with the
 // same error; a populated result can accompany an error.
-func (s Probe) Test(ctx context.Context, id int64, model, prompt, userAgent string) (*routing.ProbeExecutionResult, error) {
-	result, err := s.ProviderTest.RunTestBackgroundWithPromptAndUserAgent(ctx, id, model, prompt, userAgent)
+func (s Probe) Test(ctx context.Context, target routing.GroupProbeTarget, prompt, userAgent string) (*routing.ProbeExecutionResult, error) {
+	result, err := s.ProviderTest.RunTestBackgroundRequest(ctx, provider.TestRequest{GroupID: target.GroupID, ProviderID: target.ProviderID, Model: target.ModelID, Prompt: prompt, UserAgent: userAgent})
 	if result == nil {
 		return nil, err
 	}

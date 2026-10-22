@@ -9,7 +9,7 @@ import (
 
 // cn_test_target.go dispatches prepared CN probes to adaptive coverage, shared
 // Responses execution, or the fixed route. Every path receives one run
-// carrying its automatic flag and User-Agent, and the target combines platform
+// carrying its group, automatic flag, and User-Agent, and the target combines platform
 // failures with retained sink errors before returning.
 
 // cnTestTarget retains CN probe dependencies and the record selected for
@@ -40,6 +40,7 @@ func (t cnTestTarget) Information() provider.TestTargetInfo {
 // together.
 func (t cnTestTarget) Execute(ctx context.Context, request provider.PreparedTestRequest, sink provider.TestEventSink) error {
 	run := NewTestRun(ctx, make(http.Header), sink)
+	run.GroupID = request.GroupID
 	run.Automatic = request.Automatic
 	run.Headers.Set("User-Agent", request.UserAgent)
 	defer run.Cancel()

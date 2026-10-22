@@ -32,6 +32,9 @@ type TestHandler struct {
 // TestProviderRequest carries structured decision input and provider-specific
 // connection-test choices.
 type TestProviderRequest struct {
+	// GroupID selects the group model attribute profile. Omission uses catalogue
+	// defaults, and negative identifiers are rejected before streaming begins.
+	GroupID int64 `json:"group_id" binding:"gte=0"`
 	// SystemOne retains the supplied JSON bytes for decision preparation.
 	// TestService restricts any nonempty value, including JSON null, to Jev targets.
 	SystemOne json.RawMessage `json:"systemone"` // structured decision test input
@@ -100,7 +103,7 @@ func (h *TestHandler) Test(c *gin.Context) {
 	if testType == "" {
 		testType = req.TestMode
 	}
-	if err := h.tests.Test(c.Request.Context(), provider.TestRequest{SystemOne: req.SystemOne, ProviderID: providerID, Model: req.ModelID, Prompt: req.Prompt, Mode: req.Mode, Type: &testType, Protocol: req.Protocol, UserAgent: c.GetHeader("User-Agent"), Originator: c.GetHeader("originator")}, NewTestEventSink(c.Writer)); err != nil {
+	if err := h.tests.Test(c.Request.Context(), provider.TestRequest{GroupID: req.GroupID, SystemOne: req.SystemOne, ProviderID: providerID, Model: req.ModelID, Prompt: req.Prompt, Mode: req.Mode, Type: &testType, Protocol: req.Protocol, UserAgent: c.GetHeader("User-Agent"), Originator: c.GetHeader("originator")}, NewTestEventSink(c.Writer)); err != nil {
 		// A failed test cannot justify restoring provider health. Return before
 		// recovery even when the service has already emitted partial output or a failure event.
 		return

@@ -81,7 +81,7 @@ func (probeExecutorStub) Select(_ context.Context, _ GroupAvailabilityProbeDueGr
 // Test returns successful status with zero-valued execution metadata for
 // every provider request. Lifecycle assertions use registration and claim
 // observations, so this fixture supplies no measured upstream timing.
-func (probeExecutorStub) Test(context.Context, int64, string, string, string) (*ProbeExecutionResult, error) {
+func (probeExecutorStub) Test(context.Context, GroupProbeTarget, string, string) (*ProbeExecutionResult, error) {
 	return &ProbeExecutionResult{Status: GroupAvailabilityProbeStatusSuccess}, nil
 }
 

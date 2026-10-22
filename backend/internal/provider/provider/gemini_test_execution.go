@@ -85,7 +85,7 @@ func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 
 	c.Begin(true)
 
-	testType, capabilityErr := resolveProbeType(ctx, s.Attributes, value, testModelID, "gemini_generate_content", testTypes...)
+	testType, capabilityErr := resolveProbeType(ctx, s.Attributes, value, c.GroupID, testModelID, "gemini_generate_content", testTypes...)
 	if capabilityErr != nil {
 		return (TestStreamOutput{}).Error(c, capabilityErr.Error())
 	}

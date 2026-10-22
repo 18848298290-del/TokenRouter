@@ -43,6 +43,7 @@ func (t geminiTestTarget) Execute(ctx context.Context, request provider.Prepared
 	headers := make(http.Header)
 	headers.Set("User-Agent", request.UserAgent)
 	run := NewTestRun(ctx, headers, sink)
+	run.GroupID = request.GroupID
 	defer run.Cancel()
 	// Copy the executor before assigning an automatic UA; concurrent probes can
 	// supply different strings while sharing the same token and transport

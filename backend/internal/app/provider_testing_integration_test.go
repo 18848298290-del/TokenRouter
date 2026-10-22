@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,16 +13,20 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/app/lifecycle"
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	providerhttp "github.com/TokenFlux/TokenRouter/internal/provider/httpapi"
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// Provider connection tests load persisted credentials and dispatch through
+// provider_testing_integration_test.go verifies persisted credentials and dispatch through
 // application-assembled platform targets. A recording transport supplies each
 // platform's stream shape, letting the scenario check its request path and
 // selected provider alongside typed test-start and successful completion
@@ -35,6 +40,15 @@ type nativeProviderTestTransport struct {
 	// subtests inspect the corresponding indexes after platform Test returns, retaining each supplied request pointer.
 	requests []*http.Request // captured upstream requests
 	ids      []int64         // captured provider identities
+}
+
+// probeAttributeRepository supplies group-specific profiles for assembled provider tests.
+type probeAttributeRepository struct {
+	routing.ModelAttributeRepository // unused profile management operations
+	// config changes between platform cases to restrict the same declaration to
+	// that platform's endpoint. Each resolution reads a detached profile copy.
+	config *routing.ModelAttributeConfig
+	groups []int64 // observed profile lookup identifiers
 }
 
 // Do records the request and provider ID before returning the configured
@@ -92,4 +106,154 @@ func TestNativeProviderTestAssembly(t *testing.T) {
 	// Join registered test resources after all platform subtests finish while
 	// the fixture database remains available for any final provider cleanup work.
 	require.NoError(t, manager.Stop(ctx))
+}
+
+// ForGroup supplies group 59's profile, fails group 61, and rejects output in 62.
+// Other groups inherit catalogue defaults, allowing each test to observe isolated overrides.
+func (r *probeAttributeRepository) ForGroup(_ context.Context, groupID int64) (*routing.ModelAttributeConfig, error) {
+	r.groups = append(r.groups, groupID)
+	if groupID == 61 {
+		return nil, errors.New("profile storage unavailable")
+	}
+	if groupID == 62 {
+		empty := []string{}
+		return &routing.ModelAttributeConfig{Status: "active", Rules: []routing.ModelAttributeRule{{Models: []string{"*"}, Attributes: modelcatalog.Attributes{OutputModalities: &empty}}}}, nil
+	}
+	if groupID == 59 {
+		return r.config, nil
+	}
+	return nil, nil
+}
+
+// TestProviderTestAssemblyUsesGroupAttributes exercises manual and automatic probes for unknown mapped models.
+// API-key and OAuth probes admit the configured image group; absent, rejected,
+// or unreadable output declarations stop before upstream traffic reaches transport.
+func TestProviderTestAssemblyUsesGroupAttributes(t *testing.T) {
+	f := newDatabaseFixture(t)
+	store := providerpostgres.NewProviderStore(f.client, f.db, providerpostgres.ProviderStoreOptions{})
+	transport := &nativeProviderTestTransport{}
+	manager := lifecycle.New()
+	t.Cleanup(func() { require.NoError(t, manager.Stop(context.Background())) })
+	outputs := []string{"image"}
+	repo := &probeAttributeRepository{config: &routing.ModelAttributeConfig{Status: "active", Rules: []routing.ModelAttributeRule{{Models: []string{"custom-image-final"}, Attributes: modelcatalog.Attributes{OutputModalities: &outputs}}}}}
+	attributes := &routing.ModelAttributeService{Repo: repo, Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
+	core := provideProviderTests(store, nil, nil, &provider.GrokTokenSource{}, nil, transport, &config.Config{}, nil, nil, nil, nil, manager, nil, attributes)
+	for _, credential := range []struct {
+		platform string // selected platform executor
+		kind     string // provider credential kind
+	}{
+		{provider.PlatformOpenAI, provider.ProviderTypeAPIKey},
+		{provider.PlatformGemini, provider.ProviderTypeAPIKey},
+		{provider.PlatformGrok, provider.ProviderTypeAPIKey},
+		{provider.PlatformGrok, provider.ProviderTypeOAuth},
+	} {
+		platform := credential.platform
+		probeProtocol := "gemini_generate_content"
+		if platform == provider.PlatformOpenAI || platform == provider.PlatformGrok {
+			probeProtocol = "openai_images_generations"
+		}
+		repo.config.Rules[0].Match = &routing.ModelAttributeMatch{ClientProtocol: probeProtocol, UpstreamProtocol: probeProtocol}
+		row, err := f.client.Provider.Create().SetName("group-image-" + platform + "-" + credential.kind).SetPlatform(platform).SetType(credential.kind).SetCredentials(map[string]any{
+			"api_key": "fixture-key", "base_url": "https://upstream.example",
+			"access_token": "fixture-access", "refresh_token": "fixture-refresh",
+			"expires_at":    time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339),
+			"model_mapping": map[string]any{"alias": "custom-image-final", "custom-image-final": "wrong-second-hop"},
+		}).Save(t.Context())
+		require.NoError(t, err)
+		for _, automatic := range []bool{false, true} {
+			for _, groupID := range []int64{0, 59, 60, 61, 62} {
+				before := len(transport.requests)
+				repo.groups = nil
+				if platform == provider.PlatformOpenAI || platform == provider.PlatformGrok {
+					transport.body = `{"data":[{"b64_json":"QUJD"}]}`
+				} else {
+					transport.body = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"QUJD\"}}]}}]}\n\n"
+				}
+				request := provider.TestRequest{ProviderID: row.ID, GroupID: groupID, Model: "alias", Prompt: "draw"}
+				success := false
+				if automatic {
+					result, err := core.RunTestBackgroundRequest(t.Context(), request)
+					require.NoError(t, err)
+					success = result.Status == "success"
+				} else {
+					kind := provider.ProviderTestTypeImage
+					request.Type = &kind
+					recorder := httptest.NewRecorder()
+					success = core.Test(t.Context(), request, providerhttp.NewTestEventSink(recorder)) == nil
+				}
+				require.Equal(t, groupID == 59, success, "platform=%s kind=%s automatic=%v group=%d", platform, credential.kind, automatic, groupID)
+				if groupID > 0 {
+					require.Contains(t, repo.groups, groupID)
+				} else {
+					require.Empty(t, repo.groups)
+				}
+				if groupID == 59 {
+					require.Len(t, transport.requests, before+1)
+					body, err := io.ReadAll(transport.requests[before].Body)
+					require.NoError(t, err)
+					require.Contains(t, string(body)+transport.requests[before].URL.Path, "custom-image-final")
+					if platform != provider.PlatformGemini {
+						require.Equal(t, "/v1/images/generations", transport.requests[before].URL.Path)
+						require.Equal(t, "custom-image-final", gjson.GetBytes(body, "model").String())
+					}
+				} else {
+					require.Len(t, transport.requests, before)
+				}
+			}
+		}
+	}
+}
+
+// TestProviderTestAssemblyMatchesTextAttributeProtocol uses a custom model declared
+// on exactly one text endpoint. Automatic tests must resolve that endpoint's group
+// attributes and send the same mapped model through the admitted protocol.
+func TestProviderTestAssemblyMatchesTextAttributeProtocol(t *testing.T) {
+	f := newDatabaseFixture(t)
+	store := providerpostgres.NewProviderStore(f.client, f.db, providerpostgres.ProviderStoreOptions{})
+	manager := lifecycle.New()
+	t.Cleanup(func() { require.NoError(t, manager.Stop(context.Background())) })
+	outputs := []string{"text"}
+	repo := &probeAttributeRepository{config: &routing.ModelAttributeConfig{Status: "active", Rules: []routing.ModelAttributeRule{{Models: []string{"custom-text-final"}, Attributes: modelcatalog.Attributes{OutputModalities: &outputs}}}}}
+	attributes := &routing.ModelAttributeService{Repo: repo, Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
+	transport := &nativeProviderTestTransport{}
+	core := provideProviderTests(store, nil, nil, nil, nil, transport, &config.Config{}, nil, nil, nil, nil, manager, nil, attributes)
+	for _, tc := range []struct {
+		name      string                 // selected routing scenario
+		mode      provider.TextRouteMode // configured upstream text mode
+		requested string                 // explicit probe protocol selector
+		protocol  string                 // expected attribute protocol identity
+		path      string                 // expected upstream request path
+	}{
+		{"default responses", "", "", "openai_responses", "/v1/responses"},
+		{"forced responses", provider.TextRouteModeForceResponses, "", "openai_responses", "/v1/responses"},
+		{"forced chat", provider.TextRouteModeForceChatCompletions, "", "openai_chat_completions", "/v1/chat/completions"},
+		{"explicit responses", provider.TextRouteModeForceChatCompletions, "responses", "openai_responses", "/v1/responses"},
+		{"explicit chat", provider.TextRouteModeForceResponses, "chat_completions", "openai_chat_completions", "/v1/chat/completions"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo.config.Rules[0].Match = &routing.ModelAttributeMatch{ClientProtocol: tc.protocol, UpstreamProtocol: tc.protocol}
+			repo.groups = nil
+			transport.requests = nil
+			transport.body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n"
+			if tc.protocol == "openai_chat_completions" {
+				transport.body = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+			}
+			row, err := f.client.Provider.Create().SetName("group-text-" + tc.name).SetPlatform("openai").SetType("apikey").SetExtra(map[string]any{provider.ExtraKeyTextRouteMode: string(tc.mode)}).SetCredentials(map[string]any{
+				"api_key": "fixture-key", "base_url": "https://upstream.example",
+				"upstream_protocols": []string{"openai_responses", "openai_chat_completions"},
+				"model_mapping":      map[string]any{"alias": "custom-text-final", "custom-text-final": "wrong-second-hop"},
+			}).Save(t.Context())
+			require.NoError(t, err)
+			result, err := core.RunTestBackgroundRequest(t.Context(), provider.TestRequest{ProviderID: row.ID, GroupID: 59, Model: "alias", Prompt: "hello", Protocol: tc.requested})
+			require.NoError(t, err)
+			require.Equal(t, "success", result.Status, result.ErrorMessage)
+			require.Equal(t, "ok", result.ResponseText)
+			require.Len(t, transport.requests, 1)
+			require.Equal(t, tc.path, transport.requests[0].URL.Path)
+			body, err := io.ReadAll(transport.requests[0].Body)
+			require.NoError(t, err)
+			require.Equal(t, "custom-text-final", gjson.GetBytes(body, "model").String())
+			require.Contains(t, repo.groups, int64(59))
+		})
+	}
 }

@@ -16,6 +16,11 @@ import (
 // executor, which validates supported provider types during execution. Automatic
 // text and image probes select their payload using declared final-model output;
 // explicit image probes require the same positive capability evidence.
+//
+// Attribute lookups carry the selected group through both endpoint checks.
+// OpenAI API-key and Grok image and text requests use different protocols, so each
+// declaration authorizes its own route. The complete resolution retains target
+// identity and conditional rules for executors that adjust sampling parameters.
 
 // TestTargets loads provider records and binds platform executors for prepared
 // probes.
@@ -33,10 +38,10 @@ type TestTargets struct {
 	Antigravity *AntigravityProviderTest // Antigravity platform probe executor
 }
 
-// ModelAttributeLookup resolves the final provider model for a probe protocol.
-// Implementations retain a catalog snapshot for the probe and propagate profile
-// failures before the executor sends a request to its selected upstream.
-type ModelAttributeLookup func(context.Context, *provider.Record, string, string) (modelcatalog.Attributes, error)
+// ModelAttributeLookup resolves the final provider model for a group and probe protocol.
+// The result retains target identity and conditional rules for sampling checks.
+// Profile failures propagate before the executor sends its upstream request.
+type ModelAttributeLookup func(context.Context, *provider.Record, int64, string, string) (modelcatalog.Resolution, error)
 
 // LoadTestTarget reads the requested provider and returns its platform-bound
 // test handle. Read errors propagate; successful reads supply a nonnil record,
@@ -76,29 +81,45 @@ func (t *TestTargets) LoadTestTarget(ctx context.Context, request provider.TestR
 // text/image declaration selects the image probe automatically, while explicit
 // text keeps its chosen payload. Resolver errors stop preparation immediately;
 // an empty output set cannot be rescued by a model name or a selected image
-// test type.
-func resolveProbeType(ctx context.Context, lookup ModelAttributeLookup, value *provider.Record, model, protocol string, testTypes ...string) (string, error) {
+// test type. OpenAI API keys and Grok check image capability on the images endpoint;
+// automatic text probes then check their selected text endpoint independently.
+func resolveProbeType(ctx context.Context, lookup ModelAttributeLookup, value *provider.Record, groupID int64, model, protocol string, testTypes ...string) (string, error) {
 	kind, explicit := provider.ProviderTestTypeFromArgs(testTypes...)
 	if explicit && kind != provider.ProviderTestTypeImage {
 		return kind, nil
 	}
-	attrs := modelcatalog.Attributes{}
+	imageProtocol := protocol
+	if value.Platform == provider.PlatformGrok || (value.Platform == provider.PlatformOpenAI && value.Type == provider.ProviderTypeAPIKey) {
+		imageProtocol = "openai_images_generations"
+	}
+	resolved := modelcatalog.Resolution{}
 	if lookup != nil {
 		var err error
-		attrs, err = lookup(ctx, value, model, protocol)
+		resolved, err = lookup(ctx, value, groupID, model, imageProtocol)
 		if err != nil {
 			return "", err
 		}
 	}
-	image := attrs.OutputSupport("image")
+	image := resolved.Attributes.OutputSupport("image")
+	if image != nil && *image {
+		return provider.ProviderTestTypeImage, nil
+	}
+	if !explicit {
+		// OpenAI API keys and Grok use separate image and text endpoints. If the image route
+		// lacks support, resolve the actual text route before admitting an automatic text probe.
+		if lookup != nil && imageProtocol != protocol {
+			var err error
+			resolved, err = lookup(ctx, value, groupID, model, protocol)
+			if err != nil {
+				return "", err
+			}
+		}
+		if text := resolved.Attributes.OutputSupport("text"); text != nil && *text {
+			return provider.ProviderTestTypeText, nil
+		}
+	}
 	if image == nil {
 		return "", apperror.BadRequest("MODEL_CAPABILITY_UNKNOWN", "model output capability is unknown; configure image attributes or explicitly select a text test")
 	}
-	if *image {
-		return provider.ProviderTestTypeImage, nil
-	}
-	if explicit || attrs.OutputSupport("text") == nil || !*attrs.OutputSupport("text") {
-		return "", apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", "the model does not declare the output required by this test")
-	}
-	return provider.ProviderTestTypeText, nil
+	return "", apperror.BadRequest("MODEL_CAPABILITY_UNSUPPORTED", "the model does not declare the output required by this test")
 }

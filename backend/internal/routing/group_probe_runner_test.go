@@ -222,16 +222,17 @@ func TestRunGroupAvailabilityProbeAttemptsStopsAfterParentCancellation(t *testin
 func (e mappedProbeExecutor) Select(_ context.Context, due GroupAvailabilityProbeDueGroup, model string) (GroupProbeTarget, error) {
 	require.Equal(e.t, int64(59), due.GroupID)
 	require.Equal(e.t, "gemini-3.8-flash", model)
-	return GroupProbeTarget{ProviderID: 3678, ModelID: "gemini-3.8-flash-tiered"}, nil
+	return GroupProbeTarget{GroupID: due.GroupID, ProviderID: 3678, ModelID: "gemini-3.8-flash-tiered"}, nil
 }
 
 // Test asserts the selected provider, mapped model, prompt, and User-Agent
 // before returning successful status. Timing fields remain zero because this
 // executor verifies argument forwarding rather than measured execution
 // duration.
-func (e mappedProbeExecutor) Test(_ context.Context, id int64, model, prompt, userAgent string) (*ProbeExecutionResult, error) {
-	require.Equal(e.t, int64(3678), id)
-	require.Equal(e.t, "gemini-3.8-flash-tiered", model)
+func (e mappedProbeExecutor) Test(_ context.Context, target GroupProbeTarget, prompt, userAgent string) (*ProbeExecutionResult, error) {
+	require.Equal(e.t, int64(59), target.GroupID)
+	require.Equal(e.t, int64(3678), target.ProviderID)
+	require.Equal(e.t, "gemini-3.8-flash-tiered", target.ModelID)
 	require.Equal(e.t, "hi", prompt)
 	require.Equal(e.t, "probe-client", userAgent)
 	return &ProbeExecutionResult{Status: GroupAvailabilityProbeStatusSuccess}, nil

@@ -98,10 +98,11 @@ type OpenAIProviderTestStore interface {
 // before image or text selection.
 //
 // Automatic probe type follows declared final-model output, while explicit
-// image tests require the same capability and explicit text retains its route. OAuth and shadows resolve their credential owner for
-// authentication, keeping the selected record's proxy, concurrency, and
-// state-write ID. API-key text routes use the requested protocol when supplied
-// for OpenAI, otherwise their resolved configuration.
+// image tests require the same capability and explicit text retains its route.
+// OAuth and shadows resolve their credential owner for authentication, keeping
+// the selected record's proxy, concurrency, and state-write ID. API-key text
+// routes use the requested protocol when supplied for OpenAI, otherwise their
+// resolved configuration.
 //
 // Text Agent Identity failures can recover the currently recorded task and
 // replay once, retaining the run's start-event state. Responses are closed
@@ -132,9 +133,16 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 	}
 
 	// Explicit type selection determines whether the image endpoint is tested.
-	// Automatic selection reads declared output for calls that omit a type,
-	// while explicit text keeps the text route.
-	testType, capabilityErr := resolveProbeType(ctx, s.Attributes, value, testModelID, "openai_responses", testTypes...)
+	// Automatic selection reads the group's declared output for each endpoint.
+	// Text protocol selection also determines which protocol-specific profile rules match.
+	textProtocol := providercore.TextProtocolResponses
+	if value.Type == providercore.ProviderTypeAPIKey {
+		textProtocol = providercore.ResolveUpstreamTextProtocol(value.Extra, providercore.TextProtocolResponses)
+		if requested := c.RequestedProtocol; requested != "" && value.IsOpenAI() {
+			textProtocol = requested
+		}
+	}
+	testType, capabilityErr := resolveProbeType(ctx, s.Attributes, value, c.GroupID, testModelID, string(providercore.TestProtocolID(string(textProtocol))), testTypes...)
 	if capabilityErr != nil {
 		return (TestStreamOutput{}).Error(c, capabilityErr.Error())
 	}
@@ -190,11 +198,7 @@ func (s *OpenAIProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		if err != nil {
 			return (TestStreamOutput{}).Error(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		protocol := providercore.ResolveUpstreamTextProtocol(value.Extra, providercore.TextProtocolResponses)
-		if requested := c.RequestedProtocol; requested != "" && value.IsOpenAI() {
-			protocol = requested
-		}
-		if protocol == providercore.TextProtocolChatCompletions {
+		if textProtocol == providercore.TextProtocolChatCompletions {
 			return s.executeChat(c, value, testModelID, prompt, normalizedBaseURL, authToken)
 		}
 		apiURL = httpclient.BuildOpenAIEndpointURL(normalizedBaseURL, "/v1/responses")

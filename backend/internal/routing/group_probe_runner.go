@@ -255,7 +255,7 @@ func (s *GroupAvailabilityProbeRunnerService) runProbeAttempt(ctx context.Contex
 	// Execute the selected model but retain probeConfig.ModelID in history,
 	// keeping the administrator's requested model distinct from group and provider
 	// mapping results.
-	result, err := s.executor.Test(ctx, target.ProviderID, target.ModelID, probeConfig.Prompt, probeConfig.UserAgent)
+	result, err := s.executor.Test(ctx, target, probeConfig.Prompt, probeConfig.UserAgent)
 	finishedAt := s.now()
 	probeResult := &GroupAvailabilityProbeResult{
 		GroupID:    due.GroupID,

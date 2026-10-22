@@ -19,8 +19,9 @@ import (
 
 // grok_test_execution.go executes Grok text and image probes and publishes
 // their content and quota observations. Grok provider probes select Responses
-// for text and the image-generation endpoint for an explicit image test. OAuth
-// uses the manual-test token path, while API-key probes read the saved key.
+// for text and the image-generation endpoint for image tests. Group attributes
+// validate image output and select automatic probe types. OAuth uses the
+// manual-test token path, while API-key probes read the saved key.
 // Saved model mapping precedes request construction, and resolved endpoint
 // policy still applies to either credential kind before the shared transport
 // is called.
@@ -36,6 +37,10 @@ import (
 // GrokProviderTest probes Grok with shared token and transport services and
 // records quota health.
 type GrokProviderTest struct {
+	// Attributes resolves the mapped model for the selected group and endpoint.
+	// Missing declarations reject automatic and image probes before credentials
+	// are acquired.
+	Attributes ModelAttributeLookup
 	// Tokens is required for OAuth probes and uses manual-test acquisition so
 	// scheduling exclusions do not prevent an administrator credential test.
 	Tokens *providercore.GrokTokenSource
@@ -76,11 +81,15 @@ type GrokProviderTest struct {
 	SuppressStart bool
 }
 
-// Execute runs a Grok text or explicit image probe with the selected credentials.
+// Execute runs a Grok text or image probe with the selected group and credentials.
 // It accepts prompt and test type as the first two optional arguments, maps the
 // test name, and defaults missing text identity through the platform resolver.
 // OAuth requires Tokens; API-key input requires a nonblank saved key.
-// Explicit image selection enters executeImage before the text request path.
+// Empty explicit image input defaults before provider mapping; empty text input
+// defaults afterward. Each model is mapped once and that final identity selects
+// its group attributes and outgoing request. Automatic probes prefer declared
+// image output, and explicit text keeps its selected route. Attribute errors
+// stop before credential acquisition or transport.
 //
 // Text handling stamps quota plan evidence and performs best-effort snapshot/
 // limit writes before inspecting a failed body. Content-policy rejection skips
@@ -90,23 +99,34 @@ type GrokProviderTest struct {
 func (s *GrokProviderTest) Execute(c *TestRun, value *providercore.Record, modelID string, testArgs ...string) error {
 	ctx := c.Context
 	prompt := ""
-	testType, explicitTestType := providercore.ProviderTestTypeText, false
+	var testTypes []string
 	if len(testArgs) > 0 {
 		prompt = testArgs[0]
 	}
 	if len(testArgs) > 1 {
-		testType, explicitTestType = providercore.ProviderTestTypeFromArgs(testArgs[1])
+		testTypes = testArgs[1:2]
 	}
 
 	if s.Transport == nil {
 		return (TestStreamOutput{}).Error(c, "HTTP upstream not configured")
 	}
 
-	billingModel := strings.TrimSpace(modelID)
-	if mapped := strings.TrimSpace(mappedTestModel(value, billingModel)); mapped != "" {
-		billingModel = mapped
+	testModelID := strings.TrimSpace(modelID)
+	requestedType, explicitType := providercore.ProviderTestTypeFromArgs(testTypes...)
+	if testModelID == "" && explicitType && requestedType == providercore.ProviderTestTypeImage {
+		testModelID = "grok-imagine-image"
 	}
-	testModelID := xai.ResolveDefaultTextModel(billingModel, xai.DefaultResponsesModel)
+	// Image defaults participate in provider mapping, while a blank text request
+	// selects its platform default afterward. Resolve each supplied alias once so
+	// capability lookup and dispatch cannot follow different mapping hops.
+	if mapped := strings.TrimSpace(mappedTestModel(value, testModelID)); mapped != "" {
+		testModelID = mapped
+	}
+	testModelID = xai.ResolveDefaultTextModel(testModelID, xai.DefaultResponsesModel)
+	testType, capabilityErr := resolveProbeType(ctx, s.Attributes, value, c.GroupID, testModelID, "openai_responses", testTypes...)
+	if capabilityErr != nil {
+		return (TestStreamOutput{}).Error(c, capabilityErr.Error())
+	}
 
 	var authToken string
 	switch value.Type {
@@ -132,19 +152,12 @@ func (s *GrokProviderTest) Execute(c *TestRun, value *providercore.Record, model
 	default:
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Unsupported Grok provider type: %s", value.Type))
 	}
-	if explicitTestType && testType == providercore.ProviderTestTypeImage {
-		imageModel := strings.TrimSpace(modelID)
-		if imageModel == "" {
-			imageModel = "grok-imagine-image"
-		}
-		if mapped := strings.TrimSpace(mappedTestModel(value, imageModel)); mapped != "" {
-			imageModel = mapped
-		}
+	if testType == providercore.ProviderTestTypeImage {
 		imagePrompt := strings.TrimSpace(prompt)
 		if imagePrompt == "" {
 			imagePrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."
 		}
-		return s.executeImage(c, ctx, value, authToken, imageModel, imagePrompt)
+		return s.executeImage(c, ctx, value, authToken, testModelID, imagePrompt)
 	}
 
 	apiURL, err := s.responsesURL(value)

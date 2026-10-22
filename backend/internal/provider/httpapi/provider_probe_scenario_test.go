@@ -696,7 +696,7 @@ func TestProviderTestService_TestProviderConnection_GrokUsesXAIResponses(t *test
 
 	rec := httptest.NewRecorder()
 
-	err := executeGrokProviderTest(t, svc, provider, rec, "grok", "", providercore.ProviderTestModeDefault)
+	err := executeGrokProviderTest(t, svc, provider, rec, "grok", "", providercore.ProviderTestModeDefault, providercore.ProviderTestTypeText)
 	require.NoError(t, err)
 
 	require.Equal(t, "https://cli-chat-proxy.grok.com/v1/responses", upstream.lastReq.URL.String())
@@ -770,7 +770,15 @@ func TestProviderTestService_TestProviderConnection_GrokExplicitImageUsesMediaEn
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(`{"data":[{"b64_json":"aGVsbG8=","mime_type":"image/png"}]}`)),
 	}}
-	svc := &provideradapter.GrokProviderTest{Store: repo, Transport: upstream, OperatorValidator: (egress.OperatorURLPolicy{}).Validate}
+	svc := &provideradapter.GrokProviderTest{
+		Store: repo, Transport: upstream, OperatorValidator: (egress.OperatorURLPolicy{}).Validate,
+		Attributes: func(_ context.Context, value *providercore.Record, _ int64, model, protocol string) (modelcatalog.Resolution, error) {
+			require.Equal(t, "custom-image-alias", model)
+			require.Equal(t, "openai_images_generations", protocol)
+			image := []string{"image"}
+			return testkit.OfflineView().Resolve(value.ModelAttributeTarget(model, protocol), modelcatalog.Attributes{OutputModalities: &image}), nil
+		},
+	}
 	recorder := httptest.NewRecorder()
 
 	err := executeGrokProviderTest(t, svc, provider, recorder, "custom-image-alias", "draw a lighthouse", providercore.ProviderTestModeDefault, providercore.ProviderTestTypeImage)
@@ -858,7 +866,7 @@ func TestProviderTestService_Grok429PersistsRateLimitReset(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 
-	err := executeGrokProviderTest(t, svc, provider, recorder, "grok", "", providercore.ProviderTestModeDefault)
+	err := executeGrokProviderTest(t, svc, provider, recorder, "grok", "", providercore.ProviderTestModeDefault, providercore.ProviderTestTypeText)
 
 	require.Error(t, err)
 	require.Equal(t, 1, repo.rateLimitedCalls)
@@ -890,7 +898,7 @@ func TestProviderTestService_Grok429WithoutQuotaHeadersUsesFallback(t *testing.T
 	recorder := httptest.NewRecorder()
 	before := time.Now()
 
-	err := executeGrokProviderTest(t, svc, provider, recorder, "grok", "", providercore.ProviderTestModeDefault)
+	err := executeGrokProviderTest(t, svc, provider, recorder, "grok", "", providercore.ProviderTestModeDefault, providercore.ProviderTestTypeText)
 
 	require.Error(t, err)
 	require.Equal(t, 1, repo.rateLimitedCalls)
@@ -1528,9 +1536,9 @@ func TestProviderTestService_OpenAIExplicitImageTypeDoesNotInspectModelName(t *t
 		},
 	}
 	svc := &provideradapter.OpenAIProviderTest{
-		Attributes: func(context.Context, *providercore.Record, string, string) (modelcatalog.Attributes, error) {
+		Attributes: func(context.Context, *providercore.Record, int64, string, string) (modelcatalog.Resolution, error) {
 			image := []string{"image"}
-			return modelcatalog.Attributes{OutputModalities: &image}, nil
+			return modelcatalog.Resolution{Attributes: modelcatalog.Attributes{OutputModalities: &image}}, nil
 		},
 		Transport:   upstream,
 		ValidateURL: (egress.OperatorURLPolicy{}).Validate,
@@ -1852,11 +1860,11 @@ func TestProviderTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
-// TestProviderTestService_RunTestBackgroundWithPromptAndUserAgentOverridesHeader
+// TestProviderTestService_RunTestBackgroundRequestOverridesHeader
 // runs the background test use case with an explicit prompt and agent string.
 // The result reports success and transport headers retain the supplied agent
 // and recognized originator.
-func TestProviderTestService_RunTestBackgroundWithPromptAndUserAgentOverridesHeader(t *testing.T) {
+func TestProviderTestService_RunTestBackgroundRequestOverridesHeader(t *testing.T) {
 	resp := newJSONResponse(http.StatusOK, "")
 	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
 
@@ -1878,7 +1886,7 @@ func TestProviderTestService_RunTestBackgroundWithPromptAndUserAgentOverridesHea
 		Transport:  upstream,
 	}
 
-	result, err := openAIProbeCore(svc).RunTestBackgroundWithPromptAndUserAgent(context.Background(), provider.ID, "gpt-5.4", "hi", "codex-tui/9.9.1 test-terminal")
+	result, err := openAIProbeCore(svc).RunTestBackgroundRequest(context.Background(), providercore.TestRequest{ProviderID: provider.ID, Model: "gpt-5.4", Prompt: "hi", UserAgent: "codex-tui/9.9.1 test-terminal"})
 
 	require.NoError(t, err)
 	require.Equal(t, "success", result.Status)
@@ -2349,7 +2357,7 @@ func TestProviderTestService_AutomaticOpenAIProbeUsesMatchedRoute(t *testing.T) 
 		nil,
 	)
 
-	result, err := svc.RunTestBackgroundWithPromptAndUserAgent(context.Background(), provider.ID, "gpt-5.4", "hi", "probe-client/1.0")
+	result, err := svc.RunTestBackgroundRequest(context.Background(), providercore.TestRequest{ProviderID: provider.ID, Model: "gpt-5.4", Prompt: "hi", UserAgent: "probe-client/1.0"})
 
 	require.NoError(t, err)
 	require.Equal(t, "success", result.Status)
@@ -2433,7 +2441,7 @@ func TestProviderTestService_AutomaticOpenAIProbeRejectsClientPolicyLocally(t *t
 			if test.runDefault {
 				result, err = svc.RunTestBackground(context.Background(), provider.ID, "gpt-5.4")
 			} else {
-				result, err = svc.RunTestBackgroundWithPromptAndUserAgent(context.Background(), provider.ID, "gpt-5.4", "hi", test.userAgent)
+				result, err = svc.RunTestBackgroundRequest(context.Background(), providercore.TestRequest{ProviderID: provider.ID, Model: "gpt-5.4", Prompt: "hi", UserAgent: test.userAgent})
 			}
 
 			require.NoError(t, err)
@@ -2483,7 +2491,7 @@ func TestProviderTestService_AutomaticOpenAIProbeFallsBackToProviderTLSProfile(t
 		nil,
 	)
 
-	result, err := svc.RunTestBackgroundWithPromptAndUserAgent(context.Background(), provider.ID, "gpt-5.4", "hi", "unmatched-client/1.0")
+	result, err := svc.RunTestBackgroundRequest(context.Background(), providercore.TestRequest{ProviderID: provider.ID, Model: "gpt-5.4", Prompt: "hi", UserAgent: "unmatched-client/1.0"})
 
 	require.NoError(t, err)
 	require.Equal(t, "success", result.Status)
@@ -2630,7 +2638,7 @@ func TestProviderTestService_AutomaticOpenAIProbeMissingRouteProfileFallsBack(t 
 		nil,
 	)
 
-	result, err := svc.RunTestBackgroundWithPromptAndUserAgent(context.Background(), provider.ID, "gpt-5.4", "hi", "route-client/1.0")
+	result, err := svc.RunTestBackgroundRequest(context.Background(), providercore.TestRequest{ProviderID: provider.ID, Model: "gpt-5.4", Prompt: "hi", UserAgent: "route-client/1.0"})
 
 	require.NoError(t, err)
 	require.Equal(t, "success", result.Status)
@@ -2676,7 +2684,7 @@ func TestProviderTestService_AutomaticOpenAIProbeRoutesChatCompletionsAndImages(
 		cfg := &egress.OperatorURLPolicy{}
 		svc := newOpenAIAutomaticProbeTestService(t, []providercore.Record{provider}, upstream, router, nil, cfg)
 
-		result, err := svc.RunTestBackgroundWithPromptAndUserAgent(context.Background(), provider.ID, "gpt-5.4", "hi", "chat-client/1.0")
+		result, err := svc.RunTestBackgroundRequest(context.Background(), providercore.TestRequest{ProviderID: provider.ID, Model: "gpt-5.4", Prompt: "hi", UserAgent: "chat-client/1.0"})
 
 		require.NoError(t, err)
 		require.Equal(t, "success", result.Status)
@@ -2726,7 +2734,7 @@ func TestProviderTestService_AutomaticOpenAIProbeRoutesChatCompletionsAndImages(
 			nil,
 		)
 
-		result, err := svc.RunTestBackgroundWithPromptAndUserAgent(context.Background(), provider.ID, "gpt-image-2", "draw", "image-client/1.0")
+		result, err := svc.RunTestBackgroundRequest(context.Background(), providercore.TestRequest{ProviderID: provider.ID, Model: "gpt-image-2", Prompt: "draw", UserAgent: "image-client/1.0"})
 
 		require.NoError(t, err)
 		require.Equal(t, "success", result.Status)
@@ -3266,10 +3274,13 @@ func (l grokTestTargetLoader) LoadTestTarget(context.Context, providercore.TestR
 }
 
 // executeGrokProviderTest runs a fixed Grok target through the shared test
-// service and HTTP sink. Only the first optional test kind is supplied, while
-// the test context controls execution and result events.
+// service and HTTP sink. Missing lookup dependencies use the offline catalogue,
+// and the first optional kind selects explicit execution when the scenario needs it.
 func executeGrokProviderTest(t *testing.T, executor *provideradapter.GrokProviderTest, value *providercore.Record, recorder *httptest.ResponseRecorder, model, prompt, mode string, types ...string) error {
 	t.Helper()
+	if executor.Attributes == nil {
+		executor.Attributes = probeModelAttributes
+	}
 	core := providercore.NewTestService(grokTestTargetLoader{target: executor.Target(value)}, providercore.TestOptions{Now: time.Now, Error: func(string) {}, WriteError: func(error) {}})
 	request := providercore.TestRequest{ProviderID: value.ID, Model: model, Prompt: prompt, Mode: mode}
 	if len(types) > 0 {
@@ -3324,7 +3335,7 @@ func (f *grokTestFailureStoreFixture) SetTempUnschedulable(context.Context, int6
 }
 
 // executeGrokProbe creates a derived TestRun using the fixture request context
-// and headers. It executes Grok directly, reports the run's output-aware result
+// and headers. It executes an explicit text test, reports the output-aware result
 // and cancels its derived context before returning.
 func executeGrokProbe(t *testing.T, executor *provideradapter.GrokProviderTest, output *openAIProbeOutput, value *providercore.Record, model string) error {
 	t.Helper()
@@ -3332,7 +3343,7 @@ func executeGrokProbe(t *testing.T, executor *provideradapter.GrokProviderTest, 
 	// Each helper owns the derived TestRun context. Release that cancellation
 	// ownership after execution so the fixture request and output writer stay bounded to the call.
 	defer run.Cancel()
-	return run.Result(executor.Execute(run, value, model))
+	return run.Result(executor.Execute(run, value, model, "", providercore.ProviderTestTypeText))
 }
 
 // newProbeAgentKey generates local Ed25519 signing material with fixed runtime
@@ -3854,6 +3865,6 @@ func executeQoderTest(t *testing.T, output *qoderTestOutputFixture, executor *pr
 // probeModelAttributes resolves fixture provider models against the embedded
 // catalog. Probe tests keep authentication and transport stubs independent of
 // capability data while unknown identities retain an absent output declaration.
-func probeModelAttributes(_ context.Context, value *providercore.Record, model, protocol string) (modelcatalog.Attributes, error) {
-	return testkit.OfflineView().Resolve(value.ModelAttributeTarget(model, protocol), modelcatalog.Attributes{}).Attributes, nil
+func probeModelAttributes(_ context.Context, value *providercore.Record, _ int64, model, protocol string) (modelcatalog.Resolution, error) {
+	return testkit.OfflineView().Resolve(value.ModelAttributeTarget(model, protocol), modelcatalog.Attributes{}), nil
 }

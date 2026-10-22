@@ -81,6 +81,9 @@ type TestRequest struct {
 	SystemOne json.RawMessage
 
 	ProviderID int64 // selected provider record identifier
+	// GroupID selects the model attribute profile for this test. Zero uses
+	// catalogue defaults; the supplied model still follows provider mapping.
+	GroupID int64
 	// Model, Prompt, and Mode carry raw caller text into loading. Preparation
 	// writes normalized Mode into the copied request, with Model and Prompt passed
 	// to the target for its platform-specific handling.
@@ -270,7 +273,7 @@ func ResolveProviderTestModeAndType(mode string, testTypes ...string) (string, s
 		}
 	}
 	// Keep an empty kind for omitted input so platform targets can apply
-	// model-based legacy inference; the normalized text default alone would hide
+	// attribute-based automatic selection; the normalized text default alone would hide
 	// that missing selection.
 	if !explicit {
 		testType = ""
@@ -510,11 +513,12 @@ func (s *testGuardedSink) failure() error { s.mu.Lock(); defer s.mu.Unlock(); re
 // model. It supplies empty prompt and user agent, and execution failures become
 // failed result data with a nil Go error.
 func (s *TestService) RunTestBackground(ctx context.Context, id int64, model string) (*ScheduledTestResult, error) {
-	return s.RunTestBackgroundWithPromptAndUserAgent(ctx, id, model, "", "")
+	return s.RunTestBackgroundRequest(ctx, TestRequest{ProviderID: id, Model: model})
 }
 
-// RunTestBackgroundWithPromptAndUserAgent returns a timed automatic default-mode
-// result using the supplied prompt and user agent. Now is required and sampled
+// RunTestBackgroundRequest returns a timed automatic default-mode
+// result using the supplied model, group, prompt, and user agent. Mode is set to
+// default and Automatic is enabled. Now is required and sampled
 // before and after Test; latency is their difference in whole milliseconds. Test
 // failures are represented in result data with a nil Go error.
 //
@@ -523,10 +527,12 @@ func (s *TestService) RunTestBackground(ctx context.Context, id int64, model str
 // returns nil; any returned execution error still selects failed status and
 // supplies its text if that message is empty. Image and completion events
 // contribute no response text or status decision to this collector.
-func (s *TestService) RunTestBackgroundWithPromptAndUserAgent(ctx context.Context, id int64, model, prompt, userAgent string) (*ScheduledTestResult, error) {
+func (s *TestService) RunTestBackgroundRequest(ctx context.Context, request TestRequest) (*ScheduledTestResult, error) {
 	started := s.options.Now()
 	sink := &testResultSink{}
-	testErr := s.Test(ctx, TestRequest{ProviderID: id, Model: model, Prompt: prompt, Mode: ProviderTestModeDefault, Automatic: true, UserAgent: userAgent}, sink)
+	request.Mode = ProviderTestModeDefault
+	request.Automatic = true
+	testErr := s.Test(ctx, request, sink)
 	finished := s.options.Now()
 	text, message := sink.result()
 	status := "success"

@@ -22,6 +22,7 @@ Use the repository's [project-doc](.agents/skills/project-doc/SKILL.md) skill fi
 ## Change conventions
 
 - Work directly on the current `main` branch. Create or switch branches only when the user explicitly requests it.
+- Use the project's designated brand-color token wherever the UI calls for brand color. Identify the correct token from the user-approved reference component and its theme and interaction state. Do not substitute another color or shade, darken or lighten it, or reduce its opacity for readability, contrast, aesthetics, skill recommendations, or other reasons unless the user explicitly requests that color change. This rule applies when following `oil-ui-pro` and all other UI skills. Resolve readability issues through layout, typography, or surrounding surfaces while preserving the brand color.
 - Write code comments and docstrings in English. Cover the files, declarations, fields, tests, and operations required by `code-comments`, including private declarations. Follow Go documentation conventions and the repository's file-overview and `doc.go` placement rules.
 - Wrap code for readability and put one operation on each line.
 - Treat comment maintenance as part of every code change. When behavior, names, parameters, return values, constraints, or execution order change, update affected comments in the same edit. Check file overviews, declaration comments, field comments, and inline comments against the resulting implementation.
