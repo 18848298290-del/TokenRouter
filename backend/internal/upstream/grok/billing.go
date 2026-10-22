@@ -36,8 +36,9 @@ const (
 	CLITokenAuthValue      = "xai-grok-cli"          // CLI token identity value
 	CLIClientVersionHeader = "x-grok-client-version" // CLI client version header
 	// CLIClientVersion is the shared version used to construct Grok CLI request identities.
-	// Billing probes use this bundled version independently of the environment override.
-	CLIClientVersion = "0.2.120"
+	// Billing request construction uses this value; CLI proxy transport can apply
+	// a validated environment override before dispatch.
+	CLIClientVersion = "1.0.67"
 	// billingCLIUserAgent advertises the pinned pager and shell billing identity;
 	// general forwarding obtains a separately resolved workspace User-Agent.
 	billingCLIUserAgent = "grok-pager/" + CLIClientVersion + " grok-shell/" + CLIClientVersion + " (macos; aarch64)"

@@ -134,7 +134,7 @@ Grok Build CLI 的模型配置指向 TokenRouter 对外的地址（以 `/v1` 结
 - `XAI_OAUTH_AUTHORIZE_URL`
 - `XAI_OAUTH_TOKEN_URL`
 - `XAI_BASE_URL`
-- `XAI_GROK_CLI_VERSION`：覆盖 Grok CLI 的客户端版本；内置版本和允许的最低版本都是 `0.2.114`，覆盖值需要是规范的 SemVer，并且不低于这个版本
+- `XAI_GROK_CLI_VERSION`：覆盖 Grok CLI 的客户端版本和 User-Agent 中的版本；内置版本为 `1.0.67`。覆盖值需要是不带 `v` 前缀、不含 build metadata 的规范 SemVer。发往 `cli-chat-proxy.grok.com` 的请求在传输层要求覆盖值不低于内置版本，否则使用内置版本。
 
 进程配置 `gateway.grok` 还包括 Free OAuth 提供商的本地滚动窗口软门禁：默认 24 小时、500000 token、95% 时停调、统计缓存 60 秒。只有明确标记为 Free 的提供商参与；未知或付费的档位，以及数据库或统计查询失败时，都放行（fail-open）。管理端主动的额度查询和导入时的探测，不经过这个软门禁。门禁判断和缓存由 `provider.FreeQuotaGate` 负责，app 传入配置，绑定 usage 批量统计和后台任务屏障；两条普通选择链各自共用自己的缓存，高级调度器按实例使用独立的缓存，第一次缓存未命中时照常放行，并在后台刷新。
 
