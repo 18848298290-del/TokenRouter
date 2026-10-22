@@ -58,8 +58,7 @@ func (p *OpenAIResponseOutput) failedResponseTerminal(ctx context.Context, c *gi
 		MarkOpenAIResponseFailureEffects(c, policyStatus, decision.StopScheduling)
 		return p.NewStreamPolicyFailure(
 			c, provider, false, strings.TrimSpace(resp.Header.Get("x-request-id")), resp.Header,
-			policyStatus, terminalPayload, msg,
-			gatewayprovider.OpenAIStreamFailureRetryable(provider, terminalPayload, msg),
+			terminalPayload, msg,
 		)
 	}
 	err := p.ProtocolError(resp, c, msg)

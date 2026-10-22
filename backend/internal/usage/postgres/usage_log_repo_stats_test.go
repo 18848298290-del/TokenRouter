@@ -131,7 +131,7 @@ func TestProviderFilteredEndpointStatsKeepUserActualCost(t *testing.T) {
 	require.NoError(t, err)
 	upstream, err := repo.GetUpstreamEndpointStatsWithFilters(context.Background(), start, end, 0, 0, providerID, 0, "", nil, nil, nil)
 	require.NoError(t, err)
-	paths, err := repo.getEndpointPathStatsWithFilters(context.Background(), start, end, 0, 0, providerID, 0, 0, "", "", nil, nil, nil, "", false, false, nil)
+	paths, err := repo.getEndpointPathStatsWithFilters(context.Background(), start, end, UsageLogFilters{ProviderID: providerID})
 	require.NoError(t, err)
 
 	// Apply one absolute tolerance to monetary readback in all three endpoint

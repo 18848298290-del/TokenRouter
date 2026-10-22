@@ -160,7 +160,7 @@ func provideOAuthUsageCore(store *providerpostgres.ProviderStore, usageStore *us
 		},
 	}
 	core := provider.NewOAuthUsageService(store, cache, stats, options)
-	manager.Register(lifecycle.Hook{Name: "ProviderOAuthUsage", StopOrder: 25, Stop: core.StopContext})
+	manager.Register(lifecycle.Hook{Name: "ProviderOAuthUsage", StopOrder: shutdownStageProbesAndRefresh, Stop: core.StopContext})
 	return core
 }
 
@@ -220,7 +220,7 @@ func provideUpstreamUsage(store *providerpostgres.ProviderStore, upstream httpcl
 	core := provider.NewUpstreamUsageService(store, source, provider.UpstreamUsageOptions{Now: time.Now})
 	// Query activity stops after producer shutdown and before shared SQL or
 	// HTTP cleanup. The manager returns an error if this service cannot finish within its budget.
-	manager.Register(lifecycle.Hook{Name: "ProviderUpstreamUsage", StopOrder: 25, Stop: core.StopContext})
+	manager.Register(lifecycle.Hook{Name: "ProviderUpstreamUsage", StopOrder: shutdownStageProbesAndRefresh, Stop: core.StopContext})
 	return core
 }
 

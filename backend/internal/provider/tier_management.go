@@ -192,7 +192,7 @@ func (s *TierManagement) refresh(ctx context.Context, v *Record) (*TierRefreshRe
 	if kind != "google_one" {
 		return nil, apperror.BadRequest("", "Only google_one OAuth providers support tier refresh")
 	}
-	expected := FailureVersion(v).CredentialVersion
+	expected := ObserveCredentialVersion(v)
 	observation, err := s.options.Observe(ctx, CloneRecord(v))
 	if err != nil {
 		return nil, err

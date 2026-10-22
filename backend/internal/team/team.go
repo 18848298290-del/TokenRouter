@@ -871,15 +871,11 @@ func (s *TeamService) ListMembers(ctx context.Context, userID int64) ([]TeamMemb
 // members replace it with their own ID; Key filtering remains in the supplied
 // query.
 func (s *TeamService) GetUsageSummary(ctx context.Context, userID int64, query TeamUsageQuery) (*TeamUsageSummary, error) {
-	teamCtx, err := s.requireMembership(ctx, userID)
+	teamID, query, err := s.prepareUsageReport(ctx, userID, query)
 	if err != nil {
 		return nil, err
 	}
-	query = NormalizeTeamUsageQueryAt(query, s.now())
-	if teamCtx.Membership.Role != TeamRoleOwner {
-		query.ActorUserID = &userID
-	}
-	return s.repo.GetUsageSummary(ctx, teamCtx.Team.ID, query)
+	return s.repo.GetUsageSummary(ctx, teamID, query)
 }
 
 // ListMemberUsageSeries returns normalized member trends for an active
@@ -887,15 +883,11 @@ func (s *TeamService) GetUsageSummary(ctx context.Context, userID int64, query T
 // fixed to themselves; repository reporting determines represented
 // current/departed members within that authorized scope.
 func (s *TeamService) ListMemberUsageSeries(ctx context.Context, userID int64, query TeamUsageQuery) ([]TeamMemberUsageSeries, error) {
-	teamCtx, err := s.requireMembership(ctx, userID)
+	teamID, query, err := s.prepareUsageReport(ctx, userID, query)
 	if err != nil {
 		return nil, err
 	}
-	query = NormalizeTeamUsageQueryAt(query, s.now())
-	if teamCtx.Membership.Role != TeamRoleOwner {
-		query.ActorUserID = &userID
-	}
-	return s.repo.ListMemberUsageSeries(ctx, teamCtx.Team.ID, query)
+	return s.repo.ListMemberUsageSeries(ctx, teamID, query)
 }
 
 // ListUsageLogs returns a page of normalized team usage records after
@@ -903,19 +895,31 @@ func (s *TeamService) ListMemberUsageSeries(ctx context.Context, userID int64, q
 // ID; the result retains repository item storage and reports the normalized
 // limit/offset alongside its total.
 func (s *TeamService) ListUsageLogs(ctx context.Context, userID int64, query TeamUsageQuery) (*TeamUsagePage, error) {
-	teamCtx, err := s.requireMembership(ctx, userID)
+	teamID, query, err := s.prepareUsageReport(ctx, userID, query)
 	if err != nil {
 		return nil, err
+	}
+	items, total, err := s.repo.ListUsageLogs(ctx, teamID, query)
+	if err != nil {
+		return nil, err
+	}
+	return &TeamUsagePage{Items: items, Total: total, Limit: query.Limit, Offset: query.Offset}, nil
+}
+
+// prepareUsageReport authorizes an active membership and returns its team ID
+// with normalized report filters. Membership failures precede clock sampling;
+// admitted calls sample once. Key filters pass through, owners keep their actor
+// filter, and other roles select the acting user.
+func (s *TeamService) prepareUsageReport(ctx context.Context, userID int64, query TeamUsageQuery) (int64, TeamUsageQuery, error) {
+	teamCtx, err := s.requireMembership(ctx, userID)
+	if err != nil {
+		return 0, TeamUsageQuery{}, err
 	}
 	query = NormalizeTeamUsageQueryAt(query, s.now())
 	if teamCtx.Membership.Role != TeamRoleOwner {
 		query.ActorUserID = &userID
 	}
-	items, total, err := s.repo.ListUsageLogs(ctx, teamCtx.Team.ID, query)
-	if err != nil {
-		return nil, err
-	}
-	return &TeamUsagePage{Items: items, Total: total, Limit: query.Limit, Offset: query.Offset}, nil
+	return teamCtx.Team.ID, query, nil
 }
 
 // ListTeamKeys returns masked team credentials for a membership, including a

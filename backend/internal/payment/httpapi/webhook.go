@@ -56,10 +56,6 @@ const (
 // notification handling.
 type PaymentWebhookHandler struct {
 	paymentService *payment.Runtime // candidate and fulfillment runtime
-	// registry retains the constructor's provider table reference. Callback
-	// candidate resolution currently uses paymentService.GetWebhookProviders and
-	// its ProviderBindings registry instead of reading this field.
-	registry *payment.Registry
 }
 
 // WebhookWxpaySuccessResponse is the official WeChat callback success
@@ -69,14 +65,13 @@ type WebhookWxpaySuccessResponse struct {
 	Message string `json:"message"` // protocol acknowledgement message
 }
 
-// NewPaymentWebhookHandler binds the payment runtime and retains the supplied
-// registry reference for the HTTP adapter. Candidate and notification
-// operations require the runtime; callback handlers delegate account selection
-// to its ProviderBindings.
-func NewPaymentWebhookHandler(paymentService *payment.Runtime, registry *payment.Registry) *PaymentWebhookHandler {
+// NewPaymentWebhookHandler binds the payment runtime for callback verification
+// and fulfillment. Candidate and notification operations require a usable
+// runtime; callback handlers resolve provider accounts through its
+// ProviderBindings before processing accepted notifications.
+func NewPaymentWebhookHandler(paymentService *payment.Runtime) *PaymentWebhookHandler {
 	return &PaymentWebhookHandler{
 		paymentService: paymentService,
-		registry:       registry,
 	}
 }
 

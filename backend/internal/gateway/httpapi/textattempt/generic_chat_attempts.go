@@ -57,7 +57,7 @@ type genericChatAttemptBridge struct {
 // before returning loop metadata.
 func (b *genericChatAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
 	var err error
-	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.selectionSessionHash, b.reqModel, excluded, "", int64(0))
+	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.selectionSessionHash, b.reqModel, excluded)
 	if err != nil {
 		return textflow.Selection{}, err
 	}

@@ -42,7 +42,7 @@ func provideSearchRuntime(store *settings.Store, proxies *egresspg.ProxyStore, r
 	runtime := search.NewConfigService(store, searchProxies{proxies}, func(configs []search.ProviderConfig, work *search.WorkGroup) *search.Manager {
 		return search.NewManager(configs, state, searchadapter.NewExecutor(), work)
 	}, registry)
-	manager.Register(lifecycle.Hook{Name: "WebSearchRuntime", StartOrder: 181, StopOrder: 30, Start: runtime.Initialize, Stop: runtime.StopContext})
+	manager.Register(lifecycle.Hook{Name: "WebSearchRuntime", StartOrder: 181, StopOrder: shutdownStageAggregatesSessionsAndSearch, Start: runtime.Initialize, Stop: runtime.StopContext})
 	return runtime
 }
 

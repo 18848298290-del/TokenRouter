@@ -3,8 +3,6 @@ package httpapi
 import (
 	"bufio"
 	"crypto/rand"
-	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -38,72 +36,6 @@ import (
 // binding these HTTP decisions, model and tier observations, optional header
 // filtering, and reasoning/tool restoration to that attempt.
 
-// chatBufferedFailure handles a failed terminal Responses object before
-// buffered Chat output. It records cyber-policy evidence first; otherwise
-// provider health classification chooses generic rejection, failover, or a
-// client error. A failover result leaves final response writing to the outer
-// attempt loop.
-//
-// For a final client error, event-derived status and normalized failure bytes
-// feed configured error rules after Ops recording. Those rules can replace
-// status and message, while the unhandled case emits a Chat upstream_error
-// using the captured failure message.
-func (p *OpenAIResponseOutput) chatBufferedFailure(c *gin.Context, provider *gatewayprovider.ExecutionProvider, resp *http.Response, requestID, upstreamModel string, finalResponse *wire.ResponsesResponse, usage wire.ForwardUsage) error {
-	// Classification continues if event marshaling fails; the message still comes
-	// from finalResponse, while byte-based cyber detection and rules receive no payload.
-	payload, _ := json.Marshal(map[string]any{"type": "response.failed", "response": finalResponse})
-	if hit, code, msg := openai.DetectOpenAICyberPolicy(payload); hit {
-		// A buffered cyber rejection has no client content yet. Attach its observed
-		// usage to the moderation mark before returning the dedicated Chat error.
-		MarkOpsCyberPolicy(c, moderationflow.Mark{
-			Code:           code,
-			Message:        msg,
-			Body:           logredact.TruncateUTF8(string(payload), 4096),
-			UpstreamStatus: http.StatusOK,
-			UpstreamInTok:  usage.InputTokens,
-			UpstreamOutTok: usage.OutputTokens,
-		})
-		clientMsg := msg
-		if clientMsg == "" {
-			clientMsg = "Request blocked by upstream cyber-security policy"
-		}
-		WriteForwardChatError(c, http.StatusBadRequest, "invalid_request_error", clientMsg)
-		return fmt.Errorf("openai cyber_policy: %s", msg)
-	}
-	message := openAICompatFailedResponseMessage(finalResponse)
-	policyStatus, decision := p.ApplyStreamFailurePolicy(
-		c.Request.Context(), provider, upstreamModel, resp.Header, payload, message,
-	)
-	if decision.ShouldReturnGenericError() {
-		WriteForwardChatError(c, http.StatusInternalServerError, "api_error", "Upstream gateway error")
-		return fmt.Errorf("upstream response failed: status=%d (not in custom error codes)", policyStatus)
-	}
-	// Health policy can request another provider before buffered JSON is written;
-	// publishing failure effects lets the outer attempt loop account for that choice.
-	if decision.ShouldFailover(gatewayprovider.ExecutionErrorPolicy(provider), policyStatus, openai.OpenAIStreamFailedEventShouldFailover(payload, message)) {
-		MarkOpenAIResponseFailureEffects(c, policyStatus, decision.StopScheduling)
-		return p.NewStreamPolicyFailureWithModel(
-			c, provider, false, requestID, resp.Header, policyStatus, payload, message,
-			gatewayprovider.OpenAIStreamFailureRetryable(provider, payload, message), upstreamModel,
-		)
-	}
-	message = p.RecordStreamError(c, provider, false, requestID, "http_error", payload, message)
-	// HTTP 200 carries no failure status for these events. Infer one from the
-	// terminal object so status-based presentation rules see the upstream failure.
-	if status, errType, errMsg, matched := ApplyOpenAIStreamFailedErrorRule(
-		c, provider.Record.Platform, payload, message,
-	); matched {
-		if errMsg == "" {
-			errMsg = message
-		}
-		MarkResponseCommitted(c)
-		WriteForwardChatError(c, status, errType, errMsg)
-		return fmt.Errorf("upstream response failed (passthrough): %s", errMsg)
-	}
-	WriteForwardChatError(c, http.StatusBadGateway, "upstream_error", message)
-	return fmt.Errorf("upstream response failed: %s", message)
-}
-
 // chatStreamFailure translates a failed Responses event into a ChatFailure for
 // the stream reader. Callers pass the reader's business-output state, because
 // only a pre-output failure can return a provider failover error. Health
@@ -123,8 +55,7 @@ func (p *OpenAIResponseOutput) chatStreamFailure(c *gin.Context, provider *gatew
 	if !clientOutputStarted && decision.ShouldFailover(gatewayprovider.ExecutionErrorPolicy(provider), policyStatus, openai.OpenAIStreamFailedEventShouldFailover(payloadBytes, message)) {
 		MarkOpenAIResponseFailureEffects(c, policyStatus, decision.StopScheduling)
 		failure := p.NewStreamPolicyFailureWithModel(
-			c, provider, false, requestID, resp.Header, policyStatus, payloadBytes, message,
-			gatewayprovider.OpenAIStreamFailureRetryable(provider, payloadBytes, message), upstreamModel,
+			c, provider, false, requestID, resp.Header, payloadBytes, message, upstreamModel,
 		)
 		return openai.ChatFailure{Failover: failure}
 	}
@@ -162,7 +93,10 @@ func (p *OpenAIResponseOutput) ChatOptions(c *gin.Context, provider *gatewayprov
 			return p.BufferedReadFailure(c, provider, resp, resp.Header.Get("x-request-id"), err)
 		},
 		BufferedFailure: func(final *wire.ResponsesResponse, usage wire.ForwardUsage) error {
-			return p.chatBufferedFailure(c, provider, resp, resp.Header.Get("x-request-id"), upstreamModel, final, usage)
+			return p.bufferedResponseFailure(
+				c, provider, resp, resp.Header.Get("x-request-id"), upstreamModel, final, usage,
+				"upstream_error", WriteForwardChatError,
+			)
 		},
 		ObserveFinal: func(final *wire.ResponsesResponse) {
 			observer := UpstreamResponseModelObserverFromContext(c)

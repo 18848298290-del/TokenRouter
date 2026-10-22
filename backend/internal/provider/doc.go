@@ -21,6 +21,8 @@
 //     background scans, and recovery.
 //   - openai*.go, claude*.go, antigravity*.go, gemini*.go: platform
 //     authorization, tokens, and quotas.
+//   - authorization_sessions.go: typed OAuth session storage and cleanup
+//     lifecycle used by the platform authorization stores.
 //   - grok*.go, qoder*.go, vertex*.go: Grok, Qoder, and Vertex credentials and
 //     usage.
 //   - oauth_usage*.go, usage*.go, ollama_usage*.go: usage reads, caching,

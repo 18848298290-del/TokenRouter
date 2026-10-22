@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"regexp"
 	"testing"
 	"time"
 
@@ -807,5 +809,92 @@ func TestBatchImageHoldClaimRequestID(t *testing.T) {
 	require.Empty(t, taskHoldClaimRequestID(nil))
 	for _, id := range []string{"batch_image_hold:imgbatch_x", "creative_hold:crun_x"} {
 		require.Equal(t, id, taskHoldClaimRequestID(&billing.TaskFundsCommand{Task: billing.TaskReference{ID: "opaque", ReserveRequestID: id}}))
+	}
+}
+
+// TestIncrementUsageBillingProviderQuota_ReturnedState exercises the eight
+// returned counters and each limit crossing. Missing providers and unavailable
+// outbox writes return errors to the caller, while successful scans retain
+// the returned field order and use the supplied transaction for events.
+func TestIncrementUsageBillingProviderQuota_ReturnedState(t *testing.T) {
+	outboxErr := errors.New("quota outbox unavailable")
+	for _, tc := range []struct {
+		name          string                     // returned quota scenario
+		state         billing.ProviderQuotaState // supplied post-update counters
+		missing       bool                       // omit provider result
+		missingOutbox bool                       // omit crossing callback
+		outboxErr     error                      // injected callback failure
+		wantErr       error                      // expected sentinel failure
+		wantCalls     int                        // expected callback count
+	}{
+		{name: "distinct scan fields", state: billing.ProviderQuotaState{TotalUsed: 11, TotalLimit: 100, DailyUsed: 12, DailyLimit: 200, WeeklyUsed: 13, WeeklyLimit: 300, MonthlyUsed: 14, MonthlyLimit: 400}},
+		{name: "total crossing", state: billing.ProviderQuotaState{TotalUsed: 11, TotalLimit: 10}, wantCalls: 1},
+		{name: "daily crossing", state: billing.ProviderQuotaState{DailyUsed: 11, DailyLimit: 10}, wantCalls: 1},
+		{name: "weekly crossing", state: billing.ProviderQuotaState{WeeklyUsed: 11, WeeklyLimit: 10}, wantCalls: 1},
+		{name: "monthly crossing", state: billing.ProviderQuotaState{MonthlyUsed: 11, MonthlyLimit: 10}, wantCalls: 1},
+		{name: "already exhausted", state: billing.ProviderQuotaState{TotalUsed: 12, TotalLimit: 10}},
+		{name: "missing provider", missing: true, wantErr: billing.ErrProviderNotFound},
+		{name: "missing outbox", state: billing.ProviderQuotaState{TotalUsed: 11, TotalLimit: 10}, missingOutbox: true},
+		{name: "outbox failure", state: billing.ProviderQuotaState{TotalUsed: 11, TotalLimit: 10}, outboxErr: outboxErr, wantErr: outboxErr, wantCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+			ctx := context.Background()
+			mock.ExpectBegin()
+			tx, err := db.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			rows := sqlmock.NewRows([]string{
+				"quota_used", "quota_limit", "quota_daily_used", "quota_daily_limit",
+				"quota_weekly_used", "quota_weekly_limit", "quota_monthly_used", "quota_monthly_limit",
+			})
+			if !tc.missing {
+				rows.AddRow(tc.state.TotalUsed, tc.state.TotalLimit, tc.state.DailyUsed, tc.state.DailyLimit,
+					tc.state.WeeklyUsed, tc.state.WeeklyLimit, tc.state.MonthlyUsed, tc.state.MonthlyLimit)
+			}
+			query := `(?s)^UPDATE providers SET extra = .*WHERE id = \$2 AND deleted_at IS NULL RETURNING ` +
+				regexp.QuoteMeta(`COALESCE((extra->>'quota_used')::numeric, 0), COALESCE((extra->>'quota_limit')::numeric, 0), `+
+					`COALESCE((extra->>'quota_daily_used')::numeric, 0), COALESCE((extra->>'quota_daily_limit')::numeric, 0), `+
+					`COALESCE((extra->>'quota_weekly_used')::numeric, 0), COALESCE((extra->>'quota_weekly_limit')::numeric, 0), `+
+					`COALESCE((extra->>'quota_monthly_used')::numeric, 0), COALESCE((extra->>'quota_monthly_limit')::numeric, 0)`) + `$`
+			mock.ExpectQuery(query).
+				WithArgs(2.0, int64(41)).
+				WillReturnRows(rows).
+				RowsWillBeClosed()
+			mock.ExpectRollback()
+			mock.ExpectClose()
+
+			calls := 0
+			var outbox ProviderQuotaOutbox
+			if !tc.missingOutbox {
+				outbox = func(callbackCtx context.Context, callbackTx *sql.Tx, providerID int64) error {
+					calls++
+					require.Equal(t, ctx, callbackCtx)
+					require.Same(t, tx, callbackTx)
+					require.Equal(t, int64(41), providerID)
+					return tc.outboxErr
+				}
+			}
+			state, err := incrementUsageBillingProviderQuota(ctx, tx, 41, 2, outbox)
+			switch {
+			case tc.missingOutbox:
+				require.EqualError(t, err, "provider quota outbox is not configured")
+				require.Nil(t, state)
+			case tc.wantErr != nil:
+				require.ErrorIs(t, err, tc.wantErr)
+				require.Nil(t, state)
+			default:
+				require.NoError(t, err)
+				require.Equal(t, &tc.state, state)
+			}
+			require.Equal(t, tc.wantCalls, calls)
+			// End this caller-owned attempt after inspecting the returned state or
+			// failure, so the helper cannot silently complete its enclosing transaction.
+			require.NoError(t, tx.Rollback())
+			require.NoError(t, db.Close())
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
 	}
 }

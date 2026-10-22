@@ -110,7 +110,7 @@ func provideCreativeExecutor(cfg *config.Config, groups creativeprovider.Executi
 	if generic != nil {
 		out.Gemini = func(ctx context.Context, run creative.CreativeRun) (*creative.Selection, error) {
 			id := run.GroupID
-			value, err := generic.SelectProviderWithLoadAwareness(ctx, &id, "", run.Model, nil, "", 0)
+			value, err := generic.SelectProviderWithLoadAwareness(ctx, &id, "", run.Model, nil)
 			return project(value, err)
 		}
 	}

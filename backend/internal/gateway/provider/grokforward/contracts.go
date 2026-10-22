@@ -20,6 +20,13 @@ import (
 // identities separate while request-local adapters supply transport and health
 // effects. Its inputs also carry output mode and timing so the returned OpenAI
 // result can describe the selected attempt to completion processing.
+//
+// Failure construction combines response retry guidance with the health decision
+// that has already run for the attempt. Either source can permit reuse of the
+// provider, while request-scoped capacity handling requires response-derived
+// retryability and HTTP 429. Headers become an independent snapshot for the
+// provider loop; captured error bytes remain borrowed from the attempt, and
+// previously computed retry deadlines pass through without another clock read.
 
 // ComposerVisionModel selects the auxiliary image-description model used by Composer before the main text request is sent.
 const ComposerVisionModel = "grok-build-0.1"
@@ -204,4 +211,26 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// newFailure captures response evidence and combines the supplied retry decisions.
+// Callers supply a nonnil response after computing RetryMetadata and applying
+// health policy, keeping their existing observation order and deadline sampling.
+//
+// Either retry source permits provider reuse, while request-scoped transient
+// handling requires a retryable HTTP 429 from response guidance. Headers are
+// cloned for the outer attempt loop; body bytes remain shared with the caller.
+// Delay, deadline, and attempt limits retain the supplied values without new
+// clock reads or provider side effects.
+func newFailure(response *http.Response, body []byte, retry Retry, retrySameProvider bool) Failure {
+	return Failure{
+		StatusCode:                response.StatusCode,
+		ResponseBody:              body,
+		ResponseHeaders:           response.Header.Clone(),
+		RetryableOnSameProvider:   retry.Retryable || retrySameProvider,
+		RequestScopedTransient:    retry.Retryable && response.StatusCode == http.StatusTooManyRequests,
+		SameProviderRetryDelay:    retry.Delay,
+		SameProviderRetryDeadline: retry.Deadline,
+		SameProviderRetryMax:      retry.Max,
+	}
 }

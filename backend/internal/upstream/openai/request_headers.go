@@ -10,8 +10,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// request_headers.go builds Responses HTTP requests with ordered
-// authentication, session isolation, and provider identity handling.
+// request_headers.go builds Responses HTTP requests and supplies authenticated
+// POST construction for image and search requests.
 // Responses request identity depends on authentication, client headers,
 // credential scoping, and optional fingerprint policy. Incoming turn state is
 // filtered before Codex session headers are rebuilt, so known failover state
@@ -73,22 +73,9 @@ type ResponsesRequestOptions struct {
 // beta features, routing hints, and diagnostics run in that order, making later
 // policy callbacks see the prepared outgoing headers.
 func BuildResponsesRequest(ctx context.Context, body []byte, promptCacheKey string, options ResponsesRequestOptions) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, options.URL, bytes.NewReader(body))
+	req, err := newAuthenticatedPostRequest(ctx, options.URL, body, options.Authenticate)
 	if err != nil {
 		return nil, err
-	}
-	req = req.WithContext(upstream.WithHTTPUpstreamProfile(req.Context(), upstream.HTTPUpstreamProfileOpenAI))
-
-	// Authentication resolves the selected provider assertion or bearer values
-	// before forwarding, so the request begins with its prepared credential identity.
-	authHeaders, err := options.Authenticate(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("build openai authentication headers: %w", err)
-	}
-	for key, values := range authHeaders {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
 	}
 
 	// Codex authentication also needs account headers and the ChatGPT Host;
@@ -193,6 +180,30 @@ func BuildResponsesRequest(ctx context.Context, body []byte, promptCacheKey stri
 	options.RoutingHint(req.Header, body)
 	options.Diagnostics(req.Header, body)
 
+	return req, nil
+}
+
+// newAuthenticatedPostRequest creates a POST carrying the OpenAI transport
+// profile and copied authentication headers. Request construction errors precede
+// authentication; authenticate receives ctx, while the returned request carries
+// the transport profile in a derived context. Header values retain their per-key
+// order and use slices owned by the request, including when authenticate reuses
+// its map.
+func newAuthenticatedPostRequest(ctx context.Context, address string, body []byte, authenticate func(context.Context) (http.Header, error)) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, address, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(upstream.WithHTTPUpstreamProfile(req.Context(), upstream.HTTPUpstreamProfileOpenAI))
+	authHeaders, err := authenticate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("build openai authentication headers: %w", err)
+	}
+	for key, values := range authHeaders {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
 	return req, nil
 }
 

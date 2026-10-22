@@ -74,7 +74,7 @@ func (p *OpenAIResponseOutput) BufferedReadFailure(
 		responseHeaders = resp.Header
 	}
 	failoverErr := p.NewStreamPolicyFailure(
-		c, provider, false, requestID, responseHeaders, http.StatusBadGateway, payload, message, false,
+		c, provider, false, requestID, responseHeaders, payload, message,
 	)
 	// Keep transport error codes stable after retry exhaustion so clients and passthrough rules can classify them.
 	failoverErr.ResponseBody = payload

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	coderws "github.com/coder/websocket"
@@ -37,13 +37,13 @@ import (
 // application-owned; short-lived Live service facades delegate creation,
 // controller handling and expiry to gateway/live.
 //
-// Every facade references the executor's same observer registry, so local
-// shutdown applies across previously constructed facades. Registration and
-// waiting are coordinated by ObserverState using the retained mutex, stopped
-// flag, cancel map and wait group. The transport adapters distinguish
-// ordinary close from reconnectable errors, and creation diagnostics retain
-// bounded status and error fields without serializing credential-bearing
-// request options.
+// Every facade references the executor's same observer manager, so local
+// shutdown applies across previously constructed facades. Atomic publication
+// selects one manager when registration and shutdown first run concurrently
+// on a zero-value executor. ObserverManager owns admission and waiting. The
+// transport adapters distinguish ordinary close from reconnectable errors, and
+// creation diagnostics retain bounded status and error fields without
+// serializing credential-bearing request options.
 
 const (
 	// defaultLiveMaxSessionDuration bounds a call when no positive session duration
@@ -109,14 +109,9 @@ type OpenAILiveExecutor struct {
 	// Background schedules the initial observer through application task tracking.
 	// liveCreatePorts.Observe invokes it after saving the created call record.
 	Background func(string, func()) bool
-	// liveObserverMu protects registration, liveObserverStopped and
-	// liveObserverCancels. ObserverState adds liveObserverWG under that same lock
-	// before shutdown begins waiting, and accepted cleanup removes its owner
-	// and decrements the wait count once.
-	liveObserverMu      sync.Mutex                    // observer registration state lock
-	liveObserverStopped bool                          // later observer registration disabled
-	liveObserverCancels map[string]context.CancelFunc // active owner cancellation callbacks
-	liveObserverWG      sync.WaitGroup                // accepted observer completion tracking
+	// liveObservers publishes one manager on first registration or shutdown.
+	// Every runtime facade uses that instance throughout the executor's lifetime.
+	liveObservers atomic.Pointer[gatewaylive.ObserverManager]
 }
 
 // liveSidebandReadError converts a normal upstream close to the session-ended
@@ -483,20 +478,12 @@ func (s *OpenAILiveExecutor) observeLiveCall(record *session.LiveCallRecord) {
 	s.liveRuntime().Observe(record)
 }
 
-// liveObserverState returns references to the executor's shared observer
-// coordination fields. Every new runtime facade uses those same references,
-// allowing shutdown to stop existing observers and reject later registrations
-// through one registry.
-func (s *OpenAILiveExecutor) liveObserverState() gatewaylive.ObserverState {
-	return gatewaylive.ObserverState{Mutex: &s.liveObserverMu, Stopped: &s.liveObserverStopped, Cancels: &s.liveObserverCancels, Wait: &s.liveObserverWG}
-}
-
 // beginLiveObserver registers owner in the shared local observer registry and
 // returns a background context with cleanup. Callers use an owner unique among
 // active registrations and call accepted cleanup exactly once. Registration
 // after stopping returns false with no usable observer context.
 func (s *OpenAILiveExecutor) beginLiveObserver(owner string) (context.Context, func(), bool) {
-	return s.liveObserverState().Begin(owner)
+	return s.liveObserverManager().Begin(owner)
 }
 
 // StopLiveObservers rejects later local registration, cancels current
@@ -504,7 +491,28 @@ func (s *OpenAILiveExecutor) beginLiveObserver(owner string) (context.Context, f
 // nonnil executor and context; stopping local observation leaves stored
 // remote call lifetime to the Live runtime.
 func (s *OpenAILiveExecutor) StopLiveObservers(ctx context.Context) error {
-	return s.liveObserverState().Stop(ctx)
+	return s.liveObserverManager().Stop(ctx)
+}
+
+// liveObserverManager returns this executor's shared local observer manager.
+// Callers provide a nonnil executor; its zero value obtains a manager when
+// registration or shutdown first needs one.
+//
+// Concurrent first callers can allocate separate candidates, but the successful
+// atomic publication selects the instance every caller uses. The published
+// pointer remains installed after shutdown, so runtime facades created later
+// observe closed admission and cannot start a separate observer registry.
+func (s *OpenAILiveExecutor) liveObserverManager() *gatewaylive.ObserverManager {
+	if manager := s.liveObservers.Load(); manager != nil {
+		return manager
+	}
+	manager := &gatewaylive.ObserverManager{}
+	// Publish a candidate before using it; a concurrent winner owns the manager
+	// that registration and shutdown must both consult for this executor.
+	if s.liveObservers.CompareAndSwap(nil, manager) {
+		return manager
+	}
+	return s.liveObservers.Load()
 }
 
 // liveProviderProxyURL returns the saved provider's proxy URL when both proxy

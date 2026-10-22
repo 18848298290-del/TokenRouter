@@ -32,6 +32,37 @@ import (
 // optional cache expiry, batching, and idle-client cleanup available without
 // adding those methods to every repository or transport.
 
+const (
+	// Shutdown stages group concurrent stops and order their consumers before
+	// shared resources close. Startup levels remain independent because rollback
+	// follows reverse startup and registration order, including acquired resources.
+	shutdownStageLocalObservers              = 5   // local observation cleanup
+	shutdownStageRequests                    = 15  // HTTP and gateway request completion
+	shutdownStageProducers                   = 20  // periodic and task-producing workers
+	shutdownStageProbesAndRefresh            = 25  // probes and runtime refresh loops
+	shutdownStageAggregatesSessionsAndSearch = 30  // aggregation, credential sessions, and search cleanup
+	shutdownStageOpenAIQuota                 = 35  // administrative OpenAI quota operations
+	shutdownStageUsageRecords                = 40  // request completion recording
+	shutdownStageModeration                  = 45  // queued content moderation
+	shutdownStageUsageBatchers               = 48  // buffered usage persistence
+	shutdownStageBillingCache                = 50  // queued billing cache updates
+	shutdownStageOllamaUsage                 = 60  // Ollama usage synchronization
+	shutdownStageDeferredWrites              = 65  // deferred provider writes
+	shutdownStageEmail                       = 70  // queued notification delivery
+	shutdownStageAudit                       = 75  // buffered audit persistence
+	shutdownStageRequestAndSystemLogs        = 790 // request and system log persistence
+	shutdownStageSettings                    = 800 // runtime settings subscriptions
+	shutdownStageAPIKeys                     = 805 // API key cache cleanup
+	shutdownStageAuthAndSubscriptions        = 810 // authorization maintenance and cache subscriptions
+	shutdownStageLocalCaches                 = 815 // recurring local cache expiry
+	shutdownStageTimingWheel                 = 820 // shared timer execution
+	shutdownStageHTTPConnections             = 840 // idle upstream HTTP connections
+
+	// This additional reusable wait follows billing-cache draining and its first
+	// task barrier. It precedes Ollama usage shutdown and has no producer hook.
+	shutdownStageBillingCacheFollowupBarrier = 56
+)
+
 // coreRuntimeReady marks registration of shared cleanup, cache, connection,
 // and task barriers.
 type coreRuntimeReady struct{}
@@ -63,7 +94,7 @@ func provideCoreRuntime(
 	httpUpstream httpclient.UpstreamTransport,
 	rates *gatewayBillingRates,
 ) *coreRuntimeReady {
-	manager.Register(lifecycle.Hook{Name: "AuthCacheInvalidationWorker", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "AuthCacheInvalidationWorker", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if authCacheInvalidationWorker != nil {
 			authCacheInvalidationWorker.Start()
 		}
@@ -74,7 +105,7 @@ func provideCoreRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "SchedulerSnapshotService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "SchedulerSnapshotService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if schedulerSnapshot != nil {
 			schedulerSnapshot.Start()
 		}
@@ -86,7 +117,7 @@ func provideCoreRuntime(
 		return nil
 	}})
 
-	manager.Register(lifecycle.Hook{Name: "UsageCleanupService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "UsageCleanupService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if usageCleanup != nil {
 			usageCleanup.Start()
 		}
@@ -97,7 +128,7 @@ func provideCoreRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "IdempotencyCleanupService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "IdempotencyCleanupService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if idempotencyCleanup != nil {
 			idempotencyCleanup.Start()
 		}
@@ -109,7 +140,7 @@ func provideCoreRuntime(
 		return nil
 	}})
 
-	manager.Register(lifecycle.Hook{Name: "PaymentOrderExpiryService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "PaymentOrderExpiryService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if paymentOrderExpiry != nil {
 			paymentOrderExpiry.Start(ctx)
 		}
@@ -121,14 +152,14 @@ func provideCoreRuntime(
 		return nil
 	}})
 
-	manager.Register(lifecycle.Hook{Name: "TLSFingerprintCollectorService", StartOrder: 995, StopOrder: 5, Start: nil, Stop: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "TLSFingerprintCollectorService", StartOrder: 995, StopOrder: shutdownStageLocalObservers, Start: nil, Stop: func(ctx context.Context) error {
 		if tlsFingerprintCollector != nil {
 			return tlsFingerprintCollector.Shutdown(ctx)
 		}
 		return nil
 	}})
 
-	manager.Register(lifecycle.Hook{Name: "TimingWheelService", StartOrder: 180, StopOrder: 820, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "TimingWheelService", StartOrder: 180, StopOrder: shutdownStageTimingWheel, Start: func(ctx context.Context) error {
 		if timingWheel != nil {
 			return timingWheel.Start()
 		}
@@ -141,7 +172,7 @@ func provideCoreRuntime(
 	}})
 
 	manager.Register(lifecycle.Hook{
-		Name: "RuntimeLocalCaches", StartOrder: 185, StopOrder: 815,
+		Name: "RuntimeLocalCaches", StartOrder: 185, StopOrder: shutdownStageLocalCaches,
 		Start: func(context.Context) error {
 			// The wheel has started before this hook schedules cache maintenance.
 			// A named callback lets its stop hook cancel and await this work later.
@@ -159,7 +190,7 @@ func provideCoreRuntime(
 			return nil
 		}, Stop: func(context.Context) error { timingWheel.CancelAndWait("runtime:local_caches"); return nil },
 	})
-	manager.Register(lifecycle.Hook{Name: "UsageLogBatchers", StartOrder: 952, StopOrder: 48, Stop: func(context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "UsageLogBatchers", StartOrder: 952, StopOrder: shutdownStageUsageBatchers, Stop: func(context.Context) error {
 		if closer, ok := usageRepo.(interface {
 			// StopUsageBatchers closes repository write queues and waits for their
 			// workers before shared storage cleanup. It has no context argument;
@@ -173,11 +204,23 @@ func provideCoreRuntime(
 
 	// Earlier stop callbacks may enqueue tracked side effects. Insert reusable
 	// waits after their levels before later consumers or shared resources close.
-	for _, phase := range []int{16, 21, 26, 31, 41, 46, 49, 51, 56, 61, 66} {
+	for _, phase := range []int{
+		shutdownStageRequests + 1,
+		shutdownStageProducers + 1,
+		shutdownStageProbesAndRefresh + 1,
+		shutdownStageAggregatesSessionsAndSearch + 1,
+		shutdownStageUsageRecords + 1,
+		shutdownStageModeration + 1,
+		shutdownStageUsageBatchers + 1,
+		shutdownStageBillingCache + 1,
+		shutdownStageBillingCacheFollowupBarrier,
+		shutdownStageOllamaUsage + 1,
+		shutdownStageDeferredWrites + 1,
+	} {
 		manager.Register(lifecycle.Hook{Name: fmt.Sprintf("BackgroundBarrier%d", phase), StartOrder: 1000 - phase, StopOrder: phase, Stop: tasks.Wait})
 	}
 
-	manager.Register(lifecycle.Hook{Name: "HTTPIdleConnections", StartOrder: 160, StopOrder: 840, Stop: func(context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "HTTPIdleConnections", StartOrder: 160, StopOrder: shutdownStageHTTPConnections, Stop: func(context.Context) error {
 		if closer, ok := httpUpstream.(interface {
 			// CloseIdleConnections releases currently unused transport connections.
 			// Active requests retain their connections; the application invokes this

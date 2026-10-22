@@ -115,7 +115,7 @@ type SelectionPorts struct {
 	// cached sticky provider lookup
 	CachedSession func(context.Context, *int64, string) (int64, error)
 	// provider selection with credential target
-	SelectProvider func(context.Context, *int64, string, string, map[int64]struct{}, string, int64) (*gatewaycapture.SelectionResult, error)
+	SelectProvider func(context.Context, *int64, string, string, map[int64]struct{}) (*gatewaycapture.SelectionResult, error)
 	// single-provider group eligibility check
 	SingleProviderGroup func(context.Context, *int64) bool
 	// exhausted failure scheduling penalty
@@ -221,7 +221,7 @@ type messageExecutionDependencies struct {
 	// per-attempt group input preparation
 	prepareGatewayAttemptRequest func(context.Context, *requeststate.ParsedRequest, []byte, *apikey.APIKey, string) (*requeststate.ParsedRequest, routing.GroupMappingResult, error)
 	// provider target and capacity selection
-	selectProvider func(context.Context, *int64, string, string, map[int64]struct{}, string, int64) (*gatewaycapture.SelectionResult, error)
+	selectProvider func(context.Context, *int64, string, string, map[int64]struct{}) (*gatewaycapture.SelectionResult, error)
 	// selected provider session tracking
 	trackSession func(*scheduler.SessionAttempts, *gatewaycapture.ExecutionProvider, string)
 	// request session attempt tracker factory

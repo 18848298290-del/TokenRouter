@@ -40,6 +40,6 @@ func provideBalanceAlertMonitor(store *providerpostgres.ProviderStore, queries *
 		})
 	}
 	monitor := provider.NewBalanceAlertMonitor(store, queries, send)
-	manager.Register(lifecycle.Hook{Name: "ProviderBalanceAlerts", StartOrder: 980, StopOrder: 20, Start: monitor.StartContext, Stop: monitor.StopContext})
+	manager.Register(lifecycle.Hook{Name: "ProviderBalanceAlerts", StartOrder: 980, StopOrder: shutdownStageProducers, Start: monitor.StartContext, Stop: monitor.StopContext})
 	return monitor
 }

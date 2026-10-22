@@ -339,11 +339,8 @@ func writeConfigFile(cfg *SetupConfig) error {
 		Server   ServerConfig   `yaml:"server"`   // persisted HTTP listener settings
 		Database DatabaseConfig `yaml:"database"` // installation PostgreSQL connection settings
 		Redis    RedisConfig    `yaml:"redis"`    // installation Redis connection settings
-		JWT      struct {
-			Secret     string `yaml:"secret"`      // persisted JWT signing secret
-			ExpireHour int    `yaml:"expire_hour"` // access-token lifetime in hours
-		} `yaml:"jwt"` // persisted signing and expiry settings
-		Default struct {
+		JWT      JWTConfig      `yaml:"jwt"`      // persisted signing and expiry settings
+		Default  struct {
 			UserConcurrency int     `yaml:"user_concurrency"` // default concurrent request limit
 			UserBalance     float64 `yaml:"user_balance"`     // default initial USD balance
 			APIKeyPrefix    string  `yaml:"api_key_prefix"`   // generated key text prefix
@@ -358,33 +355,16 @@ func writeConfigFile(cfg *SetupConfig) error {
 		Server:   cfg.Server,
 		Database: cfg.Database,
 		Redis:    cfg.Redis,
-		JWT: struct {
-			Secret     string `yaml:"secret"`      // persisted JWT signing secret
-			ExpireHour int    `yaml:"expire_hour"` // access-token lifetime in hours
-		}{
-			Secret:     cfg.JWT.Secret,
-			ExpireHour: cfg.JWT.ExpireHour,
-		},
-		Default: struct {
-			UserConcurrency int     `yaml:"user_concurrency"` // default concurrent request limit
-			UserBalance     float64 `yaml:"user_balance"`     // default initial USD balance
-			APIKeyPrefix    string  `yaml:"api_key_prefix"`   // generated key text prefix
-			RateMultiplier  float64 `yaml:"rate_multiplier"`  // default billing rate multiplier
-		}{
-			UserConcurrency: defaultUserConcurrency,
-			UserBalance:     0,
-			APIKeyPrefix:    "sk-",
-			RateMultiplier:  1.0,
-		},
-		RateLimit: struct {
-			RequestsPerMinute int `yaml:"requests_per_minute"` // legacy request-rate setting value
-			BurstSize         int `yaml:"burst_size"`          // legacy burst setting value
-		}{
-			RequestsPerMinute: 60,
-			BurstSize:         10,
-		},
+		JWT:      cfg.JWT,
 		Timezone: tz,
 	}
+
+	yamlConfig.Default.UserConcurrency = defaultUserConcurrency
+	yamlConfig.Default.UserBalance = 0
+	yamlConfig.Default.APIKeyPrefix = "sk-"
+	yamlConfig.Default.RateMultiplier = 1.0
+	yamlConfig.RateLimit.RequestsPerMinute = 60
+	yamlConfig.RateLimit.BurstSize = 10
 
 	data, err := yaml.Marshal(&yamlConfig)
 	if err != nil {

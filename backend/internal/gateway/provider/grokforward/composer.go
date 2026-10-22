@@ -90,16 +90,7 @@ func DescribeImage(ctx context.Context, p Ports, o Options, in Input, imageURL s
 				// auxiliary usage is not treated as a completed description.
 				if kind == "failover" {
 					retry := p.RetryMetadata(resp.StatusCode, respBody)
-					return true, p.Failure(Failure{
-						StatusCode:                resp.StatusCode,
-						ResponseBody:              respBody,
-						ResponseHeaders:           resp.Header.Clone(),
-						RetryableOnSameProvider:   retry.Retryable || decision.RetrySameProvider,
-						RequestScopedTransient:    retry.Retryable && resp.StatusCode == http.StatusTooManyRequests,
-						SameProviderRetryDelay:    retry.Delay,
-						SameProviderRetryDeadline: retry.Deadline,
-						SameProviderRetryMax:      retry.Max,
-					})
+					return true, p.Failure(newFailure(resp, respBody, retry, decision.RetrySameProvider))
 				}
 				return true, fmt.Errorf("grok composer image bridge upstream error: %s", upstreamMsg)
 			}

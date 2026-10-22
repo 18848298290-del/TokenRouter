@@ -2,17 +2,18 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-// Group percentage and provider predicates use supplied availability
-// observations, including error entries with temporary-unschedulable deadlines.
-// These tests check selected indicator values and missing group identity using
-// immutable fixtures shared by parallel subtests; they do not enter evaluator
-// lifecycle or event persistence.
+// alert_evaluator_service_test.go checks group percentages, provider predicates,
+// and rule metric selection against supplied observations. Availability cases
+// distinguish query failures from usable empty results, check required group
+// selectors, and count reads across repeated rule evaluations with mixed
+// provider states and temporary-unschedulable deadlines.
 
 // The interface assertion checks the dashboard stub's repository method set,
 // including methods promoted from its embedded interface for compilation.
@@ -133,10 +134,9 @@ func TestCountProvidersByCondition(t *testing.T) {
 	})
 }
 
-// TestComputeRuleMetricNewIndicators supplies disk and availability
-// observations to selected direct indicator branches. Parallel cases check
-// returned values and usability, including unavailable group metrics when the
-// group identity is absent.
+// TestComputeRuleMetricNewIndicators supplies disk and all seven availability
+// indicators with mixed provider states. Each availability rule reads once,
+// including repeated evaluations, while invalid group rules make no query.
 func TestComputeRuleMetricNewIndicators(t *testing.T) {
 	t.Parallel()
 
@@ -148,6 +148,7 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 			GroupID:        groupID,
 			TotalProviders: 10,
 			AvailableCount: 8,
+			RateLimitCount: 3,
 		},
 		Providers: map[int64]*ProviderAvailability{
 			1: {IsRateLimited: true},
@@ -155,21 +156,10 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 			3: {HasError: true},
 			4: {HasError: true, TempUnschedulableUntil: timePtr(time.Now().UTC().Add(2 * time.Minute))},
 			5: {HasError: false, IsRateLimited: false},
+			6: nil,
+			7: {HasError: true, TempUnschedulableUntil: timePtr(time.Now().UTC().Add(-time.Minute))},
+			8: {IsOverloaded: true},
 		},
-	}
-
-	// Parallel cases share these availability observations as read-only
-	// data; the injected getter bypasses production provider queries and
-	// returns the same fixture pointer.
-	opsService := &OpsService{
-		getProviderAvailability: func(_ context.Context, _ string, _ *int64) (*OpsProviderAvailability, error) {
-			return availability, nil
-		},
-	}
-
-	svc := &OpsAlertEvaluatorService{
-		opsService: opsService,
-		opsRepo:    &stubOpsRepo{overview: &OpsDashboardOverview{}},
 	}
 
 	start := time.Now().UTC().Add(-5 * time.Minute)
@@ -183,15 +173,16 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 		// computeRuleMetric. Parallel cases keep the pointed fixture
 		// values unchanged throughout their evaluation.
 		system *OpsSystemMetricsSnapshot // system sample pointer
-		// groupID is passed unchanged to metric selection. Nil
-		// exercises unavailable group observations; the supplied group
-		// cases use the positive fixture identity.
+		// groupID is passed unchanged to metric selection. Nil rejects group
+		// indicators and leaves provider indicators unfiltered; supplied group
+		// selectors use the positive fixture identity.
 		groupID *int64 // optional group selector
-		// wantValue and wantOK describe usable observations together. A
-		// false wantOK ends the case after checking availability, so
-		// its numeric result is not asserted.
+		// wantValue and wantOK describe the observation together. Unavailable
+		// observations return zero with false, while usable zero values still
+		// participate in the caller's threshold comparison.
 		wantValue float64 // expected usable value
 		wantOK    bool    // expected usable flag
+		wantCalls int     // reads per evaluation
 	}{
 		{
 			name:       "disk_usage_percent",
@@ -209,6 +200,7 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 			groupID:    &groupID,
 			wantValue:  8,
 			wantOK:     true,
+			wantCalls:  1,
 		},
 		{
 			name:       "group_available_ratio",
@@ -216,6 +208,7 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 			groupID:    &groupID,
 			wantValue:  80.0,
 			wantOK:     true,
+			wantCalls:  1,
 		},
 		{
 			name:       "provider_rate_limited_count",
@@ -223,6 +216,7 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 			groupID:    nil,
 			wantValue:  2,
 			wantOK:     true,
+			wantCalls:  1,
 		},
 		{
 			name:       "provider_error_count",
@@ -230,12 +224,40 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 			groupID:    nil,
 			wantValue:  1,
 			wantOK:     true,
+			wantCalls:  1,
+		},
+		{
+			name:       "group_rate_limit_ratio",
+			metricType: "group_rate_limit_ratio",
+			groupID:    &groupID,
+			wantValue:  30,
+			wantOK:     true,
+			wantCalls:  1,
+		},
+		{
+			name:       "provider_error_ratio",
+			metricType: "provider_error_ratio",
+			wantValue:  12.5,
+			wantOK:     true,
+			wantCalls:  1,
+		},
+		{
+			name:       "overload_provider_count",
+			metricType: "overload_provider_count",
+			wantValue:  1,
+			wantOK:     true,
+			wantCalls:  1,
 		},
 		{
 			name:       "group_available_providers without group_id returns false",
 			metricType: "group_available_providers",
 			groupID:    nil,
 			wantValue:  0,
+			wantOK:     false,
+		},
+		{
+			name:       "group_rate_limit_ratio without group_id returns false",
+			metricType: "group_rate_limit_ratio",
 			wantOK:     false,
 		},
 		{
@@ -251,17 +273,182 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rule := &OpsAlertRule{
-				MetricType: tt.metricType,
+			calls := 0
+			svc := &OpsAlertEvaluatorService{
+				opsService: &OpsService{
+					getProviderAvailability: func(gotCtx context.Context, gotPlatform string, gotGroupID *int64) (*OpsProviderAvailability, error) {
+						calls++
+						require.Equal(t, ctx, gotCtx)
+						require.Equal(t, platform, gotPlatform)
+						require.Same(t, tt.groupID, gotGroupID)
+						return availability, nil
+					},
+				},
 			}
-			gotValue, gotOK := svc.computeRuleMetric(ctx, rule, tt.system, start, end, platform, tt.groupID)
-			require.Equal(t, tt.wantOK, gotOK)
-			if !tt.wantOK {
-				return
+			for evaluation := 1; evaluation <= 2; evaluation++ {
+				rule := &OpsAlertRule{ID: int64(evaluation), MetricType: " " + tt.metricType + " "}
+				gotValue, gotOK := svc.computeRuleMetric(ctx, rule, tt.system, start, end, platform, tt.groupID)
+				require.Equal(t, tt.wantOK, gotOK)
+				require.Equal(t, evaluation*tt.wantCalls, calls)
+				// Use a small absolute tolerance for returned measurements.
+				require.InDelta(t, tt.wantValue, gotValue, 0.0001)
 			}
-			// Use a small absolute tolerance for returned
-			// measurements.
-			require.InDelta(t, tt.wantValue, gotValue, 0.0001)
+		})
+	}
+}
+
+// TestComputeRuleMetricAvailabilityInputs distinguishes unavailable reads from
+// usable empty observations for every availability indicator. It also checks
+// group validation before queries and dependency failures before any read.
+func TestComputeRuleMetricAvailabilityInputs(t *testing.T) {
+	t.Parallel()
+
+	groupID := int64(101)
+	zeroGroupID := int64(0)
+	negativeGroupID := int64(-1)
+	queryErr := errors.New("availability unavailable")
+	metrics := []string{
+		"group_available_providers",
+		"group_available_ratio",
+		"provider_rate_limited_count",
+		"provider_error_count",
+		"group_rate_limit_ratio",
+		"provider_error_ratio",
+		"overload_provider_count",
+	}
+	for _, metric := range metrics {
+		t.Run(metric, func(t *testing.T) {
+			t.Parallel()
+
+			requiresGroup := metric == "group_available_providers" || metric == "group_available_ratio" || metric == "group_rate_limit_ratio"
+			tests := []struct {
+				name    string // subtest display name
+				groupID *int64 // supplied group selector
+				// availability and queryErr are returned together by the injected
+				// query. A nonnil error makes the observation unusable even when
+				// availability contains a result.
+				availability *OpsProviderAvailability // supplied query result
+				queryErr     error                    // supplied query failure
+				// missingEvaluator and missingService select absent dependencies.
+				// The evaluator is omitted first; otherwise the service is bound
+				// unless missingService requests the nil-service path.
+				missingEvaluator bool // omit evaluator instance
+				missingService   bool // omit availability service
+				wantOK           bool // expected usable result
+				wantCalls        int  // expected availability reads
+			}{
+				{
+					name:             "nil evaluator",
+					groupID:          &groupID,
+					missingEvaluator: true,
+				},
+				{
+					name:           "nil service",
+					groupID:        &groupID,
+					missingService: true,
+				},
+				{
+					name:      "query error",
+					groupID:   &groupID,
+					queryErr:  queryErr,
+					wantCalls: 1,
+				},
+				{
+					name:         "query error with data",
+					groupID:      &groupID,
+					availability: &OpsProviderAvailability{},
+					queryErr:     queryErr,
+					wantCalls:    1,
+				},
+				{
+					name:      "nil observation",
+					groupID:   &groupID,
+					wantCalls: 1,
+				},
+				{
+					name:         "nil group and providers",
+					groupID:      &groupID,
+					availability: &OpsProviderAvailability{},
+					wantOK:       true,
+					wantCalls:    1,
+				},
+				{
+					name:    "empty group and providers",
+					groupID: &groupID,
+					availability: &OpsProviderAvailability{
+						Group:     &GroupAvailability{},
+						Providers: map[int64]*ProviderAvailability{},
+					},
+					wantOK:    true,
+					wantCalls: 1,
+				},
+				{
+					name:    "negative group total",
+					groupID: &groupID,
+					availability: &OpsProviderAvailability{
+						Group: &GroupAvailability{TotalProviders: -1},
+					},
+					wantOK:    true,
+					wantCalls: 1,
+				},
+				{
+					name:    "nil provider entry",
+					groupID: &groupID,
+					availability: &OpsProviderAvailability{
+						Providers: map[int64]*ProviderAvailability{1: nil},
+					},
+					wantOK:    true,
+					wantCalls: 1,
+				},
+				{
+					name:         "missing group selector",
+					availability: &OpsProviderAvailability{},
+					wantOK:       !requiresGroup,
+					wantCalls:    1,
+				},
+				{
+					name:         "zero group selector",
+					groupID:      &zeroGroupID,
+					availability: &OpsProviderAvailability{},
+					wantOK:       !requiresGroup,
+					wantCalls:    1,
+				},
+				{
+					name:         "negative group selector",
+					groupID:      &negativeGroupID,
+					availability: &OpsProviderAvailability{},
+					wantOK:       !requiresGroup,
+					wantCalls:    1,
+				},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+
+					calls := 0
+					svc := &OpsAlertEvaluatorService{}
+					if tt.missingEvaluator {
+						svc = nil
+					} else if !tt.missingService {
+						svc.opsService = &OpsService{
+							getProviderAvailability: func(_ context.Context, _ string, gotGroupID *int64) (*OpsProviderAvailability, error) {
+								calls++
+								require.Same(t, tt.groupID, gotGroupID)
+								return tt.availability, tt.queryErr
+							},
+						}
+					}
+					rule := &OpsAlertRule{MetricType: metric}
+					gotValue, gotOK := svc.computeRuleMetric(context.Background(), rule, nil, time.Time{}, time.Time{}, "openai", tt.groupID)
+					require.Equal(t, tt.wantOK, gotOK)
+					require.Zero(t, gotValue)
+					wantCalls := tt.wantCalls
+					if requiresGroup && (tt.groupID == nil || *tt.groupID <= 0) {
+						wantCalls = 0
+					}
+					require.Equal(t, wantCalls, calls)
+				})
+			}
 		})
 	}
 }

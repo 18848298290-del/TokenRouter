@@ -14,6 +14,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
 // authRepoStub delegates configured direct authentication and invalidation
@@ -98,6 +99,244 @@ type dailyUsageCalendarCache struct {
 	APIKeyCache               // unused cache methods require setup
 	key         string        // captured date-based counter identity
 	ttl         time.Duration // captured daily-counter expiry duration
+}
+
+// authPreparationGroupRepo records target reads for authentication preparation
+// and supplies the configured group or read failure.
+type authPreparationGroupRepo struct {
+	GroupRepository                // unused methods require setup
+	group           *routing.Group // configured runtime target group
+	err             error          // configured target lookup failure
+	reads           []int64        // observed target lookup identifiers
+}
+
+// authPreparationCache retains published snapshots so authentication tests can
+// inspect their ownership after request preparation.
+type authPreparationCache struct {
+	authCacheStub // ordinary shared cache fixture
+	// obsoletePublication changes the version during publication to exercise the
+	// defensive direct reload after a loaded entry fails snapshot acceptance.
+	obsoletePublication bool // publication version replacement switch
+	// published retains the pointers supplied to shared publication so tests can
+	// check for request preparation mutations after GetByKey finishes.
+	published []*APIKeyAuthCacheEntry // captured shared cache entries
+}
+
+// TestAPIKeyService_GetByKey_PreparationAcrossLoadPaths exercises ordinary and
+// composite credentials through cached, loaded and rejected-snapshot paths.
+// It protects fallback precedence, permission errors, IP preparation, snapshot
+// ownership, timestamp values and exact repository read counts.
+func TestAPIKeyService_GetByKey_PreparationAcrossLoadPaths(t *testing.T) {
+	for _, path := range []struct {
+		name          string // authentication load path name
+		l1            bool   // positive local cache enablement
+		l2            bool   // shared cache tier enablement
+		seed          bool   // initial positive snapshot presence
+		oldSnapshot   bool   // obsolete initial snapshot version
+		singleflight  bool   // shared credential load enablement
+		directReload  bool   // published snapshot rejection injection
+		wantRepoReads int    // expected credential repository reads
+		wantL2Reads   int    // expected shared cache reads
+	}{
+		{name: "l1", l1: true, seed: true},
+		{name: "l2", l2: true, seed: true, wantL2Reads: 1},
+		{name: "load", wantRepoReads: 1},
+		{name: "singleflight", singleflight: true, wantRepoReads: 1},
+		{name: "old_l1", l1: true, seed: true, oldSnapshot: true, wantRepoReads: 1},
+		{name: "old_l2", l2: true, seed: true, oldSnapshot: true, wantRepoReads: 1, wantL2Reads: 1},
+		{name: "direct_reload", l2: true, directReload: true, wantRepoReads: 2, wantL2Reads: 1},
+		{name: "singleflight_direct_reload", l2: true, singleflight: true, directReload: true, wantRepoReads: 2, wantL2Reads: 1},
+	} {
+		t.Run(path.name, func(t *testing.T) {
+			for _, scenario := range []string{
+				"fallback_before_source_permission", "denied_public_group", "failed_fallback_then_permission",
+				"composite", "nil_ip_rules", "empty_ip_rules", "missing_group",
+			} {
+				t.Run(scenario, func(t *testing.T) {
+					createdAt := time.Date(2026, time.October, 1, 2, 3, 4, 0, time.UTC)
+					expiresAt := createdAt.Add(time.Hour)
+					lastUsedAt := createdAt.Add(time.Minute)
+					source := &APIKey{
+						ID:                           21,
+						UserID:                       3,
+						Key:                          "preparation-key",
+						Status:                       StatusActive,
+						GroupID:                      new(int64(1)),
+						FallbackWhenGroupUnavailable: true,
+						CreatedAt:                    createdAt,
+						ExpiresAt:                    &expiresAt,
+						LastUsedAt:                   &lastUsedAt,
+						UpdatedAt:                    createdAt,
+						Group: &routing.Group{
+							ID:                         1,
+							Status:                     routing.StatusActive,
+							UnavailableFallbackGroupID: new(int64(2)),
+						},
+						User: &User{
+							ID:                      3,
+							Status:                  StatusActive,
+							GroupRestrictionsLoaded: true,
+						},
+						IPWhitelist: []string{"192.0.2.0/24", "invalid"},
+						IPBlacklist: []string{"192.0.2.8"},
+					}
+					groups := &authPreparationGroupRepo{group: &routing.Group{ID: 2, Status: routing.StatusActive}}
+					wantGroupID := int64(1)
+					var wantGroupReads []int64
+					var wantErr error
+					switch scenario {
+					case "fallback_before_source_permission":
+						source.Group.Status = routing.StatusDisabled
+						source.User.DisabledPublicGroups = []int64{1}
+						wantGroupID = 2
+						wantGroupReads = []int64{2}
+					case "denied_public_group":
+						source.User.DisabledPublicGroups = []int64{1}
+						wantErr = ErrGroupDisabledForUser
+					case "failed_fallback_then_permission":
+						source.Group.Status = routing.StatusDisabled
+						source.User.DisabledPublicGroups = []int64{1}
+						groups.err = errors.New("target lookup failed")
+						wantGroupReads = []int64{2}
+						wantErr = ErrGroupDisabledForUser
+					case "composite":
+						source.IsComposite = true
+						source.Group.Status = routing.StatusDisabled
+						source.User.DisabledPublicGroups = []int64{1}
+						source.CompositeGroups = []APIKeyCompositeGroup{{GroupID: 1, Prefix: "one", Group: source.Group}}
+					case "nil_ip_rules":
+						source.IPWhitelist = nil
+						source.IPBlacklist = nil
+					case "empty_ip_rules":
+						source.IPWhitelist = []string{}
+						source.IPBlacklist = []string{}
+					case "missing_group":
+						source.GroupID = nil
+						source.Group = nil
+					}
+					repoReads := 0
+					repo := &authRepoStub{getByKeyForAuth: func(context.Context, string) (*APIKey, error) {
+						repoReads++
+						return source, nil
+					}}
+					cache := &authPreparationCache{obsoletePublication: path.directReload}
+					cfg := &Options{APIKeyAuth: APIKeyAuthCacheConfig{Singleflight: path.singleflight}}
+					if path.l1 {
+						cfg.APIKeyAuth.L1Size = 100
+						cfg.APIKeyAuth.L1TTLSeconds = 60
+					}
+					if path.l2 {
+						cfg.APIKeyAuth.L2TTLSeconds = 60
+					}
+					svc := NewAPIKeyService(repo, nil, groups, nil, nil, cache, cfg)
+					svc.Start()
+					t.Cleanup(svc.Stop)
+					entry := &APIKeyAuthCacheEntry{Snapshot: svc.KeySnapshotFromAPIKey(context.Background(), source)}
+					expectedSnapshot := svc.KeySnapshotFromAPIKey(context.Background(), source)
+					if path.oldSnapshot {
+						// Seed a prior schema so cache presence still requires repository
+						// loading before this request can obtain an accepted authentication view.
+						entry.Snapshot.Version--
+						expectedSnapshot.Version--
+					}
+					l2Reads := 0
+					cache.getAuthCache = func(context.Context, string) (*APIKeyAuthCacheEntry, error) {
+						l2Reads++
+						if path.seed {
+							return entry, nil
+						}
+						return nil, redis.Nil
+					}
+					if path.l1 {
+						svc.KeySetAuthCacheL1(svc.KeyAuthCacheKey(source.Key), entry)
+						// Ristretto publishes asynchronously; flush and verify the seeded
+						// entry so this scenario exercises a local hit before preparation.
+						svc.authCacheL1.Load().Wait()
+						_, found := svc.authCacheL1.Load().Get(svc.KeyAuthCacheKey(source.Key))
+						require.True(t, found)
+					}
+
+					loaded, err := svc.GetByKey(context.Background(), source.Key)
+					require.Equal(t, path.wantRepoReads, repoReads)
+					require.Equal(t, path.wantL2Reads, l2Reads)
+					require.Equal(t, wantGroupReads, groups.reads)
+					require.Equal(t, expectedSnapshot, entry.Snapshot)
+					wantPublications := 0
+					if path.l2 && path.wantRepoReads > 0 {
+						wantPublications = 1
+					}
+					require.Len(t, cache.published, wantPublications)
+					for _, published := range cache.published {
+						expectedPublished := *expectedSnapshot
+						expectedPublished.Version = KeyApiKeyAuthSnapshotVersion
+						if path.directReload {
+							expectedPublished.Version--
+						}
+						require.Equal(t, &expectedPublished, published.Snapshot)
+					}
+					if wantErr != nil {
+						require.ErrorIs(t, err, wantErr)
+						require.EqualError(t, err, "get api key: "+wantErr.Error())
+						require.Nil(t, loaded)
+						if path.directReload {
+							require.Nil(t, source.CompiledIPWhitelist)
+							require.Nil(t, source.CompiledIPBlacklist)
+						}
+						return
+					}
+					require.NoError(t, err)
+					require.Equal(t, source.Key, loaded.Key)
+					require.Equal(t, source.IsComposite, loaded.IsComposite)
+					if scenario == "missing_group" {
+						require.Nil(t, loaded.GroupID)
+						require.Nil(t, loaded.Group)
+					} else {
+						require.Equal(t, wantGroupID, *loaded.GroupID)
+						require.Equal(t, wantGroupID, loaded.Group.ID)
+						require.Equal(t, int64(1), *source.GroupID)
+					}
+					require.Equal(t, source.IPWhitelist, loaded.IPWhitelist)
+					require.Equal(t, source.IPBlacklist, loaded.IPBlacklist)
+					require.Equal(t, len(source.IPWhitelist), loaded.CompiledIPWhitelist.PatternCount)
+					require.Equal(t, len(source.IPBlacklist), loaded.CompiledIPBlacklist.PatternCount)
+					allowed, _ := CheckIPRestrictionWithCompiledRules("192.0.2.9", loaded.CompiledIPWhitelist, loaded.CompiledIPBlacklist)
+					require.True(t, allowed)
+					denied, _ := CheckIPRestrictionWithCompiledRules("192.0.2.8", loaded.CompiledIPWhitelist, loaded.CompiledIPBlacklist)
+					require.Equal(t, len(source.IPBlacklist) == 0, denied)
+					require.Equal(t, createdAt, loaded.CreatedAt)
+					require.Equal(t, expiresAt, *loaded.ExpiresAt)
+					if path.directReload {
+						require.Equal(t, source.LastUsedAt, loaded.LastUsedAt)
+						require.Equal(t, source.UpdatedAt, loaded.UpdatedAt)
+					} else {
+						require.Nil(t, loaded.LastUsedAt)
+						require.Zero(t, loaded.UpdatedAt)
+					}
+				})
+			}
+		})
+	}
+}
+
+// GetByIDLite captures the requested runtime group identity and returns the
+// configured result. The fixture retains its group pointer, and tests inspect
+// the sequential read history after authentication finishes.
+func (r *authPreparationGroupRepo) GetByIDLite(_ context.Context, id int64) (*routing.Group, error) {
+	r.reads = append(r.reads, id)
+	return r.group, r.err
+}
+
+// SetAuthCache records the entry published by credential loading. When
+// obsoletePublication is set, the returned entry becomes unacceptable so
+// GetByKey exercises its defensive second repository lookup.
+func (c *authPreparationCache) SetAuthCache(_ context.Context, _ string, entry *APIKeyAuthCacheEntry, _ time.Duration) error {
+	if c.obsoletePublication {
+		// Invalidate this loaded entry before acceptance to expose the defensive
+		// reload branch independently of the initial cache lookup's version check.
+		entry.Snapshot.Version--
+	}
+	c.published = append(c.published, entry)
+	return nil
 }
 
 // TestAPIKeyService_GetByKey_UsesL1Cache loads one credential into an enabled

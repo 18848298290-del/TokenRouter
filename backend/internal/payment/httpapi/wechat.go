@@ -69,9 +69,6 @@ type WeChatPaymentHTTPOptions struct {
 	// continuation. Callback invokes it after code exchange; callers provide a
 	// nonnil service for that path.
 	Resume func() *payment.PaymentResumeService
-	// TokenURL is retained in these options but is not read by this handler. The
-	// injected Exchange operation owns its actual token endpoint choice.
-	TokenURL string
 	// Exchange obtains payer identity from the callback code using current
 	// configuration and request context. Callback propagates exchange failure
 	// into its frontend error redirect after cookie cleanup is installed.

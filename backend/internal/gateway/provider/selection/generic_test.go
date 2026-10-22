@@ -384,7 +384,7 @@ func TestGatewayAdvancedSchedulerKeepsFullLoadCandidatesForWaitAndNoSlotSelectio
 
 	ctx := requeststate.WithGroup(context.Background(), group)
 
-	selection, err := svc.SelectProviderWithLoadAwareness(ctx, &group.ID, "", "claude-sonnet-4", nil, "", 0)
+	selection, err := svc.SelectProviderWithLoadAwareness(ctx, &group.ID, "", "claude-sonnet-4", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -437,7 +437,7 @@ func TestGatewayAdvancedSchedulerForcePlatformUsesGroupOverrides(t *testing.T) {
 	ctx := requeststate.WithGroup(context.Background(), group)
 	ctx = apikey.WithForcePlatform(ctx, capability.PlatformAntigravity)
 
-	selection, err := svc.SelectProviderWithLoadAwareness(ctx, &group.ID, "force", "gemini-2.5-pro", nil, "", 0)
+	selection, err := svc.SelectProviderWithLoadAwareness(ctx, &group.ID, "force", "gemini-2.5-pro", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -486,7 +486,7 @@ func TestGatewayAdvancedSchedulerWeightedStickyKeepsStickyOnlyProvider(t *testin
 
 	ctx := requeststate.WithGroup(context.Background(), group)
 
-	selection, err := svc.SelectProviderWithLoadAwareness(ctx, &group.ID, "sticky", "claude-sonnet-4", nil, "", 0)
+	selection, err := svc.SelectProviderWithLoadAwareness(ctx, &group.ID, "sticky", "claude-sonnet-4", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -536,7 +536,7 @@ func TestGatewayAdvancedSchedulerEscapesNonOpenAIHardSticky(t *testing.T) {
 	}
 	ctx := requeststate.WithGroup(context.Background(), group)
 
-	selection, err := svc.SelectProviderWithLoadAwareness(ctx, &group.ID, "sticky", "gemini-3-pro", nil, "", 0)
+	selection, err := svc.SelectProviderWithLoadAwareness(ctx, &group.ID, "sticky", "gemini-3-pro", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -756,7 +756,7 @@ func TestSelectProviderWithLoadAwareness_UsesAdmittedFallbackGroupForGroupRestri
 
 	ctx := requeststate.WithGroup(context.Background(), groupRepo.groups[fallbackID])
 	ctx = requeststate.WithRoutePlan(ctx, routing.Plan(routing.PlanInput{Group: groupRepo.groups[fallbackID]}))
-	result, err := svc.SelectProviderWithLoadAwareness(ctx, &fallbackID, "", "claude-sonnet-4-6", nil, "", 0)
+	result, err := svc.SelectProviderWithLoadAwareness(ctx, &fallbackID, "", "claude-sonnet-4-6", nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.Provider)
@@ -1177,7 +1177,7 @@ func TestSelectProviderWithLoadAwareness_StickyReadReuse(t *testing.T) {
 			Shared: Shared{Cache: cache, Concurrency: concurrency},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(baseCtx, selectionFixtureGroupID(baseCtx), "sess-hash", "", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(baseCtx, selectionFixtureGroupID(baseCtx), "sess-hash", "", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1194,7 +1194,7 @@ func TestSelectProviderWithLoadAwareness_StickyReadReuse(t *testing.T) {
 		}, cfg)
 
 		ctx := requeststate.WithPrefetchedStickySession(baseCtx, provider.Record.ID, *selectionFixtureGroupID(baseCtx))
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "sess-hash", "", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "sess-hash", "", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1211,7 +1211,7 @@ func TestSelectProviderWithLoadAwareness_StickyReadReuse(t *testing.T) {
 		}, cfg)
 
 		ctx := requeststate.WithPrefetchedStickySession(baseCtx, 999, 77)
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "sess-hash", "", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "sess-hash", "", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1484,7 +1484,7 @@ func TestSelectProviderWithLoadAwareness_FiltersUpstreamRestrictedProviders(t *t
 					},
 				}, cfg)
 
-				result, err := svc.SelectProviderWithLoadAwareness(context.Background(), &groupID, "sticky", "client-alias", nil, "", 0)
+				result, err := svc.SelectProviderWithLoadAwareness(context.Background(), &groupID, "sticky", "client-alias", nil)
 				require.NoError(t, err)
 				require.NotNil(t, result)
 				require.Equal(t, int64(2), result.Provider.Record.ID)
@@ -1541,7 +1541,7 @@ func TestSelectProviderWithLoadAwareness_AppliesGroupMappingOnce(t *testing.T) {
 			capability.PlatformGemini, pricingConfig)},
 	}, testConfig())
 
-	result, err := svc.SelectProviderWithLoadAwareness(context.Background(), &groupID, "", "client-alias", nil, "", 0)
+	result, err := svc.SelectProviderWithLoadAwareness(context.Background(), &groupID, "", "client-alias", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1574,7 +1574,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 
 		svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{Providers: repo}, Shared: Shared{Cache: cache, Concurrency: nil}}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1624,7 +1624,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			Shared: Shared{Cache: cache, Concurrency: nil},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, sessionHash, "claude-b", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, sessionHash, "claude-b", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1651,7 +1651,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 
 		svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{Providers: repo}, Shared: Shared{Cache: cache, Concurrency: nil}}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1678,7 +1678,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 		svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{Providers: repo}, Shared: Shared{Concurrency: nil, Cache: cache}}, cfg)
 
 		excludedIDs := map[int64]struct{}{1: {}}
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", excludedIDs, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", excludedIDs)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1715,7 +1715,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "sticky", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "sticky", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1754,7 +1754,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "sticky", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "sticky", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1798,7 +1798,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(testCtx, selectionFixtureGroupID(testCtx), "sticky", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(testCtx, selectionFixtureGroupID(testCtx), "sticky", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1821,7 +1821,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 
 		svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{Providers: repo}, Shared: Shared{Concurrency: nil, Cache: cache}}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil)
 		require.Error(t, err)
 		require.Nil(t, result)
 		require.ErrorIs(t, err, schedulercore.ErrNoAvailableProviders)
@@ -1848,7 +1848,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 
 		svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{Providers: repo}, Shared: Shared{Cache: cache, Concurrency: nil}}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1876,7 +1876,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 
 		svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{Providers: repo}, Shared: Shared{Concurrency: nil, Cache: cache}}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -1917,7 +1917,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "sticky", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "sticky", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.WaitPlan)
@@ -1956,7 +1956,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "legacy", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "legacy", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -2020,7 +2020,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, sessionHash, "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, sessionHash, "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.WaitPlan)
@@ -2075,7 +2075,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, sessionHash, "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, sessionHash, "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -2133,7 +2133,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, sessionHash, "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, sessionHash, "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -2196,7 +2196,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "route", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "route", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -2259,7 +2259,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "route-full", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "route-full", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.WaitPlan)
@@ -2318,7 +2318,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "fallback", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "fallback", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -2358,7 +2358,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.WaitPlan)
@@ -2411,7 +2411,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "gemini", "gemini-2.5-pro", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "gemini", "gemini-2.5-pro", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -2495,7 +2495,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 		}, cfg)
 
 		excluded := map[int64]struct{}{1: {}}
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "", "claude-3-5-sonnet-20241022", excluded, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "", "claude-3-5-sonnet-20241022", excluded)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -2550,7 +2550,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 
 		admitted := requeststate.WithGroup(ctx, groupRepo.groups[fallbackID])
 		admitted = requeststate.WithRoutePlan(admitted, routing.Plan(routing.PlanInput{Group: groupRepo.groups[fallbackID]}))
-		result, err := svc.SelectProviderWithLoadAwareness(admitted, &fallbackID, "", "gemini-2.5-pro", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(admitted, &fallbackID, "", "gemini-2.5-pro", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -2580,7 +2580,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			Shared: Shared{Cache: &mockGatewayCacheForPlatform{}, Concurrency: nil},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, "", "claude-3-5-sonnet-20241022", nil)
 		require.Error(t, err)
 		require.Nil(t, result)
 		require.ErrorIs(t, err, routing.ErrClaudeCodeOnly)
@@ -2621,7 +2621,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "wait", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "wait", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.WaitPlan)
@@ -2662,7 +2662,7 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			},
 		}, cfg)
 
-		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "missing-load", "claude-3-5-sonnet-20241022", nil, "", int64(0))
+		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "missing-load", "claude-3-5-sonnet-20241022", nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Provider)
@@ -3294,7 +3294,7 @@ func TestGatewaySelectProviderWithLoadAwareness_HydratesSelectedProviderFromSche
 		Shared: Shared{Cache: &mockGatewayCacheForPlatform{}},
 	}, testConfig())
 
-	result, err := svc.SelectProviderWithLoadAwareness(context.Background(), selectionFixtureGroupID(context.Background()), "", "claude-3-5-sonnet-20241022", nil, "", 0)
+	result, err := svc.SelectProviderWithLoadAwareness(context.Background(), selectionFixtureGroupID(context.Background()), "", "claude-3-5-sonnet-20241022", nil)
 	if err != nil {
 		t.Fatalf("SelectProviderWithLoadAwareness error: %v", err)
 	}
@@ -3375,7 +3375,7 @@ func TestGatewaySelectProviderWithLoadAwareness_SkipsAntigravityGeminiFamilyRate
 		FallbackWaitTimeout: time.Second, FallbackMaxWaiting: 10,
 	}}})
 
-	result, err := svc.SelectProviderWithLoadAwareness(context.Background(), &groupID, "", "gemini-3-flash-preview", nil, "", 0)
+	result, err := svc.SelectProviderWithLoadAwareness(context.Background(), &groupID, "", "gemini-3-flash-preview", nil)
 	if err != nil {
 		t.Fatalf("SelectProviderWithLoadAwareness error: %v", err)
 	}

@@ -44,7 +44,7 @@ func provideAuthRuntime(
 	tlsFingerprintRouter *egress.TLSFingerprintRouterService,
 	manager *lifecycle.Manager,
 ) *authRuntimeReady {
-	manager.Register(lifecycle.Hook{Name: "APIKeyService", StartOrder: 195, StopOrder: 805, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "APIKeyService", StartOrder: 195, StopOrder: shutdownStageAPIKeys, Start: func(ctx context.Context) error {
 		if apiKeyService != nil {
 			apiKeyService.Start()
 		}
@@ -56,7 +56,7 @@ func provideAuthRuntime(
 		return nil
 	}})
 
-	manager.Register(lifecycle.Hook{Name: "OAuthService", StartOrder: 190, StopOrder: 810, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "OAuthService", StartOrder: 190, StopOrder: shutdownStageAuthAndSubscriptions, Start: func(ctx context.Context) error {
 		if oauth != nil {
 			oauth.Start()
 		}
@@ -67,7 +67,7 @@ func provideAuthRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "OpenAIOAuthService", StartOrder: 190, StopOrder: 810, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "OpenAIOAuthService", StartOrder: 190, StopOrder: shutdownStageAuthAndSubscriptions, Start: func(ctx context.Context) error {
 		if openaiOAuth != nil {
 			openaiOAuth.Start()
 		}
@@ -78,7 +78,7 @@ func provideAuthRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "GeminiOAuthService", StartOrder: 190, StopOrder: 810, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "GeminiOAuthService", StartOrder: 190, StopOrder: shutdownStageAuthAndSubscriptions, Start: func(ctx context.Context) error {
 		if geminiOAuth != nil {
 			geminiOAuth.Start()
 		}
@@ -89,7 +89,7 @@ func provideAuthRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "AntigravityOAuthService", StartOrder: 190, StopOrder: 810, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "AntigravityOAuthService", StartOrder: 190, StopOrder: shutdownStageAuthAndSubscriptions, Start: func(ctx context.Context) error {
 		if antigravityOAuth != nil {
 			antigravityOAuth.Start()
 		}
@@ -103,8 +103,8 @@ func provideAuthRuntime(
 	// Credential builds are managed operations started on demand. Cancel and
 	// wait for them after earlier request barriers and before completion consumers
 	// or shared connections enter their stop phases.
-	manager.Register(lifecycle.Hook{Name: "QoderCredentialSessions", StopOrder: 30, Stop: qoderTokens.StopContext})
-	manager.Register(lifecycle.Hook{Name: "QoderOAuthService", StartOrder: 190, StopOrder: 810, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "QoderCredentialSessions", StopOrder: shutdownStageAggregatesSessionsAndSearch, Stop: qoderTokens.StopContext})
+	manager.Register(lifecycle.Hook{Name: "QoderOAuthService", StartOrder: 190, StopOrder: shutdownStageAuthAndSubscriptions, Start: func(ctx context.Context) error {
 		if qoderOAuth != nil {
 			qoderOAuth.Core.Start()
 		}
@@ -115,7 +115,7 @@ func provideAuthRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "GrokOAuthService", StartOrder: 190, StopOrder: 810, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "GrokOAuthService", StartOrder: 190, StopOrder: shutdownStageAuthAndSubscriptions, Start: func(ctx context.Context) error {
 		if grokOAuth != nil {
 			grokOAuth.Start()
 		}
@@ -127,7 +127,7 @@ func provideAuthRuntime(
 		return nil
 	}})
 
-	manager.Register(lifecycle.Hook{Name: "TLSFingerprintProfileService", StartOrder: 190, StopOrder: 810, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "TLSFingerprintProfileService", StartOrder: 190, StopOrder: shutdownStageAuthAndSubscriptions, Start: func(ctx context.Context) error {
 		if tlsFingerprintProfile != nil {
 			tlsFingerprintProfile.Start()
 		}
@@ -138,7 +138,7 @@ func provideAuthRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "TLSFingerprintRouterService", StartOrder: 190, StopOrder: 810, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "TLSFingerprintRouterService", StartOrder: 190, StopOrder: shutdownStageAuthAndSubscriptions, Start: func(ctx context.Context) error {
 		if tlsFingerprintRouter != nil {
 			tlsFingerprintRouter.Start()
 		}
@@ -151,7 +151,7 @@ func provideAuthRuntime(
 	}})
 
 	manager.Register(lifecycle.Hook{
-		Name: "ErrorPassthroughService", StartOrder: 190, StopOrder: 810,
+		Name: "ErrorPassthroughService", StartOrder: 190, StopOrder: shutdownStageAuthAndSubscriptions,
 		Start: errorPassthrough.StartContext,
 		Stop:  errorPassthrough.StopContext,
 	})

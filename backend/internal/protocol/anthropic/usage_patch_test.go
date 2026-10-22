@@ -8,6 +8,54 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// TestExtractSSEUsagePatchSharedFieldRules supplies the same usage fields on
+// start and delta events. Speed text and explicit zero TTL buckets remain
+// authoritative while invalid aggregate values follow each event's presence rules.
+func TestExtractSSEUsagePatchSharedFieldRules(t *testing.T) {
+	for _, eventType := range []string{"message_start", "message_delta"} {
+		t.Run(eventType, func(t *testing.T) {
+			usage := map[string]any{
+				"speed":                       " fast ",
+				"input_tokens":                "invalid",
+				"output_tokens":               float64(9),
+				"cache_creation_input_tokens": float64(0),
+				"cache_read_input_tokens":     true,
+				"cache_creation": map[string]any{
+					"ephemeral_5m_input_tokens": float64(0),
+					"ephemeral_1h_input_tokens": "invalid",
+				},
+			}
+			event := map[string]any{"type": eventType, "usage": usage}
+			if eventType == "message_start" {
+				event = map[string]any{"type": eventType, "message": map[string]any{"usage": usage}}
+			}
+			patch := ExtractSSEUsagePatch(event)
+			require.NotNil(t, patch)
+			require.Equal(t, " fast ", patch.Speed)
+			require.True(t, patch.HasSpeed)
+			require.True(t, patch.HasCacheCreation5m)
+			require.Zero(t, patch.CacheCreation5mTokens)
+			require.False(t, patch.HasCacheCreation1h)
+			require.Zero(t, patch.InputTokens)
+			require.Zero(t, patch.CacheCreationInputTokens)
+			require.Zero(t, patch.CacheReadInputTokens)
+			if eventType == "message_start" {
+				require.True(t, patch.HasInputTokens)
+				require.True(t, patch.HasCacheCreationInput)
+				require.True(t, patch.HasCacheReadInput)
+				require.False(t, patch.HasOutputTokens)
+				require.Zero(t, patch.OutputTokens)
+			} else {
+				require.False(t, patch.HasInputTokens)
+				require.False(t, patch.HasCacheCreationInput)
+				require.False(t, patch.HasCacheReadInput)
+				require.True(t, patch.HasOutputTokens)
+				require.Equal(t, 9, patch.OutputTokens)
+			}
+		})
+	}
+}
+
 // TestParseSSEUsage_MessageStart supplies prompt and cache counters in an initial
 // Messages event. Parsing must establish those buckets while leaving output at
 // zero because message_start does not supply the generated-token observation.

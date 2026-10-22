@@ -677,10 +677,10 @@ func parseOpsAlertRuleScope(filters map[string]any) (platform string, groupID *i
 // reset continuity.
 //
 // System metrics use the supplied snapshot without inspecting freshness or
-// scope. Group metrics require a positive identity, but a returned missing
-// group can be a valid zero count or ratio. Provider errors require HasError
-// and a nil temporary-unschedulable deadline; provider-error ratios divide by
-// all map positions, including nil entries skipped by the numerator.
+// scope. Group metrics require a positive identity before reading availability.
+// Each availability rule performs its own query, then computeAvailabilityMetric
+// selects the value from that observation. A returned missing group can be a
+// valid zero count or ratio.
 //
 // Proxy metrics query current global proxy state. Remaining metric names query
 // a raw dashboard window, using a repository-backed service when needed.
@@ -702,7 +702,7 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 	// Return unavailable when a required query or field cannot be read;
 	// evaluateOnce then resets continuity instead of treating that absence
 	// as a measured zero.
-	switch strings.TrimSpace(rule.MetricType) {
+	switch metricType := strings.TrimSpace(rule.MetricType); metricType {
 	case "cpu_usage_percent":
 		if systemMetrics != nil && systemMetrics.CPUUsagePercent != nil {
 			return *systemMetrics.CPUUsagePercent, true
@@ -723,9 +723,13 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 			return float64(*systemMetrics.ConcurrencyQueueDepth), true
 		}
 		return 0, false
-	case "group_available_providers":
-		if groupID == nil || *groupID <= 0 {
-			return 0, false
+	case "group_available_providers", "group_available_ratio", "provider_rate_limited_count",
+		"provider_error_count", "group_rate_limit_ratio", "provider_error_ratio", "overload_provider_count":
+		switch metricType {
+		case "group_available_providers", "group_available_ratio", "group_rate_limit_ratio":
+			if groupID == nil || *groupID <= 0 {
+				return 0, false
+			}
 		}
 		if s == nil || s.opsService == nil {
 			return 0, false
@@ -734,93 +738,7 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 		if err != nil || availability == nil {
 			return 0, false
 		}
-		if availability.Group == nil {
-			return 0, true
-		}
-		return float64(availability.Group.AvailableCount), true
-	case "group_available_ratio":
-		if groupID == nil || *groupID <= 0 {
-			return 0, false
-		}
-		if s == nil || s.opsService == nil {
-			return 0, false
-		}
-		availability, err := s.opsService.GetProviderAvailability(ctx, platform, groupID)
-		if err != nil || availability == nil {
-			return 0, false
-		}
-		return computeGroupAvailableRatio(availability.Group), true
-	case "provider_rate_limited_count":
-		if s == nil || s.opsService == nil {
-			return 0, false
-		}
-		availability, err := s.opsService.GetProviderAvailability(ctx, platform, groupID)
-		if err != nil || availability == nil {
-			return 0, false
-		}
-		return float64(countProvidersByCondition(availability.Providers, func(acc *ProviderAvailability) bool {
-			return acc.IsRateLimited
-		})), true
-	case "provider_error_count":
-		if s == nil || s.opsService == nil {
-			return 0, false
-		}
-		availability, err := s.opsService.GetProviderAvailability(ctx, platform, groupID)
-		if err != nil || availability == nil {
-			return 0, false
-		}
-		return float64(countProvidersByCondition(availability.Providers, func(acc *ProviderAvailability) bool {
-			return acc.HasError && acc.TempUnschedulableUntil == nil
-		})), true
-	case "group_rate_limit_ratio":
-		if groupID == nil || *groupID <= 0 {
-			return 0, false
-		}
-		if s == nil || s.opsService == nil {
-			return 0, false
-		}
-		availability, err := s.opsService.GetProviderAvailability(ctx, platform, groupID)
-		if err != nil || availability == nil {
-			return 0, false
-		}
-		// An absent or nonpositive group total is a valid zero observation.
-		// Otherwise, express the returned rate-limited count as a percentage
-		// without capping the ratio.
-		if availability.Group == nil || availability.Group.TotalProviders <= 0 {
-			return 0, true
-		}
-		return (float64(availability.Group.RateLimitCount) / float64(availability.Group.TotalProviders)) * 100, true
-	case "provider_error_ratio":
-		if s == nil || s.opsService == nil {
-			return 0, false
-		}
-		availability, err := s.opsService.GetProviderAvailability(ctx, platform, groupID)
-		if err != nil || availability == nil {
-			return 0, false
-		}
-		// The ratio denominator includes every returned map position,
-		// including nil values; its numerator counts populated error
-		// entries with no temporary-unschedulable deadline.
-		// The resulting share uses percentage units for rule thresholds.
-		total := int64(len(availability.Providers))
-		if total <= 0 {
-			return 0, true
-		}
-		errorCount := countProvidersByCondition(availability.Providers, func(acc *ProviderAvailability) bool {
-			return acc.HasError && acc.TempUnschedulableUntil == nil
-		})
-		return (float64(errorCount) / float64(total)) * 100, true
-	case "overload_provider_count":
-		if s == nil || s.opsService == nil {
-			return 0, false
-		}
-		availability, err := s.opsService.GetProviderAvailability(ctx, platform, groupID)
-		if err != nil || availability == nil {
-			return 0, false
-		}
-		return float64(countProvidersByCondition(availability.Providers, func(acc *ProviderAvailability) bool {
-			return acc.IsOverloaded
-		})), true
+		return computeAvailabilityMetric(metricType, availability)
 	case "proxy_expired_count":
 		if s == nil || s.proxyRepo == nil {
 			return 0, false
@@ -881,6 +799,59 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 			return 0, false
 		}
 		return overview.UpstreamErrorRate * 100, true
+	default:
+		return 0, false
+	}
+}
+
+// computeAvailabilityMetric calculates one indicator from a nonnil availability
+// observation after computeRuleMetric validates the selected group and query.
+// Missing groups yield usable zero group metrics, and nonpositive group totals
+// yield zero ratios. Empty provider maps yield usable zero provider metrics;
+// unsupported names return false. Callers keep the supplied observation stable
+// while the calculation reads its values directly.
+//
+// Error counts exclude providers with any temporary-unschedulable deadline,
+// including past deadlines. Error ratios divide by every provider map position,
+// including nil entries skipped by the numerator. Group ratios use the supplied
+// aggregate counts and can exceed one hundred percent.
+func computeAvailabilityMetric(metricType string, availability *OpsProviderAvailability) (float64, bool) {
+	switch metricType {
+	case "group_available_providers":
+		if availability.Group == nil {
+			return 0, true
+		}
+		return float64(availability.Group.AvailableCount), true
+	case "group_available_ratio":
+		return computeGroupAvailableRatio(availability.Group), true
+	case "provider_rate_limited_count":
+		return float64(countProvidersByCondition(availability.Providers, func(acc *ProviderAvailability) bool {
+			return acc.IsRateLimited
+		})), true
+	case "provider_error_count":
+		return float64(countProvidersByCondition(availability.Providers, func(acc *ProviderAvailability) bool {
+			return acc.HasError && acc.TempUnschedulableUntil == nil
+		})), true
+	case "group_rate_limit_ratio":
+		if availability.Group == nil || availability.Group.TotalProviders <= 0 {
+			return 0, true
+		}
+		// Percentage output matches configured group rate-limit ratio thresholds.
+		return (float64(availability.Group.RateLimitCount) / float64(availability.Group.TotalProviders)) * 100, true
+	case "provider_error_ratio":
+		total := int64(len(availability.Providers))
+		if total <= 0 {
+			return 0, true
+		}
+		errorCount := countProvidersByCondition(availability.Providers, func(acc *ProviderAvailability) bool {
+			return acc.HasError && acc.TempUnschedulableUntil == nil
+		})
+		// Percentage output matches configured provider-error ratio thresholds.
+		return (float64(errorCount) / float64(total)) * 100, true
+	case "overload_provider_count":
+		return float64(countProvidersByCondition(availability.Providers, func(acc *ProviderAvailability) bool {
+			return acc.IsOverloaded
+		})), true
 	default:
 		return 0, false
 	}

@@ -106,6 +106,40 @@ func TestEntSoftDelete_ApiKey_DeleteIdempotent(t *testing.T) {
 	require.NoError(t, repo.Delete(ctx, key.ID), "second delete should be idempotent")
 }
 
+// TestEntSoftDelete_ApiKey_RollbackUsesTransactionClient deletes a committed key
+// through an Ent transaction. The deletion is visible inside that transaction,
+// stays invisible to another connection, and disappears when the transaction rolls back.
+func TestEntSoftDelete_ApiKey_RollbackUsesTransactionClient(t *testing.T) {
+	ctx := context.Background()
+	db, client := identityDatabase(t)
+	user := createEntUser(t, ctx, client, uniqueSoftDeleteValue(t, "rollback-user")+"@example.com")
+	key := &apikeyerrors.APIKey{
+		UserID: user.ID,
+		Key:    uniqueSoftDeleteValue(t, "rollback-key"),
+		Name:   "rollback",
+		Status: billing.StatusActive,
+	}
+	require.NoError(t, newKeyStoreFixture(client, db).Create(ctx, key))
+	tx, err := client.Tx(ctx)
+	require.NoError(t, err)
+	// Retain rollback cleanup until assertions finish, including early failures,
+	// so the independently committed fixture remains available after transaction-local deletion.
+	defer func() { _ = tx.Rollback() }()
+	require.NoError(t, tx.Client().APIKey.DeleteOneID(key.ID).Exec(ctx))
+	_, err = tx.Client().APIKey.Get(ctx, key.ID)
+	require.True(t, dbent.IsNotFound(err))
+	deleted, err := tx.Client().APIKey.Get(mixins.SkipSoftDelete(ctx), key.ID)
+	require.NoError(t, err)
+	require.NotNil(t, deleted.DeletedAt)
+	outside, err := client.APIKey.Get(ctx, key.ID)
+	require.NoError(t, err)
+	require.Nil(t, outside.DeletedAt)
+	require.NoError(t, tx.Rollback())
+	restored, err := client.APIKey.Get(ctx, key.ID)
+	require.NoError(t, err)
+	require.Nil(t, restored.DeletedAt)
+}
+
 // TestEntSoftDelete_ApiKey_HardDeleteViaSkipSoftDelete first soft deletes a
 // key, then physically deletes through the bypass context. A bypass query also
 // reports absence after the hard deletion.

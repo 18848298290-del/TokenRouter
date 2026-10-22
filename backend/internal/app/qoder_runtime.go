@@ -185,7 +185,7 @@ func (b *qoderRuntime) Select(ctx context.Context, request gateway.Request, excl
 		}
 		return selected
 	}
-	selection, err := b.Choices.SelectProviderWithLoadAwareness(ctx, key.GroupID, request.SessionHash, request.Model, excluded, "", request.UserID)
+	selection, err := b.Choices.SelectProviderWithLoadAwareness(ctx, key.GroupID, request.SessionHash, request.Model, excluded)
 	if err != nil {
 		return nil, err
 	}

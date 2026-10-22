@@ -132,8 +132,8 @@ func (b *messageAttemptBridge) PrepareAttempt() bool {
 	return true
 }
 
-// Select chooses and retains a provider under the current group, session,
-// excluded identifiers and authenticated subject. Begin and successful
+// Select chooses and retains a provider under the current group, model,
+// session and excluded identifiers. Begin and successful
 // preparation precede serial use; a nonempty session key also registers this
 // target in request session tracking.
 func (b *messageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
@@ -144,7 +144,7 @@ func (b *messageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Sel
 		zap.Int("failed_provider_count", len(excluded)),
 	)
 	var err error
-	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.currentAPIKey.GroupID, b.sessionKey, b.reqModel, excluded, b.parsedReq.MetadataUserID, b.subject.UserID)
+	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.currentAPIKey.GroupID, b.sessionKey, b.reqModel, excluded)
 	if err != nil {
 		return textflow.Selection{}, err
 	}

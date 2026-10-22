@@ -3185,53 +3185,8 @@ func (c *Config) Validate() error {
 	if len([]byte(jwtSecret)) < 32 {
 		return fmt.Errorf("jwt.secret must be at least 32 bytes")
 	}
-	switch c.Log.Level {
-	case "debug", "info", "warn", "error":
-	case "":
-		return fmt.Errorf("log.level is required")
-	default:
-		return fmt.Errorf("log.level must be one of: debug/info/warn/error")
-	}
-	switch c.Log.Format {
-	case "json", "console":
-	case "":
-		return fmt.Errorf("log.format is required")
-	default:
-		return fmt.Errorf("log.format must be one of: json/console")
-	}
-	switch c.Log.StacktraceLevel {
-	case "none", "error", "fatal":
-	case "":
-		return fmt.Errorf("log.stacktrace_level is required")
-	default:
-		return fmt.Errorf("log.stacktrace_level must be one of: none/error/fatal")
-	}
-	if !c.Log.Output.ToStdout && !c.Log.Output.ToFile {
-		return fmt.Errorf("log.output.to_stdout and log.output.to_file cannot both be false")
-	}
-	if c.Log.Rotation.MaxSizeMB <= 0 {
-		return fmt.Errorf("log.rotation.max_size_mb must be positive")
-	}
-	if c.Log.Rotation.MaxBackups < 0 {
-		return fmt.Errorf("log.rotation.max_backups must be non-negative")
-	}
-	if c.Log.Rotation.MaxAgeDays < 0 {
-		return fmt.Errorf("log.rotation.max_age_days must be non-negative")
-	}
-	if c.Log.Sampling.Enabled {
-		if c.Log.Sampling.Initial <= 0 {
-			return fmt.Errorf("log.sampling.initial must be positive when sampling is enabled")
-		}
-		if c.Log.Sampling.Thereafter <= 0 {
-			return fmt.Errorf("log.sampling.thereafter must be positive when sampling is enabled")
-		}
-	} else {
-		if c.Log.Sampling.Initial < 0 {
-			return fmt.Errorf("log.sampling.initial must be non-negative")
-		}
-		if c.Log.Sampling.Thereafter < 0 {
-			return fmt.Errorf("log.sampling.thereafter must be non-negative")
-		}
+	if err := c.validateLog(); err != nil {
+		return err
 	}
 
 	// Gemini client selection uses a credential pair. Reject a partial trimmed
@@ -3259,49 +3214,8 @@ func (c *Config) Validate() error {
 		}
 		warnIfInsecureURL("server.frontend_url", c.Server.FrontendURL)
 	}
-	// Normalize the configured relying-party identity before comparing browser
-	// origins. Accepted origins keep scheme and host spelling after the host has
-	// been checked against the configured relying-party domain.
-	if c.WebAuthn.Enabled {
-		c.WebAuthn.RPDisplayName = strings.TrimSpace(c.WebAuthn.RPDisplayName)
-		c.WebAuthn.RPID = strings.ToLower(strings.TrimSpace(c.WebAuthn.RPID))
-		c.WebAuthn.RPOrigins = normalizeStringSlice(c.WebAuthn.RPOrigins)
-		if c.WebAuthn.RPDisplayName == "" {
-			return fmt.Errorf("webauthn.rp_display_name is required when passkeys are enabled")
-		}
-		if c.WebAuthn.RPID == "" {
-			return fmt.Errorf("webauthn.rp_id is required when passkeys are enabled")
-		}
-		if strings.Contains(c.WebAuthn.RPID, "://") || strings.ContainsAny(c.WebAuthn.RPID, "/:") {
-			return fmt.Errorf("webauthn.rp_id must be a domain without scheme, port, or path")
-		}
-		if len(c.WebAuthn.RPOrigins) == 0 {
-			return fmt.Errorf("webauthn.rp_origins must contain at least one origin when passkeys are enabled")
-		}
-		for i, origin := range c.WebAuthn.RPOrigins {
-			u, err := url.Parse(origin)
-			if err != nil || u.Scheme == "" || u.Host == "" {
-				return fmt.Errorf("webauthn.rp_origins contains invalid origin %q", origin)
-			}
-			if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
-				return fmt.Errorf("webauthn.rp_origins entry %q must not include userinfo, path, query, or fragment", origin)
-			}
-			u.Scheme = strings.ToLower(u.Scheme)
-			u.Host = strings.ToLower(u.Host)
-			host := strings.ToLower(u.Hostname())
-			localDevelopment := host == "localhost" || host == "127.0.0.1" || host == "::1"
-			// Passkey origins require HTTPS in the deployment rule. Permit HTTP for the
-			// exact localhost and loopback host forms so a local development relying
-			// party
-			// can use a plain HTTP origin.
-			if u.Scheme != "https" && (u.Scheme != "http" || !localDevelopment) {
-				return fmt.Errorf("webauthn.rp_origins entry %q must use HTTPS (HTTP is allowed only for localhost)", origin)
-			}
-			if host != c.WebAuthn.RPID && !strings.HasSuffix(host, "."+c.WebAuthn.RPID) {
-				return fmt.Errorf("webauthn.rp_origins entry %q is not within relying party ID %q", origin, c.WebAuthn.RPID)
-			}
-			c.WebAuthn.RPOrigins[i] = u.Scheme + "://" + u.Host
-		}
+	if err := c.validateWebAuthn(); err != nil {
+		return err
 	}
 	if c.JWT.ExpireHour <= 0 {
 		return fmt.Errorf("jwt.expire_hour must be positive")
@@ -3428,85 +3342,8 @@ func (c *Config) Validate() error {
 		}
 		warnIfInsecureURL("wechat_connect.frontend_redirect_url", weChat.FrontendRedirectURL)
 	}
-	if c.OIDC.Enabled {
-		if strings.TrimSpace(c.OIDC.ClientID) == "" {
-			return fmt.Errorf("oidc_connect.client_id is required when oidc_connect.enabled=true")
-		}
-		if strings.TrimSpace(c.OIDC.IssuerURL) == "" {
-			return fmt.Errorf("oidc_connect.issuer_url is required when oidc_connect.enabled=true")
-		}
-		if strings.TrimSpace(c.OIDC.RedirectURL) == "" {
-			return fmt.Errorf("oidc_connect.redirect_url is required when oidc_connect.enabled=true")
-		}
-		if strings.TrimSpace(c.OIDC.FrontendRedirectURL) == "" {
-			return fmt.Errorf("oidc_connect.frontend_redirect_url is required when oidc_connect.enabled=true")
-		}
-		if !scopeContainsOpenID(c.OIDC.Scopes) {
-			return fmt.Errorf("oidc_connect.scopes must contain openid")
-		}
-
-		method := strings.ToLower(strings.TrimSpace(c.OIDC.TokenAuthMethod))
-		switch method {
-		case "", "client_secret_post", "client_secret_basic", "none":
-		default:
-			return fmt.Errorf("oidc_connect.token_auth_method must be one of: client_secret_post/client_secret_basic/none")
-		}
-		if (method == "" || method == "client_secret_post" || method == "client_secret_basic") &&
-			strings.TrimSpace(c.OIDC.ClientSecret) == "" {
-			return fmt.Errorf("oidc_connect.client_secret is required when oidc_connect.enabled=true and token_auth_method is client_secret_post/client_secret_basic")
-		}
-		// Enabled OIDC bounds this tolerance even when ID-token validation is
-		// disabled.
-		if c.OIDC.ClockSkewSeconds < 0 || c.OIDC.ClockSkewSeconds > 600 {
-			return fmt.Errorf("oidc_connect.clock_skew_seconds must be between 0 and 600")
-		}
-		if c.OIDC.ValidateIDToken && strings.TrimSpace(c.OIDC.AllowedSigningAlgs) == "" {
-			return fmt.Errorf("oidc_connect.allowed_signing_algs is required when oidc_connect.validate_id_token=true")
-		}
-
-		if err := ValidateAbsoluteHTTPURL(c.OIDC.IssuerURL); err != nil {
-			return fmt.Errorf("oidc_connect.issuer_url invalid: %w", err)
-		}
-		if v := strings.TrimSpace(c.OIDC.DiscoveryURL); v != "" {
-			if err := ValidateAbsoluteHTTPURL(v); err != nil {
-				return fmt.Errorf("oidc_connect.discovery_url invalid: %w", err)
-			}
-		}
-		if v := strings.TrimSpace(c.OIDC.AuthorizeURL); v != "" {
-			if err := ValidateAbsoluteHTTPURL(v); err != nil {
-				return fmt.Errorf("oidc_connect.authorize_url invalid: %w", err)
-			}
-		}
-		if v := strings.TrimSpace(c.OIDC.TokenURL); v != "" {
-			if err := ValidateAbsoluteHTTPURL(v); err != nil {
-				return fmt.Errorf("oidc_connect.token_url invalid: %w", err)
-			}
-		}
-		if v := strings.TrimSpace(c.OIDC.UserInfoURL); v != "" {
-			if err := ValidateAbsoluteHTTPURL(v); err != nil {
-				return fmt.Errorf("oidc_connect.userinfo_url invalid: %w", err)
-			}
-		}
-		if v := strings.TrimSpace(c.OIDC.JWKSURL); v != "" {
-			if err := ValidateAbsoluteHTTPURL(v); err != nil {
-				return fmt.Errorf("oidc_connect.jwks_url invalid: %w", err)
-			}
-		}
-		if err := ValidateAbsoluteHTTPURL(c.OIDC.RedirectURL); err != nil {
-			return fmt.Errorf("oidc_connect.redirect_url invalid: %w", err)
-		}
-		if err := ValidateFrontendRedirectURL(c.OIDC.FrontendRedirectURL); err != nil {
-			return fmt.Errorf("oidc_connect.frontend_redirect_url invalid: %w", err)
-		}
-
-		warnIfInsecureURL("oidc_connect.issuer_url", c.OIDC.IssuerURL)
-		warnIfInsecureURL("oidc_connect.discovery_url", c.OIDC.DiscoveryURL)
-		warnIfInsecureURL("oidc_connect.authorize_url", c.OIDC.AuthorizeURL)
-		warnIfInsecureURL("oidc_connect.token_url", c.OIDC.TokenURL)
-		warnIfInsecureURL("oidc_connect.userinfo_url", c.OIDC.UserInfoURL)
-		warnIfInsecureURL("oidc_connect.jwks_url", c.OIDC.JWKSURL)
-		warnIfInsecureURL("oidc_connect.redirect_url", c.OIDC.RedirectURL)
-		warnIfInsecureURL("oidc_connect.frontend_redirect_url", c.OIDC.FrontendRedirectURL)
+	if err := c.validateOIDC(); err != nil {
+		return err
 	}
 	if c.Billing.CircuitBreaker.Enabled {
 		if c.Billing.CircuitBreaker.FailureThreshold <= 0 {
@@ -4285,6 +4122,203 @@ func (c *Config) Validate() error {
 	}
 	if err := ValidateDingTalkConfig(c.DingTalk); err != nil {
 		return fmt.Errorf("dingtalk_connect: %w", err)
+	}
+	return nil
+}
+
+// validateLog checks logger formats, destinations, rotation, and sampling
+// controls in their startup order. It returns the first invalid field and leaves
+// configured values unchanged, including sampling values while sampling is
+// disabled.
+func (c *Config) validateLog() error {
+	switch c.Log.Level {
+	case "debug", "info", "warn", "error":
+	case "":
+		return fmt.Errorf("log.level is required")
+	default:
+		return fmt.Errorf("log.level must be one of: debug/info/warn/error")
+	}
+	switch c.Log.Format {
+	case "json", "console":
+	case "":
+		return fmt.Errorf("log.format is required")
+	default:
+		return fmt.Errorf("log.format must be one of: json/console")
+	}
+	switch c.Log.StacktraceLevel {
+	case "none", "error", "fatal":
+	case "":
+		return fmt.Errorf("log.stacktrace_level is required")
+	default:
+		return fmt.Errorf("log.stacktrace_level must be one of: none/error/fatal")
+	}
+	if !c.Log.Output.ToStdout && !c.Log.Output.ToFile {
+		return fmt.Errorf("log.output.to_stdout and log.output.to_file cannot both be false")
+	}
+	if c.Log.Rotation.MaxSizeMB <= 0 {
+		return fmt.Errorf("log.rotation.max_size_mb must be positive")
+	}
+	if c.Log.Rotation.MaxBackups < 0 {
+		return fmt.Errorf("log.rotation.max_backups must be non-negative")
+	}
+	if c.Log.Rotation.MaxAgeDays < 0 {
+		return fmt.Errorf("log.rotation.max_age_days must be non-negative")
+	}
+	if c.Log.Sampling.Enabled {
+		if c.Log.Sampling.Initial <= 0 {
+			return fmt.Errorf("log.sampling.initial must be positive when sampling is enabled")
+		}
+		if c.Log.Sampling.Thereafter <= 0 {
+			return fmt.Errorf("log.sampling.thereafter must be positive when sampling is enabled")
+		}
+	} else {
+		if c.Log.Sampling.Initial < 0 {
+			return fmt.Errorf("log.sampling.initial must be non-negative")
+		}
+		if c.Log.Sampling.Thereafter < 0 {
+			return fmt.Errorf("log.sampling.thereafter must be non-negative")
+		}
+	}
+	return nil
+}
+
+// validateWebAuthn checks the enabled relying-party identity and browser origins.
+// Disabled passkey settings remain untouched. For enabled settings, it trims the
+// display name, lowercases the relying-party ID, and replaces nonempty origin
+// input with a trimmed list before checking required fields.
+//
+// The method then canonicalizes accepted origins in order. A failure leaves
+// these mutations visible, including earlier accepted origins, while later
+// origins retain their trimmed input spelling. Callers serialize access to the
+// receiver during validation.
+func (c *Config) validateWebAuthn() error {
+	if c.WebAuthn.Enabled {
+		c.WebAuthn.RPDisplayName = strings.TrimSpace(c.WebAuthn.RPDisplayName)
+		c.WebAuthn.RPID = strings.ToLower(strings.TrimSpace(c.WebAuthn.RPID))
+		c.WebAuthn.RPOrigins = normalizeStringSlice(c.WebAuthn.RPOrigins)
+		if c.WebAuthn.RPDisplayName == "" {
+			return fmt.Errorf("webauthn.rp_display_name is required when passkeys are enabled")
+		}
+		if c.WebAuthn.RPID == "" {
+			return fmt.Errorf("webauthn.rp_id is required when passkeys are enabled")
+		}
+		if strings.Contains(c.WebAuthn.RPID, "://") || strings.ContainsAny(c.WebAuthn.RPID, "/:") {
+			return fmt.Errorf("webauthn.rp_id must be a domain without scheme, port, or path")
+		}
+		if len(c.WebAuthn.RPOrigins) == 0 {
+			return fmt.Errorf("webauthn.rp_origins must contain at least one origin when passkeys are enabled")
+		}
+		for i, origin := range c.WebAuthn.RPOrigins {
+			u, err := url.Parse(origin)
+			if err != nil || u.Scheme == "" || u.Host == "" {
+				return fmt.Errorf("webauthn.rp_origins contains invalid origin %q", origin)
+			}
+			if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
+				return fmt.Errorf("webauthn.rp_origins entry %q must not include userinfo, path, query, or fragment", origin)
+			}
+			u.Scheme = strings.ToLower(u.Scheme)
+			u.Host = strings.ToLower(u.Host)
+			host := strings.ToLower(u.Hostname())
+			localDevelopment := host == "localhost" || host == "127.0.0.1" || host == "::1"
+			// Passkey origins require HTTPS in the deployment rule. Permit HTTP for the
+			// exact localhost and loopback host forms so a local development relying
+			// party can use a plain HTTP origin.
+			if u.Scheme != "https" && (u.Scheme != "http" || !localDevelopment) {
+				return fmt.Errorf("webauthn.rp_origins entry %q must use HTTPS (HTTP is allowed only for localhost)", origin)
+			}
+			if host != c.WebAuthn.RPID && !strings.HasSuffix(host, "."+c.WebAuthn.RPID) {
+				return fmt.Errorf("webauthn.rp_origins entry %q is not within relying party ID %q", origin, c.WebAuthn.RPID)
+			}
+			c.WebAuthn.RPOrigins[i] = u.Scheme + "://" + u.Host
+		}
+	}
+	return nil
+}
+
+// validateOIDC checks enabled login credentials, scopes, and endpoints in their
+// startup order. Disabled settings pass unchanged. Validation reads trimmed
+// views of strings, keeps the configured values, and emits HTTP warnings only
+// after all OIDC checks succeed.
+func (c *Config) validateOIDC() error {
+	if c.OIDC.Enabled {
+		if strings.TrimSpace(c.OIDC.ClientID) == "" {
+			return fmt.Errorf("oidc_connect.client_id is required when oidc_connect.enabled=true")
+		}
+		if strings.TrimSpace(c.OIDC.IssuerURL) == "" {
+			return fmt.Errorf("oidc_connect.issuer_url is required when oidc_connect.enabled=true")
+		}
+		if strings.TrimSpace(c.OIDC.RedirectURL) == "" {
+			return fmt.Errorf("oidc_connect.redirect_url is required when oidc_connect.enabled=true")
+		}
+		if strings.TrimSpace(c.OIDC.FrontendRedirectURL) == "" {
+			return fmt.Errorf("oidc_connect.frontend_redirect_url is required when oidc_connect.enabled=true")
+		}
+		if !scopeContainsOpenID(c.OIDC.Scopes) {
+			return fmt.Errorf("oidc_connect.scopes must contain openid")
+		}
+
+		method := strings.ToLower(strings.TrimSpace(c.OIDC.TokenAuthMethod))
+		switch method {
+		case "", "client_secret_post", "client_secret_basic", "none":
+		default:
+			return fmt.Errorf("oidc_connect.token_auth_method must be one of: client_secret_post/client_secret_basic/none")
+		}
+		if (method == "" || method == "client_secret_post" || method == "client_secret_basic") &&
+			strings.TrimSpace(c.OIDC.ClientSecret) == "" {
+			return fmt.Errorf("oidc_connect.client_secret is required when oidc_connect.enabled=true and token_auth_method is client_secret_post/client_secret_basic")
+		}
+		// Enabled OIDC bounds this tolerance even when ID-token validation is
+		// disabled.
+		if c.OIDC.ClockSkewSeconds < 0 || c.OIDC.ClockSkewSeconds > 600 {
+			return fmt.Errorf("oidc_connect.clock_skew_seconds must be between 0 and 600")
+		}
+		if c.OIDC.ValidateIDToken && strings.TrimSpace(c.OIDC.AllowedSigningAlgs) == "" {
+			return fmt.Errorf("oidc_connect.allowed_signing_algs is required when oidc_connect.validate_id_token=true")
+		}
+
+		if err := ValidateAbsoluteHTTPURL(c.OIDC.IssuerURL); err != nil {
+			return fmt.Errorf("oidc_connect.issuer_url invalid: %w", err)
+		}
+		if v := strings.TrimSpace(c.OIDC.DiscoveryURL); v != "" {
+			if err := ValidateAbsoluteHTTPURL(v); err != nil {
+				return fmt.Errorf("oidc_connect.discovery_url invalid: %w", err)
+			}
+		}
+		if v := strings.TrimSpace(c.OIDC.AuthorizeURL); v != "" {
+			if err := ValidateAbsoluteHTTPURL(v); err != nil {
+				return fmt.Errorf("oidc_connect.authorize_url invalid: %w", err)
+			}
+		}
+		if v := strings.TrimSpace(c.OIDC.TokenURL); v != "" {
+			if err := ValidateAbsoluteHTTPURL(v); err != nil {
+				return fmt.Errorf("oidc_connect.token_url invalid: %w", err)
+			}
+		}
+		if v := strings.TrimSpace(c.OIDC.UserInfoURL); v != "" {
+			if err := ValidateAbsoluteHTTPURL(v); err != nil {
+				return fmt.Errorf("oidc_connect.userinfo_url invalid: %w", err)
+			}
+		}
+		if v := strings.TrimSpace(c.OIDC.JWKSURL); v != "" {
+			if err := ValidateAbsoluteHTTPURL(v); err != nil {
+				return fmt.Errorf("oidc_connect.jwks_url invalid: %w", err)
+			}
+		}
+		if err := ValidateAbsoluteHTTPURL(c.OIDC.RedirectURL); err != nil {
+			return fmt.Errorf("oidc_connect.redirect_url invalid: %w", err)
+		}
+		if err := ValidateFrontendRedirectURL(c.OIDC.FrontendRedirectURL); err != nil {
+			return fmt.Errorf("oidc_connect.frontend_redirect_url invalid: %w", err)
+		}
+
+		warnIfInsecureURL("oidc_connect.issuer_url", c.OIDC.IssuerURL)
+		warnIfInsecureURL("oidc_connect.discovery_url", c.OIDC.DiscoveryURL)
+		warnIfInsecureURL("oidc_connect.authorize_url", c.OIDC.AuthorizeURL)
+		warnIfInsecureURL("oidc_connect.token_url", c.OIDC.TokenURL)
+		warnIfInsecureURL("oidc_connect.userinfo_url", c.OIDC.UserInfoURL)
+		warnIfInsecureURL("oidc_connect.jwks_url", c.OIDC.JWKSURL)
+		warnIfInsecureURL("oidc_connect.redirect_url", c.OIDC.RedirectURL)
+		warnIfInsecureURL("oidc_connect.frontend_redirect_url", c.OIDC.FrontendRedirectURL)
 	}
 	return nil
 }

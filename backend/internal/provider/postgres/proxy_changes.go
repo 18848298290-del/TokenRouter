@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
@@ -84,35 +83,22 @@ func (p ProxyChanges) InvalidateSnapshots(ctx context.Context, proxyID int64) ([
 // allowing the caller's transaction connection to finish its remaining work.
 // The caller owns commit, scheduler events, and cache synchronization.
 func (p ProxyChanges) Reassign(ctx context.Context, proxyID int64, target *int64) ([]int64, error) {
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	// Retain the original proxy in both reassignment branches so egress can later
-	// restore it, and clear snapshots whose fetch used the connection being replaced.
-	if target == nil {
-		rows, err = p.exec.QueryContext(ctx, `
-			UPDATE providers SET proxy_id=NULL, proxy_fallback_origin_id=$1,
-				extra=(CASE
-					WHEN platform IN ('openai', 'anthropic') AND type='apikey'
-					THEN COALESCE(extra, '{}'::jsonb) - 'ollama_cloud_usage_snapshot'
-					ELSE COALESCE(extra, '{}'::jsonb)
-				END) - 'upstream_billing_probe' - 'upstream_billing_probe_enabled',
-				updated_at=NOW()
-			WHERE proxy_id=$1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL
-			RETURNING id`, proxyID)
-	} else {
-		rows, err = p.exec.QueryContext(ctx, `
-			UPDATE providers SET proxy_id=$2, proxy_fallback_origin_id=$1,
-				extra=(CASE
-					WHEN platform IN ('openai', 'anthropic') AND type='apikey'
-					THEN COALESCE(extra, '{}'::jsonb) - 'ollama_cloud_usage_snapshot'
-					ELSE COALESCE(extra, '{}'::jsonb)
-				END) - 'upstream_billing_probe' - 'upstream_billing_probe_enabled',
-				updated_at=NOW()
-			WHERE proxy_id=$1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL
-			RETURNING id`, proxyID, *target)
+	var targetID any
+	if target != nil {
+		targetID = *target
 	}
+	// Retain the original proxy so egress can restore it later. A nil target
+	// binds SQL NULL while snapshot cleanup follows the same rules for either destination.
+	rows, err := p.exec.QueryContext(ctx, `
+		UPDATE providers SET proxy_id=$2, proxy_fallback_origin_id=$1,
+			extra=(CASE
+				WHEN platform IN ('openai', 'anthropic') AND type='apikey'
+				THEN COALESCE(extra, '{}'::jsonb) - 'ollama_cloud_usage_snapshot'
+				ELSE COALESCE(extra, '{}'::jsonb)
+			END) - 'upstream_billing_probe' - 'upstream_billing_probe_enabled',
+			updated_at=NOW()
+		WHERE proxy_id=$1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL
+		RETURNING id`, proxyID, targetID)
 	if err != nil {
 		return nil, err
 	}

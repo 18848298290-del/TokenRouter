@@ -70,7 +70,7 @@ func ObserveUsageVersion(value *Record) UsageObservationVersion {
 		return UsageObservationVersion{}
 	}
 	return UsageObservationVersion{
-		CredentialVersion: FailureVersion(value).CredentialVersion,
+		CredentialVersion: ObserveCredentialVersion(value),
 		ParentProviderID:  clonePointer(value.ParentProviderID), QuotaDimension: value.QuotaDimension,
 		RateLimitedAt: clonePointer(value.RateLimitedAt), RateLimitResetAt: clonePointer(value.RateLimitResetAt), OverloadUntil: clonePointer(value.OverloadUntil),
 	}

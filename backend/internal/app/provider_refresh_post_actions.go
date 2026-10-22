@@ -31,7 +31,7 @@ func provideRefreshPostActions(store *postgres.ProviderStore, privacy *provider.
 		},
 		ClearError: func(ctx context.Context, value *provider.Record) (bool, error) {
 			return store.ClearUsageErrorIfUnchanged(ctx, provider.UsageRecoveryVersion{
-				CredentialVersion: provider.FailureVersion(value).CredentialVersion, ErrorMessage: value.ErrorMessage,
+				CredentialVersion: provider.ObserveCredentialVersion(value), ErrorMessage: value.ErrorMessage,
 			})
 		},
 		ClearCooldown: func(ctx context.Context, value *provider.Record) (bool, error) {

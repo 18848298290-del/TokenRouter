@@ -214,7 +214,7 @@ func (s *RefreshPostActions) Sync(ctx context.Context, provider *Record) {
 // matched write copies the clearing fields into an existing nonnil Extra map,
 // then logs success; it does not allocate that local map. Each reached logger
 // must be callable, and unsupported mutable credential values retain
-// FailureVersion's copy limits.
+// ObserveCredentialVersion's copy limits.
 func (s *RefreshPostActions) ClearRefreshRequest(ctx context.Context, provider *Record, outcome string) {
 	if s == nil || provider == nil || !NeedsAntigravityRefreshRequest(provider) {
 		return
@@ -226,7 +226,7 @@ func (s *RefreshPostActions) ClearRefreshRequest(ctx context.Context, provider *
 		s.Warn("token_refresh.clear_antigravity_force_refresh_failed", "provider_id", provider.ID, "outcome", outcome, "error", "conditional refresh request clearer is not configured")
 		return
 	}
-	version := FailureVersion(provider).CredentialVersion
+	version := ObserveCredentialVersion(provider)
 	if outcome == "non_retryable" {
 		// Permanent failure has already changed durable health before this flag
 		// cleanup, so compare the error status rather than the attempted active

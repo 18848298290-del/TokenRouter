@@ -34,7 +34,7 @@ func TestGenericResponsesCarriesSelectedDiagnosticPolicy(t *testing.T) {
 			target := gatewaycapture.NewExecutionProvider(&provider.Record{ID: 7, Platform: platform, Type: "oauth", Extra: map[string]any{provider.ProviderExtraUpstreamRequestIDHeader: "X-Client-Request-ID"}})
 			deps := &messageExecutionDependencies{
 				geminiAvailable: true, antigravityAvailable: true,
-				selectProvider: func(context.Context, *int64, string, string, map[int64]struct{}, string, int64) (*gatewaycapture.SelectionResult, error) {
+				selectProvider: func(context.Context, *int64, string, string, map[int64]struct{}) (*gatewaycapture.SelectionResult, error) {
 					return &gatewaycapture.SelectionResult{Provider: target}, nil
 				},
 				reportSchedule: func(*gatewaycapture.SelectionResult, int64, bool, *forwardcore.MessagesResult) {},

@@ -91,7 +91,7 @@ func TestBedrockRegionRouting_SchedulerAndDiagnosisAgree(t *testing.T) {
 				diagnosis := gatewayprovider.NewModelAvailability(selectionAvailabilityFixture{repo}, nil, false).DiagnoseGeneral(context.Background(), &groupID, "claude-sonnet-5", capability.PlatformAnthropic)
 				require.True(t, diagnosis.HasProvidersInPool)
 				require.Equal(t, withValid, diagnosis.HasModelSupport)
-				selected, err := gateway.SelectProviderWithLoadAwareness(context.Background(), &groupID, "sticky", "claude-sonnet-5", nil, "", 0)
+				selected, err := gateway.SelectProviderWithLoadAwareness(context.Background(), &groupID, "sticky", "claude-sonnet-5", nil)
 				if withValid {
 					require.NoError(t, err)
 					require.Equal(t, valid.Record.ID, selected.Provider.Record.ID)

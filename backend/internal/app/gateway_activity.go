@@ -23,6 +23,6 @@ type gatewayRequestActivity struct {
 // registration remains available.
 func provideGatewayRequestActivity(manager *lifecycle.Manager) *gatewayRequestActivity {
 	activity := &gatewayRequestActivity{Operations: lifecycle.NewOperations("GatewayRequestsAndAttempts")}
-	manager.Register(lifecycle.Hook{Name: "GatewayRequestsAndAttempts", StopOrder: 15, Stop: activity.StopContext})
+	manager.Register(lifecycle.Hook{Name: "GatewayRequestsAndAttempts", StopOrder: shutdownStageRequests, Stop: activity.StopContext})
 	return activity
 }

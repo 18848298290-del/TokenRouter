@@ -1,13 +1,9 @@
 package openai
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
-
-	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
 // images_request.go builds authenticated image requests from prepared bodies
@@ -22,19 +18,9 @@ import (
 // identity; nonblank contentType replaces forwarding, and allowed provider
 // overrides run last with ctx retained for sending.
 func BuildImagesRequest(ctx context.Context, body []byte, contentType string, options ResponsesRequestOptions) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, options.URL, bytes.NewReader(body))
+	req, err := newAuthenticatedPostRequest(ctx, options.URL, body, options.Authenticate)
 	if err != nil {
 		return nil, err
-	}
-	req = req.WithContext(upstream.WithHTTPUpstreamProfile(req.Context(), upstream.HTTPUpstreamProfileOpenAI))
-	authHeaders, err := options.Authenticate(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("build openai authentication headers: %w", err)
-	}
-	for key, values := range authHeaders {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
 	}
 	for key, values := range options.ForwardHeaders() {
 		if !options.AllowHeader(strings.ToLower(key)) {

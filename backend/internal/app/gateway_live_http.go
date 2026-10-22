@@ -50,7 +50,7 @@ func provideLiveExecution(cfg *config.Config, auxiliary *gatewayhttp.OpenAIAuxil
 	}
 	// Close local Live observers at the early shutdown level so their tracked
 	// work can finish before request completion and shared dependency cleanup.
-	manager.Register(lifecycle.Hook{Name: "OpenAILiveObservers", StartOrder: 995, StopOrder: 5, Stop: out.StopLiveObservers})
+	manager.Register(lifecycle.Hook{Name: "OpenAILiveObservers", StartOrder: 995, StopOrder: shutdownStageLocalObservers, Stop: out.StopLiveObservers})
 	return out
 }
 

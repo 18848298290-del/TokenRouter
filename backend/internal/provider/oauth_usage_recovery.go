@@ -19,8 +19,9 @@ import (
 // storage precedes local status/error changes, so a rejected observation leaves
 // the caller record unchanged. These steps do not undo another health window
 // or the scheduling switch. Callers synchronize borrowed records during
-// snapshot capture and mutation; supported-container copies in FailureVersion
-// still leave unsupported mutable values shared with their owner.
+// snapshot capture and mutation; supported-container copies in
+// ObserveCredentialVersion leave unsupported mutable values shared with their
+// owner.
 
 // UsageRecoveryVersion associates observed credential identity with the exact
 // stored recovery error.
@@ -35,8 +36,7 @@ type UsageRecoveryWriter interface {
 	// ClearUsageErrorIfUnchanged clears the observed credential error after
 	// comparison. False reports a miss so callers keep their local record
 	// unchanged. The PostgreSQL writer compares ID, platform, type, status,
-	// complete credentials, proxy, and exact error text; ParentProviderID and
-	// QuotaDimension carried in the version are outside that predicate.
+	// complete credentials, proxy, and exact error text.
 	ClearUsageErrorIfUnchanged(context.Context, UsageRecoveryVersion) (bool, error)
 }
 
@@ -63,7 +63,7 @@ func RecoverUsageProviderError(ctx context.Context, value *Record, writer UsageR
 	if writer == nil {
 		return false, errors.New("usage recovery conditional writer is not configured")
 	}
-	version := UsageRecoveryVersion{CredentialVersion: FailureVersion(value).CredentialVersion, ErrorMessage: value.ErrorMessage}
+	version := UsageRecoveryVersion{CredentialVersion: ObserveCredentialVersion(value), ErrorMessage: value.ErrorMessage}
 	// Compare observed identity and exact error before changing local health.
 	// An administrator edit can reject this recovery while leaving its newer
 	// state authoritative.

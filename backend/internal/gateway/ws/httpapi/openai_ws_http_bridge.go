@@ -1093,13 +1093,14 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 			}
 			if !wroteDownstream && shouldFailover &&
 				(turn == 1 || statusCode == http.StatusTooManyRequests) {
-				retrySame := requestScopedCapacity || terminalPolicy.Decision.RetryableOnSameProvider(gatewayprovider.ExecutionErrorPolicy(provider), statusCode)
 				if !requestScopedCapacity {
 					// Policy effects already ran for this failed event; mark their result before
 					// error construction so the output helper consumes them without another health write.
 					gatewayhttp.MarkOpenAIResponseFailureEffects(c, statusCode, terminalPolicy.Decision.StopScheduling)
 				}
-				return nil, s.Output.NewStreamPolicyFailureWithModel(c, provider, true, resp.Header.Get("x-request-id"), resp.Header, statusCode, upstreamMessage, errMessage, retrySame, mappedModel)
+				return nil, s.Output.NewStreamPolicyFailureWithModel(
+					c, provider, true, resp.Header.Get("x-request-id"), resp.Header, upstreamMessage, errMessage, mappedModel,
+				)
 			}
 			if wroteDownstream && requestScopedCapacity && !capacityFailoverSuppressedLogged {
 				gatewayhttp.LogOpenAICapacityFailoverSuppressed(ctx, provider, "ws_http_bridge", resp.Header.Get("x-request-id"), eventType)
@@ -1162,11 +1163,12 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 				upstreamEventErr = errors.New("upstream error not in custom error codes")
 			} else if !wroteDownstream && (requestScopedCapacity || (!requestScopedError && decision.ShouldFailover(gatewayprovider.ExecutionErrorPolicy(provider), policyStatus, defaultFailover))) &&
 				(turn == 1 || policyStatus == http.StatusTooManyRequests) {
-				retrySame := requestScopedCapacity || decision.RetryableOnSameProvider(gatewayprovider.ExecutionErrorPolicy(provider), policyStatus)
 				if c != nil && !requestScopedCapacity && !requestScopedError {
 					gatewayhttp.MarkOpenAIResponseFailureEffects(c, policyStatus, decision.StopScheduling)
 				}
-				return nil, s.Output.NewStreamPolicyFailureWithModel(c, provider, true, resp.Header.Get("x-request-id"), resp.Header, policyStatus, upstreamMessage, errMessage, retrySame, mappedModel)
+				return nil, s.Output.NewStreamPolicyFailureWithModel(
+					c, provider, true, resp.Header.Get("x-request-id"), resp.Header, upstreamMessage, errMessage, mappedModel,
+				)
 			}
 			if wroteDownstream && requestScopedCapacity && !capacityFailoverSuppressedLogged {
 				gatewayhttp.LogOpenAICapacityFailoverSuppressed(ctx, provider, "ws_http_bridge", resp.Header.Get("x-request-id"), eventType)
@@ -1208,10 +1210,8 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 						true,
 						resp.Header.Get("x-request-id"),
 						resp.Header,
-						http.StatusBadGateway,
 						nil,
 						"OpenAI WS HTTP bridge first-output staging limit exceeded",
-						false,
 					)
 				}
 				// Copy staged bytes before the scanner advances; a later commit flushes

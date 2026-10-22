@@ -43,7 +43,7 @@ func provideMaintenanceRuntime(
 	concurrency *scheduler.ConcurrencyService,
 	messageQueue *scheduler.UserMessageQueueService,
 ) *maintenanceRuntimeReady {
-	manager.Register(lifecycle.Hook{Name: "TokenRefreshService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "TokenRefreshService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if tokenRefresh != nil {
 			return tokenRefresh.StartContext(ctx)
 		}
@@ -54,7 +54,7 @@ func provideMaintenanceRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "ProviderExpiryService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "ProviderExpiryService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if providerExpiry != nil {
 			providerExpiry.Start()
 		}
@@ -65,7 +65,7 @@ func provideMaintenanceRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "ProxyExpiryService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "ProxyExpiryService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if proxyExpiry != nil {
 			proxyExpiry.Start()
 		}
@@ -76,7 +76,7 @@ func provideMaintenanceRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "SubscriptionExpiryService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "SubscriptionExpiryService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if subscriptionExpiry != nil {
 			subscriptionExpiry.Start()
 		}
@@ -87,7 +87,7 @@ func provideMaintenanceRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "AnnouncementExpiryService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "AnnouncementExpiryService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if announcementExpiry != nil {
 			announcementExpiry.Start()
 		}
@@ -99,7 +99,7 @@ func provideMaintenanceRuntime(
 		return nil
 	}})
 
-	manager.Register(lifecycle.Hook{Name: "ScheduledTestRunnerService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "ScheduledTestRunnerService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if scheduledTestRunner != nil {
 			return scheduledTestRunner.StartContext(ctx)
 		}
@@ -110,7 +110,7 @@ func provideMaintenanceRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "GroupAvailabilityProbeRunnerService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "GroupAvailabilityProbeRunnerService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if groupAvailabilityProbeRunner != nil {
 			groupAvailabilityProbeRunner.Start()
 		}
@@ -122,7 +122,7 @@ func provideMaintenanceRuntime(
 		return nil
 	}})
 
-	manager.Register(lifecycle.Hook{Name: "ConcurrencyService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "ConcurrencyService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if concurrency != nil {
 			concurrency.StartSlotCleanupWorker(cfg.Gateway.Scheduling.SlotCleanupInterval)
 		}
@@ -133,7 +133,7 @@ func provideMaintenanceRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "UserMessageQueueService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "UserMessageQueueService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if messageQueue != nil {
 			// The message-queue worker accepts a duration, while its deployment field
 			// stores seconds; use that unit for the lifecycle-start interval.

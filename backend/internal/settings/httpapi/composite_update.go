@@ -39,6 +39,7 @@ import (
 	runtimesettings "github.com/TokenFlux/TokenRouter/internal/settings"
 	"github.com/TokenFlux/TokenRouter/internal/settings/composite"
 	settingsdto "github.com/TokenFlux/TokenRouter/internal/settings/httpapi/dto"
+	sitedto "github.com/TokenFlux/TokenRouter/internal/site/httpapi/dto"
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
@@ -1164,226 +1165,19 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	// Validate menu shape before serialization and ID assignment so saved entries
-	// can be matched by stable IDs and safely resolved to external URLs or page slugs.
-	// Limit menu entry counts and source byte sizes before IDs and destinations
-	// are serialized, keeping a rejected list outside the eventual saved settings batch.
-	const (
-		maxCustomMenuItems    = 20
-		maxMenuItemLabelLen   = 50
-		maxMenuItemURLLen     = 2048
-		maxMenuItemIconSVGLen = 10 * 1024 // maximum SVG bytes (ten kibibytes)
-		maxMenuItemIDLen      = 32
-	)
-
-	customMenuJSON := previousSettings.CustomMenuItems
-	if req.CustomMenuItems != nil {
-		items := *req.CustomMenuItems
-		if len(items) > maxCustomMenuItems {
-			httpx.BadRequest(c, "Too many custom menu items (max 20)")
-			return
-		}
-		for i, item := range items {
-			if strings.TrimSpace(item.Label) == "" {
-				httpx.BadRequest(c, "Custom menu item label is required")
-				return
-			}
-			if len(item.Label) > maxMenuItemLabelLen {
-				httpx.BadRequest(c, "Custom menu item label is too long (max 50 characters)")
-				return
-			}
-			urlTrimmed := strings.TrimSpace(item.URL)
-			if slug, ok := strings.CutPrefix(urlTrimmed, "md:"); ok {
-				// Page navigation shares the page reader's slug rules, keeping the saved
-				// md: destination aligned with the slug accepted by the protected page route.
-				// Keep page targets nonempty and bounded before applying the shared ASCII
-				// slug pattern, so this stored navigation value names one accepted page lookup key.
-				if slug == "" {
-					httpx.BadRequest(c, "Custom menu item markdown slug cannot be empty (use md:slug format)")
-					return
-				}
-				if len(slug) > 64 || !markdownMenuSlugPattern.MatchString(slug) {
-					httpx.BadRequest(c, "Custom menu item markdown slug contains invalid characters")
-					return
-				}
-			} else {
-				if urlTrimmed == "" {
-					httpx.BadRequest(c, "Custom menu item URL is required (use md:slug for markdown pages)")
-					return
-				}
-				if len(urlTrimmed) > maxMenuItemURLLen {
-					httpx.BadRequest(c, "Custom menu item URL is too long (max 2048 characters)")
-					return
-				}
-				if err := authconfig.ValidateAbsoluteHTTPURL(urlTrimmed); err != nil {
-					httpx.BadRequest(c, "Custom menu item URL must be an absolute http(s) URL or md:<slug>")
-					return
-				}
-			}
-			// Save the recognized trimmed destination so leading whitespace cannot hide
-			// its md: prefix from the later site page and visibility resolution helpers.
-			items[i].URL = urlTrimmed
-			if item.Visibility != "user" && item.Visibility != "admin" {
-				httpx.BadRequest(c, "Custom menu item visibility must be 'user' or 'admin'")
-				return
-			}
-			if len(item.IconSVG) > maxMenuItemIconSVGLen {
-				httpx.BadRequest(c, "Custom menu item icon SVG is too large (max 10KB)")
-				return
-			}
-			// Give a missing item a saved stable ID so later localization can match
-			// its identity after reordering; the next pass still checks within-list uniqueness.
-			if strings.TrimSpace(item.ID) == "" {
-				id, err := generateMenuItemID()
-				if err != nil {
-					httpx.Error(c, http.StatusInternalServerError, "Failed to generate menu item ID")
-					return
-				}
-				items[i].ID = id
-			} else if len(item.ID) > maxMenuItemIDLen {
-				httpx.BadRequest(c, "Custom menu item ID is too long (max 32 characters)")
-				return
-			} else if !menuItemIDPattern.MatchString(item.ID) {
-				httpx.BadRequest(c, "Custom menu item ID contains invalid characters (only a-z, A-Z, 0-9, - and _ are allowed)")
-				return
-			}
-		}
-		// Reject duplicate item IDs after missing IDs are filled so one localized
-		// entry cannot be selected for two submitted menu records during later site preparation.
-		seen := make(map[string]struct{}, len(items))
-		for _, item := range items {
-			if _, exists := seen[item.ID]; exists {
-				httpx.BadRequest(c, "Duplicate custom menu item ID: "+item.ID)
-				return
-			}
-			seen[item.ID] = struct{}{}
-		}
-		menuBytes, err := json.Marshal(items)
-		if err != nil {
-			httpx.BadRequest(c, "Failed to serialize custom menu items")
-			return
-		}
-		customMenuJSON = string(menuBytes)
+	customMenuJSON, ok := prepareCustomMenuItems(c, req.CustomMenuItems, previousSettings.CustomMenuItems)
+	if !ok {
+		return
 	}
 
-	// Validate endpoint records before saving their JSON so administrator-facing
-	// descriptions and gateway addresses retain the supported URL shape and bounded source text.
-	// Bound endpoint count, names, descriptions, and URL bytes before serialization
-	// so oversize administrator records return a validation error ahead of persistence.
-	const (
-		maxCustomEndpoints        = 10
-		maxEndpointNameLen        = 50
-		maxEndpointURLLen         = 2048
-		maxEndpointDescriptionLen = 200
-	)
-
-	customEndpointsJSON := previousSettings.CustomEndpoints
-	if req.CustomEndpoints != nil {
-		endpoints := *req.CustomEndpoints
-		if len(endpoints) > maxCustomEndpoints {
-			httpx.BadRequest(c, "Too many custom endpoints (max 10)")
-			return
-		}
-		for _, ep := range endpoints {
-			if strings.TrimSpace(ep.Name) == "" {
-				httpx.BadRequest(c, "Custom endpoint name is required")
-				return
-			}
-			if len(ep.Name) > maxEndpointNameLen {
-				httpx.BadRequest(c, "Custom endpoint name is too long (max 50 characters)")
-				return
-			}
-			if strings.TrimSpace(ep.Endpoint) == "" {
-				httpx.BadRequest(c, "Custom endpoint URL is required")
-				return
-			}
-			if len(ep.Endpoint) > maxEndpointURLLen {
-				httpx.BadRequest(c, "Custom endpoint URL is too long (max 2048 characters)")
-				return
-			}
-			if err := authconfig.ValidateAbsoluteHTTPURL(strings.TrimSpace(ep.Endpoint)); err != nil {
-				httpx.BadRequest(c, "Custom endpoint URL must be an absolute http(s) URL")
-				return
-			}
-			if len(ep.Description) > maxEndpointDescriptionLen {
-				httpx.BadRequest(c, "Custom endpoint description is too long (max 200 characters)")
-				return
-			}
-		}
-		endpointBytes, err := json.Marshal(endpoints)
-		if err != nil {
-			httpx.BadRequest(c, "Failed to serialize custom endpoints")
-			return
-		}
-		customEndpointsJSON = string(endpointBytes)
+	customEndpointsJSON, ok := prepareCustomEndpoints(c, req.CustomEndpoints, previousSettings.CustomEndpoints)
+	if !ok {
+		return
 	}
 
-	// Validate footer groups and their link records before serialization, keeping
-	// display text within storage budgets while permitting internal slash-prefixed destinations.
-	// Bound footer group/link counts and source text bytes before JSON preparation
-	// so a rejected footer update cannot enter the complete settings write batch.
-	const (
-		maxFooterGroups      = 6
-		maxFooterLinksPerGrp = 10
-		maxFooterLabelLen    = 50
-		maxFooterURLLen      = 2048
-		maxFooterTextLen     = 500
-	)
-
-	footerLinksJSON := previousSettings.FooterLinks
-	if req.FooterLinks != nil {
-		groups := *req.FooterLinks
-		if len(groups) > maxFooterGroups {
-			httpx.BadRequest(c, "Too many footer link groups (max 6)")
-			return
-		}
-		for _, group := range groups {
-			if strings.TrimSpace(group.Title) == "" {
-				httpx.BadRequest(c, "Footer link group title is required")
-				return
-			}
-			if len(group.Title) > maxFooterLabelLen {
-				httpx.BadRequest(c, "Footer link group title is too long (max 50 characters)")
-				return
-			}
-			if len(group.Links) > maxFooterLinksPerGrp {
-				httpx.BadRequest(c, "Too many links in footer group (max 10)")
-				return
-			}
-			for _, link := range group.Links {
-				if strings.TrimSpace(link.Label) == "" {
-					httpx.BadRequest(c, "Footer link label is required")
-					return
-				}
-				if len(link.Label) > maxFooterLabelLen {
-					httpx.BadRequest(c, "Footer link label is too long (max 50 characters)")
-					return
-				}
-				trimmedURL := strings.TrimSpace(link.URL)
-				if trimmedURL == "" {
-					httpx.BadRequest(c, "Footer link URL is required")
-					return
-				}
-				if len(trimmedURL) > maxFooterURLLen {
-					httpx.BadRequest(c, "Footer link URL is too long (max 2048 characters)")
-					return
-				}
-				// Permit slash-prefixed footer destinations, including protocol-relative text,
-				// while other values must pass the absolute HTTP(S) check before they are serialized.
-				if !strings.HasPrefix(trimmedURL, "/") {
-					if err := authconfig.ValidateAbsoluteHTTPURL(trimmedURL); err != nil {
-						httpx.BadRequest(c, "Footer link URL must be an absolute http(s) URL or a path starting with /")
-						return
-					}
-				}
-			}
-		}
-		groupBytes, err := json.Marshal(groups)
-		if err != nil {
-			httpx.BadRequest(c, "Failed to serialize footer links")
-			return
-		}
-		footerLinksJSON = string(groupBytes)
+	footerLinksJSON, ok := prepareFooterLinks(c, req.FooterLinks, previousSettings.FooterLinks)
+	if !ok {
+		return
 	}
 
 	// Keep the first occurrence of each trimmed model ID so the stored featured
@@ -1426,6 +1220,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		homeFeaturedModelsJSON = string(modelBytes)
 	}
 
+	// Bound the trimmed footer copy by its UTF-8 byte length.
+	const maxFooterTextLen = 500
 	footerText := previousSettings.FooterText
 	if req.FooterText != nil {
 		trimmed := strings.TrimSpace(*req.FooterText)
@@ -2209,6 +2005,242 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 
 	httpx.Success(c, systemSettingsResponseData(payload, updatedAuthSourceDefaults))
+}
+
+// prepareCustomMenuItems validates menu entries and returns their settings JSON.
+// A nil input retains previous JSON, while a supplied slice is serialized even
+// when empty. URL normalization and generated IDs modify the caller's slice,
+// which also updates the shallow request copy retained for audit processing.
+//
+// Validation proceeds in entry order before the duplicate-ID pass. Mutations
+// completed before a later error remain visible to the caller, including a
+// trimmed URL on an entry whose visibility or ID is subsequently rejected.
+// False means the function has written the first HTTP error response.
+func prepareCustomMenuItems(c *gin.Context, input *[]sitedto.CustomMenuItem, previous string) (string, bool) {
+	// Bound menu count, text, icons, and IDs before producing stored navigation JSON.
+	const (
+		maxCustomMenuItems    = 20
+		maxMenuItemLabelLen   = 50
+		maxMenuItemURLLen     = 2048
+		maxMenuItemIconSVGLen = 10 * 1024 // maximum SVG bytes (ten kibibytes)
+		maxMenuItemIDLen      = 32
+	)
+
+	customMenuJSON := previous
+	if input != nil {
+		items := *input
+		if len(items) > maxCustomMenuItems {
+			httpx.BadRequest(c, "Too many custom menu items (max 20)")
+			return "", false
+		}
+		for i, item := range items {
+			if strings.TrimSpace(item.Label) == "" {
+				httpx.BadRequest(c, "Custom menu item label is required")
+				return "", false
+			}
+			if len(item.Label) > maxMenuItemLabelLen {
+				httpx.BadRequest(c, "Custom menu item label is too long (max 50 characters)")
+				return "", false
+			}
+			urlTrimmed := strings.TrimSpace(item.URL)
+			if slug, ok := strings.CutPrefix(urlTrimmed, "md:"); ok {
+				// Apply the page reader's bounded ASCII slug rules so the saved md:
+				// destination names a lookup key accepted by the protected page route.
+				if slug == "" {
+					httpx.BadRequest(c, "Custom menu item markdown slug cannot be empty (use md:slug format)")
+					return "", false
+				}
+				if len(slug) > 64 || !markdownMenuSlugPattern.MatchString(slug) {
+					httpx.BadRequest(c, "Custom menu item markdown slug contains invalid characters")
+					return "", false
+				}
+			} else {
+				if urlTrimmed == "" {
+					httpx.BadRequest(c, "Custom menu item URL is required (use md:slug for markdown pages)")
+					return "", false
+				}
+				if len(urlTrimmed) > maxMenuItemURLLen {
+					httpx.BadRequest(c, "Custom menu item URL is too long (max 2048 characters)")
+					return "", false
+				}
+				if err := authconfig.ValidateAbsoluteHTTPURL(urlTrimmed); err != nil {
+					httpx.BadRequest(c, "Custom menu item URL must be an absolute http(s) URL or md:<slug>")
+					return "", false
+				}
+			}
+			// Save the recognized trimmed destination so leading whitespace cannot hide
+			// its md: prefix from the later site page and visibility resolution helpers.
+			items[i].URL = urlTrimmed
+			if item.Visibility != "user" && item.Visibility != "admin" {
+				httpx.BadRequest(c, "Custom menu item visibility must be 'user' or 'admin'")
+				return "", false
+			}
+			if len(item.IconSVG) > maxMenuItemIconSVGLen {
+				httpx.BadRequest(c, "Custom menu item icon SVG is too large (max 10KB)")
+				return "", false
+			}
+			// Give a missing item a saved stable ID so later localization can match
+			// its identity after reordering; the next pass still checks within-list uniqueness.
+			if strings.TrimSpace(item.ID) == "" {
+				id, err := generateMenuItemID()
+				if err != nil {
+					httpx.Error(c, http.StatusInternalServerError, "Failed to generate menu item ID")
+					return "", false
+				}
+				items[i].ID = id
+			} else if len(item.ID) > maxMenuItemIDLen {
+				httpx.BadRequest(c, "Custom menu item ID is too long (max 32 characters)")
+				return "", false
+			} else if !menuItemIDPattern.MatchString(item.ID) {
+				httpx.BadRequest(c, "Custom menu item ID contains invalid characters (only a-z, A-Z, 0-9, - and _ are allowed)")
+				return "", false
+			}
+		}
+		// Reject duplicate item IDs after missing IDs are filled so one localized
+		// entry cannot be selected for two submitted menu records during later site preparation.
+		seen := make(map[string]struct{}, len(items))
+		for _, item := range items {
+			if _, exists := seen[item.ID]; exists {
+				httpx.BadRequest(c, "Duplicate custom menu item ID: "+item.ID)
+				return "", false
+			}
+			seen[item.ID] = struct{}{}
+		}
+		menuBytes, err := json.Marshal(items)
+		if err != nil {
+			httpx.BadRequest(c, "Failed to serialize custom menu items")
+			return "", false
+		}
+		customMenuJSON = string(menuBytes)
+	}
+	return customMenuJSON, true
+}
+
+// prepareCustomEndpoints validates endpoint entries and returns their settings
+// JSON, retaining previous JSON for nil input. URL checks trim whitespace while
+// serialization retains the supplied strings, and false reports an HTTP error
+// already written for the first invalid field.
+func prepareCustomEndpoints(c *gin.Context, input *[]sitedto.CustomEndpoint, previous string) (string, bool) {
+	// Bound endpoint counts and untrimmed text before producing their saved JSON records.
+	const (
+		maxCustomEndpoints        = 10
+		maxEndpointNameLen        = 50
+		maxEndpointURLLen         = 2048
+		maxEndpointDescriptionLen = 200
+	)
+
+	customEndpointsJSON := previous
+	if input != nil {
+		endpoints := *input
+		if len(endpoints) > maxCustomEndpoints {
+			httpx.BadRequest(c, "Too many custom endpoints (max 10)")
+			return "", false
+		}
+		for _, ep := range endpoints {
+			if strings.TrimSpace(ep.Name) == "" {
+				httpx.BadRequest(c, "Custom endpoint name is required")
+				return "", false
+			}
+			if len(ep.Name) > maxEndpointNameLen {
+				httpx.BadRequest(c, "Custom endpoint name is too long (max 50 characters)")
+				return "", false
+			}
+			if strings.TrimSpace(ep.Endpoint) == "" {
+				httpx.BadRequest(c, "Custom endpoint URL is required")
+				return "", false
+			}
+			if len(ep.Endpoint) > maxEndpointURLLen {
+				httpx.BadRequest(c, "Custom endpoint URL is too long (max 2048 characters)")
+				return "", false
+			}
+			if err := authconfig.ValidateAbsoluteHTTPURL(strings.TrimSpace(ep.Endpoint)); err != nil {
+				httpx.BadRequest(c, "Custom endpoint URL must be an absolute http(s) URL")
+				return "", false
+			}
+			if len(ep.Description) > maxEndpointDescriptionLen {
+				httpx.BadRequest(c, "Custom endpoint description is too long (max 200 characters)")
+				return "", false
+			}
+		}
+		endpointBytes, err := json.Marshal(endpoints)
+		if err != nil {
+			httpx.BadRequest(c, "Failed to serialize custom endpoints")
+			return "", false
+		}
+		customEndpointsJSON = string(endpointBytes)
+	}
+	return customEndpointsJSON, true
+}
+
+// prepareFooterLinks validates footer groups and returns their settings JSON,
+// retaining previous JSON for nil input. Slash-prefixed destinations are accepted
+// after trimming for validation, while serialization retains supplied whitespace.
+// False reports an HTTP error already written for the first invalid field.
+func prepareFooterLinks(c *gin.Context, input *[]sitedto.FooterLinkGroup, previous string) (string, bool) {
+	// Bound footer columns, nested links, and display text before preparing their stored JSON.
+	const (
+		maxFooterGroups      = 6
+		maxFooterLinksPerGrp = 10
+		maxFooterLabelLen    = 50
+		maxFooterURLLen      = 2048
+	)
+
+	footerLinksJSON := previous
+	if input != nil {
+		groups := *input
+		if len(groups) > maxFooterGroups {
+			httpx.BadRequest(c, "Too many footer link groups (max 6)")
+			return "", false
+		}
+		for _, group := range groups {
+			if strings.TrimSpace(group.Title) == "" {
+				httpx.BadRequest(c, "Footer link group title is required")
+				return "", false
+			}
+			if len(group.Title) > maxFooterLabelLen {
+				httpx.BadRequest(c, "Footer link group title is too long (max 50 characters)")
+				return "", false
+			}
+			if len(group.Links) > maxFooterLinksPerGrp {
+				httpx.BadRequest(c, "Too many links in footer group (max 10)")
+				return "", false
+			}
+			for _, link := range group.Links {
+				if strings.TrimSpace(link.Label) == "" {
+					httpx.BadRequest(c, "Footer link label is required")
+					return "", false
+				}
+				if len(link.Label) > maxFooterLabelLen {
+					httpx.BadRequest(c, "Footer link label is too long (max 50 characters)")
+					return "", false
+				}
+				trimmedURL := strings.TrimSpace(link.URL)
+				if trimmedURL == "" {
+					httpx.BadRequest(c, "Footer link URL is required")
+					return "", false
+				}
+				if len(trimmedURL) > maxFooterURLLen {
+					httpx.BadRequest(c, "Footer link URL is too long (max 2048 characters)")
+					return "", false
+				}
+				// Permit slash-prefixed footer destinations, including protocol-relative text,
+				// while other values must pass the absolute HTTP(S) check before they are serialized.
+				if !strings.HasPrefix(trimmedURL, "/") {
+					if err := authconfig.ValidateAbsoluteHTTPURL(trimmedURL); err != nil {
+						httpx.BadRequest(c, "Footer link URL must be an absolute http(s) URL or a path starting with /")
+						return "", false
+					}
+				}
+			}
+		}
+		groupBytes, err := json.Marshal(groups)
+		if err != nil {
+			httpx.BadRequest(c, "Failed to serialize footer links")
+			return "", false
+		}
+		footerLinksJSON = string(groupBytes)
+	}
+	return footerLinksJSON, true
 }
 
 // mergeNormalizedSettingsFields serializes a module value into flat request

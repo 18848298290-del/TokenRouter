@@ -194,7 +194,7 @@ OpenAI 兼容计数、Grok 本地估算和 Responses 输入 token 预检，由 a
 
 AlphaSearch 和 Embeddings 也复用固定的请求实例和响应实例，搜索授权的元数据由 `provider.OpenAIAuthorization` 提供。
 
-Live 和 sideband 的 HTTP 入口由 app 直接构造，`LivePorts` 共用审核、资金准入和并发服务。分组的协议和功能门禁在读取请求体之前执行；先审核，再检查资金，然后立即拿用户槽。会话创建、身份归属和 relay 绑定 `OpenAILiveExecutor`；纯会话编排在 `gateway/live`，存储、租约和拨号器与其他入口共用。observer 的取消表和等待计数由这个执行器持有，app 把它登记在对应的关闭阶段。Live 记录的用量费用为零。报文之外的模型重定向由 HTTP 适配层的一个函数统一提供，Live 和 WS 使用同样的一跳映射和追踪规则。
+Live 和 sideband 的 HTTP 入口由 app 直接构造，`LivePorts` 共用审核、资金准入和并发服务。分组的协议和功能门禁在读取请求体之前执行；先审核，再检查资金，然后立即拿用户槽。会话创建、身份归属和 relay 绑定 `OpenAILiveExecutor`；纯会话编排在 `gateway/live`，存储、租约和拨号器与其他入口共用。observer 的取消表和等待计数由 `gateway/live.ObserverManager` 持有，`OpenAILiveExecutor` 和它创建的运行时引用同一个管理器；app 把执行器登记在对应的关闭阶段。Live 记录的用量费用为零。报文之外的模型重定向由 HTTP 适配层的一个函数统一提供，Live 和 WS 使用同样的一跳映射和追踪规则。
 
 ### 会话哈希
 

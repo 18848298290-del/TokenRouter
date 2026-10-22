@@ -20,8 +20,8 @@ import (
 // elapsed-time expiry and remains until replacement or invalidation.
 //
 // Reads return cloned values, and writes serialize before publishing a separate
-// local copy. Subscription registration and terminal stopping share a lifecycle
-// mutex so StopSubscription observes admitted work before waiting.
+// local copy. A tlsCacheSubscriber tracks notification work through terminal
+// shutdown so StopSubscription waits for admitted callbacks and Pub/Sub cleanup.
 // Notifications clear the local collection before invoking the handler
 // synchronously. Handler work therefore delays subscription completion, and
 // callers stop the subscriber before closing Redis; a handler cannot
@@ -38,9 +38,9 @@ const (
 // tlsFingerprintProfileCache retains local TLS profiles and one tracked Redis
 // refresh subscription.
 //
-// localMu protects localCache publication and cloning. subscriptionMu protects
-// subscriptionCancel and subscriptionStopped while admitting subscriptionWG
-// work, so terminal stopping cannot miss a subscriber registered before it.
+// localMu protects localCache publication and cloning. subscriber owns refresh
+// registration and completion, while this cache clears its local collection
+// before invoking the service handler.
 type tlsFingerprintProfileCache struct {
 	// rdb remains available for cache commands and subscriber callbacks until
 	// StopSubscription finishes. The application owns closing the client after the
@@ -52,10 +52,10 @@ type tlsFingerprintProfileCache struct {
 	localCache []*egress.TLSFingerprintProfile // owned local configuration collection
 	localMu    sync.RWMutex                    // local value publication lock
 
-	subscriptionMu      sync.Mutex         // subscriber lifecycle registration lock
-	subscriptionCancel  context.CancelFunc // retained subscriber cancellation function
-	subscriptionWG      sync.WaitGroup     // admitted subscriber completion tracking
-	subscriptionStopped bool               // terminal subscriber admission flag
+	// subscriber owns refresh admission and completion for this adapter. Its zero
+	// value accepts one registration, and StopSubscription seals admission
+	// permanently even when no registration has occurred.
+	subscriber tlsCacheSubscriber
 }
 
 // NewTLSFingerprintProfileCache constructs an empty adapter using the supplied
@@ -167,84 +167,28 @@ func (c *tlsFingerprintProfileCache) NotifyUpdate(ctx context.Context) error {
 	return c.rdb.Publish(ctx, tlsFPProfilePubSubKey, "refresh").Err()
 }
 
-// SubscribeUpdates admits one tracked subscriber for TLS profile refresh
-// messages and returns after launching it. Repeated registration or terminal
-// stopping rejects another subscriber; handler needs to be nonnil and return to
-// permit progress.
-//
-// Registration stores cancellation and increments the wait group under
-// subscriptionMu before launch, so StopSubscription can observe the admitted
-// work. Each message clears local state before invoking handler synchronously.
-// Context cancellation or channel closure ends the subscriber; its retained
-// registration prevents restarting this adapter, and handler code cannot
-// synchronously call StopSubscription on itself.
+// SubscribeUpdates registers TLS profile refresh notifications and returns after
+// launching the subscriber. Each notification clears the local collection
+// before invoking handler synchronously; handler must be nonnil and return for
+// later notifications and shutdown to proceed. Duplicate registrations and
+// registrations after StopSubscription are ignored.
 func (c *tlsFingerprintProfileCache) SubscribeUpdates(ctx context.Context, handler func()) {
-	subscriberCtx, cancel := context.WithCancel(ctx)
-	c.subscriptionMu.Lock()
-	if c.subscriptionCancel != nil || c.subscriptionStopped {
-		c.subscriptionMu.Unlock()
-		cancel()
-		return
-	}
-	// Register cancellation and wait-group membership before releasing admission
-	// state, so a concurrent terminal stop waits for this accepted goroutine.
-	c.subscriptionCancel = cancel
-	c.subscriptionWG.Add(1)
-	c.subscriptionMu.Unlock()
-
-	go func() {
-		defer c.subscriptionWG.Done()
-		sub := c.rdb.Subscribe(subscriberCtx, tlsFPProfilePubSubKey)
-		defer func() { _ = sub.Close() }()
-
-		ch := sub.Channel()
-		for {
-			select {
-			case <-subscriberCtx.Done():
-				slog.Debug("tls_fp_profile_cache_subscriber_stopped", "reason", "context_done")
-				return
-			case msg, ok := <-ch:
-				if !ok || msg == nil {
-					if subscriberCtx.Err() != nil {
-						slog.Debug("tls_fp_profile_cache_subscriber_stopped", "reason", "context_done")
-						return
-					}
-					slog.Warn("tls_fp_profile_cache_subscriber_stopped", "reason", "channel_closed")
-					return
-				}
-				// Clear the current collection before invoking the service callback so a
-				// refresh can discover updated data. An in-flight publisher may install a
-				// local collection again before the callback performs its lookup.
-				c.localMu.Lock()
-				c.localCache = nil
-				c.localMu.Unlock()
-
-				handler()
-			}
-		}
-	}()
+	c.subscriber.start(ctx, c.rdb, tlsFPProfilePubSubKey, "tls_fp_profile_cache_subscriber_stopped", func() {
+		// Clear the current collection before invoking the service callback so a
+		// refresh can discover updated data. An in-flight publisher may install a
+		// local collection again before the callback performs its lookup.
+		c.localMu.Lock()
+		c.localCache = nil
+		c.localMu.Unlock()
+		handler()
+	})
 }
 
-// StopSubscription seals new subscription admission, cancels retained
-// subscriber work, and waits for completion. Repeated calls share that
-// lifetime, and an unregistered adapter stops immediately. Call it before
-// closing Redis.
-//
-// The lifecycle mutex is released before waiting, allowing subscription cleanup
-// to progress. Cancellation ends receive waiting but does not interrupt a
-// synchronous handler; that handler needs to return for the wait group to
-// complete. Calling this method from the same subscriber handler waits on
-// itself, so application shutdown invokes it from outside callback execution.
+// StopSubscription cancels the retained subscriber and waits for callback and
+// Pub/Sub completion. Call it before closing Redis and outside callback
+// execution, since a callback that stops itself waits on its own completion.
+// Repeated calls wait for the same subscriber lifetime, and stopping an unused
+// cache permanently rejects later registration.
 func (c *tlsFingerprintProfileCache) StopSubscription() {
-	c.subscriptionMu.Lock()
-	cancel := c.subscriptionCancel
-	c.subscriptionStopped = true
-	c.subscriptionMu.Unlock()
-	if cancel == nil {
-		return
-	}
-	// Wait outside lifecycle admission after cancellation. A callback already
-	// running still owns completion and must return before Redis can be closed.
-	cancel()
-	c.subscriptionWG.Wait()
+	c.subscriber.stop()
 }

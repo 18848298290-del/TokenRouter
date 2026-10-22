@@ -54,7 +54,7 @@ func provideProviderRefresh(store *providerpostgres.ProviderStore, cache provide
 		Now: time.Now, Warn: slog.Warn, Info: slog.Info, Error: slog.Error,
 		Platform: provider.ProviderRefreshPlatformPolicy(),
 	})
-	manager.Register(lifecycle.Hook{Name: "ProviderRefreshCoordinator", StopOrder: 25, Stop: coordinator.StopContext})
+	manager.Register(lifecycle.Hook{Name: "ProviderRefreshCoordinator", StopOrder: shutdownStageProbesAndRefresh, Stop: coordinator.StopContext})
 	return coordinator
 }
 

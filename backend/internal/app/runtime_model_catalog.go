@@ -55,7 +55,7 @@ func provideModelCatalogRuntime(catalog *provider.Service, manager *lifecycle.Ma
 		return nil
 	}})
 
-	manager.Register(lifecycle.Hook{Name: "ModelCatalogService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "ModelCatalogService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		// The later hook consumes readiness published by initial loading. Starting
 		// updates after success satisfies Service.Start's initialization requirement.
 		if catalog != nil && catalogReady {

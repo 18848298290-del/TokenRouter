@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -9,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/tidwall/gjson"
-
-	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
 // alpha_search_headers.go builds authenticated requests for standalone Alpha
@@ -65,20 +62,9 @@ func BuildAlphaSearchRequest(ctx context.Context, body []byte, options AlphaSear
 		parsedURL.RawQuery = query.Encode()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, parsedURL.String(), bytes.NewReader(body))
+	req, err := newAuthenticatedPostRequest(ctx, parsedURL.String(), body, options.Authenticate)
 	if err != nil {
 		return nil, err
-	}
-	req = req.WithContext(upstream.WithHTTPUpstreamProfile(req.Context(), upstream.HTTPUpstreamProfileOpenAI))
-
-	authHeaders, err := options.Authenticate(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("build openai authentication headers: %w", err)
-	}
-	for key, values := range authHeaders {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -123,20 +109,9 @@ func BuildAlphaSearchRequest(ctx context.Context, body []byte, options AlphaSear
 // different keys. The request accepts SSE, uses the ChatGPT host, pairs the
 // final User-Agent and originator, and applies overrides last.
 func BuildAlphaSearchResponsesRequest(ctx context.Context, alphaBody []byte, body []byte, options AlphaSearchRequestOptions) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, options.URL, bytes.NewReader(body))
+	req, err := newAuthenticatedPostRequest(ctx, options.URL, body, options.Authenticate)
 	if err != nil {
 		return nil, err
-	}
-	req = req.WithContext(upstream.WithHTTPUpstreamProfile(req.Context(), upstream.HTTPUpstreamProfileOpenAI))
-
-	authHeaders, err := options.Authenticate(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("build openai authentication headers: %w", err)
-	}
-	for key, values := range authHeaders {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
 	}
 	req.Host = "chatgpt.com"
 	if err := options.ProviderHeaders(ctx, req.Header); err != nil {

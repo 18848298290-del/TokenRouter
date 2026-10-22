@@ -1,9 +1,6 @@
 package httpclient
 
 import (
-	"bufio"
-	"compress/flate"
-	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -18,8 +15,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/andybalholm/brotli"
-	"github.com/klauspost/compress/zstd"
 	"golang.org/x/net/http2"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/proxy"
@@ -189,25 +184,6 @@ type trackedBody struct {
 	// response cleanup returns a reservation once even when callers close
 	// repeatedly.
 	onClose func() // request reservation release callback
-}
-
-// zstdResponseReader reports decoder reads while warning once about non-EOF
-// failures.
-type zstdResponseReader struct {
-	// ReadCloser supplies decoded bytes while warnOnce limits non-EOF failure
-	// logging to this reader instance. Underlying decoder read and close
-	// requirements remain applicable.
-	io.ReadCloser           // retained zstd decoder reader
-	warnOnce      sync.Once // decoder failure warning guard
-}
-
-// decompressedBody closes the decoder and the underlying response body.
-type decompressedBody struct {
-	// reader produces decoded or buffered bytes while closer retains the
-	// original network body. Close attempts reader cleanup first, discards its
-	// error, then returns the original body's close result.
-	reader io.Reader // decoded or buffered response bytes
-	closer io.Closer // retained original response body
 }
 
 // NewUpstreamPool constructs an initialized upstream cache with its own entry
@@ -806,101 +782,6 @@ func wrapTrackedBody(body io.ReadCloser, onClose func()) io.ReadCloser {
 		return body
 	}
 	return &trackedBody{ReadCloser: body, onClose: onClose}
-}
-
-// decompressResponseBody installs one decoder for supported Content-Encoding
-// on a non-nil response body. Supported names are gzip, br, deflate, and
-// zstd; unsupported or combined encodings retain the body. Setup failure
-// retains encoding metadata, while gzip header reads may already have
-// consumed original bytes.
-//
-// Zstd peeks through a buffered reader before decoder setup so a failed setup
-// keeps peeked bytes readable. Installed decoders remove encoding/length
-// headers and set unknown length. Closing the wrapper attempts decoder
-// cleanup before closing the original body; decoder-close errors are
-// discarded while original body errors remain caller-visible.
-func decompressResponseBody(resp *http.Response) {
-	if resp == nil || resp.Body == nil {
-		return
-	}
-	ce := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
-	if ce == "" {
-		return
-	}
-
-	originalBody := resp.Body
-	var reader io.Reader
-	switch ce {
-	case "gzip":
-		gr, err := gzip.NewReader(resp.Body)
-		if err != nil {
-			// Gzip setup can already have consumed header bytes. Retain encoding
-			// metadata and the remaining original body when initialization cannot supply a decoder.
-			return
-		}
-		reader = gr
-	case "br":
-		reader = brotli.NewReader(resp.Body)
-	case "deflate":
-		reader = flate.NewReader(resp.Body)
-	case "zstd":
-		bufferedBody := bufio.NewReader(resp.Body)
-		resp.Body = &decompressedBody{reader: bufferedBody, closer: originalBody}
-
-		// Peek retains bytes in this reader. Setup failure can then leave the
-		// encoded response readable through the buffered body instead of losing consumed input.
-		headerBytes, _ := bufferedBody.Peek(zstd.HeaderMaxSize)
-		var header zstd.Header
-		if err := header.Decode(headerBytes); err != nil {
-			slog.Warn("zstd_decompress_failed", "error", err)
-			return
-		}
-
-		zr, err := zstd.NewReader(bufferedBody)
-		if err != nil {
-			slog.Warn("zstd_decompress_failed", "error", err)
-			return
-		}
-		reader = &zstdResponseReader{ReadCloser: zr.IOReadCloser()}
-	default:
-		return
-	}
-
-	resp.Body = &decompressedBody{reader: reader, closer: originalBody}
-	resp.Header.Del("Content-Encoding")
-	resp.Header.Del("Content-Length") // Decoded length is unknown.
-	resp.ContentLength = -1
-}
-
-// Read delegates to the zstd decoder and emits one warning for the first
-// non-EOF error. It returns the decoder's count and error unchanged, while
-// later failures reuse the completed warning guard.
-func (r *zstdResponseReader) Read(p []byte) (int, error) {
-	n, err := r.ReadCloser.Read(p)
-	if err != nil && !errors.Is(err, io.EOF) {
-		r.warnOnce.Do(func() {
-			slog.Warn("zstd_decompress_failed", "error", err)
-		})
-	}
-	return n, err
-}
-
-// Read delegates response bytes to the installed decoder or buffered reader.
-func (d *decompressedBody) Read(p []byte) (int, error) {
-	return d.reader.Read(p)
-}
-
-// Close attempts decoder cleanup when it implements io.Closer, then closes
-// the retained original response body. Decoder-close errors are discarded;
-// the returned error comes from the original body, and callers retain its
-// repeat/concurrent-close rules.
-func (d *decompressedBody) Close() error {
-	// Decoder cleanup can own buffers or workers. Attempt it first, then close
-	// the original network body and expose that body's cleanup result to its caller.
-	if rc, ok := d.reader.(io.Closer); ok {
-		_ = rc.Close()
-	}
-	return d.closer.Close()
 }
 
 // CloseIdleConnections asks every cached client to close idle connections

@@ -234,10 +234,10 @@ ORDER BY bucket ASC`
 // breaker.
 //
 // A full outer join retains a platform observed by either source, while empty
-// or null platforms disappear from the result. Group and provider joins on
-// usage retain recorded platform identity rather than deriving current
-// platform. This independent query can observe data newer than the preceding
-// timeline, and its scan or iteration errors reject the combined response.
+// or null platforms disappear from the result. Usage totals read the recorded
+// platform directly. This independent query can observe data newer than the
+// preceding timeline, and its scan or iteration errors reject the combined
+// response.
 func (r *Store) getThroughputBreakdownByPlatform(ctx context.Context, start, end time.Time) ([]*ops.OpsThroughputPlatformBreakdownItem, error) {
 	q := `
 WITH usage_totals AS (
@@ -245,8 +245,6 @@ WITH usage_totals AS (
          COUNT(*) AS success_count,
          COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS token_consumed
   FROM usage_logs ul
-  LEFT JOIN groups g ON g.id = ul.group_id
-  LEFT JOIN providers a ON a.id = ul.provider_id
   WHERE ul.created_at >= $1 AND ul.created_at < $2
   GROUP BY 1
 ),

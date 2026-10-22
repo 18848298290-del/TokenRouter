@@ -116,22 +116,26 @@ func TestWrapReleaseOnDone_NoGoroutineLeak(t *testing.T) {
 }
 
 // TestWrapReleaseOnDone_ContextCancellation installs a release wrapper and
-// cancels its request context. After allowing callback execution, it requires
-// the recorded cleanup count to be one.
+// cancels its request context. It waits for the cleanup callback to finish
+// before checking that the recorded cleanup count is one.
 func TestWrapReleaseOnDone_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var releaseCount int32
+	released := make(chan struct{})
 	_ = WrapRelease(ctx, ReleaseOnCancel, func() {
 		atomic.AddInt32(&releaseCount, 1)
+		close(released)
 	})
 
-	// Cancellation dispatches the registered cleanup asynchronously. The
-	// following settling interval permits that callback to run before its
-	// atomic count is inspected.
+	// Cancellation dispatches cleanup asynchronously. Wait for its completion
+	// signal so the count assertion observes the callback rather than scheduler timing.
 	cancel()
-
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("context cancellation did not finish release")
+	}
 
 	if count := atomic.LoadInt32(&releaseCount); count != 1 {
 		t.Errorf("expected release count to be 1, got %d", count)
@@ -195,8 +199,8 @@ func TestWrapReleaseOnDone_NilReleaseFunc(t *testing.T) {
 }
 
 // TestWrapReleaseOnDone_ConcurrentCalls dispatches ten goroutines using one
-// cancellation release wrapper. After a settling interval, it requires one
-// cleanup observation across those concurrent callers.
+// cancellation release wrapper. It joins every caller before requiring one
+// cleanup observation across the complete set of concurrent calls.
 func TestWrapReleaseOnDone_ConcurrentCalls(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -206,15 +210,14 @@ func TestWrapReleaseOnDone_ConcurrentCalls(t *testing.T) {
 		atomic.AddInt32(&releaseCount, 1)
 	})
 
-	// Reuse one wrapper across multiple cleanup callers to exercise its shared
-	// release guard; the later delay allows dispatched goroutines to reach
-	// that guard.
+	// Join every cleanup caller before inspecting the count so a late invocation
+	// cannot escape the assertion merely because its goroutine has not run yet.
 	const numGoroutines = 10
+	var callers sync.WaitGroup
 	for range numGoroutines {
-		go release()
+		callers.Go(release)
 	}
-
-	time.Sleep(200 * time.Millisecond)
+	callers.Wait()
 
 	if count := atomic.LoadInt32(&releaseCount); count != 1 {
 		t.Errorf("expected release count to be 1, got %d", count)

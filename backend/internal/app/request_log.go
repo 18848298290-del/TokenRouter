@@ -29,7 +29,7 @@ import (
 func provideRequestLog(db *sql.DB, cfg *config.Config, manager *lifecycle.Manager) *requestlog.Service {
 	service := requestlog.NewService(postgres.NewStore(db), cfg.RequestLog.RetentionDays,
 		func(format string, args ...any) { logging.LegacyPrintf("request.records", format, args...) })
-	manager.Register(lifecycle.Hook{Name: "RequestRecords", StartOrder: 185, StopOrder: 790, Start: service.Start, Stop: service.Stop})
+	manager.Register(lifecycle.Hook{Name: "RequestRecords", StartOrder: 185, StopOrder: shutdownStageRequestAndSystemLogs, Start: service.Start, Stop: service.Stop})
 	return service
 }
 

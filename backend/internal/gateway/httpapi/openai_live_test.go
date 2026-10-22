@@ -165,6 +165,13 @@ type liveTestStore struct {
 	getControllerErr error // injected controller read failure
 }
 
+// liveObserverStore counts controller claims after local observer registration
+// for shutdown assertions.
+type liveObserverStore struct {
+	liveTestStore              // underlying controller state fixture
+	claims        atomic.Int32 // observed controller claim count
+}
+
 // liveTestConcurrencyCache accepts Live leases and counts their requested
 // releases.
 type liveTestConcurrencyCache struct {
@@ -248,7 +255,7 @@ func TestLiveHandoffCancellationStopsBeforeProviderLookup(t *testing.T) {
 	store := &cancelingLiveStore{liveTestStore: liveTestStore{record: record}, cancel: cancel}
 	providers := &countingLiveProviders{}
 	s := newLiveFixture(liveFixtureInputs{store: store, providers: providers})
-	s.liveObserverStopped = true
+	require.NoError(t, s.StopLiveObservers(context.Background()))
 	start := time.Now()
 	err := s.Proxy(ctx, record, &coderws.Conn{})
 	if err != context.Canceled {
@@ -476,6 +483,14 @@ func (s *liveTestStore) ClaimLiveController(_ context.Context, callHash, control
 	s.record.Controller = controller
 	s.record.ControllerOwner = owner
 	return true, nil
+}
+
+// ClaimLiveController records each observer's entry into shared storage and
+// delegates the controller claim. Tests configure the embedded store before
+// observation begins and inspect the count concurrently.
+func (s *liveObserverStore) ClaimLiveController(ctx context.Context, callHash, controller, owner string) (bool, error) {
+	s.claims.Add(1)
+	return s.liveTestStore.ClaimLiveController(ctx, callHash, controller, owner)
 }
 
 // ReleaseLiveController resets matching ownership to pending and clears its
@@ -1029,34 +1044,69 @@ func TestFinalizeLiveCallUsageLogFallsBackToSyncCreate(t *testing.T) {
 	require.Len(t, usageRepo.logs[0].RequestID, 36)
 }
 
-// TestStopLiveObserversPreservesRemoteCall stops a registered observer while
-// its initial store claim fails. Shutdown drains local work, keeps the
-// saved remote call pending, and prevents a later observer registration.
+// TestStopLiveObserversPreservesRemoteCall stops observers from two runtime
+// facades while their initial store claims fail. Shutdown drains both tasks,
+// keeps the saved remote call pending, and rejects later work from every facade.
 func TestStopLiveObserversPreservesRemoteCall(t *testing.T) {
 	record := &gatewaysession.LiveCallRecord{CallHash: "test-shutdown", Controller: gatewaysession.LiveControllerPending, ExpiresAt: time.Now().Add(time.Hour)}
-	store := &liveTestStore{record: record, claimErr: errors.New("temporary store failure")}
+	store := &liveObserverStore{liveTestStore: liveTestStore{record: record, claimErr: errors.New("temporary store failure")}}
 	svc := newLiveFixture(liveFixtureInputs{store: store})
-	// Wait for registration before requesting shutdown, then join the observer
-	// goroutine so later stored-call assertions run after local observation has drained.
-	done := make(chan struct{})
-	go func() { svc.observeLiveCall(record); close(done) }()
+	first := svc.liveRuntime()
+	second := svc.liveRuntime()
+	// Both facades reach storage after registration. Join their observers after
+	// stopping so saved-call assertions cover the entire shared local shutdown.
+	done := make(chan struct{}, 2)
+	for _, runtime := range []*live.Service{first, second} {
+		go func() {
+			runtime.Observe(record)
+			done <- struct{}{}
+		}()
+	}
 	require.Eventually(t, func() bool {
-		svc.liveObserverMu.Lock()
-		defer svc.liveObserverMu.Unlock()
-		return len(svc.liveObserverCancels) == 1
+		return store.claims.Load() == 2
 	}, time.Second, time.Millisecond)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	require.NoError(t, svc.StopLiveObservers(ctx))
 	<-done
+	<-done
 	require.NoError(t, svc.StopLiveObservers(ctx))
 	stored, err := store.GetLiveCall(context.Background(), record.CallHash)
 	require.NoError(t, err)
 	require.Equal(t, gatewaysession.LiveControllerPending, stored.Controller)
+	first.Observe(record)
+	second.Observe(record)
 	svc.observeLiveCall(record)
-	svc.liveObserverMu.Lock()
-	require.Empty(t, svc.liveObserverCancels)
-	svc.liveObserverMu.Unlock()
+	require.EqualValues(t, 2, store.claims.Load())
+}
+
+// TestLiveObserverManagerSharedInitialization races first use of a zero-value
+// executor across callers. Every caller receives the same manager, and stopping
+// that instance keeps it installed with admission closed.
+func TestLiveObserverManagerSharedInitialization(t *testing.T) {
+	svc := &OpenAILiveExecutor{}
+	managers := make([]*live.ObserverManager, 16)
+	var callers sync.WaitGroup
+	start := make(chan struct{})
+	// Release first callers together and join their writes before checking pointer
+	// identity, so the race detector covers publication without racing the assertions.
+	for index := range managers {
+		callers.Go(func() {
+			<-start
+			managers[index] = svc.liveObserverManager()
+		})
+	}
+	close(start)
+	callers.Wait()
+	for _, manager := range managers {
+		require.Same(t, managers[0], manager)
+	}
+	require.NoError(t, svc.StopLiveObservers(context.Background()))
+	require.Same(t, managers[0], svc.liveObserverManager())
+	run, finish, ok := svc.beginLiveObserver("late")
+	require.False(t, ok)
+	require.Nil(t, run)
+	require.Nil(t, finish)
 }
 
 // newLiveTLSRoutingServices starts production TLS profile and router

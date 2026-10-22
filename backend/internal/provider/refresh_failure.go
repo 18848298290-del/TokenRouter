@@ -53,17 +53,16 @@ type RefreshFailureWriter interface {
 	ApplyOAuthRefreshFailure(context.Context, RefreshFailureVersion, RefreshFailure) (bool, error)
 }
 
-// FailureVersion captures credentials, proxy and scheduling state before a
-// conditional failure write. Nil input yields the zero version, and nil
-// credentials become an empty object; unsupported values retain the sharing
-// behavior of CloneValues.
+// FailureVersion captures credential identity and scheduling state for a
+// conditional failure write. ObserveCredentialVersion supplies detached
+// supported values; nil input returns a zero failure version, including its
+// disabled scheduling switch.
 func FailureVersion(value *Record) RefreshFailureVersion {
 	if value == nil {
 		return RefreshFailureVersion{}
 	}
-	credentials := CloneValues(value.Credentials)
-	if credentials == nil {
-		credentials = map[string]any{}
+	return RefreshFailureVersion{
+		CredentialVersion: ObserveCredentialVersion(value),
+		Schedulable:       value.Schedulable,
 	}
-	return RefreshFailureVersion{CredentialVersion: CredentialVersion{ID: value.ID, Platform: value.Platform, Type: value.Type, Status: value.Status, Credentials: credentials, ProxyID: clonePointer(value.ProxyID)}, Schedulable: value.Schedulable}
 }

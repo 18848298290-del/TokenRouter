@@ -513,26 +513,24 @@ func (p *OpenAIResponseOutput) NewStreamFailureWithModel(
 		headers = responseHeaders[0]
 	}
 	return p.NewStreamPolicyFailureWithModel(
-		c, provider, passthrough, upstreamRequestID, headers, http.StatusBadGateway, payload, message, false, canonicalModel,
+		c, provider, passthrough, upstreamRequestID, headers, payload, message, canonicalModel,
 	)
 }
 
-// NewStreamPolicyFailure delegates stream failure construction using status
-// and captured event evidence. Its boolean retry argument is unused; the
-// model-aware builder recomputes event retryability and may replace the
-// supplied status with applied-health or terminal classification.
+// NewStreamPolicyFailure delegates stream failure construction using captured
+// event evidence. The model-aware builder derives status from applied-health
+// or terminal classification and computes retryability from the provider and
+// event payload.
 func (p *OpenAIResponseOutput) NewStreamPolicyFailure(
 	c *gin.Context,
 	provider *gatewayprovider.ExecutionProvider,
 	passthrough bool,
 	upstreamRequestID string,
 	responseHeaders http.Header,
-	statusCode int,
 	payload []byte,
 	message string,
-	_ bool,
 ) *forwardcore.UpstreamFailoverError {
-	return p.NewStreamPolicyFailureWithModel(c, provider, passthrough, upstreamRequestID, responseHeaders, statusCode, payload, message, false)
+	return p.NewStreamPolicyFailureWithModel(c, provider, passthrough, upstreamRequestID, responseHeaders, payload, message)
 }
 
 // NewStreamPolicyFailureWithModel constructs a classified failover error from
@@ -541,8 +539,8 @@ func (p *OpenAIResponseOutput) NewStreamPolicyFailure(
 // slot. Present evidence supplies the status and disablement already applied;
 // otherwise TerminalProviderEffects computes them.
 //
-// Event retryability is recomputed, and the boolean input is unused. Semantic
-// 429 classification omits stream-establishment headers while retaining them
+// Event retryability follows the provider and payload. Semantic 429
+// classification omits stream-establishment headers while retaining them
 // on the returned failure for downstream metadata. Classified credential or
 // request-transient failures keep their response body; other failures receive
 // a rebuilt protocol error envelope. Callers enforce the output window before
@@ -553,10 +551,8 @@ func (p *OpenAIResponseOutput) NewStreamPolicyFailureWithModel(
 	passthrough bool,
 	upstreamRequestID string,
 	responseHeaders http.Header,
-	statusCode int,
 	payload []byte,
 	message string,
-	_ bool,
 	canonicalModel ...string,
 ) *forwardcore.UpstreamFailoverError {
 	message = logredact.SanitizeUpstreamQueries(strings.TrimSpace(message))
@@ -569,10 +565,7 @@ func (p *OpenAIResponseOutput) NewStreamPolicyFailureWithModel(
 	}
 	// Conversion may already have applied health for this terminal. Consume
 	// that evidence once before deciding whether another health application is needed.
-	observedStatus, shouldDisable, sideEffectsApplied := consumeOpenAIResponseFailureEffects(c)
-	if sideEffectsApplied {
-		statusCode = observedStatus
-	}
+	statusCode, shouldDisable, sideEffectsApplied := consumeOpenAIResponseFailureEffects(c)
 	if !sideEffectsApplied {
 		statusCode, shouldDisable = p.TerminalProviderEffects(c, provider, payload, message, headers, canonicalModel...)
 	}

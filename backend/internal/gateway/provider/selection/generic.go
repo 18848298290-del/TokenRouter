@@ -87,10 +87,10 @@ func (s *Generic) SelectProviderForModelWithExclusions(ctx context.Context, grou
 
 // SelectProviderWithLoadAwareness returns the selected target with acquired
 // resources or a wait plan for the admitted group. Callers await capacity
-// before forwarding and release acquired resources after the attempt;
-// metadataUserID and tokenRouterUserID are unused compatibility inputs.
+// before forwarding and release acquired resources after the attempt.
+// Excluded provider IDs apply to this selection without changing group policy.
 // @project-doc docs/architecture/gateway_request_lifecycle.md#account_selection_and_failover
-func (s *Generic) SelectProviderWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, tokenRouterUserID int64) (*gatewayprovider.SelectionResult, error) {
+func (s *Generic) SelectProviderWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*gatewayprovider.SelectionResult, error) {
 	ctx = withSelectionRequest(ctx, groupID, requestedModel)
 	ctx, capabilities := withCapabilitySelection(ctx)
 	core, scope := s.genericSelector()

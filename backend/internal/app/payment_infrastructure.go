@@ -32,10 +32,10 @@ func providePaymentAdminHTTP(runtime *payment.Runtime, cfg *payment.ConfigServic
 	return paymenthttp.NewAdminHandler(runtime, cfg, plans, calendar)
 }
 
-// providePaymentWebhookHTTP joins payment fulfillment and provider-registry
-// webhook verification.
-func providePaymentWebhookHTTP(runtime *payment.Runtime, registry *payment.Registry) *paymenthttp.PaymentWebhookHandler {
-	return paymenthttp.NewPaymentWebhookHandler(runtime, registry)
+// providePaymentWebhookHTTP binds the shared runtime for callback verification
+// and payment fulfillment.
+func providePaymentWebhookHTTP(runtime *payment.Runtime) *paymenthttp.PaymentWebhookHandler {
+	return paymenthttp.NewPaymentWebhookHandler(runtime)
 }
 
 // providePaymentEncryptionKey returns the configured persistent TOTP key for

@@ -32,7 +32,7 @@ func provideProviderImportProbes(manager *lifecycle.Manager) *provider.GrokImpor
 	queue := provider.NewGrokImportProbeScheduler(provider.GrokImportProbeOptions{Concurrency: 3, Timeout: 25 * time.Second, Debug: slog.Debug, Info: slog.Info, Warn: slog.Warn, Error: slog.Error})
 	// Imported snapshots may still be queued after HTTP completion. Register
 	// queue draining before the later quota services and shared storage enter their shutdown levels.
-	manager.Register(lifecycle.Hook{Name: "ProviderImportProbes", StopOrder: 20, Stop: queue.StopContext})
+	manager.Register(lifecycle.Hook{Name: "ProviderImportProbes", StopOrder: shutdownStageProducers, Stop: queue.StopContext})
 	return queue
 }
 

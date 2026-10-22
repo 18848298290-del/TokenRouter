@@ -10,12 +10,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
-// jwt_auth.go authenticates panel JWT requests against current account and
-// session-binding state.
-// Panel JWTs are checked against a current user before a request receives
-// authenticated Gin values. A valid signature alone is insufficient when the
-// account is inactive, the credential fingerprint changed, or the configured
-// session binding rejects the request.
+// jwt_auth.go authenticates panel requests and validates current-account JWT
+// state for panel and administrator entrypoints. Access claims are checked
+// against current user status and credential version before optional session
+// binding. Administrator entrypoints check the role before publishing identity;
+// panel middleware records activity after publishing identity.
 
 // JWTAuth builds middleware that validates a Bearer token, loads its current
 // user, and applies session binding before recording a JWT principal. Supply
@@ -47,39 +46,8 @@ func JWTAuth(
 			return
 		}
 
-		claims, err := authService.ValidateToken(tokenString)
-		if err != nil {
-			if errors.Is(err, identity.ErrTokenExpired) {
-				AbortWithError(c, 401, "TOKEN_EXPIRED", "Token has expired")
-				return
-			}
-			AbortWithError(c, 401, "INVALID_TOKEN", "Invalid token")
-			return
-		}
-
-		// Read current state so disabling a user takes effect before token expiry.
-		user, err := userService.GetByID(c.Request.Context(), claims.UserID)
-		if err != nil {
-			AbortWithError(c, 401, "USER_NOT_FOUND", "User not found")
-			return
-		}
-
-		if !user.IsActive() {
-			AbortWithError(c, 401, "USER_INACTIVE", "User account is not active")
-			return
-		}
-
-		// Credential changes update the current user fingerprint; comparing it with
-		// the signed version prevents an earlier token from authenticating
-		// afterward.
-		if claims.TokenVersion != user.TokenVersion {
-			AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked (password changed)")
-			return
-		}
-
-		// Binding enforcement can revoke the refresh family and abort this request;
-		// publish authenticated Gin values only after that check accepts the token.
-		if !EnforceSessionBinding(c, authService, settingService, auditService, claims) {
+		claims, user, ok := validateCurrentJWT(c, tokenString, authService, userService, settingService, auditService)
+		if !ok {
 			return
 		}
 
@@ -90,4 +58,55 @@ func JWTAuth(
 
 		c.Next()
 	}
+}
+
+// validateCurrentJWT returns signed claims and the current active account after
+// credential-version and session-binding checks. It aborts with the first
+// authentication failure and returns false; callers apply any role check and
+// publish identity after success. Authentication and user readers supply nonnil
+// results when returning nil errors.
+func validateCurrentJWT(
+	c *gin.Context,
+	token string,
+	authService SessionAuth,
+	userService UserReader,
+	settingService BindingSettings,
+	auditService AuthObserver,
+) (*identity.JWTClaims, *identity.User, bool) {
+	claims, err := authService.ValidateToken(token)
+	if err != nil {
+		if errors.Is(err, identity.ErrTokenExpired) {
+			AbortWithError(c, 401, "TOKEN_EXPIRED", "Token has expired")
+			return nil, nil, false
+		}
+		AbortWithError(c, 401, "INVALID_TOKEN", "Invalid token")
+		return nil, nil, false
+	}
+
+	// Read current state so disabling a user takes effect before token expiry.
+	user, err := userService.GetByID(c.Request.Context(), claims.UserID)
+	if err != nil {
+		AbortWithError(c, 401, "USER_NOT_FOUND", "User not found")
+		return nil, nil, false
+	}
+
+	if !user.IsActive() {
+		AbortWithError(c, 401, "USER_INACTIVE", "User account is not active")
+		return nil, nil, false
+	}
+
+	// Credential changes update the current user fingerprint; comparing it with
+	// the signed version prevents an earlier token from authenticating afterward.
+	if claims.TokenVersion != user.TokenVersion {
+		AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked (password changed)")
+		return nil, nil, false
+	}
+
+	// Binding enforcement can revoke the refresh family and record an audit event.
+	// Complete it before entrypoints check roles or publish authenticated values.
+	if !EnforceSessionBinding(c, authService, settingService, auditService, claims) {
+		return nil, nil, false
+	}
+
+	return claims, user, true
 }

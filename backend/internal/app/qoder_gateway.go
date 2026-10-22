@@ -147,7 +147,7 @@ func provideQoderRequestActivity(manager *lifecycle.Manager, runtime *gatewaypro
 	activity := lifecycle.NewOperations("QoderRequestsAndAttempts")
 	// Stop request and attempt admission together, then wait for accepted work
 	// before completion recording and the shared platform dependencies enter later cleanup phases.
-	manager.Register(lifecycle.Hook{Name: "QoderRequestsAndAttempts", StopOrder: 15, Stop: activity.StopContext})
+	manager.Register(lifecycle.Hook{Name: "QoderRequestsAndAttempts", StopOrder: shutdownStageRequests, Stop: activity.StopContext})
 	runtime.BindAttemptActivity(activity.Enter)
 	return &qoderRequestActivity{Operations: activity}
 }

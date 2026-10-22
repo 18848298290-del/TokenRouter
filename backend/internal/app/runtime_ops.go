@@ -53,7 +53,7 @@ func provideOpsRuntime(
 	manager *lifecycle.Manager,
 	dashboardAggregation *usage.DashboardAggregationService,
 ) *opsRuntimeReady {
-	manager.Register(lifecycle.Hook{Name: "OpsMetricsCollector", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "OpsMetricsCollector", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if opsMetricsCollector != nil {
 			opsMetricsCollector.Start()
 		}
@@ -64,7 +64,7 @@ func provideOpsRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "OpsAggregationService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "OpsAggregationService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if opsAggregation != nil {
 			opsAggregation.Start()
 		}
@@ -75,7 +75,7 @@ func provideOpsRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "OpsAlertEvaluatorService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "OpsAlertEvaluatorService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if opsAlertEvaluator != nil {
 			opsAlertEvaluator.Start()
 		}
@@ -86,7 +86,7 @@ func provideOpsRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "OpsCleanupService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "OpsCleanupService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if opsCleanup != nil {
 			opsCleanup.Start()
 		}
@@ -97,7 +97,7 @@ func provideOpsRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "OpsScheduledReportService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "OpsScheduledReportService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if opsScheduledReport != nil {
 			opsScheduledReport.Start()
 		}
@@ -108,7 +108,7 @@ func provideOpsRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "OpsSystemLogSink", StartOrder: 210, StopOrder: 790, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "OpsSystemLogSink", StartOrder: 210, StopOrder: shutdownStageRequestAndSystemLogs, Start: func(ctx context.Context) error {
 		if opsSystemLogSink != nil {
 			opsSystemLogSink.Start()
 			// Publish the sink after its worker starts so lifecycle and request logs
@@ -125,7 +125,7 @@ func provideOpsRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "OpsService", StartOrder: 975, StopOrder: 25, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "OpsService", StartOrder: 975, StopOrder: shutdownStageProbesAndRefresh, Start: func(ctx context.Context) error {
 		if opsService != nil {
 			// The refresh loop owns its cancellable lifetime after startup. Its
 			// paired stop method cancels and waits instead of inheriting the start context.
@@ -138,7 +138,7 @@ func provideOpsRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "OpsIngressRejectAggregator", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "OpsIngressRejectAggregator", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if opsIngressReject != nil {
 			opsIngressReject.Start()
 		}
@@ -155,7 +155,7 @@ func provideOpsRuntime(
 		return nil
 	}})
 
-	manager.Register(lifecycle.Hook{Name: "DashboardAggregationService", StartOrder: 970, StopOrder: 30, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "DashboardAggregationService", StartOrder: 970, StopOrder: shutdownStageAggregatesSessionsAndSearch, Start: func(ctx context.Context) error {
 		if dashboardAggregation != nil {
 			dashboardAggregation.Start()
 		}

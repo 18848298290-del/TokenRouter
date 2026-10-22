@@ -31,7 +31,7 @@ func provideJobsRuntime(
 	cnUsageMonitor *provider.CNUsageMonitor,
 	manager *lifecycle.Manager,
 ) *jobsRuntimeReady {
-	manager.Register(lifecycle.Hook{Name: "BatchImageCleanupService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "BatchImageCleanupService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if batchImageCleanup != nil {
 			batchImageCleanup.Start()
 		}
@@ -42,7 +42,7 @@ func provideJobsRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "BatchImageWorkerRuntime", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "BatchImageWorkerRuntime", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if batchImageWorker != nil {
 			batchImageWorker.Start()
 		}
@@ -53,7 +53,7 @@ func provideJobsRuntime(
 		}
 		return nil
 	}})
-	manager.Register(lifecycle.Hook{Name: "CreativeWorkerRuntime", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "CreativeWorkerRuntime", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if creativeWorker != nil {
 			creativeWorker.Start()
 		}
@@ -65,7 +65,7 @@ func provideJobsRuntime(
 		return nil
 	}})
 
-	manager.Register(lifecycle.Hook{Name: "CNProviderBalanceCheckService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "CNProviderBalanceCheckService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: func(ctx context.Context) error {
 		if cnUsageMonitor != nil {
 			return cnUsageMonitor.StartContext(ctx)
 		}

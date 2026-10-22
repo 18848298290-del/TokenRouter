@@ -35,7 +35,7 @@ func ObserveRefreshCooldown(value *Record) RefreshCooldownVersion {
 		return RefreshCooldownVersion{}
 	}
 	return RefreshCooldownVersion{
-		CredentialVersion: FailureVersion(value).CredentialVersion,
+		CredentialVersion: ObserveCredentialVersion(value),
 		ParentProviderID:  clonePointer(value.ParentProviderID), QuotaDimension: value.QuotaDimension,
 		Until: clonePointer(value.TempUnschedulableUntil), Reason: value.TempUnschedulableReason,
 	}

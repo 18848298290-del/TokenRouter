@@ -87,19 +87,7 @@ func (s *OrderStore) ApplyOrderRebate(ctx context.Context, o *payment.Order, bas
 			})
 			return fmt.Errorf("update affiliate rebate skipped audit: %w", err)
 		}
-		// Commit the skipped outcome with its claimed audit so a later replay
-		// recognizes completed handling even when promotion produced no positive
-		// rebate.
-		if err := tx.Commit(); err != nil {
-			s.runtime.Audit(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
-				"error": fmt.Sprintf("commit affiliate rebate tx: %v", err),
-			})
-			return fmt.Errorf("commit affiliate rebate tx: %w", err)
-		}
-		return nil
-	}
-
-	if err := s.UpdateClaimedAffiliateRebateAudit(txCtx, tx.Client(), o.ID, "AFFILIATE_REBATE_APPLIED", map[string]any{
+	} else if err := s.UpdateClaimedAffiliateRebateAudit(txCtx, tx.Client(), o.ID, "AFFILIATE_REBATE_APPLIED", map[string]any{
 		"baseAmount":   basePoints,
 		"rebateAmount": rebateAmount,
 	}); err != nil {
@@ -109,9 +97,9 @@ func (s *OrderStore) ApplyOrderRebate(ctx context.Context, o *payment.Order, bas
 		return fmt.Errorf("update affiliate rebate applied audit: %w", err)
 	}
 
-	// Commit the positive grant and its final audit together after both
-	// succeeded. A later fulfillment retry can then recognize this order's
-	// completed rebate action.
+	// Commit the grant outcome and its final applied or skipped audit together.
+	// A later fulfillment retry can then recognize this order's completed
+	// rebate handling.
 	if err := tx.Commit(); err != nil {
 		s.runtime.Audit(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
 			"error": fmt.Sprintf("commit affiliate rebate tx: %v", err),

@@ -52,7 +52,7 @@ type genericResponsesAttemptBridge struct {
 // request Ops before returning loop metadata.
 func (b *genericResponsesAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
 	var err error
-	b.selection, err = b.binding().selectProvider(b.requestCtx, b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0))
+	b.selection, err = b.binding().selectProvider(b.requestCtx, b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded)
 	if err != nil {
 		return textflow.Selection{}, err
 	}

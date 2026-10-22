@@ -1,26 +1,15 @@
 package provider
 
-import (
-	"sync"
-	"time"
-)
+import "time"
 
-// openai_sessions.go stores OpenAI PKCE sessions and coordinates expiration
-// cleanup with shutdown.
-// An OpenAI authorization URL stores state, PKCE verifier and exchange
-// parameters under a generated session ID for later code exchange. Get rejects
-// entries older than the session TTL even when cleanup has not run, so
-// retained expired entries cannot start that exchange path.
-//
-// The store protects map access while returning the stored session pointer
-// directly; callers treat each published session as immutable. Cleanup sweeps
-// expired entries periodically. Start registers one worker while holding the
-// runtime mutex, and Stop closes its channel through that same mutex before
-// joining the worker. A stopped store cannot restart cleanup, but its map
-// remains available to Set, Get and Delete. Lookup and deletion are separate
-// operations rather than an atomic session claim.
+// openai_sessions.go retains OpenAI PKCE proof and the parameters selected for
+// authorization code exchange. Its typed store delegates expiry and cleanup to
+// authorizationSessionStore, and the session records client, proxy, and
+// redirect
+// choices consumed by OpenAIAuthorization.
 
-// OpenAISessionTTL limits PKCE session age for both lookups and periodic eviction
+// OpenAISessionTTL limits PKCE session age for both lookups and periodic
+// eviction
 // from the in-memory authorization store.
 const OpenAISessionTTL = 30 * time.Minute
 
@@ -43,153 +32,59 @@ type OpenAIOAuthSession struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// OpenAISessionStore stores borrowed authorization-session pointers and
-// coordinates one periodic eviction worker.
+// OpenAISessionStore retains typed authorization proof with a stoppable cleanup
+// worker.
 type OpenAISessionStore struct {
-	// runtimeMu protects runtimeStarted and runtimeStopped while registering work
-	// with runtimeWG or closing stopCh. Stop waits after releasing this mutex.
-	runtimeMu      sync.Mutex     // startup and stop state guard
-	runtimeStarted bool           // cleanup worker registration state
-	runtimeStopped bool           // permanent cleanup stop state
-	runtimeWG      sync.WaitGroup // registered cleanup worker lifetime
-
-	// mu protects sessions membership and iteration. Each stored pointer remains
-	// shared after Get returns, so owners keep the pointed session fields immutable.
-	mu       sync.RWMutex                   // session map access guard
-	sessions map[string]*OpenAIOAuthSession // published authorization session pointers
-
-	// stopCh is closed once under runtimeMu to request worker termination. It
-	// remains closed after Stop, preventing that initialized store from restarting cleanup.
-	stopCh chan struct{}
+	// authorizationSessionStore owns locking, expiration, and cleanup for these
+	// sessions. Construct the enclosing platform store before invoking its methods.
+	authorizationSessionStore[OpenAIOAuthSession]
 }
 
-// NewOpenAISessionStore creates an empty store with a fresh stop channel and
-// an idle cleanup worker. Call Start to launch cleanup; Get enforces entry age
-// even while cleanup remains idle.
+// NewOpenAISessionStore creates empty authorization storage with cleanup idle.
+// Call Start to begin periodic removal and Stop to join that worker; lookup
+// checks creation-time expiry even before Start.
 func NewOpenAISessionStore() *OpenAISessionStore {
-	store := &OpenAISessionStore{
-		sessions: make(map[string]*OpenAIOAuthSession),
-		stopCh:   make(chan struct{}),
+	return &OpenAISessionStore{
+		authorizationSessionStore: newAuthorizationSessionStore(
+			OpenAISessionTTL,
+			func(session *OpenAIOAuthSession) time.Time { return session.CreatedAt },
+		),
 	}
-
-	return store
 }
 
-// Set stores session by reference under sessionID, replacing any earlier entry
-// for that ID. Supply an initialized store and nonnil session with its
-// creation time set; callers treat published session fields as immutable,
-// including after Stop.
+// Set retains session under sessionID, replacing any previous pointer for that
+// identifier. Supply a nonnil session and keep its fields stable while stored
+// or borrowed by a reader, including after Stop.
 func (s *OpenAISessionStore) Set(sessionID string, session *OpenAIOAuthSession) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Replacing membership changes future reads while earlier borrowers retain
-	// their session pointers; published objects stay immutable across this map mutation.
-	s.sessions[sessionID] = session
+	s.set(sessionID, session)
 }
 
-// Get returns the stored session pointer when its age is no greater than
-// OpenAISessionTTL, or nil and false for absent or older entries. The returned
-// pointer remains borrowed and immutable; reading does not consume the entry
-// or remove expired storage.
+// Get returns the stored pointer when its creation age is at most
+// OpenAISessionTTL.
+// Missing or older entries return nil and false; expired entries remain stored
+// until deletion or cleanup, and returned fields remain shared.
 func (s *OpenAISessionStore) Get(sessionID string) (*OpenAIOAuthSession, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	session, ok := s.sessions[sessionID]
-	if !ok {
-		return nil, false
-	}
-	// Lookup enforces session age between eviction sweeps so physical retention
-	// of an expired PKCE entry cannot make a later exchange start successfully.
-	if time.Since(session.CreatedAt) > OpenAISessionTTL {
-		return nil, false
-	}
-	return session, true
+	return s.get(sessionID)
 }
 
-// Delete removes sessionID from future lookups and accepts an absent ID.
-// Previously borrowed session pointers remain available to their holders, so
-// callers requiring exclusive exchange coordinate that claim separately from
-// Get and Delete.
+// Delete removes sessionID from subsequent lookups and accepts an absent ID.
+// Borrowers retain previously returned pointers, so callers coordinate
+// exclusive
+// exchange separately from the store's Get and Delete operations.
 func (s *OpenAISessionStore) Delete(sessionID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Removing membership leaves already borrowed pointers intact; this map operation
-	// cannot revoke an exchange that obtained its immutable session through an earlier Get.
-	delete(s.sessions, sessionID)
+	s.delete(sessionID)
 }
 
-// Start launches the cleanup worker once unless this initialized store has
-// already stopped. Repeated calls return with the existing worker unchanged,
-// and a stopped store retains its permanent stop state.
-//
-// The runtime mutex protects the started and stopped flags and remains held
-// while the worker is registered with runtimeWG. That registration precedes
-// any Stop call's wait, preventing shutdown from overlooking a newly launched
-// worker. Session lookups enforce expiry independently of whether cleanup is
-// running.
+// Start admits periodic expiry cleanup once for a constructed store.
+// Repeated calls leave the running worker unchanged, and calls after Stop
+// return with cleanup permanently disabled for this instance.
 func (s *OpenAISessionStore) Start() {
-	s.runtimeMu.Lock()
-	defer s.runtimeMu.Unlock()
-	if s.runtimeStarted || s.runtimeStopped {
-		return
-	}
-	// Register the worker while startup still holds runtimeMu, so a racing Stop
-	// observes its lifetime before waiting and cannot miss this accepted cleanup launch.
-	s.runtimeStarted = true
-	s.runtimeWG.Go(func() { ; s.cleanup() })
+	s.start()
 }
 
-// Stop permanently prevents cleanup startup, closes the stop signal once and
-// waits for the registered worker to finish. Calling Stop before Start or from
-// concurrent callers follows the same runtime-state guard.
-//
-// Channel closure and startup decisions share runtimeMu, while waiting occurs
-// after releasing it so competing Stop calls can join the same worker. Cleanup
-// owns its ticker and can finish a selected sweep before observing the closed
-// signal. Stored entries remain available through the map methods; Stop
-// supplies no context deadline or map clearing.
+// Stop closes cleanup admission and waits for any admitted worker to exit.
+// Repeated calls and calls before Start are supported; Set, Get, and Delete
+// remain available after cleanup stops.
 func (s *OpenAISessionStore) Stop() {
-	s.runtimeMu.Lock()
-	// Share the permanent stop transition with startup and channel closure;
-	// concurrent stoppers join one worker while exactly one caller closes the signal.
-	if !s.runtimeStopped {
-		s.runtimeStopped = true
-		close(s.stopCh)
-	}
-	s.runtimeMu.Unlock()
-	s.runtimeWG.Wait()
-}
-
-// cleanup evicts entries older than OpenAISessionTTL until the store's stop
-// channel is observed. Start is its worker owner, and Stop joins its return
-// after closing that channel.
-//
-// A selected tick locks the session map for the complete sweep so concurrent
-// Set and Delete operations cannot alter the iteration. If the stop signal and
-// a tick are simultaneously ready, selecting the tick permits another sweep
-// before shutdown is observed. The worker stops its own ticker on return; Get
-// already enforces expiry between sweeps.
-func (s *OpenAISessionStore) cleanup() {
-	// Sweep expired storage every five minutes; lookups reject stale sessions between
-	// these scheduled cleanup attempts, regardless of when the worker next runs.
-	ticker := time.NewTicker(5 * time.Minute)
-	// The worker owns the ticker and stops it on every return path, including
-	// a stop signal observed before the first periodic eviction sweep.
-	defer ticker.Stop()
-	for {
-		select {
-		case <-s.stopCh:
-			return
-		case <-ticker.C:
-			// Hold membership stable for the whole expiry sweep; Set and Delete wait
-			// so the iteration removes the same session pointers whose ages it inspected.
-			s.mu.Lock()
-			for id, session := range s.sessions {
-				if time.Since(session.CreatedAt) > OpenAISessionTTL {
-					delete(s.sessions, id)
-				}
-			}
-			s.mu.Unlock()
-		}
-	}
+	s.stop()
 }

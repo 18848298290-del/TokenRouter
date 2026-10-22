@@ -51,7 +51,7 @@ func provideBackup(settings *settings.Store, cfg *config.Config, cipher identity
 	// Begin stopping before HTTP drain so handlers cannot begin more backup
 	// work during shutdown; the later service hook waits for already accepted operations.
 	manager.Register(lifecycle.Hook{Name: "BackupAdmission", StartOrder: 980, StopOrder: 14, Stop: func(ctx context.Context) error { core.BeginStopContext(ctx); return nil }})
-	manager.Register(lifecycle.Hook{Name: "BackupService", StartOrder: 980, StopOrder: 20, Start: core.StartContext, Stop: core.StopContext})
+	manager.Register(lifecycle.Hook{Name: "BackupService", StartOrder: 980, StopOrder: shutdownStageProducers, Start: core.StartContext, Stop: core.StopContext})
 	return core
 }
 

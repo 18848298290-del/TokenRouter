@@ -52,65 +52,7 @@ func (p ProviderUsageParticipant) Increment(ctx context.Context, id int64, amoun
 	// Update all enabled quota periods with total usage in one statement, then
 	// use its returned total to identify the event for this increment.
 	rows, err := p.exec.QueryContext(ctx,
-		`UPDATE providers SET extra = (
-			COALESCE(extra, '{}'::jsonb)
-			-- 总额度：始终递增
-			|| jsonb_build_object('quota_used', COALESCE((extra->>'quota_used')::numeric, 0) + $1)
-			-- 日额度：仅在 quota_daily_limit > 0 时处理
-			|| CASE WHEN COALESCE((extra->>'quota_daily_limit')::numeric, 0) > 0 THEN
-				jsonb_build_object(
-					'quota_daily_used',
-					CASE WHEN `+DailyExpiredExpr+`
-					THEN $1
-					ELSE COALESCE((extra->>'quota_daily_used')::numeric, 0) + $1 END,
-					'quota_daily_start',
-					CASE WHEN `+DailyExpiredExpr+`
-					THEN `+NowUTC+`
-					ELSE COALESCE(extra->>'quota_daily_start', `+NowUTC+`) END
-				)
-				-- 固定模式重置时更新下次重置时间
-				|| CASE WHEN `+DailyExpiredExpr+` AND `+NextDailyResetAtExpr+` IS NOT NULL
-				   THEN jsonb_build_object('quota_daily_reset_at', `+NextDailyResetAtExpr+`)
-				   ELSE '{}'::jsonb END
-			ELSE '{}'::jsonb END
-			-- 周额度：仅在 quota_weekly_limit > 0 时处理
-			|| CASE WHEN COALESCE((extra->>'quota_weekly_limit')::numeric, 0) > 0 THEN
-				jsonb_build_object(
-					'quota_weekly_used',
-					CASE WHEN `+WeeklyExpiredExpr+`
-					THEN $1
-					ELSE COALESCE((extra->>'quota_weekly_used')::numeric, 0) + $1 END,
-					'quota_weekly_start',
-					CASE WHEN `+WeeklyExpiredExpr+`
-					THEN `+NowUTC+`
-					ELSE COALESCE(extra->>'quota_weekly_start', `+NowUTC+`) END
-				)
-				-- 固定模式重置时更新下次重置时间
-				|| CASE WHEN `+WeeklyExpiredExpr+` AND `+NextWeeklyResetAtExpr+` IS NOT NULL
-				   THEN jsonb_build_object('quota_weekly_reset_at', `+NextWeeklyResetAtExpr+`)
-				   ELSE '{}'::jsonb END
-			ELSE '{}'::jsonb END
-			-- Monthly counters share the same update so accounting cannot commit
-			-- total consumption while losing the corresponding monthly charge.
-			|| CASE WHEN COALESCE((extra->>'quota_monthly_limit')::numeric, 0) > 0 THEN
-				jsonb_build_object(
-					'quota_monthly_used',
-					CASE WHEN `+MonthlyExpiredExpr+`
-					THEN $1
-					ELSE COALESCE((extra->>'quota_monthly_used')::numeric, 0) + $1 END,
-					'quota_monthly_start',
-					CASE WHEN `+MonthlyExpiredExpr+`
-					THEN `+NowUTC+`
-					ELSE COALESCE(extra->>'quota_monthly_start', `+NowUTC+`) END
-				)
-				-- Expired fixed windows advance their reset deadline with the counter
-				-- so the next increment stays in the newly initialized monthly period.
-				|| CASE WHEN `+MonthlyExpiredExpr+` AND `+NextMonthlyResetAtExpr+` IS NOT NULL
-				   THEN jsonb_build_object('quota_monthly_reset_at', `+NextMonthlyResetAtExpr+`)
-				   ELSE '{}'::jsonb END
-			ELSE '{}'::jsonb END
-		), updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL
+		providerQuotaIncrementSQL+`
 		RETURNING
 			COALESCE((extra->>'quota_used')::numeric, 0),
 			COALESCE((extra->>'quota_limit')::numeric, 0)`,

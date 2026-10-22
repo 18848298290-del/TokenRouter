@@ -519,7 +519,7 @@ func initializeApplication(ctx context.Context, cfg *config.Config, info BuildIn
 	routeMiddleware := provideGatewayRouteMiddleware(apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, cfg, errorLogQueue, appMessageHTTPBindings, modelAttributeService, gatewayRuntimeSettings)
 	appGatewayRouteMount := provideGatewayRouteMount(countTokensHandler, qoderCompatibleHandler, compatibleTextHandler, geminiNativeHandler, openAITextHandler, openAITokensHandler, responsesWSHandler, modelsHandler, messagesHandler, mediaHandler, auxiliaryHandler, liveHandler, searchHandler, publicUsageHandler, qoderChatHandler, batchImageHandler, routeMiddleware)
 	paymentHandler := providePaymentHTTP(paymentRuntime, paymentConfigService, plans)
-	paymentWebhookHandler := providePaymentWebhookHTTP(paymentRuntime, paymentRegistry)
+	paymentWebhookHandler := providePaymentWebhookHTTP(paymentRuntime)
 	httpapiAdminHandler := providePaymentAdminHTTP(paymentRuntime, paymentConfigService, plans, calendar)
 	planHandler := httpapi.NewPlanHandler(plans)
 	appPaymentRouteMount := providePaymentRouteMount(paymentHandler, paymentWebhookHandler, httpapiAdminHandler, planHandler)

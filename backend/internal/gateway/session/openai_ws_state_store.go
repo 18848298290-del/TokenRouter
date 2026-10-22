@@ -441,29 +441,6 @@ func (s *defaultOpenAIWSStateStore) BindResponseProvider(ctx context.Context, gr
 	return s.cache.SetSessionProviderID(cacheCtx, groupID, cacheKey, providerID, ttl)
 }
 
-// cleanupExpiredHTTPResponseOwnerBindings removes expired HTTP owner entries
-// while inspecting at most maxScan keys. The caller holds the owning map's
-// write lock; nil or empty maps and nonpositive scan budgets require no work.
-// Live entries also consume the unordered scan budget.
-func cleanupExpiredHTTPResponseOwnerBindings(bindings map[string]openAIHTTPResponseOwnerBinding, now time.Time, maxScan int) {
-	if len(bindings) == 0 || maxScan <= 0 {
-		return
-	}
-	scanned := 0
-	// Remove elapsed bindings while counting every visited key toward maxScan.
-	// Unvisited expired values stay unavailable to readers until a later scan
-	// removes them physically.
-	for key, binding := range bindings {
-		if now.After(binding.expiresAt) {
-			delete(bindings, key)
-		}
-		scanned++
-		if scanned >= maxScan {
-			break
-		}
-	}
-}
-
 // GetResponseProvider returns the group's remembered provider for a trimmed
 // response ID, or zero when none is usable. A local binding is accepted
 // strictly before its deadline. Otherwise optional shared storage is queried
@@ -852,136 +829,56 @@ func (s *defaultOpenAIWSStateStore) maybeCleanup() {
 	// Scan maps under separate locks with bounded inspected counts so cleanup
 	// does not hold every continuity map while processing one map's expired bindings.
 	s.responseToProviderMu.Lock()
-	cleanupExpiredProviderBindings(s.responseToProvider, now, openAIWSStateStoreCleanupMaxPerMap)
+	cleanupExpiredBindings(s.responseToProvider, now, openAIWSStateStoreCleanupMaxPerMap, func(binding openAIWSProviderBinding) time.Time {
+		return binding.expiresAt
+	})
 	s.responseToProviderMu.Unlock()
 
 	s.responseOwnerMu.Lock()
-	cleanupExpiredHTTPResponseOwnerBindings(s.responseOwners, now, openAIWSStateStoreCleanupMaxPerMap)
+	cleanupExpiredBindings(s.responseOwners, now, openAIWSStateStoreCleanupMaxPerMap, func(binding openAIHTTPResponseOwnerBinding) time.Time {
+		return binding.expiresAt
+	})
 	s.responseOwnerMu.Unlock()
 
 	s.responseToConnMu.Lock()
-	cleanupExpiredConnBindings(s.responseToConn, now, openAIWSStateStoreCleanupMaxPerMap)
+	cleanupExpiredBindings(s.responseToConn, now, openAIWSStateStoreCleanupMaxPerMap, func(binding openAIWSConnBinding) time.Time {
+		return binding.expiresAt
+	})
 	s.responseToConnMu.Unlock()
 
 	s.sessionToTurnStateMu.Lock()
-	cleanupExpiredTurnStateBindings(s.sessionToTurnState, now, openAIWSStateStoreCleanupMaxPerMap)
+	cleanupExpiredBindings(s.sessionToTurnState, now, openAIWSStateStoreCleanupMaxPerMap, func(binding openAIWSTurnStateBinding) time.Time {
+		return binding.expiresAt
+	})
 	s.sessionToTurnStateMu.Unlock()
 
 	s.sessionToConnMu.Lock()
-	cleanupExpiredSessionConnBindings(s.sessionToConn, now, openAIWSStateStoreCleanupMaxPerMap)
+	cleanupExpiredBindings(s.sessionToConn, now, openAIWSStateStoreCleanupMaxPerMap, func(binding openAIWSSessionConnBinding) time.Time {
+		return binding.expiresAt
+	})
 	s.sessionToConnMu.Unlock()
 
 	s.sessionInvalidEncryptedMu.Lock()
-	cleanupExpiredInvalidEncryptedBindings(s.sessionInvalidEncrypted, now, openAIWSStateStoreCleanupMaxPerMap)
+	cleanupExpiredBindings(s.sessionInvalidEncrypted, now, openAIWSStateStoreCleanupMaxPerMap, func(binding openAIWSInvalidEncryptedBinding) time.Time {
+		return binding.expiresAt
+	})
 	s.sessionInvalidEncryptedMu.Unlock()
 }
 
-// cleanupExpiredInvalidEncryptedBindings removes expired ciphertext rejection
-// entries while inspecting at most maxScan keys. The caller holds the owning
-// map's write lock; nil or empty maps and nonpositive scan budgets require no
-// work. Live entries also consume the unordered scan budget.
-func cleanupExpiredInvalidEncryptedBindings(bindings map[string]openAIWSInvalidEncryptedBinding, now time.Time, maxScan int) {
+// cleanupExpiredBindings removes entries whose deadlines precede now while
+// inspecting at most maxScan keys. The caller holds the map's write lock and
+// supplies an expiry reader for its binding type. Nil or empty maps and
+// nonpositive budgets skip scanning. Every visited entry consumes the budget,
+// including live entries and deadlines equal to now; map iteration is unordered.
+func cleanupExpiredBindings[T any](bindings map[string]T, now time.Time, maxScan int, expiresAt func(T) time.Time) {
 	if len(bindings) == 0 || maxScan <= 0 {
 		return
 	}
 	scanned := 0
-	// Remove elapsed bindings while counting every visited key toward maxScan.
-	// Unvisited expired values stay unavailable to readers until a later scan
-	// removes them physically.
+	// Count every inspected binding so a map with many live values holds its
+	// owning lock for the same bounded number of visits as an expired map.
 	for key, binding := range bindings {
-		if now.After(binding.expiresAt) {
-			delete(bindings, key)
-		}
-		scanned++
-		if scanned >= maxScan {
-			break
-		}
-	}
-}
-
-// cleanupExpiredProviderBindings removes expired provider affinity entries
-// while inspecting at most maxScan keys. The caller holds the owning map's
-// write lock; nil or empty maps and nonpositive scan budgets require no work.
-// Live entries also consume the unordered scan budget.
-func cleanupExpiredProviderBindings(bindings map[string]openAIWSProviderBinding, now time.Time, maxScan int) {
-	if len(bindings) == 0 || maxScan <= 0 {
-		return
-	}
-	scanned := 0
-	// Remove elapsed bindings while counting every visited key toward maxScan.
-	// Unvisited expired values stay unavailable to readers until a later scan
-	// removes them physically.
-	for key, binding := range bindings {
-		if now.After(binding.expiresAt) {
-			delete(bindings, key)
-		}
-		scanned++
-		if scanned >= maxScan {
-			break
-		}
-	}
-}
-
-// cleanupExpiredConnBindings removes expired response connection entries while
-// inspecting at most maxScan keys. The caller holds the owning map's write
-// lock; nil or empty maps and nonpositive scan budgets require no work. Live
-// entries also consume the unordered scan budget.
-func cleanupExpiredConnBindings(bindings map[string]openAIWSConnBinding, now time.Time, maxScan int) {
-	if len(bindings) == 0 || maxScan <= 0 {
-		return
-	}
-	scanned := 0
-	// Remove elapsed bindings while counting every visited key toward maxScan.
-	// Unvisited expired values stay unavailable to readers until a later scan
-	// removes them physically.
-	for key, binding := range bindings {
-		if now.After(binding.expiresAt) {
-			delete(bindings, key)
-		}
-		scanned++
-		if scanned >= maxScan {
-			break
-		}
-	}
-}
-
-// cleanupExpiredTurnStateBindings removes expired opaque turn-state entries
-// while inspecting at most maxScan keys. The caller holds the owning map's
-// write lock; nil or empty maps and nonpositive scan budgets require no work.
-// Live entries also consume the unordered scan budget.
-func cleanupExpiredTurnStateBindings(bindings map[string]openAIWSTurnStateBinding, now time.Time, maxScan int) {
-	if len(bindings) == 0 || maxScan <= 0 {
-		return
-	}
-	scanned := 0
-	// Remove elapsed bindings while counting every visited key toward maxScan.
-	// Unvisited expired values stay unavailable to readers until a later scan
-	// removes them physically.
-	for key, binding := range bindings {
-		if now.After(binding.expiresAt) {
-			delete(bindings, key)
-		}
-		scanned++
-		if scanned >= maxScan {
-			break
-		}
-	}
-}
-
-// cleanupExpiredSessionConnBindings removes expired session connection entries
-// while inspecting at most maxScan keys. The caller holds the owning map's
-// write lock; nil or empty maps and nonpositive scan budgets require no work.
-// Live entries also consume the unordered scan budget.
-func cleanupExpiredSessionConnBindings(bindings map[string]openAIWSSessionConnBinding, now time.Time, maxScan int) {
-	if len(bindings) == 0 || maxScan <= 0 {
-		return
-	}
-	scanned := 0
-	// Remove elapsed bindings while counting every visited key toward maxScan.
-	// Unvisited expired values stay unavailable to readers until a later scan
-	// removes them physically.
-	for key, binding := range bindings {
-		if now.After(binding.expiresAt) {
+		if now.After(expiresAt(binding)) {
 			delete(bindings, key)
 		}
 		scanned++

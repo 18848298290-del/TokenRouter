@@ -28,7 +28,7 @@ func provideSettingsRuntime(
 	settingService *gateway.RuntimeSettings,
 	forwarded *runtimeconfig.ForwardedSettings,
 ) *settingsRuntimeReady {
-	manager.Register(lifecycle.Hook{Name: "RuntimeSettingsInitialization", StartOrder: 181, StopOrder: 800, Start: func(ctx context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "RuntimeSettingsInitialization", StartOrder: 181, StopOrder: shutdownStageSettings, Start: func(ctx context.Context) error {
 		// Report a forwarded-IP load failure and still attempt the Grok migration.
 		// Returning success lets the remaining application startup hooks proceed.
 		if err := forwarded.LoadForwardedClientIPSettings(ctx); err != nil {

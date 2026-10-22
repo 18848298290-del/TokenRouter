@@ -71,6 +71,281 @@ type fakeBatchImageAuthCacheInvalidator struct {
 	groupIDs []int64  // invalidated group identity values
 }
 
+// submitCompensationRepository records failed submission writes and injects persistence failures.
+type submitCompensationRepository struct {
+	*fakeBatchImageRepository                               // delegated in-memory job storage
+	onCall                    func(context.Context, string) // ordered operation observation
+	cancel                    context.CancelFunc            // submission cancellation at failure
+	itemErr                   error                         // injected item creation error
+	recordErr                 error                         // injected failure record error
+	hideErr                   error                         // injected record hiding error
+	message                   string                        // attempted diagnostic message text
+}
+
+// submitCompensationFunding observes refund attempts through the existing funding fixture.
+type submitCompensationFunding struct {
+	*fakeBatchImageBillingRepo                               // delegated task funding fixture
+	onCall                     func(context.Context, string) // ordered operation observation
+}
+
+// submitCompensationQueue observes billing retry publication through the existing queue fixture.
+type submitCompensationQueue struct {
+	*publicBatchImageQueue                               // delegated batch queue fixture
+	onCall                 func(context.Context, string) // ordered operation observation
+}
+
+// submitCompensationProvider supplies unusable submission outcomes after cancelling the caller context.
+type submitCompensationProvider struct {
+	*publicBatchImageProvider                               // delegated provider fixture methods
+	onCall                    func(context.Context, string) // ordered operation observation
+	cancel                    context.CancelFunc            // cancellation before failed return
+	result                    *batchimage.BatchProviderJob  // injected upstream job result
+}
+
+// submitCompensationError observes diagnostic formatting while retaining the underlying error category.
+type submitCompensationError struct {
+	err     error  // underlying submission failure
+	onError func() // diagnostic formatting observation
+}
+
+// TestBatchImagePublicService_SubmitCompensation exercises item persistence errors,
+// upstream errors and unusable upstream names after funds have been reserved.
+// It checks compensation order, cancelled context reuse, error precedence and
+// the visibility of records retained for billing retries.
+func TestBatchImagePublicService_SubmitCompensation(t *testing.T) {
+	stages := []struct {
+		name        string                       // scenario display name
+		itemErr     error                        // injected item persistence failure
+		providerErr error                        // injected upstream submission error
+		providerJob *batchimage.BatchProviderJob // returned unusable upstream identity
+		wantErr     error                        // expected public error category
+		wantCode    string                       // expected persisted diagnostic code
+		wantMessage string                       // expected sanitized diagnostic text
+	}{
+		{
+			name:        "item creation",
+			itemErr:     errors.New("projects/private/item persistence failed"),
+			wantErr:     batchimage.ErrBatchImageQueueFailed,
+			wantCode:    "ITEM_CREATE_FAILED",
+			wantMessage: "upstream platform operation failed",
+		},
+		{
+			name:        "upstream error",
+			providerErr: errors.New("projects/private/upstream failed"),
+			wantErr:     batchimage.ErrBatchImageProviderSubmitFailed,
+			wantCode:    "PROVIDER_SUBMIT_FAILED",
+			wantMessage: "upstream platform operation failed",
+		},
+		{
+			name:        "upstream credential error",
+			providerErr: batchimage.ErrBatchImageProviderMissingServiceAccount,
+			wantErr:     batchimage.ErrBatchImageProviderMissingServiceAccount,
+			wantCode:    "BATCH_IMAGE_PROVIDER_MISSING_SERVICE_ACCOUNT",
+			wantMessage: batchimage.ErrBatchImageProviderMissingServiceAccount.Error(),
+		},
+		{
+			name:        "blank upstream name",
+			providerJob: &batchimage.BatchProviderJob{ProviderJobName: " \t "},
+			wantErr:     batchimage.ErrBatchImageProviderSubmitFailed,
+			wantCode:    "PROVIDER_SUBMIT_FAILED",
+			wantMessage: "platform job name missing",
+		},
+		{
+			name:        "nil upstream job",
+			wantErr:     batchimage.ErrBatchImageProviderSubmitFailed,
+			wantCode:    "PROVIDER_SUBMIT_FAILED",
+			wantMessage: "platform job name missing",
+		},
+	}
+	for _, stage := range stages {
+		t.Run(stage.name, func(t *testing.T) {
+			for _, failure := range []struct {
+				name       string // compensation failure scenario name
+				releaseErr error  // injected funding release failure
+				recordErr  error  // injected diagnostic persistence failure
+				hideErr    error  // injected record hiding failure
+				queueErr   error  // injected retry publication failure
+			}{
+				{name: "success"},
+				{name: "record failure", recordErr: errors.New("record unavailable")},
+				{name: "hide failure", hideErr: errors.New("hide unavailable")},
+				{name: "release failure", releaseErr: errors.New("funding unavailable")},
+				{name: "release and record failure", releaseErr: errors.New("funding unavailable"), recordErr: errors.New("record unavailable")},
+				{name: "release and queue failure", releaseErr: errors.New("funding unavailable"), queueErr: errors.New("queue unavailable")},
+			} {
+				t.Run(failure.name, func(t *testing.T) {
+					svc, repo, queue, gemini, _, authCache := newTestBatchImagePublicService(true)
+					ctx, cancel := context.WithCancel(routing.WithModelAttributes(context.Background(), svc.Attributes))
+					defer cancel()
+					var calls []string
+					onCall := func(gotCtx context.Context, operation string) {
+						require.Same(t, ctx, gotCtx)
+						if operation != "items" && operation != "submit" {
+							require.ErrorIs(t, gotCtx.Err(), context.Canceled)
+						}
+						calls = append(calls, operation)
+					}
+					observeError := func(err error) error {
+						if err == nil {
+							return nil
+						}
+						return submitCompensationError{err: err, onError: func() { onCall(ctx, "describe") }}
+					}
+					writes := &submitCompensationRepository{
+						fakeBatchImageRepository: repo,
+						onCall:                   onCall,
+						cancel:                   cancel,
+						itemErr:                  observeError(stage.itemErr),
+						recordErr:                failure.recordErr,
+						hideErr:                  failure.hideErr,
+					}
+					svc.Repo = writes
+					funds := testassert.MustType[*fakeBatchImageBillingRepo](taskFixtureBilling(svc))
+					funds.releaseErr = failure.releaseErr
+					svc.Funding.Store = &submitCompensationFunding{fakeBatchImageBillingRepo: funds, onCall: onCall}
+					queue.err = failure.queueErr
+					svc.Queue = &submitCompensationQueue{publicBatchImageQueue: queue, onCall: onCall}
+					gemini.submitErr = observeError(stage.providerErr)
+					provider := &submitCompensationProvider{
+						publicBatchImageProvider: gemini,
+						onCall:                   onCall,
+						cancel:                   cancel,
+						result:                   stage.providerJob,
+					}
+					providers := testassert.MustType[*batchProviderFixture](svc.ProviderRepo)
+					providers.registry = batchimage.NewRegistry[batchimageprovider.BatchImageProvider](provider)
+					req := validBatchImageSubmitRequest()
+					req.TaskName = "compensation"
+
+					got, err := svc.Submit(ctx, testBatchImageOwner(), req, "")
+
+					require.Nil(t, got)
+					wantErr := stage.wantErr
+					wantCode := stage.wantCode
+					wantCalls := []string{"items"}
+					if stage.itemErr == nil {
+						wantCalls = append(wantCalls, "submit")
+					}
+					wantCalls = append(wantCalls, "release")
+					if failure.releaseErr != nil {
+						wantErr = batchimage.ErrBatchImageBillingHoldFailed
+						wantCode = "BILLING_RELEASE_FAILED"
+						wantCalls = append(wantCalls, "record:"+wantCode, "enqueue")
+						require.Len(t, authCache.userIDs, 1)
+					} else {
+						if stage.itemErr != nil || stage.providerErr != nil {
+							wantCalls = append(wantCalls, "describe")
+						}
+						wantCalls = append(wantCalls, "record:"+wantCode, "hide")
+						require.Equal(t, stage.wantMessage, writes.message)
+						require.Len(t, authCache.userIDs, 2)
+					}
+					require.ErrorIs(t, err, wantErr)
+					require.Equal(t, wantCalls, calls)
+					require.Len(t, funds.reserves, 1)
+					require.Len(t, funds.releases, 1)
+					require.Equal(t, funds.reserves[0].RequestPayloadHash, funds.releases[0].RequestPayloadHash)
+					require.Len(t, repo.jobs, 1)
+					for _, job := range repo.jobs {
+						require.Nil(t, job.ProviderJobName)
+						require.Equal(t, failure.releaseErr != nil, job.AllowanceReserved)
+						require.Equal(t, batchimage.BatchImageReleaseRequestID(job.BatchID), funds.releases[0].RequestID)
+						if failure.recordErr == nil {
+							require.Equal(t, batchimage.BatchImageJobStatusFailed, job.Status)
+							require.Equal(t, wantCode, batchimage.BatchImageDerefString(job.LastErrorCode))
+						} else {
+							wantStatus := batchimage.BatchImageJobStatusUploading
+							if stage.itemErr != nil {
+								wantStatus = batchimage.BatchImageJobStatusCreated
+							}
+							require.Equal(t, wantStatus, job.Status)
+							require.Nil(t, job.LastErrorCode)
+						}
+						if failure.releaseErr == nil && failure.recordErr == nil && failure.hideErr == nil {
+							require.NotNil(t, job.UserDeletedAt)
+						} else {
+							require.Nil(t, job.UserDeletedAt)
+						}
+						if failure.releaseErr != nil && failure.queueErr == nil {
+							require.Equal(t, []string{job.BatchID}, queue.enqueued)
+						} else {
+							require.Empty(t, queue.enqueued)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// BulkCreateBatchImageItems records item persistence and returns the configured error.
+// A failing write cancels the request before compensation starts so tests can
+// detect a replacement context in later operations.
+func (r *submitCompensationRepository) BulkCreateBatchImageItems(ctx context.Context, params []batchimage.CreateBatchImageItemParams) error {
+	r.onCall(ctx, "items")
+	if r.itemErr != nil {
+		r.cancel()
+		return r.itemErr
+	}
+	return r.fakeBatchImageRepository.BulkCreateBatchImageItems(ctx, params)
+}
+
+// RecordBatchImageJobSubmitFailure captures the attempted diagnostic before applying
+// the configured persistence outcome. A configured error leaves the stored job
+// unchanged so later hiding attempts still exercise its state check.
+func (r *submitCompensationRepository) RecordBatchImageJobSubmitFailure(ctx context.Context, batchID, code, message string, markFailed bool) error {
+	r.onCall(ctx, "record:"+code)
+	r.message = message
+	if r.recordErr != nil {
+		return r.recordErr
+	}
+	return r.fakeBatchImageRepository.RecordBatchImageJobSubmitFailure(ctx, batchID, code, message, markFailed)
+}
+
+// MarkBatchImageJobUserDeleted records every hiding attempt before returning a
+// configured rejection or delegating the ownership and terminal-state checks.
+// Failed writes leave the fixture's user deletion timestamp absent.
+func (r *submitCompensationRepository) MarkBatchImageJobUserDeleted(ctx context.Context, userID, apiKeyID int64, batchID string, deletedAt time.Time) error {
+	r.onCall(ctx, "hide")
+	if r.hideErr != nil {
+		return r.hideErr
+	}
+	return r.fakeBatchImageRepository.MarkBatchImageJobUserDeleted(ctx, userID, apiKeyID, batchID, deletedAt)
+}
+
+// Release records refund ordering before forwarding the supplied funding command.
+func (f *submitCompensationFunding) Release(ctx context.Context, cmd *billingcore.TaskFundsCommand) (*billingcore.TaskFundsResult, error) {
+	f.onCall(ctx, "release")
+	return f.fakeBatchImageBillingRepo.Release(ctx, cmd)
+}
+
+// Enqueue records retry publication before forwarding the supplied batch identity.
+func (q *submitCompensationQueue) Enqueue(ctx context.Context, batchID string) error {
+	q.onCall(ctx, "enqueue")
+	return q.publicBatchImageQueue.Enqueue(ctx, batchID)
+}
+
+// Submit returns the configured failed upstream outcome and cancels its request.
+// Cancellation precedes compensation so every subsequent release and repository
+// write can be checked against the same cancelled context.
+func (p *submitCompensationProvider) Submit(ctx context.Context, _ *batchimage.BatchImageJob, _ *providercore.Record, input batchimage.BatchImageInput) (*batchimage.BatchProviderJob, error) {
+	p.onCall(ctx, "submit")
+	p.submits = append(p.submits, input)
+	p.cancel()
+	return p.result, p.submitErr
+}
+
+// Error records diagnostic evaluation before returning the underlying failure text.
+func (e submitCompensationError) Error() string {
+	e.onError()
+	return e.err.Error()
+}
+
+// Unwrap exposes the underlying category for submission error classification.
+func (e submitCompensationError) Unwrap() error {
+	return e.err
+}
+
 // TestBatchImageCatalogueIncludesGroupMappingTargets enumerates concrete
 // group mapping sources and targets with valid image pricing. It checks the
 // visible names before requested-stage restrictions or provider allowlists

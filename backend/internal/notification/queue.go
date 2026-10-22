@@ -180,28 +180,13 @@ func (s *EmailQueueService) processTask(workerID int, task EmailTask) {
 // whose credentials are prepared later by a worker. Only the first optional
 // language value is trimmed and stored with that intent.
 func (s *EmailQueueService) EnqueueVerifyCode(email, siteName string, locale ...string) error {
-	s.lifecycleMu.RLock()
-	defer s.lifecycleMu.RUnlock()
-	if s.stopped {
-		return fmt.Errorf("email queue is stopped")
-	}
-
 	task := EmailTask{
 		Email:    email,
 		SiteName: siteName,
 		TaskType: TaskTypeVerifyCode,
 		Locale:   firstEmailLocale(locale),
 	}
-
-	// Keep channel admission under the lifecycle read lock so shutdown cannot
-	// close it between the stopped check and this nonblocking send of the accepted task.
-	select {
-	case s.taskChan <- task:
-		logger.LegacyPrintf("service.email_queue", "[EmailQueue] Enqueued verify code task for %s", email)
-		return nil
-	default:
-		return fmt.Errorf("email queue is full")
-	}
+	return s.enqueue(task, "verify code")
 }
 
 // EnqueuePasswordReset queues password-reset delivery, returning an error when full or stopped.
@@ -209,12 +194,6 @@ func (s *EmailQueueService) EnqueueVerifyCode(email, siteName string, locale ...
 // identity processing. A successful enqueue does not establish that credentials
 // have been generated or the SMTP server has received a message.
 func (s *EmailQueueService) EnqueuePasswordReset(email, siteName, resetURL string, locale ...string) error {
-	s.lifecycleMu.RLock()
-	defer s.lifecycleMu.RUnlock()
-	if s.stopped {
-		return fmt.Errorf("email queue is stopped")
-	}
-
 	task := EmailTask{
 		Email:    email,
 		SiteName: siteName,
@@ -222,12 +201,29 @@ func (s *EmailQueueService) EnqueuePasswordReset(email, siteName, resetURL strin
 		ResetURL: resetURL,
 		Locale:   firstEmailLocale(locale),
 	}
+	return s.enqueue(task, "password reset")
+}
 
-	// Shutdown needs the write lock to close taskChan. Holding its read lock
-	// through this admission decision keeps the stopped check and send within one closure-safe interval.
+// enqueue admits an already constructed identity task or returns a full or stopped error.
+// Callers provide the task's readable name for the success log and can admit
+// work before Start registers workers.
+//
+// The lifecycle read lock covers the stopped check, nonblocking send, and
+// success log. StopContext therefore waits for the admission decision and its
+// log before acquiring the write lock that closes the channel, so each sender
+// completes before closure or observes terminal admission.
+func (s *EmailQueueService) enqueue(task EmailTask, taskName string) error {
+	s.lifecycleMu.RLock()
+	defer s.lifecycleMu.RUnlock()
+	if s.stopped {
+		return fmt.Errorf("email queue is stopped")
+	}
+
+	// Use a default branch because waiting for capacity while holding this
+	// read lock could prevent StopContext from acquiring the write lock to close admission.
 	select {
 	case s.taskChan <- task:
-		logger.LegacyPrintf("service.email_queue", "[EmailQueue] Enqueued password reset task for %s", email)
+		logger.LegacyPrintf("service.email_queue", "[EmailQueue] Enqueued %s task for %s", taskName, task.Email)
 		return nil
 	default:
 		return fmt.Errorf("email queue is full")

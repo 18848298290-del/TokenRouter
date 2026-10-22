@@ -14,11 +14,11 @@ import (
 // details for Grok request recovery.
 //
 // Comparison treats nil credentials as an empty JSON object and rejects an
-// identity that cannot be encoded. CloneCredentialVersion detaches the proxy
-// value and credential containers supported by CloneValues before administrative
-// work waits for storage locks. Callers still keep unsupported mutable
-// credential values stable, and diagnostic formatting hides authentication
-// contents.
+// identity that cannot be encoded. ObserveCredentialVersion captures a record
+// with copied proxy and supported credential values; CloneCredentialVersion
+// copies an existing version before administrative work waits for storage
+// locks. Callers still keep unsupported mutable credential values stable, and
+// diagnostic formatting hides authentication contents.
 
 // CredentialMutationSnapshot retains captured Grok authentication details for
 // conditional request-side recovery writes.
@@ -45,8 +45,9 @@ type CredentialVersion struct {
 	Type     string // observed credential kind
 	Status   string // observed persistent health status
 	// ProxyID and Credentials can borrow the observation's mutable values.
-	// Callers hold them stable throughout comparison; CloneCredentialVersion
-	// detaches the proxy and supported credential containers when needed.
+	// Callers hold them stable throughout comparison. ObserveCredentialVersion
+	// and CloneCredentialVersion detach the proxy and supported credential
+	// containers when capturing a record or copying an existing version.
 	ProxyID     *int64         // observed proxy selection
 	Credentials map[string]any `json:"-"` // complete observed credential object
 }
@@ -81,6 +82,29 @@ func (v CredentialVersion) String() string {
 // GoString delegates to String so diagnostic formatting exposes only the
 // provider ID.
 func (v CredentialVersion) GoString() string { return v.String() }
+
+// ObserveCredentialVersion captures provider identity for a conditional write.
+// Nil input returns a zero version; a present record with nil credentials gets
+// an empty object. Keep the record stable during capture. The proxy value and
+// containers supported by CloneValues are copied, while unsupported mutable
+// credential values remain shared and need stable owners during comparison.
+func ObserveCredentialVersion(value *Record) CredentialVersion {
+	if value == nil {
+		return CredentialVersion{}
+	}
+	credentials := CloneValues(value.Credentials)
+	if credentials == nil {
+		credentials = map[string]any{}
+	}
+	return CredentialVersion{
+		ID:          value.ID,
+		Platform:    value.Platform,
+		Type:        value.Type,
+		Status:      value.Status,
+		Credentials: credentials,
+		ProxyID:     clonePointer(value.ProxyID),
+	}
+}
 
 // CloneCredentialVersion detaches the proxy pointer and credential containers
 // supported by CloneValues for a queued comparison. Unsupported credential

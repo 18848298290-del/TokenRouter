@@ -52,6 +52,13 @@ type fakeTeamRepository struct {
 	// teamContext is returned as a shared pointer for any identity. Mutation
 	// helpers require its Team and change that retained object directly.
 	teamContext *TeamContext
+	// teamContextError accompanies the configured context, allowing report tests
+	// to check that lookup errors take precedence over membership validation.
+	teamContextError error
+	contextUserID    int64 // most recent context requester
+	// usageEvents records context lookup, injected clock sampling and report
+	// reads in call order. Tests use it to detect work performed before admission.
+	usageEvents []string
 	// members is the retained slice returned by ListMembers. Owner responses
 	// share its storage; ordinary-member filtering copies selected outer records
 	// into a new slice.
@@ -63,7 +70,15 @@ type fakeTeamRepository struct {
 	// usageQuery captures the submitted value after service normalization/scope
 	// selection. ActorUserID and APIKeyID pointers remain shared with the passed
 	// query.
-	usageQuery TeamUsageQuery
+	usageQuery  TeamUsageQuery
+	usageTeamID int64 // most recent report tenant
+	// usageSeries and usageItems retain the configured report slices, including
+	// nil versus empty values and backing storage. Report methods return these
+	// values alongside usageError so callers can check their result handling.
+	usageSeries []TeamMemberUsageSeries // configured member trend results
+	usageItems  []TeamUsageLogItem      // configured usage record results
+	usageTotal  int64                   // configured matching record total
+	usageError  error                   // configured report read failure
 	// teamKeys is returned with its existing backing storage. TeamService masks
 	// and clears each item, so those changes also affect retained fixture data.
 	teamKeys []TeamAPIKeyItem
@@ -155,6 +170,235 @@ func TestTeamServiceUsageScopeOwnerKeepsMemberFilter(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, repo.usageQuery.ActorUserID)
 	require.Equal(t, targetUserID, *repo.usageQuery.ActorUserID)
+}
+
+// TestTeamServiceUsageReportsNormalizeAndScope exercises all member report
+// entries with owner and member filters. Repository observations protect date
+// defaults, pagination, pointer retention and one clock sample after admission.
+func TestTeamServiceUsageReportsNormalizeAndScope(t *testing.T) {
+	location, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	now := time.Date(2026, 11, 2, 10, 11, 12, 13, location)
+	defaultFrom := time.Date(2026, 10, 3, 10, 11, 12, 13, location)
+	early := time.Date(2026, 9, 1, 3, 4, 5, 6, location)
+	late := time.Date(2026, 10, 1, 3, 4, 5, 6, location)
+	actorID := int64(99)
+	keyID := int64(31)
+	selfID := int64(2)
+	tests := []struct {
+		name  string         // descriptive report query case
+		role  string         // configured acting membership role
+		query TeamUsageQuery // caller supplied query value
+		want  TeamUsageQuery // expected repository query value
+	}{
+		{
+			name: "owner defaults", role: TeamRoleOwner,
+			want: TeamUsageQuery{From: defaultFrom, To: now, Limit: 20},
+		},
+		{
+			name: "owner actor and key filters", role: TeamRoleOwner,
+			query: TeamUsageQuery{From: early, To: late, ActorUserID: &actorID, APIKeyID: &keyID, Limit: 100, Offset: 47},
+			want:  TeamUsageQuery{From: early, To: late, ActorUserID: &actorID, APIKeyID: &keyID, Limit: 100, Offset: 47},
+		},
+		{
+			name: "member defaults", role: TeamRoleMember,
+			want: TeamUsageQuery{From: defaultFrom, To: now, ActorUserID: &selfID, Limit: 20},
+		},
+		{
+			name: "member replaces another actor", role: TeamRoleMember,
+			query: TeamUsageQuery{ActorUserID: &actorID, APIKeyID: &keyID, Limit: 101, Offset: -7},
+			want:  TeamUsageQuery{From: defaultFrom, To: now, ActorUserID: &selfID, APIKeyID: &keyID, Limit: 20},
+		},
+		{
+			name: "member own actor and smallest page", role: TeamRoleMember,
+			query: TeamUsageQuery{From: early, To: late, ActorUserID: &selfID, APIKeyID: &keyID, Limit: 1, Offset: 200},
+			want:  TeamUsageQuery{From: early, To: late, ActorUserID: &selfID, APIKeyID: &keyID, Limit: 1, Offset: 200},
+		},
+		{
+			name: "start follows selected end", role: TeamRoleOwner,
+			query: TeamUsageQuery{To: late, Limit: -1},
+			want:  TeamUsageQuery{From: early, To: late, Limit: 20},
+		},
+		{
+			name: "reversed dates", role: TeamRoleMember,
+			query: TeamUsageQuery{From: late, To: early, Limit: 25, Offset: -1},
+			want:  TeamUsageQuery{From: early, To: late, ActorUserID: &selfID, Limit: 25},
+		},
+		{
+			name: "missing end is filled before swapping", role: TeamRoleOwner,
+			query: TeamUsageQuery{From: now.Add(time.Hour), Limit: 10},
+			want:  TeamUsageQuery{From: now, To: now.Add(time.Hour), Limit: 10},
+		},
+	}
+	for _, report := range []string{"summary", "series", "logs"} {
+		for _, tt := range tests {
+			t.Run(report+"/"+tt.name, func(t *testing.T) {
+				repo := &fakeTeamRepository{teamContext: teamServiceTestContext(2, tt.role)}
+				svc := NewTeamService(repo, nil, nil, nil, nil, nil, &Options{
+					Enabled: true,
+					Now: func() time.Time {
+						repo.usageEvents = append(repo.usageEvents, "clock")
+						return now
+					},
+				})
+				query := tt.query
+
+				result, err := runTeamUsageReport(t, svc, report, 2, query)
+
+				require.NoError(t, err)
+				require.Equal(t, []string{"context", "clock", report}, repo.usageEvents)
+				require.Equal(t, int64(2), repo.contextUserID)
+				require.Equal(t, int64(11), repo.usageTeamID)
+				require.Equal(t, tt.want, repo.usageQuery)
+				require.Equal(t, tt.query, query)
+				require.Equal(t, int64(99), actorID)
+				require.Equal(t, int64(2), selfID)
+				require.True(t, query.APIKeyID == repo.usageQuery.APIKeyID)
+				if tt.role == TeamRoleOwner {
+					require.True(t, query.ActorUserID == repo.usageQuery.ActorUserID)
+				} else {
+					require.NotSame(t, query.ActorUserID, repo.usageQuery.ActorUserID)
+				}
+				if report == "logs" {
+					page, ok := result.(*TeamUsagePage)
+					require.True(t, ok)
+					require.Equal(t, tt.want.Limit, page.Limit)
+					require.Equal(t, tt.want.Offset, page.Offset)
+				}
+			})
+		}
+	}
+}
+
+// TestTeamServiceUsageReportsRejectBeforeQuery exercises feature, context and
+// team-state failures across all member reports. Each rejection returns its
+// existing error before the service samples time or reads report data.
+func TestTeamServiceUsageReportsRejectBeforeQuery(t *testing.T) {
+	lookupError := errors.New("context lookup failed")
+	suspendedOwner := teamServiceTestContext(2, TeamRoleOwner)
+	suspendedOwner.Team.Status = TeamStatusSuspended
+	suspendedMember := teamServiceTestContext(2, TeamRoleMember)
+	suspendedMember.Team.Status = TeamStatusSuspended
+	tests := []struct {
+		name        string       // descriptive admission failure case
+		disabled    bool         // configured feature gate rejection
+		teamContext *TeamContext // configured membership lookup result
+		lookupError error        // configured membership lookup failure
+		wantError   error        // expected report admission failure
+	}{
+		{name: "disabled precedes lookup", disabled: true, lookupError: lookupError, wantError: ErrTeamFeatureDisabled},
+		{name: "lookup error precedes context validation", lookupError: lookupError, wantError: lookupError},
+		{name: "missing context", wantError: ErrTeamMembershipRequired},
+		{name: "missing team", teamContext: &TeamContext{Membership: &TeamMembership{}}, wantError: ErrTeamMembershipRequired},
+		{name: "missing membership precedes suspension", teamContext: &TeamContext{Team: &Team{Status: TeamStatusSuspended}}, wantError: ErrTeamMembershipRequired},
+		{name: "suspended owner", teamContext: suspendedOwner, wantError: ErrTeamSuspended},
+		{name: "suspended member", teamContext: suspendedMember, wantError: ErrTeamSuspended},
+		{name: "lookup error precedes suspension", teamContext: suspendedMember, lookupError: lookupError, wantError: lookupError},
+	}
+	for _, report := range []string{"summary", "series", "logs"} {
+		for _, tt := range tests {
+			t.Run(report+"/"+tt.name, func(t *testing.T) {
+				repo := &fakeTeamRepository{teamContext: tt.teamContext, teamContextError: tt.lookupError}
+				svc := NewTeamService(repo, nil, nil, nil, nil, nil, &Options{
+					Enabled: !tt.disabled,
+					Now: func() time.Time {
+						repo.usageEvents = append(repo.usageEvents, "clock")
+						return time.Time{}
+					},
+				})
+
+				result, err := runTeamUsageReport(t, svc, report, 2, TeamUsageQuery{})
+
+				require.ErrorIs(t, err, tt.wantError)
+				require.Nil(t, result)
+				if tt.disabled {
+					require.Empty(t, repo.usageEvents)
+				} else {
+					require.Equal(t, []string{"context"}, repo.usageEvents)
+				}
+			})
+		}
+	}
+}
+
+// TestTeamServiceUsageReportsRetainRepositoryResults supplies nil, empty and
+// populated report values with successful and failed reads. Summary and series
+// forward repository results, while logs build a page only after success.
+func TestTeamServiceUsageReportsRetainRepositoryResults(t *testing.T) {
+	readError := errors.New("report read failed")
+	for _, report := range []string{"summary", "series", "logs"} {
+		for _, shape := range []string{"nil", "empty", "populated"} {
+			for _, failed := range []bool{false, true} {
+				name := report + "/" + shape + "/success"
+				if failed {
+					name = report + "/" + shape + "/failure"
+				}
+				t.Run(name, func(t *testing.T) {
+					repo := &fakeTeamRepository{teamContext: teamServiceTestContext(2, TeamRoleMember), usageTotal: 73}
+					if shape != "nil" {
+						repo.usageSummary = &TeamUsageSummary{}
+						repo.usageSeries = []TeamMemberUsageSeries{}
+						repo.usageItems = []TeamUsageLogItem{}
+					}
+					if shape == "populated" {
+						repo.usageSummary.ActualCost = 3
+						repo.usageSeries = append(repo.usageSeries, TeamMemberUsageSeries{ActorUserID: 2})
+						repo.usageItems = append(repo.usageItems, TeamUsageLogItem{ID: 41})
+					}
+					if failed {
+						repo.usageError = readError
+					}
+					svc := NewTeamService(repo, nil, nil, nil, nil, nil, nil)
+
+					result, err := runTeamUsageReport(t, svc, report, 2, TeamUsageQuery{Limit: 7, Offset: 8})
+
+					require.ErrorIs(t, err, repo.usageError)
+					switch report {
+					case "summary":
+						summary, ok := result.(*TeamUsageSummary)
+						require.True(t, ok)
+						require.True(t, summary == repo.usageSummary)
+					case "series":
+						series, ok := result.([]TeamMemberUsageSeries)
+						require.True(t, ok)
+						require.Equal(t, repo.usageSeries, series)
+						if len(series) > 0 {
+							require.Same(t, &repo.usageSeries[0], &series[0])
+						}
+					case "logs":
+						if failed {
+							require.Nil(t, result)
+							return
+						}
+						page, ok := result.(*TeamUsagePage)
+						require.True(t, ok)
+						require.Equal(t, &TeamUsagePage{Items: repo.usageItems, Total: 73, Limit: 7, Offset: 8}, page)
+						if len(page.Items) > 0 {
+							require.Same(t, &repo.usageItems[0], &page.Items[0])
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+// runTeamUsageReport invokes one selected public member-report entry for
+// shared characterization cases. It retains each entry's concrete result type
+// inside any so tests can inspect nil values and backing storage.
+func runTeamUsageReport(t *testing.T, svc *TeamService, report string, userID int64, query TeamUsageQuery) (any, error) {
+	t.Helper()
+	switch report {
+	case "summary":
+		return svc.GetUsageSummary(t.Context(), userID, query)
+	case "series":
+		return svc.ListMemberUsageSeries(t.Context(), userID, query)
+	case "logs":
+		return svc.ListUsageLogs(t.Context(), userID, query)
+	default:
+		t.Fatalf("unknown report: %s", report)
+		return nil, nil
+	}
 }
 
 // TestTeamServiceAdminUsageKeepsMemberFilter submits a member filter through
@@ -464,10 +708,12 @@ func (l *fakeTeamInvitationLimiter) CheckAndRecord(context.Context, int64, strin
 }
 
 // GetContextByUserID returns the configured shared team context for every
-// requested account. It ignores the identity and can return nil with nil
-// error, letting service validation inspect the represented context.
-func (r *fakeTeamRepository) GetContextByUserID(context.Context, int64) (*TeamContext, error) {
-	return r.teamContext, nil
+// requested account after recording the identity and lookup event. Its
+// configured error lets tests check validation ordering for incomplete contexts.
+func (r *fakeTeamRepository) GetContextByUserID(_ context.Context, userID int64) (*TeamContext, error) {
+	r.contextUserID = userID
+	r.usageEvents = append(r.usageEvents, "context")
+	return r.teamContext, r.teamContextError
 }
 
 // GetContextByTeamID returns the configured shared team context for every
@@ -484,12 +730,34 @@ func (r *fakeTeamRepository) ListMembers(context.Context, int64) ([]TeamMembersh
 	return r.members, nil
 }
 
-// GetUsageSummary records the supplied query value and returns the configured
-// shared summary. Pointer filters inside the captured query remain shared, so
-// tests keep their selected identities stable while inspecting scope.
-func (r *fakeTeamRepository) GetUsageSummary(_ context.Context, _ int64, query TeamUsageQuery) (*TeamUsageSummary, error) {
+// GetUsageSummary records the supplied tenant and query before returning the
+// shared summary and configured error. Captured pointer filters remain shared,
+// so tests keep selected identities stable while inspecting scope.
+func (r *fakeTeamRepository) GetUsageSummary(_ context.Context, teamID int64, query TeamUsageQuery) (*TeamUsageSummary, error) {
+	r.usageEvents = append(r.usageEvents, "summary")
+	r.usageTeamID = teamID
 	r.usageQuery = query
-	return r.usageSummary, nil
+	return r.usageSummary, r.usageError
+}
+
+// ListMemberUsageSeries records the supplied tenant and query before returning
+// the configured slice and error. Its retained backing storage lets report
+// tests check direct forwarding of member trends.
+func (r *fakeTeamRepository) ListMemberUsageSeries(_ context.Context, teamID int64, query TeamUsageQuery) ([]TeamMemberUsageSeries, error) {
+	r.usageEvents = append(r.usageEvents, "series")
+	r.usageTeamID = teamID
+	r.usageQuery = query
+	return r.usageSeries, r.usageError
+}
+
+// ListUsageLogs records the supplied tenant and query before returning the
+// configured records, total and error. Nil and empty slices remain distinct,
+// and populated slices retain their configured backing storage.
+func (r *fakeTeamRepository) ListUsageLogs(_ context.Context, teamID int64, query TeamUsageQuery) ([]TeamUsageLogItem, int64, error) {
+	r.usageEvents = append(r.usageEvents, "logs")
+	r.usageTeamID = teamID
+	r.usageQuery = query
+	return r.usageItems, r.usageTotal, r.usageError
 }
 
 // ListTeamKeys records nil creator filtering or copies the supplied creator

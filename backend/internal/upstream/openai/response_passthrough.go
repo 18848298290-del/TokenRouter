@@ -529,11 +529,12 @@ func ReadPassthroughStreaming(ctx context.Context, resp *http.Response, c *upstr
 // body ownership.
 //
 // Model replacement precedes namespace, reserved-name, and OpenAI client-tool
-// restoration in that order. A Compact bridge can consume delivery; otherwise
-// OutputContext.Data writes with upstream content type or the JSON default. The
-// result returns usage, response ID, and image observations while shared Served
-// and SearchCount fields remain zero. The ctx parameter is retained by the
-// interface but unused here.
+// restoration in that order. JSON header preparation precedes these required
+// callbacks. A Compact bridge can consume delivery; otherwise OutputContext.Data
+// writes with upstream content type or the JSON default. The result returns
+// usage, response ID, and image observations while shared Served and SearchCount
+// fields remain zero. The ctx parameter is retained by the interface but unused
+// here.
 func ReadPassthroughNonStreaming(ctx context.Context, resp *http.Response, sink upstream.OutputSink, options PassthroughOptions, originalModel, mappedModel string) (*NonStreamingResult, error) {
 	body, err := options.NonStream.ReadBody(resp.Body)
 	if err != nil {
@@ -571,16 +572,9 @@ func ReadPassthroughNonStreaming(ctx context.Context, resp *http.Response, sink 
 	if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
 		body = wire.ReplaceModelInResponseBody(body, mappedModel, originalModel)
 	}
-	// Restore namespace, reserved tool names, then OpenAI client-tool shape
-	// after model replacement, keeping the ordered identity mapping used by buffered passthrough.
-	body, err = options.RestoreNamespace(body)
+	body, err = restoreBufferedPassthroughTools(body, options)
 	if err != nil {
-		return nil, fmt.Errorf("restore OpenAI passthrough namespace response: %w", err)
-	}
-	body = options.NonStream.RestoreToolNames(body)
-	body, err = options.NonStream.RestoreOpenAITools(body)
-	if err != nil {
-		return nil, fmt.Errorf("restore OpenAI Responses client tools: %w", err)
+		return nil, err
 	}
 	if !options.NonStream.WriteCompactBridge(resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
@@ -600,10 +594,12 @@ func ReadPassthroughNonStreaming(ctx context.Context, resp *http.Response, sink 
 //
 // Empty final output can be reconstructed from deltas; failed optional
 // reconstruction keeps the terminal bytes. Compaction supplementation and tool
-// restoration precede delivery. Without final JSON, the body stays SSE with
-// compatible model replacement and its content type. Image counts/sizes use the
-// original SSE observation, while the returned response ID follows delivered
-// body extraction. Served and SearchCount remain zero in this result.
+// restoration precede header preparation and delivery. Final JSON requires the
+// namespace, reserved-name, and OpenAI client-tool restoration callbacks.
+// Without final JSON, the body stays SSE with compatible model replacement and
+// its content type. Image counts/sizes use the original SSE observation, while
+// the returned response ID follows delivered body extraction. Served and
+// SearchCount remain zero in this result.
 func ReadPassthroughSSEAsJSON(resp *http.Response, sink upstream.OutputSink, options PassthroughOptions, body []byte, originalModel, mappedModel string) (*NonStreamingResult, error) {
 	bodyText := string(body)
 	terminalType, terminalPayload, terminalOK := wire.ExtractOpenAISSETerminalEvent(bodyText)
@@ -644,16 +640,11 @@ func ReadPassthroughSSEAsJSON(resp *http.Response, sink upstream.OutputSink, opt
 		}
 
 		body = options.NonStream.CorrectToolCalls(body)
-		restoredBody, restoreErr := options.RestoreNamespace(body)
+		restoredBody, restoreErr := restoreBufferedPassthroughTools(body, options)
 		if restoreErr != nil {
-			return nil, fmt.Errorf("restore OpenAI passthrough namespace response: %w", restoreErr)
+			return nil, restoreErr
 		}
-		restoredBody = options.NonStream.RestoreToolNames(restoredBody)
 		body = restoredBody
-		body, restoreErr = options.NonStream.RestoreOpenAITools(body)
-		if restoreErr != nil {
-			return nil, fmt.Errorf("restore OpenAI Responses client tools: %w", restoreErr)
-		}
 	} else {
 		if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
 			bodyText = wire.ReplaceModelInSSEBody(bodyText, mappedModel, originalModel)
@@ -684,4 +675,23 @@ func ReadPassthroughSSEAsJSON(resp *http.Response, sink upstream.OutputSink, opt
 		ImageCount:       wire.CountOpenAIImageOutputsFromSSEBody(bodyText),
 		ImageOutputSizes: wire.CollectOpenAIImageOutputSizesFromSSEBody(bodyText),
 	}, nil
+}
+
+// restoreBufferedPassthroughTools restores tool identities in one passthrough
+// JSON body. Callers supply all three callbacks; each receives its predecessor's
+// returned slice, including nil or empty results, and the first error stops
+// restoration with response-specific context.
+func restoreBufferedPassthroughTools(body []byte, options PassthroughOptions) ([]byte, error) {
+	// Namespace restoration precedes reserved-name restoration and client-tool
+	// schema restoration, so each callback consumes the bytes produced by its predecessor.
+	body, err := options.RestoreNamespace(body)
+	if err != nil {
+		return nil, fmt.Errorf("restore OpenAI passthrough namespace response: %w", err)
+	}
+	body = options.NonStream.RestoreToolNames(body)
+	body, err = options.NonStream.RestoreOpenAITools(body)
+	if err != nil {
+		return nil, fmt.Errorf("restore OpenAI Responses client tools: %w", err)
+	}
+	return body, nil
 }

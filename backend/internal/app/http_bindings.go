@@ -103,7 +103,7 @@ func provideRouterRuntime(requests *requestlog.Service, public *site.PublicServi
 		// frame origins, so later HTML generation and CSP reads can consume the refreshed inputs.
 		notify = func() { frontend.InvalidateCache(); refresh() }
 	}
-	manager.Register(lifecycle.Hook{Name: "HTTPSettingsInitialization", StartOrder: 182, StopOrder: 800, Start: func(context.Context) error {
+	manager.Register(lifecycle.Hook{Name: "HTTPSettingsInitialization", StartOrder: 182, StopOrder: shutdownStageSettings, Start: func(context.Context) error {
 		refresh()
 		return nil
 	}})
@@ -111,7 +111,7 @@ func provideRouterRuntime(requests *requestlog.Service, public *site.PublicServi
 	// Retain this unsubscribe callback until its late cleanup hook; settings
 	// notifications remain available while earlier producer and request phases are still draining.
 	unsubscribe := store.Subscribe(notify)
-	manager.Register(lifecycle.Hook{Name: "SettingsHTTPNotification", StopOrder: 800, Stop: func(context.Context) error { unsubscribe(); return nil }})
+	manager.Register(lifecycle.Hook{Name: "SettingsHTTPNotification", StopOrder: shutdownStageSettings, Stop: func(context.Context) error { unsubscribe(); return nil }})
 	counter := redisinfra.NewFixedWindowLimiter(redisClient, "rate_limit:")
 	authLimiter := middleware.NewRateLimiter(counter)
 	var panelCounter *middleware.RateLimiter

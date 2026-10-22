@@ -53,12 +53,12 @@ type qoderCompatibleTarget struct {
 	value *gatewayprovider.ExecutionProvider // selected execution target
 }
 
-// Select delegates model-aware generic selection with excluded providers and
-// user identity. Errors return before target creation; the returned selection
+// Select delegates model-aware generic selection with excluded providers.
+// Errors return before target creation; the returned selection
 // retains acquired, release, and wait data for the compatibility runtime's
 // resource handling.
-func (p *qoderCompatibleExecution) Select(ctx context.Context, id *int64, hash, model string, excluded map[int64]struct{}, userID int64) (gatewayhttp.QoderCompatibleSelection, error) {
-	value, err := p.choices.SelectProviderWithLoadAwareness(ctx, id, hash, model, excluded, "", userID)
+func (p *qoderCompatibleExecution) Select(ctx context.Context, id *int64, hash, model string, excluded map[int64]struct{}, _ int64) (gatewayhttp.QoderCompatibleSelection, error) {
+	value, err := p.choices.SelectProviderWithLoadAwareness(ctx, id, hash, model, excluded)
 	if err != nil {
 		return nil, err
 	}

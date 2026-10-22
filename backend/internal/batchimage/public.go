@@ -457,12 +457,9 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 	// Item persistence is still before upstream creation. Refund the hold before
 	// recording and hiding a failed submission that cannot provide result identities.
 	if err := s.CreatePendingItems(ctx, job.BatchID, requestHash, normalized.Items); err != nil {
-		if releaseErr := s.ReleaseFailedSubmitHold(ctx, job, requestHash); releaseErr != nil {
-			return nil, releaseErr
-		}
-		_ = s.Repo.RecordBatchImageJobSubmitFailure(ctx, job.BatchID, "ITEM_CREATE_FAILED", SanitizeBatchImagePublicMessage(err.Error()), true)
-		s.HidePreUpstreamSubmitFailure(ctx, owner, job)
-		return nil, ErrBatchImageQueueFailed
+		return nil, s.compensateFailedSubmit(ctx, owner, job, requestHash, func() (string, string, error) {
+			return "ITEM_CREATE_FAILED", SanitizeBatchImagePublicMessage(err.Error()), ErrBatchImageQueueFailed
+		})
 	}
 
 	input := BatchImageInput{
@@ -519,22 +516,16 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 	// An error or unusable creation result cannot be queued for normal polling.
 	// Refund before recording and hiding failure; a failed refund schedules recovery.
 	if err != nil {
-		if releaseErr := s.ReleaseFailedSubmitHold(ctx, job, requestHash); releaseErr != nil {
-			return nil, releaseErr
-		}
-		publicErr := BatchImageProviderSubmitPublicError(err)
-		reason := BatchImageProviderSubmitRecordCode(publicErr)
-		_ = s.Repo.RecordBatchImageJobSubmitFailure(ctx, job.BatchID, reason, SanitizeBatchImagePublicMessage(err.Error()), true)
-		s.HidePreUpstreamSubmitFailure(ctx, owner, job)
-		return nil, publicErr
+		return nil, s.compensateFailedSubmit(ctx, owner, job, requestHash, func() (string, string, error) {
+			publicErr := BatchImageProviderSubmitPublicError(err)
+			reason := BatchImageProviderSubmitRecordCode(publicErr)
+			return reason, SanitizeBatchImagePublicMessage(err.Error()), publicErr
+		})
 	}
 	if providerJob == nil || strings.TrimSpace(providerJob.ProviderJobName) == "" {
-		if releaseErr := s.ReleaseFailedSubmitHold(ctx, job, requestHash); releaseErr != nil {
-			return nil, releaseErr
-		}
-		_ = s.Repo.RecordBatchImageJobSubmitFailure(ctx, job.BatchID, "PROVIDER_SUBMIT_FAILED", "platform job name missing", true)
-		s.HidePreUpstreamSubmitFailure(ctx, owner, job)
-		return nil, ErrBatchImageProviderSubmitFailed
+		return nil, s.compensateFailedSubmit(ctx, owner, job, requestHash, func() (string, string, error) {
+			return "PROVIDER_SUBMIT_FAILED", "platform job name missing", ErrBatchImageProviderSubmitFailed
+		})
 	}
 
 	// Persist the newly created upstream identity and references before queue
@@ -568,6 +559,35 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 		return nil, err
 	}
 	return BatchImageJobToPublic(created), nil
+}
+
+// compensateFailedSubmit refunds a reserved job after item creation or upstream
+// submission cannot continue. The caller supplies failureDetails to choose its
+// diagnostic and public error after the refund succeeds; release failure skips
+// that callback and leaves the retry record visible.
+//
+// After a successful refund, the diagnostic write precedes owner hiding. Both
+// writes are best effort, so their errors cannot replace the caller-selected
+// submission failure. The refund uses the original request hash, and persistent
+// operations reuse the supplied submission context.
+func (s *Public) compensateFailedSubmit(
+	ctx context.Context,
+	owner BatchImageOwner,
+	job *BatchImageJob,
+	requestHash string,
+	failureDetails func() (code, message string, publicErr error),
+) error {
+	// Failed releases already attempt a billing diagnostic and retry publication.
+	// Return before owner hiding so the pending refund remains visible to callers.
+	if releaseErr := s.ReleaseFailedSubmitHold(ctx, job, requestHash); releaseErr != nil {
+		return releaseErr
+	}
+	code, message, publicErr := failureDetails()
+	// Once funds are returned, attempt both state marking and owner hiding even
+	// when recording the diagnostic fails.
+	_ = s.Repo.RecordBatchImageJobSubmitFailure(ctx, job.BatchID, code, message, true)
+	s.HidePreUpstreamSubmitFailure(ctx, owner, job)
+	return publicErr
 }
 
 // BatchImageBillingHoldFailureCode selects a stable job diagnostic for a

@@ -183,16 +183,7 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 				// outer loop can decide provider reuse before switching targets.
 				if kind == "failover" {
 					retry := p.RetryMetadata(resp.StatusCode, respBody)
-					return true, p.Failure(Failure{
-						StatusCode:                resp.StatusCode,
-						ResponseBody:              respBody,
-						ResponseHeaders:           resp.Header.Clone(),
-						RetryableOnSameProvider:   retry.Retryable || decision.RetrySameProvider,
-						RequestScopedTransient:    retry.Retryable && resp.StatusCode == http.StatusTooManyRequests,
-						SameProviderRetryDelay:    retry.Delay,
-						SameProviderRetryDeadline: retry.Deadline,
-						SameProviderRetryMax:      retry.Max,
-					})
+					return true, p.Failure(newFailure(resp, respBody, retry, decision.RetrySameProvider))
 				}
 				handledResult, handleErr = p.HandleError(ctx, resp, patchedBody, upstreamModel)
 				return true, handleErr

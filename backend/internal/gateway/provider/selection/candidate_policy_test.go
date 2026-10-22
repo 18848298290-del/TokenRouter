@@ -89,7 +89,7 @@ func TestImageToolSelectionChecksEveryProvider(t *testing.T) {
 					base := requeststate.WithClientProtocol(requeststate.WithGroup(context.Background(), group), source)
 					selectModel := func(ctx context.Context) (*gatewayadapter.SelectionResult, error) {
 						if kind == "generic" {
-							return NewGeneric(GenericDependencies{Reads: Reads{Providers: repo}}, DefaultOptions()).SelectProviderWithLoadAwareness(ctx, &group.ID, "", "driver", nil, "", 0)
+							return NewGeneric(GenericDependencies{Reads: Reads{Providers: repo}}, DefaultOptions()).SelectProviderWithLoadAwareness(ctx, &group.ID, "", "driver", nil)
 						}
 						selection, _, err := NewCompatible(CompatibleDependencies{Reads: Reads{Providers: repo}}, DefaultOptions()).SelectProviderWithSchedulerForCapability(ctx, &group.ID, "", "", "driver", nil, egress.OpenAIUpstreamTransportHTTPSSE, providercore.OpenAIEndpointCapabilityResponses, false, false)
 						return selection, err

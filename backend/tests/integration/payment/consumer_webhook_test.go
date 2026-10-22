@@ -172,7 +172,7 @@ func TestStripeWebhookReturnsServerErrorWhenProviderLookupDatabaseFails(t *testi
 		`{"data":{"object":{"metadata":{"orderId":"sub2_database_failure"}}}}`,
 	))
 
-	paymenthttp.NewPaymentWebhookHandler(paymentSvc, payment.NewRegistry()).StripeWebhook(ctx)
+	paymenthttp.NewPaymentWebhookHandler(paymentSvc).StripeWebhook(ctx)
 
 	require.Equal(t, http.StatusInternalServerError, recorder.Code)
 	require.Equal(t, "provider lookup failed", recorder.Body.String())

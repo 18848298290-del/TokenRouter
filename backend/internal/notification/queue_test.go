@@ -2,6 +2,7 @@ package notification
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -49,6 +50,135 @@ func TestMailQueueStopBeforeStartReportsPending(t *testing.T) {
 	require.ErrorContains(t, queue.StopContext(context.Background()), "1 tasks")
 	queue.Start()
 	require.False(t, queue.started)
+}
+
+// TestMailQueueEnqueueBeforeStart checks both identity intents before workers exist.
+// It verifies their payload fields and that only the first language hint is
+// trimmed, including when that first value is empty and later values are present.
+func TestMailQueueEnqueueBeforeStart(t *testing.T) {
+	for _, taskType := range []string{TaskTypeVerifyCode, TaskTypePasswordReset} {
+		t.Run(taskType, func(t *testing.T) {
+			cases := []struct {
+				name   string   // locale selection scenario
+				values []string // supplied language hints
+				want   string   // expected stored hint
+			}{
+				{name: "absent"},
+				{name: "trimmed first", values: []string{" \tzh-CN\n", "en-US"}, want: "zh-CN"},
+				{name: "empty first", values: []string{" \t", "en-US"}},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					queue := NewEmailQueueService(nil, 1)
+					t.Cleanup(queue.cancel)
+					require.NoError(t, enqueueMailQueueTask(queue, taskType, tc.values...))
+					require.False(t, queue.started)
+					expected := EmailTask{
+						Email:    "fixture@example.com",
+						SiteName: "fixture",
+						TaskType: taskType,
+						Locale:   tc.want,
+					}
+					if taskType == TaskTypePasswordReset {
+						expected.ResetURL = "https://example.com/reset"
+					}
+					// A dormant queue has no consumer, so inspect the accepted intent
+					// directly before shutdown to distinguish admission from credential processing.
+					select {
+					case task := <-queue.taskChan:
+						require.Equal(t, expected, task)
+					default:
+						t.Fatal("accepted email task is missing")
+					}
+					require.NoError(t, queue.StopContext(context.Background()))
+				})
+			}
+		})
+	}
+}
+
+// TestMailQueueFullRejectsBothTaskKinds fills a dormant queue through each public entry.
+// It verifies immediate capacity rejection, retained accepted tasks, and the stopped
+// error taking precedence over a still-full buffer after shutdown closes admission.
+func TestMailQueueFullRejectsBothTaskKinds(t *testing.T) {
+	for _, taskType := range []string{TaskTypeVerifyCode, TaskTypePasswordReset} {
+		t.Run(taskType, func(t *testing.T) {
+			queue := NewEmailQueueService(nil, 1)
+			t.Cleanup(queue.cancel)
+			capacity := cap(queue.taskChan)
+			for range capacity {
+				require.NoError(t, enqueueMailQueueTask(queue, taskType))
+			}
+			require.EqualError(t, enqueueMailQueueTask(queue, taskType), "email queue is full")
+			require.Len(t, queue.taskChan, capacity)
+			require.EqualError(t, queue.StopContext(context.Background()), fmt.Sprintf("email queue drain incomplete: %d tasks", capacity))
+			require.EqualError(t, enqueueMailQueueTask(queue, taskType), "email queue is stopped")
+			require.Len(t, queue.taskChan, capacity)
+		})
+	}
+}
+
+// TestMailQueueEnqueueConcurrentStop races each identity entry with terminal shutdown.
+// Accepted intents remain counted in the dormant buffer, and every rejected call
+// reports the stopped error while channel closure remains safe under the race detector.
+func TestMailQueueEnqueueConcurrentStop(t *testing.T) {
+	for _, taskType := range []string{TaskTypeVerifyCode, TaskTypePasswordReset} {
+		t.Run(taskType, func(t *testing.T) {
+			queue := NewEmailQueueService(nil, 1)
+			t.Cleanup(queue.cancel)
+			require.NoError(t, enqueueMailQueueTask(queue, taskType))
+			// Leave one unused slot even if every racing call wins admission.
+			// This isolates stopped rejections from capacity errors while shutdown closes the same channel.
+			attempts := cap(queue.taskChan) - 2
+			start := make(chan struct{})
+			results := make(chan error, attempts)
+			stopped := make(chan error, 1)
+			var callers sync.WaitGroup
+			callers.Add(attempts + 1)
+			// Release admission and shutdown together, then wait for every caller
+			// before reading retained tasks so either lock winner has a complete observable result.
+			for range attempts {
+				go func() {
+					defer callers.Done()
+					<-start
+					results <- enqueueMailQueueTask(queue, taskType)
+				}()
+			}
+			go func() {
+				defer callers.Done()
+				<-start
+				stopped <- queue.StopContext(context.Background())
+			}()
+			close(start)
+			callers.Wait()
+			close(results)
+			accepted := 1
+			for err := range results {
+				if err == nil {
+					accepted++
+					continue
+				}
+				require.EqualError(t, err, "email queue is stopped")
+			}
+			require.Len(t, queue.taskChan, accepted)
+			require.EqualError(t, <-stopped, fmt.Sprintf("email queue drain incomplete: %d tasks", accepted))
+			require.EqualError(t, enqueueMailQueueTask(queue, taskType), "email queue is stopped")
+		})
+	}
+}
+
+// enqueueMailQueueTask submits a fixed identity fixture through the selected public entry.
+// Callers select one of the two supported task kinds and supply language hints;
+// password-reset fixtures include the same reset URL used by payload assertions.
+func enqueueMailQueueTask(queue *EmailQueueService, taskType string, locale ...string) error {
+	switch taskType {
+	case TaskTypeVerifyCode:
+		return queue.EnqueueVerifyCode("fixture@example.com", "fixture", locale...)
+	case TaskTypePasswordReset:
+		return queue.EnqueuePasswordReset("fixture@example.com", "fixture", "https://example.com/reset", locale...)
+	default:
+		panic("unsupported email task fixture")
+	}
 }
 
 // SendVerifyCode reports its first entry and blocks until its context is canceled.

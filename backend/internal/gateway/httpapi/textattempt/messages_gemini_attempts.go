@@ -24,8 +24,8 @@ import (
 // messages_gemini_attempts.go executes Gemini-backed Messages attempts and
 // captures their original client attribution and usage.
 // Forced Gemini-backed Messages retains its own mapped model and body beside
-// original client input. Provider selection uses sticky identity without the
-// Anthropic session-limit inputs, and forwarding chooses native Gemini or
+// original client input. Provider selection uses the request's group, model
+// and sticky identity, and forwarding chooses native Gemini or
 // Antigravity Gemini for the selected platform. The shared text loop still
 // owns provider failover and interprets returned output observations.
 //
@@ -49,12 +49,12 @@ type geminiMessageAttemptBridge struct {
 }
 
 // Select retains a Gemini-capable provider under request group, model, session
-// and exclusions. It supplies empty metadata identity and actor zero to bypass
-// Anthropic session-limit inputs, then stores target identity for acquisition
-// and Ops.
+// and exclusions. A successful selection stores the executable target for
+// acquisition and publishes its routing snapshot to the request's Ops
+// observations before returning loop metadata.
 func (b *geminiMessageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
 	var err error
-	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0))
+	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded)
 	if err != nil {
 		return textflow.Selection{}, err
 	}

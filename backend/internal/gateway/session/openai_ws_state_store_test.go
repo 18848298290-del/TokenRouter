@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -263,49 +264,221 @@ func TestOpenAIWSStateStore_GetResponseProvider_NoStaleAfterCacheMiss(t *testing
 	require.Zero(t, providerID, "上游缓存失效后不应继续命中本地陈旧映射")
 }
 
-// TestOpenAIWSStateStore_MaybeCleanupRemovesExpiredIncrementally preloads
-// expired response-connection entries and advances the cleanup election
-// timestamp between calls. One round removes some entries while leaving
-// others, and repeated rounds empty this all-expired map; other state maps are
-// outside this fixture.
-func TestOpenAIWSStateStore_MaybeCleanupRemovesExpiredIncrementally(t *testing.T) {
-	raw := NewOpenAIWSStateStore(nil)
-	store, ok := raw.(*defaultOpenAIWSStateStore)
-	require.True(t, ok)
+// TestCleanupExpiredBindings_AllKinds supplies each binding map with live,
+// elapsed, and exact-deadline entries. Cleanup respects the scan budget and
+// keeps retained values unchanged for every binding representation.
+func TestCleanupExpiredBindings_AllKinds(t *testing.T) {
+	t.Run("provider", func(t *testing.T) {
+		testCleanupExpiredBindings(t, func(expiresAt time.Time) openAIWSProviderBinding {
+			return openAIWSProviderBinding{providerID: 7, expiresAt: expiresAt}
+		}, func(binding openAIWSProviderBinding) time.Time {
+			return binding.expiresAt
+		})
+	})
+	t.Run("http_owner", func(t *testing.T) {
+		testCleanupExpiredBindings(t, func(expiresAt time.Time) openAIHTTPResponseOwnerBinding {
+			return openAIHTTPResponseOwnerBinding{userID: 11, apiKeyID: 13, expiresAt: expiresAt}
+		}, func(binding openAIHTTPResponseOwnerBinding) time.Time {
+			return binding.expiresAt
+		})
+	})
+	t.Run("response_connection", func(t *testing.T) {
+		testCleanupExpiredBindings(t, func(expiresAt time.Time) openAIWSConnBinding {
+			return openAIWSConnBinding{connID: "response-connection", expiresAt: expiresAt}
+		}, func(binding openAIWSConnBinding) time.Time {
+			return binding.expiresAt
+		})
+	})
+	t.Run("turn_state", func(t *testing.T) {
+		testCleanupExpiredBindings(t, func(expiresAt time.Time) openAIWSTurnStateBinding {
+			return openAIWSTurnStateBinding{turnState: "opaque-state", expiresAt: expiresAt}
+		}, func(binding openAIWSTurnStateBinding) time.Time {
+			return binding.expiresAt
+		})
+	})
+	t.Run("session_connection", func(t *testing.T) {
+		testCleanupExpiredBindings(t, func(expiresAt time.Time) openAIWSSessionConnBinding {
+			return openAIWSSessionConnBinding{connID: "session-connection", expiresAt: expiresAt}
+		}, func(binding openAIWSSessionConnBinding) time.Time {
+			return binding.expiresAt
+		})
+	})
+	t.Run("invalid_encrypted", func(t *testing.T) {
+		testCleanupExpiredBindings(t, func(expiresAt time.Time) openAIWSInvalidEncryptedBinding {
+			return openAIWSInvalidEncryptedBinding{digests: map[string]struct{}{"digest": {}}, expiresAt: expiresAt}
+		}, func(binding openAIWSInvalidEncryptedBinding) time.Time {
+			return binding.expiresAt
+		})
+	})
+}
 
-	expiredAt := time.Now().Add(-time.Minute)
-	total := 2048
-	// Populate the map under its owning lock so cleanup reads complete expired
-	// bindings; the fixture then forces election times instead of waiting real minutes.
-	store.responseToConnMu.Lock()
-	for i := range total {
-		store.responseToConn[fmt.Sprintf("resp_%d", i)] = openAIWSConnBinding{
-			connID:    "conn_incremental",
-			expiresAt: expiredAt,
-		}
+// testCleanupExpiredBindings checks expiry and budget cases for one binding
+// representation. Each scenario uses a separate map owned by this serial
+// fixture, so cleanup needs no external map lock while reading supplied values.
+func testCleanupExpiredBindings[T any](t *testing.T, newBinding func(time.Time) T, expiresAt func(T) time.Time) {
+	t.Helper()
+	now := time.Date(2026, time.October, 23, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name          string          // expiry and budget scenario
+		deadlines     []time.Duration // deadline offsets from now
+		maxScan       int             // inspected entry count limit
+		wantRemaining int             // expected retained entry count
+	}{
+		{name: "all_live", deadlines: []time.Duration{time.Second, time.Second, time.Second}, maxScan: 2, wantRemaining: 3},
+		{name: "all_expired", deadlines: []time.Duration{-time.Second, -time.Second, -time.Second}, maxScan: 3},
+		{name: "bounded_expired", deadlines: []time.Duration{-time.Second, -time.Second, -time.Second}, maxScan: 2, wantRemaining: 1},
+		{name: "equal_deadline", deadlines: []time.Duration{0, 0, 0}, maxScan: 3, wantRemaining: 3},
+		{name: "mixed_deadlines", deadlines: []time.Duration{-time.Second, 0, time.Second}, maxScan: 3, wantRemaining: 2},
+		{name: "zero_budget", deadlines: []time.Duration{-time.Second, -time.Second, -time.Second}, wantRemaining: 3},
+		{name: "negative_budget", deadlines: []time.Duration{-time.Second, -time.Second, -time.Second}, maxScan: -1, wantRemaining: 3},
 	}
-	store.responseToConnMu.Unlock()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bindings := make(map[string]T, len(test.deadlines))
+			original := make(map[string]T, len(test.deadlines))
+			for i, deadline := range test.deadlines {
+				key := fmt.Sprintf("binding-%d", i)
+				bindings[key] = newBinding(now.Add(deadline))
+				original[key] = bindings[key]
+			}
 
-	// Move the last elected time past the interval so this call exercises
-	// bounded physical scanning immediately rather than waiting for the real cleanup period.
-	store.lastCleanupUnixNano.Store(time.Now().Add(-2 * openAIWSStateStoreCleanupInterval).UnixNano())
-	store.maybeCleanup()
+			cleanupExpiredBindings(bindings, now, test.maxScan, expiresAt)
 
-	store.responseToConnMu.RLock()
-	remainingAfterFirst := len(store.responseToConn)
-	store.responseToConnMu.RUnlock()
-	require.Less(t, remainingAfterFirst, total, "单轮 cleanup 应至少有进展")
-	require.Greater(t, remainingAfterFirst, 0, "增量清理不要求单轮清空全部键")
+			require.Len(t, bindings, test.wantRemaining)
+			for key, binding := range bindings {
+				require.Equal(t, original[key], binding)
+			}
+			if test.maxScan >= len(test.deadlines) {
+				for i, deadline := range test.deadlines {
+					_, retained := bindings[fmt.Sprintf("binding-%d", i)]
+					require.Equal(t, deadline >= 0, retained)
+				}
+			}
+		})
+	}
 
-	for range 8 {
+	t.Run("nil_map", func(t *testing.T) {
+		var bindings map[string]T
+		cleanupExpiredBindings(bindings, now, 2, expiresAt)
+		require.Nil(t, bindings)
+	})
+	t.Run("empty_map", func(t *testing.T) {
+		bindings := make(map[string]T)
+		cleanupExpiredBindings(bindings, now, 2, expiresAt)
+		require.Empty(t, bindings)
+		require.NotNil(t, bindings)
+	})
+}
+
+// TestCleanupExpiredBindings_InspectedEntryBudget counts expiry reads while
+// every binding remains live. Scanning stops at the visited-entry budget, and
+// disabled budgets or absent bindings never invoke the expiry reader.
+func TestCleanupExpiredBindings_InspectedEntryBudget(t *testing.T) {
+	now := time.Date(2026, time.October, 23, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string // map and budget scenario
+		entries   int    // initial live binding count
+		maxScan   int    // inspected entry count limit
+		wantReads int    // expected expiry reader calls
+	}{
+		{name: "bounded_live", entries: 5, maxScan: 2, wantReads: 2},
+		{name: "larger_budget", entries: 2, maxScan: 5, wantReads: 2},
+		{name: "zero_budget", entries: 5},
+		{name: "negative_budget", entries: 5, maxScan: -1},
+		{name: "empty_map", maxScan: 2},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bindings := make(map[string]time.Time, test.entries)
+			for i := range test.entries {
+				bindings[fmt.Sprintf("binding-%d", i)] = now.Add(time.Hour)
+			}
+			reads := 0
+			cleanupExpiredBindings(bindings, now, test.maxScan, func(deadline time.Time) time.Time {
+				reads++
+				return deadline
+			})
+			require.Equal(t, test.wantReads, reads)
+			require.Len(t, bindings, test.entries)
+		})
+	}
+}
+
+// TestOpenAIWSStateStore_MaybeCleanupRemovesExpiredIncrementally preloads all
+// six maps with elapsed bindings. Each elected round removes the per-map
+// budget until every map is empty, with election times advanced between calls.
+func TestOpenAIWSStateStore_MaybeCleanupRemovesExpiredIncrementally(t *testing.T) {
+	// Leave a partial third round to check both the scan limit and exhausting
+	// a smaller remainder, independently of unordered iteration within each map.
+	total := 2*openAIWSStateStoreCleanupMaxPerMap + 17
+	store := newExpiredOpenAIWSStateStore(t, total)
+	remaining := total
+	for range 3 {
+		// Advance the election timestamp so each call scans immediately while the
+		// binding deadlines remain elapsed, avoiding a real cleanup-interval wait.
 		store.lastCleanupUnixNano.Store(time.Now().Add(-2 * openAIWSStateStoreCleanupInterval).UnixNano())
 		store.maybeCleanup()
+		remaining = max(0, remaining-openAIWSStateStoreCleanupMaxPerMap)
+		requireOpenAIWSStateStoreBindingCount(t, store, remaining)
 	}
+}
 
-	store.responseToConnMu.RLock()
-	remaining := len(store.responseToConn)
-	store.responseToConnMu.RUnlock()
-	require.Zero(t, remaining, "多轮 cleanup 后应逐步清空全部过期键")
+// TestOpenAIWSStateStore_MaybeCleanupElectsOneCaller releases simultaneous
+// cleanup callers against all six expired maps. One interval consumes exactly
+// one scan budget per map, and a subsequent call in that interval is skipped.
+func TestOpenAIWSStateStore_MaybeCleanupElectsOneCaller(t *testing.T) {
+	total := 2 * openAIWSStateStoreCleanupMaxPerMap
+	store := newExpiredOpenAIWSStateStore(t, total)
+	store.lastCleanupUnixNano.Store(time.Now().Add(-2 * openAIWSStateStoreCleanupInterval).UnixNano())
+
+	// Release the callers together so the atomic election competes before any
+	// final size assertions, then wait for every caller to finish its map access.
+	start := make(chan struct{})
+	var callers sync.WaitGroup
+	for range 16 {
+		callers.Go(func() {
+			<-start
+			store.maybeCleanup()
+		})
+	}
+	close(start)
+	callers.Wait()
+	requireOpenAIWSStateStoreBindingCount(t, store, openAIWSStateStoreCleanupMaxPerMap)
+	store.maybeCleanup()
+	requireOpenAIWSStateStoreBindingCount(t, store, openAIWSStateStoreCleanupMaxPerMap)
+}
+
+// newExpiredOpenAIWSStateStore fills all six local maps with elapsed bindings.
+// The returned store belongs to the calling test, which starts cleanup after
+// this initialization and controls any concurrent access afterward.
+func newExpiredOpenAIWSStateStore(t *testing.T, total int) *defaultOpenAIWSStateStore {
+	t.Helper()
+	store, ok := NewOpenAIWSStateStore(nil).(*defaultOpenAIWSStateStore)
+	require.True(t, ok)
+	expiresAt := time.Now().Add(-time.Minute)
+	for i := range total {
+		key := fmt.Sprintf("expired-%d", i)
+		store.responseToProvider[key] = openAIWSProviderBinding{expiresAt: expiresAt}
+		store.responseOwners[key] = openAIHTTPResponseOwnerBinding{expiresAt: expiresAt}
+		store.responseToConn[key] = openAIWSConnBinding{expiresAt: expiresAt}
+		store.sessionToTurnState[key] = openAIWSTurnStateBinding{expiresAt: expiresAt}
+		store.sessionToConn[key] = openAIWSSessionConnBinding{expiresAt: expiresAt}
+		store.sessionInvalidEncrypted[key] = openAIWSInvalidEncryptedBinding{expiresAt: expiresAt}
+	}
+	return store
+}
+
+// requireOpenAIWSStateStoreBindingCount compares every local map with one
+// expected count. Callers finish all concurrent store operations before this
+// assertion because the fixture reads the maps directly without taking locks.
+func requireOpenAIWSStateStoreBindingCount(t *testing.T, store *defaultOpenAIWSStateStore, want int) {
+	t.Helper()
+	require.Len(t, store.responseToProvider, want, "provider bindings")
+	require.Len(t, store.responseOwners, want, "HTTP owner bindings")
+	require.Len(t, store.responseToConn, want, "response connection bindings")
+	require.Len(t, store.sessionToTurnState, want, "turn state bindings")
+	require.Len(t, store.sessionToConn, want, "session connection bindings")
+	require.Len(t, store.sessionInvalidEncrypted, want, "invalid encrypted content bindings")
 }
 
 // TestEnsureBindingCapacity_EvictsOneWhenMapIsFull admits a third key into a

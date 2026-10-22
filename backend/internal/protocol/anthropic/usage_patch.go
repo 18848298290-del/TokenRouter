@@ -97,19 +97,27 @@ func ExtractSSEUsagePatch(event map[string]any) *SseUsagePatch {
 	}
 
 	eventType, _ := event["type"].(string)
+	var usageObj map[string]any
 	switch eventType {
 	case "message_start":
 		msg, _ := event["message"].(map[string]any)
-		usageObj, _ := msg["usage"].(map[string]any)
-		if len(usageObj) == 0 {
-			return nil
-		}
+		usageObj, _ = msg["usage"].(map[string]any)
+	case "message_delta":
+		usageObj, _ = event["usage"].(map[string]any)
+	default:
+		return nil
+	}
+	if len(usageObj) == 0 {
+		return nil
+	}
 
-		patch := &SseUsagePatch{}
-		if speed, ok := usageObj["speed"].(string); ok && strings.TrimSpace(speed) != "" {
-			patch.Speed = speed
-			patch.HasSpeed = true
-		}
+	patch := &SseUsagePatch{}
+	if speed, ok := usageObj["speed"].(string); ok && strings.TrimSpace(speed) != "" {
+		patch.Speed = speed
+		patch.HasSpeed = true
+	}
+	switch eventType {
+	case "message_start":
 		// message_start initializes aggregate prompt buckets as one observation.
 		// Missing counters therefore establish zero rather than retaining another message's values.
 		patch.HasInputTokens = true
@@ -124,31 +132,7 @@ func ExtractSSEUsagePatch(event map[string]any) *SseUsagePatch {
 		if v, ok := ParseSSEUsageInt(usageObj["cache_read_input_tokens"]); ok {
 			patch.CacheReadInputTokens = v
 		}
-		// TTL counts are presence-sensitive: a decoded zero is authoritative,
-		// allowing a cache-write observation to move between billing categories.
-		if cc, ok := usageObj["cache_creation"].(map[string]any); ok {
-			if v, exists := ParseSSEUsageInt(cc["ephemeral_5m_input_tokens"]); exists {
-				patch.CacheCreation5mTokens = v
-				patch.HasCacheCreation5m = true
-			}
-			if v, exists := ParseSSEUsageInt(cc["ephemeral_1h_input_tokens"]); exists {
-				patch.CacheCreation1hTokens = v
-				patch.HasCacheCreation1h = true
-			}
-		}
-		return patch
-
 	case "message_delta":
-		usageObj, _ := event["usage"].(map[string]any)
-		if len(usageObj) == 0 {
-			return nil
-		}
-
-		patch := &SseUsagePatch{}
-		if speed, ok := usageObj["speed"].(string); ok && strings.TrimSpace(speed) != "" {
-			patch.Speed = speed
-			patch.HasSpeed = true
-		}
 		// Compatible providers can repeat aggregate counters in message_delta.
 		// Positive values replace earlier observations; absent and zero aggregates retain them.
 		if v, ok := ParseSSEUsageInt(usageObj["input_tokens"]); ok && v > 0 {
@@ -167,22 +151,20 @@ func ExtractSSEUsagePatch(event map[string]any) *SseUsagePatch {
 			patch.CacheReadInputTokens = v
 			patch.HasCacheReadInput = true
 		}
-		// A later TTL breakdown can reclassify the same cache-write total.
-		// Preserve zero-valued fields so merging clears the bucket they supersede.
-		if cc, ok := usageObj["cache_creation"].(map[string]any); ok {
-			if v, exists := ParseSSEUsageInt(cc["ephemeral_5m_input_tokens"]); exists {
-				patch.CacheCreation5mTokens = v
-				patch.HasCacheCreation5m = true
-			}
-			if v, exists := ParseSSEUsageInt(cc["ephemeral_1h_input_tokens"]); exists {
-				patch.CacheCreation1hTokens = v
-				patch.HasCacheCreation1h = true
-			}
-		}
-		return patch
 	}
-
-	return nil
+	// TTL counts are presence-sensitive: a decoded zero is authoritative,
+	// allowing a cache-write observation to move between billing categories.
+	if cc, ok := usageObj["cache_creation"].(map[string]any); ok {
+		if v, exists := ParseSSEUsageInt(cc["ephemeral_5m_input_tokens"]); exists {
+			patch.CacheCreation5mTokens = v
+			patch.HasCacheCreation5m = true
+		}
+		if v, exists := ParseSSEUsageInt(cc["ephemeral_1h_input_tokens"]); exists {
+			patch.CacheCreation1hTokens = v
+			patch.HasCacheCreation1h = true
+		}
+	}
+	return patch
 }
 
 // MergeSSEUsagePatch replaces destination fields selected by patch's presence

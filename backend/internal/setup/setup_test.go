@@ -1,14 +1,67 @@
 package setup
 
 import (
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
+
+// TestWriteConfigFileRuntimeDocument serializes setup input with escaped secrets
+// and both timezone choices. Runtime fields retain their values and ordering,
+// while administrator credentials and the migration budget stay outside the document.
+func TestWriteConfigFileRuntimeDocument(t *testing.T) {
+	for _, zone := range []string{"", "Europe/Berlin"} {
+		t.Run(zone, func(t *testing.T) {
+			t.Setenv("DATA_DIR", t.TempDir())
+			cfg := &SetupConfig{
+				Server:                  ServerConfig{Host: "127.0.0.1", Port: 8080, Mode: "release"},
+				Database:                DatabaseConfig{Host: "database", Port: 5432, User: "app", Password: "db: #secret", DBName: "runtime", SSLMode: "require"},
+				Redis:                   RedisConfig{Host: "cache", Port: 6379, Username: "app", Password: "redis\nsecret", DB: 2, EnableTLS: true},
+				JWT:                     JWTConfig{Secret: "jwt: #secret\nnext", ExpireHour: 12},
+				Admin:                   AdminConfig{Email: "setup@example.test", Password: "setup-only-secret"},
+				Timezone:                zone,
+				MigrationTimeoutSeconds: 99,
+			}
+			require.NoError(t, writeConfigFile(cfg))
+			data, err := os.ReadFile(GetConfigFilePath())
+			require.NoError(t, err)
+			var restored SetupConfig
+			require.NoError(t, yaml.Unmarshal(data, &restored))
+			require.Equal(t, cfg.Server, restored.Server)
+			require.Equal(t, cfg.Database, restored.Database)
+			require.Equal(t, cfg.Redis, restored.Redis)
+			require.Equal(t, cfg.JWT, restored.JWT)
+			wantZone := zone
+			if wantZone == "" {
+				wantZone = "Asia/Shanghai"
+			}
+			require.Equal(t, wantZone, restored.Timezone)
+			var document yaml.Node
+			require.NoError(t, yaml.Unmarshal(data, &document))
+			var keys []string
+			fields := document.Content[0].Content
+			for i := 0; i < len(fields); i += 2 {
+				keys = append(keys, fields[i].Value)
+			}
+			require.Equal(t, []string{"server", "database", "redis", "jwt", "default", "rate_limit", "timezone"}, keys)
+			var values map[string]any
+			require.NoError(t, yaml.Unmarshal(data, &values))
+			require.Equal(t, map[string]any{"user_concurrency": 5, "user_balance": 0, "api_key_prefix": "sk-", "rate_multiplier": 1}, values["default"])
+			require.Equal(t, map[string]any{"requests_per_minute": 60, "burst_size": 10}, values["rate_limit"])
+			require.NotContains(t, string(data), "setup-only-secret")
+			require.NotContains(t, string(data), "setup@example.test")
+			t.Logf("runtime document SHA256=%x", sha256.Sum256(data))
+		})
+	}
+}
 
 // TestDecideAdminBootstrap supplies empty, administrator-containing, and
 // user-only database counts to the identity decision helper. Only the empty

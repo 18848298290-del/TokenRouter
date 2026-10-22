@@ -3320,6 +3320,429 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 	}
 }
 
+// TestValidateLogFirstErrorOrder supplies invalid logging controls together
+// with an incomplete Gemini credential pair. Repairing one failure at a time
+// must expose the next exact error before validation reaches Gemini.
+func TestValidateLogFirstErrorOrder(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	cfg.Log.Level = "invalid"
+	cfg.Log.Format = "invalid"
+	cfg.Log.StacktraceLevel = "invalid"
+	cfg.Log.Output.ToStdout = false
+	cfg.Log.Output.ToFile = false
+	cfg.Log.Rotation.MaxSizeMB = 0
+	cfg.Log.Rotation.MaxBackups = -1
+	cfg.Log.Rotation.MaxAgeDays = -1
+	cfg.Log.Sampling.Enabled = true
+	cfg.Log.Sampling.Initial = 0
+	cfg.Log.Sampling.Thereafter = 0
+	cfg.Gemini.OAuth.ClientID = "client"
+	cfg.Gemini.OAuth.ClientSecret = ""
+
+	steps := []struct {
+		wantError string        // expected first validation error
+		repair    func(*Config) // correction exposing the next failure
+	}{
+		{
+			wantError: "log.level must be one of: debug/info/warn/error",
+			repair: func(c *Config) {
+				c.Log.Level = "info"
+			},
+		},
+		{
+			wantError: "log.format must be one of: json/console",
+			repair: func(c *Config) {
+				c.Log.Format = "json"
+			},
+		},
+		{
+			wantError: "log.stacktrace_level must be one of: none/error/fatal",
+			repair: func(c *Config) {
+				c.Log.StacktraceLevel = "none"
+			},
+		},
+		{
+			wantError: "log.output.to_stdout and log.output.to_file cannot both be false",
+			repair: func(c *Config) {
+				c.Log.Output.ToStdout = true
+			},
+		},
+		{
+			wantError: "log.rotation.max_size_mb must be positive",
+			repair: func(c *Config) {
+				c.Log.Rotation.MaxSizeMB = 1
+			},
+		},
+		{
+			wantError: "log.rotation.max_backups must be non-negative",
+			repair: func(c *Config) {
+				c.Log.Rotation.MaxBackups = 0
+			},
+		},
+		{
+			wantError: "log.rotation.max_age_days must be non-negative",
+			repair: func(c *Config) {
+				c.Log.Rotation.MaxAgeDays = 0
+			},
+		},
+		{
+			wantError: "log.sampling.initial must be positive when sampling is enabled",
+			repair: func(c *Config) {
+				c.Log.Sampling.Initial = 1
+			},
+		},
+		{
+			wantError: "log.sampling.thereafter must be positive when sampling is enabled",
+			repair: func(c *Config) {
+				c.Log.Sampling.Thereafter = 1
+			},
+		},
+		{
+			wantError: "gemini.oauth.client_id and gemini.oauth.client_secret must be both set or both empty",
+			repair: func(c *Config) {
+				c.Gemini.OAuth.ClientID = ""
+			},
+		},
+	}
+	for _, step := range steps {
+		require.EqualError(t, cfg.Validate(), step.wantError)
+		step.repair(cfg)
+	}
+	require.NoError(t, cfg.Validate())
+
+	cfg.Log.Sampling.Enabled = false
+	cfg.Log.Sampling.Initial = -1
+	cfg.Log.Sampling.Thereafter = -1
+	require.EqualError(t, cfg.Validate(), "log.sampling.initial must be non-negative")
+	cfg.Log.Sampling.Initial = 0
+	require.EqualError(t, cfg.Validate(), "log.sampling.thereafter must be non-negative")
+}
+
+// TestValidateDomainFirstErrorOrder combines invalid logging and authentication
+// inputs with neighboring startup checks. The first error must follow the
+// startup sequence even when another domain is also invalid.
+func TestValidateDomainFirstErrorOrder(t *testing.T) {
+	tests := []struct {
+		name      string        // subtest display name
+		configure func(*Config) // simultaneous invalid configuration inputs
+		wantError string        // expected first validation error
+	}{
+		{
+			name: "JWT secret before logging",
+			configure: func(c *Config) {
+				c.JWT.Secret = ""
+				c.Log.Level = ""
+			},
+			wantError: "jwt.secret is required",
+		},
+		{
+			name: "Gemini before WebAuthn",
+			configure: func(c *Config) {
+				c.Gemini.OAuth.ClientID = "client"
+				c.Gemini.OAuth.ClientSecret = ""
+				c.WebAuthn = WebAuthnConfig{Enabled: true}
+			},
+			wantError: "gemini.oauth.client_id and gemini.oauth.client_secret must be both set or both empty",
+		},
+		{
+			name: "frontend URL before WebAuthn",
+			configure: func(c *Config) {
+				c.Server.FrontendURL = "https://user@example.com"
+				c.WebAuthn = WebAuthnConfig{Enabled: true}
+			},
+			wantError: "server.frontend_url invalid: must not include userinfo",
+		},
+		{
+			name: "WebAuthn before JWT lifetime",
+			configure: func(c *Config) {
+				c.WebAuthn = WebAuthnConfig{Enabled: true}
+				c.JWT.ExpireHour = 0
+			},
+			wantError: "webauthn.rp_display_name is required when passkeys are enabled",
+		},
+		{
+			name: "LinuxDo before OIDC",
+			configure: func(c *Config) {
+				c.LinuxDo.Enabled = true
+				c.LinuxDo.ClientID = ""
+				c.OIDC = OIDCConnectConfig{Enabled: true}
+			},
+			wantError: "linuxdo_connect.client_id is required when linuxdo_connect.enabled=true",
+		},
+		{
+			name: "OIDC before billing",
+			configure: func(c *Config) {
+				c.OIDC = OIDCConnectConfig{Enabled: true}
+				c.Billing.MinimumBalanceReserve = -1
+			},
+			wantError: "oidc_connect.client_id is required when oidc_connect.enabled=true",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			cfg, err := Load()
+			require.NoError(t, err)
+			tt.configure(cfg)
+			require.EqualError(t, cfg.Validate(), tt.wantError)
+		})
+	}
+}
+
+// TestValidateWebAuthnNormalizationOnError supplies padded identities and an
+// invalid second origin. Failures before, within, and after WebAuthn must retain
+// the corresponding normalization progress while leaving the supplied slice intact.
+func TestValidateWebAuthnNormalizationOnError(t *testing.T) {
+	tests := []struct {
+		name        string        // subtest display name
+		configure   func(*Config) // validation failure location selection
+		wantError   string        // expected first validation error
+		wantName    string        // resulting relying party name
+		wantID      string        // resulting relying party identifier
+		wantOrigins []string      // resulting normalized origin sequence
+	}{
+		{
+			name:        "earlier logging failure",
+			configure:   func(c *Config) { c.Log.Level = "" },
+			wantError:   "log.level is required",
+			wantName:    " TokenRouter ",
+			wantID:      " EXAMPLE.COM ",
+			wantOrigins: []string{" HTTPS://APP.EXAMPLE.COM ", " ", " https://BAD.EXAMPLE.COM/path ", " HTTPS://LAST.EXAMPLE.COM "},
+		},
+		{
+			name:        "missing name after initial normalization",
+			configure:   func(c *Config) { c.WebAuthn.RPDisplayName = " " },
+			wantError:   "webauthn.rp_display_name is required when passkeys are enabled",
+			wantName:    "",
+			wantID:      "example.com",
+			wantOrigins: []string{"HTTPS://APP.EXAMPLE.COM", "https://BAD.EXAMPLE.COM/path", "HTTPS://LAST.EXAMPLE.COM"},
+		},
+		{
+			name:        "invalid second origin after first canonicalization",
+			configure:   func(c *Config) {},
+			wantError:   "webauthn.rp_origins entry \"https://BAD.EXAMPLE.COM/path\" must not include userinfo, path, query, or fragment",
+			wantName:    "TokenRouter",
+			wantID:      "example.com",
+			wantOrigins: []string{"https://app.example.com", "https://BAD.EXAMPLE.COM/path", "HTTPS://LAST.EXAMPLE.COM"},
+		},
+		{
+			name: "later JWT lifetime failure",
+			configure: func(c *Config) {
+				c.WebAuthn.RPOrigins = []string{" HTTPS://APP.EXAMPLE.COM ", " ", " HTTPS://LAST.EXAMPLE.COM "}
+				c.JWT.ExpireHour = 0
+			},
+			wantError:   "jwt.expire_hour must be positive",
+			wantName:    "TokenRouter",
+			wantID:      "example.com",
+			wantOrigins: []string{"https://app.example.com", "https://last.example.com"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			cfg, err := Load()
+			require.NoError(t, err)
+			cfg.WebAuthn = WebAuthnConfig{
+				Enabled:       true,
+				RPDisplayName: " TokenRouter ",
+				RPID:          " EXAMPLE.COM ",
+				RPOrigins:     []string{" HTTPS://APP.EXAMPLE.COM ", " ", " https://BAD.EXAMPLE.COM/path ", " HTTPS://LAST.EXAMPLE.COM "},
+			}
+			tt.configure(cfg)
+			supplied := cfg.WebAuthn.RPOrigins
+			before := append([]string(nil), supplied...)
+			require.EqualError(t, cfg.Validate(), tt.wantError)
+			require.Equal(t, tt.wantName, cfg.WebAuthn.RPDisplayName)
+			require.Equal(t, tt.wantID, cfg.WebAuthn.RPID)
+			require.Equal(t, tt.wantOrigins, cfg.WebAuthn.RPOrigins)
+			require.Equal(t, before, supplied)
+			require.EqualError(t, cfg.Validate(), tt.wantError)
+			require.Equal(t, tt.wantOrigins, cfg.WebAuthn.RPOrigins)
+		})
+	}
+}
+
+// TestValidateOIDCFirstErrorOrder combines missing credentials and invalid
+// authentication controls with enabled token validation. Each correction must
+// reveal the next exact failure while leaving the supplied OIDC text unchanged.
+func TestValidateOIDCFirstErrorOrder(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	cfg.OIDC = OIDCConnectConfig{
+		Enabled:             true,
+		IssuerURL:           "https://issuer.example.com",
+		RedirectURL:         "https://example.com/callback",
+		FrontendRedirectURL: "/auth/callback",
+		Scopes:              "profile",
+		TokenAuthMethod:     " INVALID ",
+		ClockSkewSeconds:    -1,
+		ValidateIDToken:     true,
+	}
+	steps := []struct {
+		wantError string        // expected first validation error
+		repair    func(*Config) // correction exposing the next failure
+	}{
+		{
+			wantError: "oidc_connect.client_id is required when oidc_connect.enabled=true",
+			repair: func(c *Config) {
+				c.OIDC.ClientID = " client "
+			},
+		},
+		{
+			wantError: "oidc_connect.scopes must contain openid",
+			repair: func(c *Config) {
+				c.OIDC.Scopes = " OPENID profile "
+			},
+		},
+		{
+			wantError: "oidc_connect.token_auth_method must be one of: client_secret_post/client_secret_basic/none",
+			repair: func(c *Config) {
+				c.OIDC.TokenAuthMethod = " CLIENT_SECRET_POST "
+			},
+		},
+		{
+			wantError: "oidc_connect.client_secret is required when oidc_connect.enabled=true and token_auth_method is client_secret_post/client_secret_basic",
+			repair: func(c *Config) {
+				c.OIDC.ClientSecret = " secret "
+			},
+		},
+		{
+			wantError: "oidc_connect.clock_skew_seconds must be between 0 and 600",
+			repair: func(c *Config) {
+				c.OIDC.ClockSkewSeconds = 0
+			},
+		},
+		{
+			wantError: "oidc_connect.allowed_signing_algs is required when oidc_connect.validate_id_token=true",
+			repair: func(c *Config) {
+				c.OIDC.AllowedSigningAlgs = " RS256 "
+			},
+		},
+	}
+	for _, step := range steps {
+		before := cfg.OIDC
+		require.EqualError(t, cfg.Validate(), step.wantError)
+		require.Equal(t, before, cfg.OIDC)
+		step.repair(cfg)
+	}
+	before := cfg.OIDC
+	require.NoError(t, cfg.Validate())
+	require.Equal(t, before, cfg.OIDC)
+}
+
+// TestValidateOIDCWarningOrder supplies HTTP endpoints and long JWT lifetimes.
+// OIDC failures must suppress its endpoint warnings, while later failures and
+// repeated calls emit those warnings after the preceding domain warnings.
+func TestValidateOIDCWarningOrder(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	cfg.Server.FrontendURL = "http://example.com"
+	cfg.JWT.ExpireHour = 25
+	cfg.OIDC = OIDCConnectConfig{
+		Enabled:             true,
+		ClientID:            "client",
+		TokenAuthMethod:     "none",
+		IssuerURL:           "http://issuer.example.com",
+		DiscoveryURL:        "http://issuer.example.com/discovery",
+		AuthorizeURL:        "http://issuer.example.com/auth",
+		TokenURL:            "http://issuer.example.com/token",
+		UserInfoURL:         "http://issuer.example.com/userinfo",
+		JWKSURL:             "http://issuer.example.com/jwks",
+		RedirectURL:         "http://example.com/callback",
+		FrontendRedirectURL: "http://example.com/auth/callback",
+	}
+	cfg.Billing.MinimumBalanceReserve = -1
+	var logs bytes.Buffer
+	// Capture warnings after loading so validation ordering is measured separately
+	// from loader diagnostics, then restore the shared logger before later tests run.
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	want := []string{
+		"server.frontend_url",
+		"jwt.expire_hour is high; consider shorter expiration for security",
+	}
+	for call := range 3 {
+		logs.Reset()
+		if call == 0 {
+			require.EqualError(t, cfg.Validate(), "oidc_connect.scopes must contain openid")
+		} else {
+			require.EqualError(t, cfg.Validate(), "billing.minimum_balance_reserve must be non-negative")
+		}
+		var got []string
+		decoder := json.NewDecoder(&logs)
+		for decoder.More() {
+			var record map[string]any
+			require.NoError(t, decoder.Decode(&record))
+			if field, ok := record["field"].(string); ok {
+				got = append(got, field)
+			} else {
+				message, ok := record["msg"].(string)
+				require.True(t, ok)
+				got = append(got, message)
+			}
+		}
+		require.Equal(t, want, got)
+		if call == 0 {
+			cfg.OIDC.Scopes = "openid"
+			want = append(want,
+				"oidc_connect.issuer_url",
+				"oidc_connect.discovery_url",
+				"oidc_connect.authorize_url",
+				"oidc_connect.token_url",
+				"oidc_connect.userinfo_url",
+				"oidc_connect.jwks_url",
+				"oidc_connect.redirect_url",
+				"oidc_connect.frontend_redirect_url",
+			)
+		}
+	}
+}
+
+// TestValidateAfterBootstrapNormalizesAgain loads enabled authentication while
+// deferring JWT selection. Supplying the persisted secret must permit repeated
+// validation, retain normalized domain values, and republish static forwarding
+// settings.
+func TestValidateAfterBootstrapNormalizesAgain(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("JWT_SECRET", "")
+	viper.Set("webauthn.enabled", true)
+	viper.Set("webauthn.rp_display_name", " TokenRouter ")
+	viper.Set("webauthn.rp_id", " EXAMPLE.COM ")
+	viper.Set("webauthn.rp_origins", []string{" HTTPS://APP.EXAMPLE.COM "})
+	viper.Set("oidc_connect.enabled", true)
+	viper.Set("oidc_connect.client_id", "client")
+	viper.Set("oidc_connect.client_secret", "secret")
+	viper.Set("oidc_connect.issuer_url", "https://issuer.example.com")
+	viper.Set("oidc_connect.redirect_url", "https://example.com/callback")
+	viper.Set("oidc_connect.frontend_redirect_url", "/auth/callback")
+	cfg, err := LoadForBootstrap()
+	require.NoError(t, err)
+	require.Empty(t, cfg.JWT.Secret)
+	require.Equal(t, "TokenRouter", cfg.WebAuthn.RPDisplayName)
+	require.Equal(t, "example.com", cfg.WebAuthn.RPID)
+	require.Equal(t, []string{"https://app.example.com"}, cfg.WebAuthn.RPOrigins)
+
+	webAuthn := cfg.WebAuthn
+	oidc := cfg.OIDC
+	logging := cfg.Log
+	forwarding := cfg.ForwardedClientIPSettings()
+	cfg.JWT.Secret = strings.Repeat("persisted", 4)
+	for range 2 {
+		cfg.SetForwardedClientIPSettings(!cfg.Security.TrustForwardedIPForAPIKeyACL, []string{"X-Runtime-IP"})
+		require.NoError(t, cfg.Validate())
+		require.Equal(t, webAuthn, cfg.WebAuthn)
+		require.Equal(t, oidc, cfg.OIDC)
+		require.Equal(t, logging, cfg.Log)
+		require.Equal(t, forwarding, cfg.ForwardedClientIPSettings())
+	}
+}
+
 // collectMapstructureKeys records dotted scalar keys and their value types from
 // an acyclic struct type into a nonnil output map. Private fields and
 // mapstructure exclusions are skipped, while tag names supply field identity

@@ -171,7 +171,7 @@ func (s *ManagedRefreshService) refresh(ctx context.Context, value *Record) (*Re
 	// Capture expected identity before exchange so the later configuration write
 	// can reject an administrator change made while the supplier request was in
 	// progress.
-	expected := FailureVersion(value).CredentialVersion
+	expected := ObserveCredentialVersion(value)
 	observed, err := s.options.Exchange(ctx, value)
 	// Keep the OpenAI privacy attempt before propagating exchange failure; it uses
 	// the existing coordinated record and retains its own maintenance status and

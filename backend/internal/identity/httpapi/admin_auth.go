@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"crypto/subtle"
-	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -177,37 +176,8 @@ func ValidateJWTForAdmin(
 	settingService AuthSettings,
 	auditService AuthObserver,
 ) bool {
-	claims, err := authService.ValidateToken(token)
-	if err != nil {
-		if errors.Is(err, identity.ErrTokenExpired) {
-			AbortWithError(c, 401, "TOKEN_EXPIRED", "Token has expired")
-			return false
-		}
-		AbortWithError(c, 401, "INVALID_TOKEN", "Invalid token")
-		return false
-	}
-
-	// Read current user state before granting access.
-	user, err := userService.GetByID(c.Request.Context(), claims.UserID)
-	if err != nil {
-		AbortWithError(c, 401, "USER_NOT_FOUND", "User not found")
-		return false
-	}
-
-	if !user.IsActive() {
-		AbortWithError(c, 401, "USER_INACTIVE", "User account is not active")
-		return false
-	}
-
-	// Compare the signed version with the current credential fingerprint so an
-	// account password or email change invalidates earlier administrator tokens.
-	if claims.TokenVersion != user.TokenVersion {
-		AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked (password changed)")
-		return false
-	}
-
-	// Enforce configured IP and User-Agent binding before granting access.
-	if !EnforceSessionBinding(c, authService, settingService, auditService, claims) {
+	claims, user, ok := validateCurrentJWT(c, token, authService, userService, settingService, auditService)
+	if !ok {
 		return false
 	}
 

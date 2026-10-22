@@ -15,6 +15,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 	"github.com/TokenFlux/TokenRouter/internal/egress/postgres"
 	postgresinfra "github.com/TokenFlux/TokenRouter/internal/infra/postgres"
+	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
@@ -188,4 +189,78 @@ func (s *ProxyExpirySuite) TestSweep_NoneMode_KeepsProvider() {
 	err = postgresinfra.ScanSingleRow(s.ctx, s.tx, `SELECT proxy_fallback_origin_id FROM providers WHERE id=$1`, []any{aid}, &origin)
 	s.Require().NoError(err)
 	s.Require().Nil(origin)
+}
+
+// TestSweep_ReassignmentPreservesFilteringAndSnapshotRules expires direct and
+// backup proxies with varied provider records. Reassignment must retain existing
+// origins and deleted rows while clearing the exact managed fields on eligible rows.
+func (s *ProxyExpirySuite) TestSweep_ReassignmentPreservesFilteringAndSnapshotRules() {
+	for _, mode := range []string{egress.FallbackModeDirect, egress.FallbackModeProxy} {
+		s.Run(mode, func() {
+			past := time.Now().Add(-time.Hour)
+			backup := s.mkProxy("rules-backup-"+mode, egress.FallbackModeNone, nil, nil)
+			source := s.mkProxy("rules-source-"+mode, mode, &past, &backup)
+			for _, tc := range []struct {
+				name           string // provider scenario label
+				platform       string // stored provider platform
+				kind           string // stored credential kind
+				existingOrigin bool   // existing fallback origin
+				deleted        bool   // soft deletion state
+				clearSnapshot  bool   // expected managed snapshot removal
+			}{
+				{name: "openai-key", platform: "openai", kind: "apikey", clearSnapshot: true},
+				{name: "anthropic-key", platform: "anthropic", kind: "apikey", clearSnapshot: true},
+				{name: "other-platform", platform: "grok", kind: "apikey"},
+				{name: "other-kind", platform: "openai", kind: "oauth"},
+				{name: "existing-origin", platform: "openai", kind: "apikey", existingOrigin: true},
+				{name: "deleted", platform: "openai", kind: "apikey", deleted: true},
+			} {
+				s.Run(tc.name, func() {
+					id := s.mkProviderWithProxy(source)
+					extra := map[string]any{"ollama_cloud_usage_snapshot": map[string]any{"used": 1.0}, "upstream_billing_probe": true, "upstream_billing_probe_enabled": true, "keep": "value"}
+					update := s.tx.Client().Provider.UpdateOneID(id).SetPlatform(tc.platform).SetType(tc.kind).SetExtra(extra)
+					if tc.existingOrigin {
+						update.SetProxyFallbackOriginID(backup)
+					}
+					if tc.deleted {
+						update.SetDeletedAt(time.Now())
+					}
+					s.Require().NoError(update.Exec(s.ctx))
+					// Invoke the same provider participant as expiry while retaining this
+					// test's transaction, so direct and backup targets exercise identical cleanup rules.
+					var target *int64
+					if mode == egress.FallbackModeProxy {
+						target = &backup
+					}
+					_, err := providerpostgres.ProxyChangesInTx(s.tx).Reassign(s.ctx, source, target)
+					s.Require().NoError(err)
+					var gotProxy, origin *int64
+					var raw []byte
+					s.Require().NoError(postgresinfra.ScanSingleRow(s.ctx, s.tx, `SELECT proxy_id,proxy_fallback_origin_id,extra FROM providers WHERE id=$1`, []any{id}, &gotProxy, &origin, &raw))
+					var got map[string]any
+					s.Require().NoError(json.Unmarshal(raw, &got))
+					if tc.existingOrigin || tc.deleted {
+						s.Require().Equal(&source, gotProxy)
+						s.Require().Equal(extra, got)
+						if tc.existingOrigin {
+							s.Require().Equal(&backup, origin)
+						} else {
+							s.Require().Nil(origin)
+						}
+						return
+					}
+					s.Require().Equal(target, gotProxy)
+					s.Require().Equal(&source, origin)
+					s.Require().Equal("value", got["keep"])
+					s.Require().NotContains(got, "upstream_billing_probe")
+					s.Require().NotContains(got, "upstream_billing_probe_enabled")
+					if tc.clearSnapshot {
+						s.Require().NotContains(got, "ollama_cloud_usage_snapshot")
+					} else {
+						s.Require().Equal(extra["ollama_cloud_usage_snapshot"], got["ollama_cloud_usage_snapshot"])
+					}
+				})
+			}
+		})
+	}
 }

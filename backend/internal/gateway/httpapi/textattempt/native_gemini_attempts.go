@@ -73,11 +73,10 @@ type nativeGeminiAttemptBridge struct {
 // fingerprints read that retained result. This state belongs to one serial
 // request, and callers acquire capacity before platform execution.
 func (b *nativeGeminiAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
-	// Selection receives the client name because shared scheduling owns
-	// group mapping; this native path passes zero for the
-	// Anthropic-specific session limit.
+	// Selection receives the client model because shared scheduling resolves
+	// group mapping before validating the selected provider's supported model.
 	var err error
-	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0)) // Gemini does not apply the Anthropic session limit.
+	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded)
 	if err != nil {
 		return textflow.Selection{}, err
 	}
