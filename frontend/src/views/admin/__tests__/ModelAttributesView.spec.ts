@@ -5,7 +5,9 @@ import { modelAttributesAPI } from '@/api/admin/modelAttributes'
 import ModelAttributesFields from '@/components/admin/model-attributes/ModelAttributesFields.vue'
 import ModelAttributeRouteFields from '@/components/admin/model-attributes/ModelAttributeRouteFields.vue'
 import RuleListEditor from '@/components/common/RuleListEditor.vue'
+import LocalizedEditor from '@/components/common/LocalizedEditor.vue'
 import type { ModelAttributes } from '@/api/modelAttributes.types'
+import { originalContent } from '@/i18n/content'
 
 // ModelAttributesView.spec.ts checks attribute draft persistence, catalog references, filter
 // queries, and route previews. Mounted components or pure helper calls exercise the real owning
@@ -344,6 +346,80 @@ describe('属性管理页面', () => {
         rules: [{ models: ['upstream'], attributes: { tool_call: false } }],
       }),
     )
+    wrapper.unmount()
+  })
+
+  // An existing translated name is cleared before previewing and saving. An empty name inherits,
+  // while retyping keeps the saved localization revision needed to update the existing rule.
+  it.each(['', 'Renamed'])('清空显示名后以 %j 预览和保存', async (name) => {
+    vi.mocked(modelAttributesAPI.list).mockResolvedValueOnce({
+      items: [
+        {
+          id: 1,
+          name: 'Profile',
+          description: '',
+          status: 'active',
+          group_ids: [7],
+          rules: [
+            {
+              id: 'existing-rule',
+              models: ['upstream'],
+              attributes: {
+                tool_call: false,
+                output_modalities: [],
+                display_name: 'Custom',
+                display_name_localization: {
+                  ...originalContent('Custom', 'en'),
+                  revision: 7,
+                  source_revision: 3,
+                  translations: { 'zh-Hans': { value: '自定义', source_revision: 3 } },
+                },
+              },
+            },
+          ],
+        },
+      ],
+      total: 1,
+    })
+    vi.mocked(modelAttributesAPI.getModelDefaultAttributes).mockResolvedValue({
+      display_name: 'Catalog name',
+    })
+    vi.mocked(modelAttributesAPI.preview).mockResolvedValue({ routes: [] })
+    const wrapper = mount(ModelAttributesView, { global: { stubs } })
+    await flushPromises()
+    await wrapper.get('button[aria-label="common.edit"]').trigger('click')
+    await flushPromises()
+    const fields = wrapper.getComponent(ModelAttributesFields)
+    const input = fields.getComponent(LocalizedEditor).get('input')
+    await input.setValue('')
+    expect(input.attributes('placeholder')).toBe('admin.modelAttributes.inheritValue')
+    if (name) await input.setValue(name)
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'admin.modelAttributes.preview')!
+      .trigger('click')
+    await flushPromises()
+    const expected = name
+      ? {
+          tool_call: false,
+          output_modalities: [],
+          display_name: name,
+          display_name_localization: {
+            ...originalContent(name, 'en'),
+            revision: 7,
+            source_revision: 3,
+            reviewed_locales: [],
+            translations: { 'zh-Hans': { value: '自定义', source_revision: -1 } },
+          },
+        }
+      : { tool_call: false, output_modalities: [] }
+    const previewConfig = vi.mocked(modelAttributesAPI.preview).mock.calls.at(-1)![2]!
+    expect(previewConfig.rules[0]!.attributes).toEqual(expected)
+    expect(fields.props('modelValue').display_name_localization?.revision).toBe(7)
+    await wrapper.get('#attribute-form').trigger('submit')
+    await flushPromises()
+    const savedConfig = vi.mocked(modelAttributesAPI.save).mock.calls.at(-1)![0]
+    expect(savedConfig.rules[0]!.attributes).toEqual(expected)
     wrapper.unmount()
   })
 

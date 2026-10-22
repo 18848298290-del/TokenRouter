@@ -534,6 +534,19 @@ const blank = (): AttributeConfig => ({
 // form owns a copied attribute configuration draft so rule and group edits are submitted
 // together through the editor save operation.
 const form = ref<AttributeConfig>(blank())
+// formPayload omits empty display-name overrides from preview and save requests. The editable
+// form retains translation revisions while its source is empty so clearing and retyping an
+// existing name can still pass the server's revision check.
+const formPayload = computed<AttributeConfig>(() => ({
+  ...form.value,
+  rules: form.value.rules.map((rule) => {
+    if (rule.attributes.display_name_localization?.source !== '') return rule
+    const attributes = { ...rule.attributes }
+    delete attributes.display_name
+    delete attributes.display_name_localization
+    return { ...rule, attributes }
+  }),
+}))
 // tabsRef exposes editor validation and selection, while editorTabs supplies the basic, rule,
 // and preview sections with translated labels.
 const tabsRef = ref<InstanceType<typeof SettingsTabs> | null>(null)
@@ -751,7 +764,7 @@ async function preview() {
     const result = await modelAttributesAPI.preview(
       Number(previewGroup.value),
       previewModel.value.trim(),
-      form.value,
+      formPayload.value,
     )
     if (sequence === previewSequence) previewRoutes.value = result.routes
   } catch (cause) {
@@ -826,7 +839,7 @@ async function save() {
   try {
     // Persist the validated draft before closing the editor and reloading configurations so
     // the list reflects a completed save attempt.
-    await modelAttributesAPI.save(form.value)
+    await modelAttributesAPI.save(formPayload.value)
     showEditor.value = false
     await load()
   } catch (cause) {

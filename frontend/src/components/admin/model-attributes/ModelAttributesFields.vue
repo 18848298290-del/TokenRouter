@@ -1,27 +1,23 @@
 <template>
   <div class="space-y-4">
-    <div>
-      <LocalizedEditor
-        :label="t('admin.modelAttributes.fields.display_name')"
-        :model-value="
-          modelValue.display_name_localization ||
-          originalContent(
-            modelValue.display_name || '',
-            modelValue.display_name ? null : normalizeLocale(locale) || defaultLocale,
-          )
-        "
-        @update:model-value="
-          emit('update:modelValue', {
-            ...modelValue,
-            display_name: $event.source || undefined,
-            display_name_localization: $event,
-          })
-        "
-      />
-      <button type="button" class="btn btn-secondary btn-sm mt-2" @click="inheritDisplayName">
-        {{ t('admin.modelAttributes.inherit') }}
-      </button>
-    </div>
+    <LocalizedEditor
+      :label="t('admin.modelAttributes.fields.display_name')"
+      :model-value="
+        modelValue.display_name_localization ||
+        originalContent(
+          modelValue.display_name || '',
+          modelValue.display_name ? null : normalizeLocale(locale) || defaultLocale,
+        )
+      "
+      :placeholder="inheritText(inherited?.display_name)"
+      @update:model-value="
+        emit('update:modelValue', {
+          ...modelValue,
+          display_name: $event.source || undefined,
+          display_name_localization: $event,
+        })
+      "
+    />
     <div class="grid gap-4 sm:grid-cols-3">
       <label v-for="field in attributeLimits" :key="field">
         <span class="input-label">{{ t(`admin.modelAttributes.fields.${field}`) }}</span>
@@ -103,9 +99,9 @@ import {
 } from '@/api/modelAttributes.types'
 
 // ModelAttributesFields.vue edits model attribute overrides with inherited values shown beside
-// controls. Omitted keys inherit catalog or earlier-rule attributes, while false and empty
-// modality arrays remain explicit choices. Display-name reset clears both the source name and
-// its translations.
+// controls. Omitted keys inherit catalog or platform attributes, while false and empty
+// modality arrays remain explicit choices. Display-name edits retain translation revisions;
+// the owning page omits empty names and their translations from preview and save requests.
 
 // props supplies parent-owned editor values and display controls consumed by the fields below.
 const props = defineProps<{
@@ -173,13 +169,6 @@ function set<K extends keyof ModelAttributes>(key: K, value: ModelAttributes[K])
   emit('update:modelValue', next)
 }
 
-// inheritDisplayName removes the custom display name and its translations together.
-function inheritDisplayName() {
-  const next = { ...props.modelValue }
-  delete next.display_name
-  delete next.display_name_localization
-  emit('update:modelValue', next)
-}
 // setNumber converts a numeric input value into an attribute override. An empty input delegates
 // undefined to set, removing that override so the corresponding limit can inherit its value.
 function setNumber(field: (typeof attributeLimits)[number], value: string) {
