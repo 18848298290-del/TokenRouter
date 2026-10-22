@@ -111,3 +111,7 @@ Apple container 的新栈使用 `org.tokenrouter.stack` 标签；已有的 `sub2
 系统维护锁使用幂等表和 scope、key；processing 记录的 response_body 里保存一个独立的所有者令牌，续租和释放时，同时比较业务操作 ID 和令牌。旧的、没有令牌的记录，在原来的锁窗口内继续阻止认领，过期后可以被接管；普通的 HTTP 幂等记录不使用这套维护认领接口。回退旧二进制之前，先停止并等待维护操作完成，数据库恢复或二进制替换进行到一半时，不要切换实现。
 
 相关文档：[系统架构](../architecture/system_architecture.md)、[配置](../interfaces/configuration.md)、[版本升级说明](upgrade_notes.md)、[运维目录](index.md)。
+
+## MCP 管理接入
+
+迁移 300 创建独立的 MCP 令牌表，保存认证摘要和加密凭据，迁移 301 增加默认关闭的跳过浏览器确认设置。服务沿用现有 PostgreSQL、Redis 和持久加密密钥；创建与复制令牌要求配置固定的 `TOTP_ENCRYPTION_KEY`（或 `totp.encryption_key`），所有实例使用相同值，并与数据库一起备份。入口与网页使用同一监听端口，反向代理需要允许 `/mcp`。浏览器确认链接使用 `frontend_url`，原生客户端通过专用 Bearer 令牌连接，部署时按需限制管理入口的网络可达范围。令牌迁移、回退和临时数据规则见 [MCP 管理接口](../interfaces/mcp_management.md#client_setup)。

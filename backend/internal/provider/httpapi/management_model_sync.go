@@ -69,12 +69,7 @@ func (h *ManagementHandler) SyncUpstreamModels(c *gin.Context) {
 // provider configuration write.
 // POST /api/v1/admin/providers/models/sync-upstream-preview
 func (h *ManagementHandler) SyncUpstreamModelsPreview(c *gin.Context) {
-	var req struct {
-		Platform string `json:"platform" binding:"required"` // temporary upstream platform identifier
-		Type     string `json:"type" binding:"required"`     // temporary provider authentication kind
-		BaseURL  string `json:"base_url"`                    // temporary upstream root URL
-		APIKey   string `json:"api_key" binding:"required"`  // temporary upstream API key
-	}
+	var req ProviderModelsSyncPreviewRequest
 	if err := response.BindJSONStrict(c, &req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return

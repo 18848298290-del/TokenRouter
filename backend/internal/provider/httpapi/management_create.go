@@ -21,9 +21,7 @@ import (
 // follow-up work; the HTTP response contains names, successful IDs and failure
 // messages.
 func (h *ManagementHandler) BatchCreate(c *gin.Context) {
-	var req struct {
-		Providers []CreateProviderRequest `json:"providers" binding:"required,min=1"` // ordered provider creation requests
-	}
+	var req ProviderBatchCreateRequest
 	if err := response.BindJSONStrict(c, &req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return

@@ -1,6 +1,10 @@
 package httpapi
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
+)
 
 // routes_settings.go registers combined settings and preaggregation endpoints
 // on the administrator route group.
@@ -43,9 +47,9 @@ type PreAggregationEndpoints interface {
 // authentication and audit middleware first and supplies every endpoint dependency
 // before requests can reach these routes.
 func RegisterSettingsSettingsRoutes(adminSettings *gin.RouterGroup, endpoint SettingsSettingsEndpoints, pre PreAggregationEndpoints) {
-	adminSettings.GET("", endpoint.GetSettings)
-	adminSettings.PUT("", endpoint.UpdateSettings)
-	adminSettings.GET("/pre-aggregation", pre.GetPreAggregationSettings)
-	adminSettings.PUT("/pre-aggregation", pre.UpdatePreAggregationSettings)
-	adminSettings.POST("/pre-aggregation/backfill", pre.BackfillPreAggregation)
+	adminapi.Register(adminSettings, ManagementOperations["settings.list"], endpoint.GetSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.update"], endpoint.UpdateSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.pre_aggregation.list"], pre.GetPreAggregationSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.pre_aggregation.update"], pre.UpdatePreAggregationSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.pre_aggregation.backfill.create"], pre.BackfillPreAggregation)
 }

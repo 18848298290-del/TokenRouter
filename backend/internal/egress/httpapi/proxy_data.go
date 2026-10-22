@@ -49,9 +49,7 @@ func (h *ProxyHandler) ExportData(c *gin.Context) {
 // successful batch processing returns partial creation/reuse/failure counts and
 // diagnostics while repository-load failure uses the shared error response.
 func (h *ProxyHandler) ImportData(c *gin.Context) {
-	var req struct {
-		Data transfer.DataPayload `json:"data"` // submitted shared backup envelope
-	}
+	var req ProxyDataImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return

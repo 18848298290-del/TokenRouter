@@ -546,6 +546,7 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/usage', label: t('nav.usage'), icon: 'chart' as const },
     { path: '/admin/requests', label: t('requests.title'), icon: 'search' as const },
     { path: '/admin/audit-logs', label: t('nav.auditLogs'), icon: 'shieldCheck' as const },
+    { path: '/admin/mcp', label: t('admin.mcp.title'), icon: 'key' as const },
   ]
 
   const visibleItems = baseItems.filter((item) => item.featureFlag?.() !== false)
@@ -568,15 +569,13 @@ function closeMobile() {
   appStore.setMobileOpen(false)
 }
 
-// handleMenuItemClick closes current-route drawers and advances matching onboarding
-// steps.
-//
-// Other route changes close through the route watcher; supported tour destinations
-// schedule the next step with a delay for the destination to appear.
+// handleMenuItemClick closes the mobile drawer before navigation and advances matching
+// onboarding steps. Destination views can replace this sidebar before its route watcher
+// runs, so the click settles shared drawer state while the current instance still owns it.
 function handleMenuItemClick(itemPath: string) {
-  // A click on the current route produces no route change, so close the drawer here when
-  // the watcher cannot observe navigation.
-  if (mobileOpen.value && itemPath === route.path) {
+  // Closing on selection covers both same-route links and route transitions that unmount
+  // this instance before its watcher can remove the overlay from shared application state.
+  if (mobileOpen.value) {
     appStore.setMobileOpen(false)
   }
 

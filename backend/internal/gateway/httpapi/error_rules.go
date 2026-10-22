@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/errorpolicy"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
@@ -352,10 +353,10 @@ func (h *ErrorPassthroughHandler) Delete(c *gin.Context) {
 func RegisterErrorPassthroughRoutes(admin *gin.RouterGroup, endpoint *ErrorPassthroughHandler) {
 	rules := admin.Group("/error-passthrough-rules")
 	{
-		rules.GET("", endpoint.List)
-		rules.GET("/:id", endpoint.GetByID)
-		rules.POST("", endpoint.Create)
-		rules.PUT("/:id", endpoint.Update)
-		rules.DELETE("/:id", endpoint.Delete)
+		adminapi.Register(rules, ManagementOperations["error_passthrough_rules.list"], endpoint.List)
+		adminapi.Register(rules, ManagementOperations["error_passthrough_rules.get"], endpoint.GetByID)
+		adminapi.Register(rules, ManagementOperations["error_passthrough_rules.create"], endpoint.Create)
+		adminapi.Register(rules, ManagementOperations["error_passthrough_rules.update"], endpoint.Update)
+		adminapi.Register(rules, ManagementOperations["error_passthrough_rules.delete"], endpoint.Delete)
 	}
 }

@@ -245,7 +245,7 @@ func buildAuditLogsWhere(filter *audit.AuditLogFilter) (string, []any) {
 	if v := strings.TrimSpace(filter.Query); v != "" {
 		args = append(args, "%"+sqlutil.EscapeLikePattern(v)+"%")
 		idx := strconv.Itoa(len(args))
-		clauses = append(clauses, "(l.path ILIKE $"+idx+" OR l.action ILIKE $"+idx+" OR l.actor_email ILIKE $"+idx+")")
+		clauses = append(clauses, "(l.path ILIKE $"+idx+" OR l.action ILIKE $"+idx+" OR l.actor_email ILIKE $"+idx+" OR l.credential_masked ILIKE $"+idx+")")
 	}
 
 	return "WHERE " + strings.Join(clauses, " AND "), args

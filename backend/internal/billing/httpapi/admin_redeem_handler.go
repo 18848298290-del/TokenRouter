@@ -549,12 +549,7 @@ func (h *AdminRedeemHandler) Delete(c *gin.Context) {
 // reply can report fewer deletes than supplied IDs.
 // POST /api/v1/admin/redeem-codes/batch-delete
 func (h *AdminRedeemHandler) BatchDelete(c *gin.Context) {
-	var req struct {
-		// IDs retain requested order and duplicates for the administrator's
-		// independent delete attempts. The nonempty binding requirement does not
-		// validate individual IDs or promise an aggregate transaction.
-		IDs []int64 `json:"ids" binding:"required,min=1"` // requested credential deletion sequence
-	}
+	var req RedeemCodeBatchDeleteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return

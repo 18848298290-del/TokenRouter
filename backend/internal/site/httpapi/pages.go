@@ -9,6 +9,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
@@ -91,5 +92,5 @@ func (h *PageHandler) Register(v1 *gin.RouterGroup, jwtAuth, adminAuth gin.Handl
 	images.GET("/:slug/images/*filename", h.ServePageImage)
 	admin := v1.Group("/pages")
 	admin.Use(adminAuth)
-	admin.GET("", h.ListPages)
+	adminapi.Register(admin, ManagementOperations["pages.list"], h.ListPages)
 }

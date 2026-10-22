@@ -80,7 +80,7 @@ func TestModelAttributeHTTPReadWriteAndAuthorization(t *testing.T) {
 		Update: func() error { updates++; return nil },
 	}}
 	router := gin.New()
-	admin := router.Group("/admin", func(c *gin.Context) {
+	admin := router.Group("/api/v1/admin", func(c *gin.Context) {
 		if c.GetHeader("X-Test-Admin") != "yes" {
 			c.AbortWithStatus(403)
 		}
@@ -96,18 +96,18 @@ func TestModelAttributeHTTPReadWriteAndAuthorization(t *testing.T) {
 		router.ServeHTTP(response, req)
 		return response
 	}
-	require.Equal(t, 403, call("GET", "/admin/model-attributes/defaults", "", false).Code)
-	query := call("GET", "/admin/model-attributes/defaults?search=custom", "", true)
+	require.Equal(t, 403, call("GET", "/api/v1/admin/model-attributes/defaults", "", false).Code)
+	query := call("GET", "/api/v1/admin/model-attributes/defaults?search=custom", "", true)
 	require.Equal(t, 200, query.Code)
 	require.Contains(t, query.Body.String(), `"version":"one"`)
 	require.Zero(t, updates)
-	require.Equal(t, 200, call("POST", "/admin/model-attributes/defaults/update", "", true).Code)
+	require.Equal(t, 200, call("POST", "/api/v1/admin/model-attributes/defaults/update", "", true).Code)
 	require.Equal(t, 1, updates)
-	created := call("POST", "/admin/model-attributes/configs", `{"id":99,"name":"display","status":"active","group_ids":[1],"rules":[{"models":["custom"],"attributes":{"tool_call":false}}]}`, true)
+	created := call("POST", "/api/v1/admin/model-attributes/configs", `{"id":99,"name":"display","status":"active","group_ids":[1],"rules":[{"models":["custom"],"attributes":{"tool_call":false}}]}`, true)
 	require.Equal(t, 200, created.Code)
 	require.Zero(t, store.saved.ID)
 	require.False(t, *store.saved.Rules[0].Attributes.ToolCall)
-	require.Equal(t, 400, call("PUT", "/admin/model-attributes/configs/no", "{}", true).Code)
+	require.Equal(t, 400, call("PUT", "/api/v1/admin/model-attributes/configs/no", "{}", true).Code)
 }
 
 // TestModelAttributeDefaultsUsePagedIndex queries true and false reasoning

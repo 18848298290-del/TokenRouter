@@ -92,6 +92,10 @@ func EnforceStepUp(c *gin.Context, grantChecker StepUpGrantChecker, userReader U
 			"Admin API key cannot access this endpoint; a two-factor verified admin session is required")
 		return false
 	}
+	if principal, ok := authctx.GetPrincipal(c); ok && principal.CredentialKind == "mcp_token" && principal.SessionID == "" {
+		AbortWithError(c, 403, "STEP_UP_REQUIRED", "This operation requires browser confirmation with recent two-factor verification")
+		return false
+	}
 
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok || subject.UserID <= 0 {

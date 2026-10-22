@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
 // routes_admin.go registers proxy, TLS fingerprint, and collector routes under
@@ -19,22 +21,22 @@ import (
 func RegisterProxyRoutes(admin *gin.RouterGroup, endpoint *ProxyHandler, stepUpAuth gin.HandlerFunc) {
 	proxies := admin.Group("/proxies")
 	{
-		proxies.GET("", endpoint.List)
-		proxies.GET("/all", endpoint.GetAll)
+		adminapi.Register(proxies, ManagementOperations["proxies.list"], endpoint.List)
+		adminapi.Register(proxies, ManagementOperations["proxies.all.list"], endpoint.GetAll)
 		// The backup response includes plaintext passwords. Run the supplied
 		// step-up middleware before export so this credential read has its additional admin check.
-		proxies.GET("/data", stepUpAuth, endpoint.ExportData)
-		proxies.POST("/data", endpoint.ImportData)
-		proxies.GET("/:id", endpoint.GetByID)
-		proxies.POST("", endpoint.Create)
-		proxies.PUT("/:id", endpoint.Update)
-		proxies.DELETE("/:id", endpoint.Delete)
-		proxies.POST("/:id/test", endpoint.Test)
-		proxies.POST("/:id/quality-check", endpoint.CheckQuality)
-		proxies.GET("/:id/stats", endpoint.GetStats)
-		proxies.GET("/:id/providers", endpoint.GetProxyProviders)
-		proxies.POST("/batch-delete", endpoint.BatchDelete)
-		proxies.POST("/batch", endpoint.BatchCreate)
+		adminapi.Register(proxies, ManagementOperations["proxies.data.list"], stepUpAuth, endpoint.ExportData)
+		adminapi.Register(proxies, ManagementOperations["proxies.data.create"], endpoint.ImportData)
+		adminapi.Register(proxies, ManagementOperations["proxies.get"], endpoint.GetByID)
+		adminapi.Register(proxies, ManagementOperations["proxies.create"], endpoint.Create)
+		adminapi.Register(proxies, ManagementOperations["proxies.update"], endpoint.Update)
+		adminapi.Register(proxies, ManagementOperations["proxies.delete"], endpoint.Delete)
+		adminapi.Register(proxies, ManagementOperations["proxies.test.create"], endpoint.Test)
+		adminapi.Register(proxies, ManagementOperations["proxies.quality_check.create"], endpoint.CheckQuality)
+		adminapi.Register(proxies, ManagementOperations["proxies.stats.list"], endpoint.GetStats)
+		adminapi.Register(proxies, ManagementOperations["proxies.providers.list"], endpoint.GetProxyProviders)
+		adminapi.Register(proxies, ManagementOperations["proxies.batch_delete.create"], endpoint.BatchDelete)
+		adminapi.Register(proxies, ManagementOperations["proxies.batch.create"], endpoint.BatchCreate)
 	}
 }
 
@@ -47,18 +49,18 @@ func RegisterTLSFingerprintProfileRoutes(admin *gin.RouterGroup, endpoint *TLSFi
 	{
 		collector := profiles.Group("/collector")
 		{
-			collector.GET("/status", endpoint.CollectorStatus)
-			collector.POST("/start", endpoint.StartCollector)
-			collector.POST("/stop", endpoint.StopCollector)
-			collector.POST("/sessions", endpoint.CreateCollectorSession)
-			collector.GET("/sessions/:token/captures", endpoint.ListCollectorCaptures)
-			collector.DELETE("/sessions/:token", endpoint.DeleteCollectorSession)
+			adminapi.Register(collector, ManagementOperations["tls_fingerprint_profiles.collector.status.list"], endpoint.CollectorStatus)
+			adminapi.Register(collector, ManagementOperations["tls_fingerprint_profiles.collector.start.create"], endpoint.StartCollector)
+			adminapi.Register(collector, ManagementOperations["tls_fingerprint_profiles.collector.stop.create"], endpoint.StopCollector)
+			adminapi.Register(collector, ManagementOperations["tls_fingerprint_profiles.collector.sessions.create"], endpoint.CreateCollectorSession)
+			adminapi.Register(collector, ManagementOperations["tls_fingerprint_profiles.collector.sessions.captures.list"], endpoint.ListCollectorCaptures)
+			adminapi.Register(collector, ManagementOperations["tls_fingerprint_profiles.collector.sessions.delete"], endpoint.DeleteCollectorSession)
 		}
-		profiles.GET("", endpoint.List)
-		profiles.GET("/:id", endpoint.GetByID)
-		profiles.POST("", endpoint.Create)
-		profiles.PUT("/:id", endpoint.Update)
-		profiles.DELETE("/:id", endpoint.Delete)
+		adminapi.Register(profiles, ManagementOperations["tls_fingerprint_profiles.list"], endpoint.List)
+		adminapi.Register(profiles, ManagementOperations["tls_fingerprint_profiles.get"], endpoint.GetByID)
+		adminapi.Register(profiles, ManagementOperations["tls_fingerprint_profiles.create"], endpoint.Create)
+		adminapi.Register(profiles, ManagementOperations["tls_fingerprint_profiles.update"], endpoint.Update)
+		adminapi.Register(profiles, ManagementOperations["tls_fingerprint_profiles.delete"], endpoint.Delete)
 	}
 }
 
@@ -69,10 +71,10 @@ func RegisterTLSFingerprintProfileRoutes(admin *gin.RouterGroup, endpoint *TLSFi
 func RegisterTLSFingerprintRouterRoutes(admin *gin.RouterGroup, endpoint *TLSFingerprintRouterHandler) {
 	routers := admin.Group("/tls-fingerprint-routers")
 	{
-		routers.GET("", endpoint.List)
-		routers.GET("/:id", endpoint.GetByID)
-		routers.POST("", endpoint.Create)
-		routers.PUT("/:id", endpoint.Update)
-		routers.DELETE("/:id", endpoint.Delete)
+		adminapi.Register(routers, ManagementOperations["tls_fingerprint_routers.list"], endpoint.List)
+		adminapi.Register(routers, ManagementOperations["tls_fingerprint_routers.get"], endpoint.GetByID)
+		adminapi.Register(routers, ManagementOperations["tls_fingerprint_routers.create"], endpoint.Create)
+		adminapi.Register(routers, ManagementOperations["tls_fingerprint_routers.update"], endpoint.Update)
+		adminapi.Register(routers, ManagementOperations["tls_fingerprint_routers.delete"], endpoint.Delete)
 	}
 }

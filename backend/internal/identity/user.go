@@ -162,9 +162,9 @@ type Principal struct {
 	Role   string // current global account role
 	// SessionID carries JWT session identity when present. Administrator API Key
 	// principals leave it empty, so sid-based step-up grants cannot use that
-	// credential.
+	// credential. Confirmed MCP dispatches carry the approving browser session.
 	SessionID      string
-	CredentialKind string // jwt, admin_api_key, or api_key
+	CredentialKind string // jwt, admin_api_key, api_key, or mcp_token
 }
 
 // IsAdmin reports whether the stored global role equals the administrator

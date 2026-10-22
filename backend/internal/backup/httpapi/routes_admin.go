@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
 // routes_admin.go registers backup and retired data-management endpoints with
@@ -20,32 +22,32 @@ import (
 func RegisterBackupRoutes(admin *gin.RouterGroup, endpoint *BackupHandler, stepUpAuth gin.HandlerFunc) {
 	backup := admin.Group("/backups")
 	{
-		backup.GET("/storage-config", endpoint.GetStorageConfig)
+		adminapi.Register(backup, ManagementOperations["backups.storage_config.list"], endpoint.GetStorageConfig)
 		// Storage changes can redirect exports, so this route applies the supplied step-up policy before accepting new credentials.
-		backup.PUT("/storage-config", stepUpAuth, endpoint.UpdateStorageConfig)
-		backup.POST("/storage-config/test", endpoint.TestStorageConnection)
+		adminapi.Register(backup, ManagementOperations["backups.storage_config.update"], stepUpAuth, endpoint.UpdateStorageConfig)
+		adminapi.Register(backup, ManagementOperations["backups.storage_config.test.create"], endpoint.TestStorageConnection)
 
-		backup.GET("/content-config", endpoint.GetContentConfig)
-		backup.PUT("/content-config", endpoint.UpdateContentConfig)
+		adminapi.Register(backup, ManagementOperations["backups.content_config.list"], endpoint.GetContentConfig)
+		adminapi.Register(backup, ManagementOperations["backups.content_config.update"], endpoint.UpdateContentConfig)
 
-		backup.GET("/s3-config", endpoint.GetS3Config)
+		adminapi.Register(backup, ManagementOperations["backups.s3_config.list"], endpoint.GetS3Config)
 		// Apply the supplied step-up policy before changing the remote destination that receives database archive contents.
-		backup.PUT("/s3-config", stepUpAuth, endpoint.UpdateS3Config)
-		backup.POST("/s3-config/test", endpoint.TestS3Connection)
+		adminapi.Register(backup, ManagementOperations["backups.s3_config.update"], stepUpAuth, endpoint.UpdateS3Config)
+		adminapi.Register(backup, ManagementOperations["backups.s3_config.test.create"], endpoint.TestS3Connection)
 
-		backup.GET("/schedule", endpoint.GetSchedule)
-		backup.PUT("/schedule", endpoint.UpdateSchedule)
+		adminapi.Register(backup, ManagementOperations["backups.schedule.list"], endpoint.GetSchedule)
+		adminapi.Register(backup, ManagementOperations["backups.schedule.update"], endpoint.UpdateSchedule)
 
-		backup.POST("", stepUpAuth, endpoint.CreateBackup)
-		backup.GET("", endpoint.ListBackups)
-		backup.GET("/:id", RequireCanonicalBackupID, endpoint.GetBackup)
-		backup.DELETE("/:id", RequireCanonicalBackupID, endpoint.DeleteBackup)
+		adminapi.Register(backup, ManagementOperations["backups.create"], stepUpAuth, endpoint.CreateBackup)
+		adminapi.Register(backup, ManagementOperations["backups.list"], endpoint.ListBackups)
+		adminapi.Register(backup, ManagementOperations["backups.get"], RequireCanonicalBackupID, endpoint.GetBackup)
+		adminapi.Register(backup, ManagementOperations["backups.delete"], RequireCanonicalBackupID, endpoint.DeleteBackup)
 		// Archive downloads expose selected database contents, so both URL generation and streaming apply the supplied step-up policy.
-		backup.GET("/:id/download-url", RequireCanonicalBackupID, stepUpAuth, endpoint.GetDownloadURL)
-		backup.GET("/:id/download", RequireCanonicalBackupID, stepUpAuth, endpoint.DownloadBackup)
+		adminapi.Register(backup, ManagementOperations["backups.download_url.list"], RequireCanonicalBackupID, stepUpAuth, endpoint.GetDownloadURL)
+		adminapi.Register(backup, ManagementOperations["backups.download.list"], RequireCanonicalBackupID, stepUpAuth, endpoint.DownloadBackup)
 
 		// Apply the supplied step-up policy before restore reaches its separate current-password verification and asynchronous operation registration.
-		backup.POST("/:id/restore", RequireCanonicalBackupID, stepUpAuth, endpoint.RestoreBackup)
+		adminapi.Register(backup, ManagementOperations["backups.restore.create"], RequireCanonicalBackupID, stepUpAuth, endpoint.RestoreBackup)
 	}
 }
 
@@ -55,24 +57,24 @@ func RegisterBackupRoutes(admin *gin.RouterGroup, endpoint *BackupHandler, stepU
 func RegisterDataManagementRoutes(admin *gin.RouterGroup, endpoint *DataManagementHandler, stepUpAuth gin.HandlerFunc) {
 	dataManagement := admin.Group("/data-management")
 	{
-		dataManagement.GET("/agent/health", endpoint.GetAgentHealth)
-		dataManagement.GET("/config", endpoint.GetConfig)
-		dataManagement.PUT("/config", endpoint.UpdateConfig)
-		dataManagement.GET("/sources/:source_type/profiles", endpoint.ListSourceProfiles)
-		dataManagement.POST("/sources/:source_type/profiles", endpoint.CreateSourceProfile)
-		dataManagement.PUT("/sources/:source_type/profiles/:profile_id", endpoint.UpdateSourceProfile)
-		dataManagement.DELETE("/sources/:source_type/profiles/:profile_id", endpoint.DeleteSourceProfile)
-		dataManagement.POST("/sources/:source_type/profiles/:profile_id/activate", endpoint.SetActiveSourceProfile)
-		dataManagement.POST("/s3/test", endpoint.TestS3)
-		dataManagement.GET("/s3/profiles", endpoint.ListS3Profiles)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.agent.health.list"], endpoint.GetAgentHealth)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.config.list"], endpoint.GetConfig)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.config.update"], endpoint.UpdateConfig)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.sources.profiles.list"], endpoint.ListSourceProfiles)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.sources.profiles.create"], endpoint.CreateSourceProfile)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.sources.profiles.update"], endpoint.UpdateSourceProfile)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.sources.profiles.delete"], endpoint.DeleteSourceProfile)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.sources.profiles.activate.create"], endpoint.SetActiveSourceProfile)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.s3.test.create"], endpoint.TestS3)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.s3.profiles.list"], endpoint.ListS3Profiles)
 		// Retired destination changes retain their supplied step-up policy before the legacy handler performs validation and availability reporting.
-		dataManagement.POST("/s3/profiles", stepUpAuth, endpoint.CreateS3Profile)
-		dataManagement.PUT("/s3/profiles/:profile_id", stepUpAuth, endpoint.UpdateS3Profile)
-		dataManagement.DELETE("/s3/profiles/:profile_id", endpoint.DeleteS3Profile)
-		dataManagement.POST("/s3/profiles/:profile_id/activate", stepUpAuth, endpoint.SetActiveS3Profile)
-		dataManagement.POST("/backups", stepUpAuth, endpoint.CreateBackupJob)
-		dataManagement.GET("/backups", endpoint.ListBackupJobs)
-		dataManagement.GET("/backups/:job_id", endpoint.GetBackupJob)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.s3.profiles.create"], stepUpAuth, endpoint.CreateS3Profile)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.s3.profiles.update"], stepUpAuth, endpoint.UpdateS3Profile)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.s3.profiles.delete"], endpoint.DeleteS3Profile)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.s3.profiles.activate.create"], stepUpAuth, endpoint.SetActiveS3Profile)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.backups.create"], stepUpAuth, endpoint.CreateBackupJob)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.backups.list"], endpoint.ListBackupJobs)
+		adminapi.Register(dataManagement, ManagementOperations["data_management.backups.get"], endpoint.GetBackupJob)
 	}
 }
 

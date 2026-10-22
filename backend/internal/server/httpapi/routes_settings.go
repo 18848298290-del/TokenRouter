@@ -1,6 +1,10 @@
 package httpapi
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
+)
 
 // routes_settings.go registers panel rate-limit read and update endpoints on
 // the administrator settings group.
@@ -25,6 +29,6 @@ type ServerSettingsEndpoints interface {
 // Callers provide nonnil endpoints and an administrator settings group whose
 // middleware already performs authentication and audit before these handlers execute.
 func RegisterPanelSettingsRoutes(adminSettings *gin.RouterGroup, endpoint ServerSettingsEndpoints) {
-	adminSettings.GET("/panel-rate-limit", endpoint.GetPanelRateLimitSettings)
-	adminSettings.PUT("/panel-rate-limit", endpoint.UpdatePanelRateLimitSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.panel_rate_limit.list"], endpoint.GetPanelRateLimitSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.panel_rate_limit.update"], endpoint.UpdatePanelRateLimitSettings)
 }

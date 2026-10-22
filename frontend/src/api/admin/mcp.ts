@@ -1,0 +1,145 @@
+import { apiClient } from '../client'
+
+// mcp.ts sends administrator token and browser-confirmation requests through the
+// existing authenticated client. Token metadata never includes reusable secrets;
+// creation and the owner-only copy endpoint return complete credentials. Callers own cancellation for reads and
+// retain failed form input while displaying the server's validation response.
+
+// MCPOperation identifies one permission and the interaction required to execute it.
+export interface MCPOperation {
+  operation_id: string // Stable operation permission.
+  module: string // Permission grouping category.
+  title: string // Human-readable operation label.
+  title_zh?: string // Optional Chinese operation label.
+  description: string // Parameter and effect guidance.
+  method: string // Underlying HTTP verb.
+  path: string // Registered route pattern.
+  read_only: boolean // Declared query behavior.
+  sensitive: boolean // Browser confirmation requirement.
+  step_up: boolean // Existing TOTP policy requirement.
+  response_mode: string // Shared response delivery mode.
+}
+
+// MCPToken contains administrator-visible metadata for a dedicated access credential.
+export interface MCPToken {
+  id: number // Stored credential identifier.
+  user_id: number // Owning administrator identifier.
+  name: string // Administrator-chosen token label.
+  prefix: string // Non-secret credential prefix.
+  permissions: string[] // Exact granted operation identifiers.
+  enabled: boolean // Current admission switch.
+  skip_browser_confirmation: boolean // Direct sensitive execution preference.
+  expires_at: string | null // Optional absolute expiry.
+  last_used_at: string | null // Last admitted request time.
+  created_at: string // Initial creation time.
+  updated_at: string // Last settings change.
+  revoked_at: string | null // Permanent revocation time.
+}
+
+// MCPTokenInput replaces the complete editable settings of one owned token.
+export interface MCPTokenInput {
+  name: string // Required display name.
+  permissions: string[] // Exact selected permission set.
+  enabled: boolean // Requested admission switch.
+  skip_browser_confirmation: boolean // Opt-in MCP confirmation bypass.
+  expires_at: string | null // Null permits no expiry.
+}
+
+// MCPCreation carries a freshly issued credential for immediate client setup.
+export interface MCPCreation {
+  token: MCPToken // Persisted public token metadata.
+  credential: string // Complete issued access credential.
+}
+
+// MCPConfirmation describes the exact redacted action awaiting browser review.
+export interface MCPConfirmation {
+  id: string // Opaque confirmation identifier.
+  token_id: number // Requesting owned credential.
+  operation: MCPOperation // Action being confirmed.
+  preview: string // Redacted JSON argument display.
+  state: 'pending' | 'approved' | 'consumed' // Current shared workflow state.
+  expires_at: string // Absolute confirmation expiry.
+}
+
+// listTokens reads the current administrator's token metadata with optional cancellation.
+export async function listTokens(signal?: AbortSignal): Promise<MCPToken[]> {
+  const { data } = await apiClient.get<MCPToken[]>('/admin/mcp/tokens', { signal })
+  return data
+}
+
+// listOperations loads the same operation directory used by MCP discovery.
+export async function listOperations(signal?: AbortSignal): Promise<MCPOperation[]> {
+  const { data } = await apiClient.get<MCPOperation[]>('/admin/mcp/operations', { signal })
+  return data
+}
+
+// getCredential reads an owned token's complete value for an explicit copy action.
+// Callers keep the returned plaintext ephemeral. List responses contain metadata,
+// and this endpoint requires the owner's authenticated browser session.
+export async function getCredential(id: number): Promise<string> {
+  const { data } = await apiClient.get<{ credential: string }>(`/admin/mcp/tokens/${id}/credential`)
+  return data.credential
+}
+
+// createToken issues a credential whose plaintext the caller must keep ephemeral.
+export async function createToken(input: MCPTokenInput): Promise<MCPCreation> {
+  const { data } = await apiClient.post<MCPCreation>('/admin/mcp/tokens', input)
+  return data
+}
+
+// updateToken replaces settings on an owned credential and returns saved metadata.
+export async function updateToken(id: number, input: MCPTokenInput): Promise<MCPToken> {
+  const { data } = await apiClient.put<MCPToken>(`/admin/mcp/tokens/${id}`, input)
+  return data
+}
+
+// revokeToken permanently disables an owned credential through its administrator endpoint.
+export async function revokeToken(id: number): Promise<void> {
+  await apiClient.delete(`/admin/mcp/tokens/${id}`)
+}
+
+// getConfirmation reads a redacted review in the owner's authenticated browser session.
+export async function getConfirmation(id: string, signal?: AbortSignal): Promise<MCPConfirmation> {
+  const { data } = await apiClient.get<MCPConfirmation>(
+    `/admin/mcp/confirmations/${encodeURIComponent(id)}`,
+    { signal },
+  )
+  return data
+}
+
+// approveConfirmation records browser approval and leaves execution to the matching MCP retry.
+export async function approveConfirmation(id: string): Promise<void> {
+  await apiClient.post(`/admin/mcp/confirmations/${encodeURIComponent(id)}/approve`)
+}
+
+// downloadFile reads a protected result with the normal administrator JWT header.
+// Error bytes are decoded before the shared interceptor so expiry and TOTP
+// responses retain their structured reason. Successful downloads remain binary
+// and use the existing archive timeout for large results.
+export async function downloadFile(id: string): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>(`/admin/mcp/files/${encodeURIComponent(id)}`, {
+    responseType: 'arraybuffer',
+    timeout: 300000,
+    transformResponse: [
+      (bytes, headers, status) => {
+        if (status && status >= 400) {
+          try {
+            return JSON.parse(new TextDecoder().decode(bytes))
+          } catch {
+            return {}
+          }
+        }
+        return new Blob([bytes], {
+          type: String(headers['content-type'] || 'application/octet-stream'),
+        })
+      },
+    ],
+  })
+  return data
+}
+
+// downloadSpecification reads the authenticated OpenAPI export as a downloadable document.
+export async function downloadSpecification(): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>('/admin/mcp/openapi', { responseType: 'blob' })
+  return data
+}

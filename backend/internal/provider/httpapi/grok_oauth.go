@@ -407,32 +407,7 @@ func (h *GrokOAuthHandler) ReconcileOAuthProviders(c *gin.Context) {
 // exchange, configuration persistence and follow-up dispatch, and the HTTP
 // result redacts provider credentials.
 func (h *GrokOAuthHandler) CreateProviderFromOAuth(c *gin.Context) {
-	var req struct {
-		SessionID string `json:"session_id" binding:"required"` // authorization session identifier
-		Code      string `json:"code" binding:"required"`       // authorization exchange code
-		// State can be omitted from code-exchange input when authorization derives it
-		// from pasted code or callback text. The resolved value still needs to match
-		// the stored session.
-		State string `json:"state"` // authorization state value
-		// RedirectURI is trimmed and checked against the stored session when nonblank.
-		// Token exchange uses that stored callback after the consistency check.
-		RedirectURI string `json:"redirect_uri"` // authorization callback URI
-		// ProxyID can override exchange transport after successful lookup and is also
-		// forwarded as the provider's creation binding. An omitted selection can reuse
-		// the session route for exchange while creating a provider with no proxy ID.
-		ProxyID *int64 `json:"proxy_id"` // selected egress proxy
-		// Name is trimmed by the importer. Blank input prefers returned email and then
-		// the fixed Grok OAuth Provider label before administrative creation.
-		Name string `json:"name"` // provider display name
-		// Concurrency and Priority are forwarded as supplied to administrative
-		// creation. This OAuth path supplies no PAT-style pointer defaults, so zero
-		// reaches the corresponding administrator rules.
-		Concurrency int `json:"concurrency"` // provider request capacity
-		Priority    int `json:"priority"`    // scheduler priority value
-		// GroupIDs supplies the requested group associations for validation and
-		// creation. An empty selection creates no automatically chosen default group.
-		GroupIDs []int64 `json:"group_ids"` // associated routing groups
-	}
+	var req GrokOAuthProviderCreateRequest
 	if err := response.BindJSONStrict(c, &req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return

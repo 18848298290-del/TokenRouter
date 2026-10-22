@@ -151,13 +151,16 @@ func TestDeriveAuditAction(t *testing.T) {
 	}
 }
 
-// TestAuditSensitiveReadsIncludesForkBackupRoutes checks the direct backup
-// download and storage-configuration read routes. Both must remain audited GET
-// operations with the actions used to search sensitive management access.
-func TestAuditSensitiveReadsIncludesForkBackupRoutes(t *testing.T) {
+// TestAuditSensitiveReadsIncludesProtectedDownloads checks backup and MCP workflow
+// read routes. They remain audited GET operations so administrators can inspect
+// protected file access and confirmation reviews alongside their initiating actions.
+func TestAuditSensitiveReadsIncludesProtectedDownloads(t *testing.T) {
 	want := map[string]string{
-		"GET /api/v1/admin/backups/:id/download":   "admin.backups.download",
-		"GET /api/v1/admin/backups/storage-config": "admin.backups.storage_config.read",
+		"GET /api/v1/admin/backups/:id/download":      "admin.backups.download",
+		"GET /api/v1/admin/backups/storage-config":    "admin.backups.storage_config.read",
+		"GET /api/v1/admin/mcp/tokens/:id/credential": "admin.mcp.tokens.copy",
+		"GET /api/v1/admin/mcp/files/:id":             "admin.mcp.files.download",
+		"GET /api/v1/admin/mcp/confirmations/:id":     "admin.mcp.confirmations.read",
 	}
 	for route, action := range want {
 		if got := auditSensitiveReads[route]; got != action {
@@ -239,14 +242,14 @@ func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {
 	require.NotContains(t, logs[0].RequestBody, "audit-canary")
 }
 
-// TestPasskeyFinishRoutesOmitAuditBody checks the login and registration finish route keys.
-// Both must remain in the full-body omission map so the middleware selects that
-// capture policy for those endpoints.
-func TestPasskeyFinishRoutesOmitAuditBody(t *testing.T) {
-	// WebAuthn finish bodies contain full assertions or attestations and must be omitted from audit storage.
+// TestCredentialPayloadRoutesOmitAuditBody checks endpoints carrying opaque authentication
+// payloads. WebAuthn assertions and encoded MCP imports require whole-body omission,
+// because nested JSON-key redaction cannot inspect the encoded secret values.
+func TestCredentialPayloadRoutesOmitAuditBody(t *testing.T) {
 	for _, route := range []string{
 		"POST /api/v1/auth/passkey/login/finish",
 		"POST /api/v1/user/passkeys/register/finish",
+		"POST /api/v1/admin/mcp/files",
 	} {
 		require.Contains(t, auditBodyOmittedRoutes, route)
 	}
@@ -263,6 +266,42 @@ func (r *auditCaptureRepository) ClearWithTrace(_ context.Context, trace *audit.
 	n := len(r.logs)
 	r.logs = []*audit.AuditLog{trace}
 	return int64(n), nil
+}
+
+// TestMCPBrowserContinuationAuditRetainsActorAndToken downloads an owned protected
+// result through a JWT fixture. The audit keeps browser authentication while
+// retaining the originating token and operation for its related-history filter.
+func TestMCPBrowserContinuationAuditRetainsActorAndToken(t *testing.T) {
+	repository := &auditCaptureRepository{}
+	service := audit.NewAuditLogService(repository, nil)
+	service.Start()
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(authctx.ContextKeyUser), authctx.AuthSubject{UserID: 77})
+		c.Set("auth_method", audit.AuditAuthMethodJWT)
+		c.Next()
+	})
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(service, audit.NewRedactor(nil))))
+	router.GET("/api/v1/admin/mcp/files/:id", func(c *gin.Context) {
+		c.Set("mcp_related_token_id", int64(12))
+		c.Set("mcp_related_operation_id", "providers.data.list")
+		c.Set("mcp_related_token_prefix", "tr_mcp_example")
+		c.Data(200, "application/json", []byte(`{"result":true}`))
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/admin/mcp/files/owned-file", nil))
+	// Stop drains queued audit writes before assertions inspect the repository's
+	// captured event, so completion does not depend on asynchronous writer scheduling.
+	service.Stop()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	require.Len(t, repository.logs, 1)
+	entry := repository.logs[0]
+	require.Equal(t, audit.AuditAuthMethodJWT, entry.AuthMethod)
+	require.Equal(t, int64(77), *entry.ActorUserID)
+	require.Equal(t, "tr_mcp_example", entry.CredentialMasked)
+	require.Equal(t, int64(12), entry.Extra["mcp_token_id"])
+	require.Equal(t, "providers.data.list", entry.Extra["mcp_operation_id"])
 }
 
 // ClearWithTrace records its position after TOTP verification and captures the

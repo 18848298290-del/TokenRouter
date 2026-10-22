@@ -331,11 +331,6 @@ func (h *ProxyHandler) Delete(c *gin.Context) {
 // validate each ID's positivity here; skipped errors remain part of the
 // returned batch outcome.
 func (h *ProxyHandler) BatchDelete(c *gin.Context) {
-	// BatchDeleteRequest supplies the ordered IDs for independent administration deletions.
-	type BatchDeleteRequest struct {
-		IDs []int64 `json:"ids" binding:"required,min=1"` // ordered proxy deletion identities
-	}
-
 	var req BatchDeleteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())

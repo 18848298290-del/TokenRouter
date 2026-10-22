@@ -33,4 +33,6 @@ var httpAssemblyProviders = wire.NewSet(
 	serverhttp.NewPanelSettingsHandler,
 	provideRouterRuntime,
 	provideRequestLog,
+	provideMCPTokens,
+	provideMCPHTTP,
 )

@@ -96,7 +96,7 @@ type AuditLogFilter struct {
 	// Success selects all statuses when nil, statuses below 400 when true, and
 	// statuses at least 400 when false, matching the HTTP list query's classification.
 	Success *bool
-	Query   string // path, action, or email substring
+	Query   string // path, action, email, or credential-prefix substring
 }
 
 // AuditLogList is a page of audit records and its pagination metadata.

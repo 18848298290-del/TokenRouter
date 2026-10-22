@@ -157,11 +157,7 @@ func (h *SystemHandler) GetRollbackVersions(c *gin.Context) {
 // maintained update service.
 // POST /api/v1/admin/system/rollback
 func (h *SystemHandler) Rollback(c *gin.Context) {
-	var req struct {
-		// Version selects a downloaded rollback when trimmed nonempty. Omitted, null,
-		// or blank input selects the retained local-backup path.
-		Version string `json:"version"` // selected rollback target version
-	}
+	var req SystemRollbackRequest
 	// Use body presence and length before binding, accepting EOF as omitted target
 	// while unknown chunked length still reaches decoding.
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {

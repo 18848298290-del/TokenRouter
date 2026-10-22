@@ -1,3 +1,4 @@
+import mcp from './mcp'
 import modelAttributes from './modelAttributes'
 import overview from './overview'
 import pricing from './pricing'
@@ -64,4 +65,5 @@ export default {
   ...ops,
   ...settings,
   ...audit,
+  ...mcp,
 }

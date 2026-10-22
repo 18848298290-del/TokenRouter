@@ -68,6 +68,8 @@ OpenAI 的文本、Responses、WS、Images 和辅助执行器共用请求构造�
 
 领域错误由所属模块定义。HTTP 映射和跨模块判断传递原始错误对象，使用 `errors.Is/As` 和错误链判断；按文案新建一个同名错误会让这些判断失效。接口、存储和后台代码能依赖哪些包，由 `tools/architecture/` 的 arch-go 架构测试按角色和具体文件约束，见[依赖规则](../operations/development_workflow.md#backend_dependency_rules)。
 
+MCP 与普通管理 HTTP 共用业务 handler。app 装配专用令牌读取、Redis 确认和文件存储，并在全部管理路由挂载后检查操作目录；目录不完整时停止启动。内部请求通过私有 context 携带来源身份，进入管理链时重新核对权限。详见 [MCP 管理接口](../interfaces/mcp_management.md)。
+
 ### 传输与生成入口
 
 `app/http_transport.go` 把传输相关配置整理给下游，`gateway/provider/transport` 组合请求策略和各平台的传输能力。`infra/httpclient.UpstreamPool` 持有客户端缓存和请求占用计数，成功的请求在响应体关闭时归还占用。OpenAI 的 HTTP/2 回退由 egress 处理，Grok CLI Header 和可重放的 403 策略由 upstream/grok 处理。隐私请求使用共享的 req 客户端池，超时 30 秒，使用 Chrome 指纹。

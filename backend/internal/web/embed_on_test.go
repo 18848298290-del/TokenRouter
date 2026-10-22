@@ -607,6 +607,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 
 		apiPaths := []string{
 			"/api/v1/users",
+			"/mcp",
 			"/v1/models",
 			"/models",
 			"/v1beta/chat",
@@ -993,6 +994,7 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 
 		apiPaths := []string{
 			"/api/users",
+			"/mcp",
 			"/v1/models",
 			"/models",
 			"/v1beta/chat",
@@ -1023,6 +1025,30 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 			})
 		}
 	})
+}
+
+// TestMCPRoutesBypassEmbeddedFrontend exercises Streamable HTTP methods in both
+// embedded serving modes. Even a browser Accept header must reach the MCP
+// handler instead of receiving the application's HTML entry page.
+func TestMCPRoutesBypassEmbeddedFrontend(t *testing.T) {
+	server, err := NewFrontendServer(&mockSettingsProvider{settings: map[string]string{}})
+	require.NoError(t, err)
+	for name, frontend := range map[string]gin.HandlerFunc{"injected": server.Middleware(), "static": ServeEmbeddedFrontend()} {
+		for _, method := range []string{http.MethodPost, http.MethodGet, http.MethodDelete} {
+			t.Run(name+method, func(t *testing.T) {
+				router := gin.New()
+				router.Use(frontend)
+				router.Any("/mcp", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"transport": "mcp"}) })
+				request := httptest.NewRequest(method, "/mcp", nil)
+				request.Header.Set("Accept", "text/html, application/json")
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				require.Equal(t, http.StatusOK, response.Code)
+				require.Contains(t, response.Header().Get("Content-Type"), "application/json")
+				require.JSONEq(t, `{"transport":"mcp"}`, response.Body.String())
+			})
+		}
+	}
 }
 
 // BenchmarkReplaceNoncePlaceholder repeatedly substitutes one marker in a fixed

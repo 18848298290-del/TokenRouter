@@ -35,8 +35,9 @@ func provideJWTAuth(graph *identityAuthGraph, users *identity.UserService, setti
 }
 
 // provideAdminAuth constructs administrator authentication with shared identity services and audit recording.
-func provideAdminAuth(graph *identityAuthGraph, users *identity.UserService, settings *identity.RuntimeSettings, recorder *audit.AuditLogService) identityhttp.AdminAuthMiddleware {
-	return identityhttp.AdminAuthMiddleware(identityhttp.AdminAuth(graph.Core, users, settings, identityAuthAudit{recorder}))
+func provideAdminAuth(graph *identityAuthGraph, users *identity.UserService, settings *identity.RuntimeSettings, recorder *audit.AuditLogService, tokens *identity.MCPTokenService) identityhttp.AdminAuthMiddleware {
+	normal := identityhttp.AdminAuth(graph.Core, users, settings, identityAuthAudit{recorder})
+	return identityhttp.AdminAuthMiddleware(identityhttp.MCPAdminAuth(tokens, normal))
 }
 
 // provideStepUpAuth binds session credentials, TOTP, and dynamic settings.

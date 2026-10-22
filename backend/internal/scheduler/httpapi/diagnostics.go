@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
@@ -172,6 +173,6 @@ func ensureAdvancedSchedulerScorePreviewEOF(decoder *json.Decoder) error {
 // authorization middleware and keeps the bound endpoint available for later
 // requests.
 func RegisterProviderDiagnostics(providers *gin.RouterGroup, endpoint *DiagnosticsHandler) {
-	providers.GET("/:id/advanced-scheduler-score", endpoint.GetAdvancedSchedulerScore)
-	providers.POST("/:id/advanced-scheduler-score/preview", endpoint.PreviewAdvancedSchedulerScore)
+	adminapi.Register(providers, ManagementOperations["providers.advanced_scheduler_score.list"], endpoint.GetAdvancedSchedulerScore)
+	adminapi.Register(providers, ManagementOperations["providers.advanced_scheduler_score.preview.create"], endpoint.PreviewAdvancedSchedulerScore)
 }

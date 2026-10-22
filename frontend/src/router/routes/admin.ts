@@ -7,6 +7,18 @@ import type { RouteRecordRaw } from 'vue-router'
 // adminRoutes supplies the ordered records for this navigation area to the application router.
 export const adminRoutes: RouteRecordRaw[] = [
   {
+    path: '/admin/mcp',
+    name: 'AdminMCP',
+    component: () => import('@/views/admin/McpManagementView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'MCP management',
+      titleKey: 'admin.mcp.title',
+      descriptionKey: 'admin.mcp.description',
+    },
+  },
+  {
     path: '/admin',
     redirect: '/admin/dashboard',
   },

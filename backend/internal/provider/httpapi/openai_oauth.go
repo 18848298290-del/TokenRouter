@@ -437,34 +437,7 @@ func (h *OpenAIOAuthHandler) RefreshProviderToken(c *gin.Context) {
 // provider DTO.
 // POST /api/v1/admin/openai/create-from-oauth
 func (h *OpenAIOAuthHandler) CreateProviderFromOAuth(c *gin.Context) {
-	var req struct {
-		SessionID string `json:"session_id" binding:"required"` // authorization session identifier
-		Code      string `json:"code" binding:"required"`       // authorization exchange code
-		State     string `json:"state" binding:"required"`      // authorization state value
-		// RedirectURI overrides the stored callback when nonempty. Omission keeps the
-		// session callback used by authorization for this credential exchange.
-		RedirectURI string `json:"redirect_uri"` // authorization callback URI
-		// ProxyID selects a requested exchange override and the persisted creation
-		// binding. Omission can retain the session's exchange URL but leaves creation
-		// with no proxy ID; lookup errors reject exchange.
-		ProxyID *int64 `json:"proxy_id"` // selected egress proxy
-		// TLSFingerprintRouterID is forwarded as an optional exchange selector. OAuth
-		// provider creation stores a positive requested router ID as its later
-		// refresh binding.
-		TLSFingerprintRouterID *int64 `json:"tls_fingerprint_router_id"` // optional exchange TLS-router selector
-		// Name exactly empty selects returned email, then the fixed OpenAI OAuth
-		// Provider label. Nonempty text reaches administrative name normalization as
-		// supplied.
-		Name string `json:"name"` // provider display name
-		// Concurrency and Priority reach administrative creation as supplied.
-		// These plain integers distinguish no omission from zero, and this OAuth
-		// importer supplies none of the PAT path's pointer defaults.
-		Concurrency int `json:"concurrency"` // provider request capacity
-		Priority    int `json:"priority"`    // scheduler priority value
-		// GroupIDs supplies the requested creation associations for administrative
-		// validation. Empty input leaves the provider with no automatic default group.
-		GroupIDs []int64 `json:"group_ids"` // associated routing groups
-	}
+	var req OpenAIOAuthProviderCreateRequest
 	if err := response.BindJSONStrict(c, &req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return

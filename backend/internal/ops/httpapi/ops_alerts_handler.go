@@ -498,9 +498,7 @@ func (h *OpsHandler) UpdateAlertEventStatus(c *gin.Context) {
 		return
 	}
 
-	var payload struct {
-		Status string `json:"status"` // requested resolution state
-	}
+	var payload UpdateAlertEventStatusRequest
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		response.BadRequest(c, "Invalid request body")
 		return
@@ -543,18 +541,7 @@ func (h *OpsHandler) CreateAlertSilence(c *gin.Context) {
 		return
 	}
 
-	var payload struct {
-		RuleID   int64  `json:"rule_id"`  // target alert rule identity
-		Platform string `json:"platform"` // requested silence platform scope
-		// GroupID is passed directly to the saved scope; nil leaves that scope's
-		// group identity absent rather than selecting every group.
-		GroupID *int64 `json:"group_id"` // optional silence group identity
-		// Region is passed through without HTTP trimming; PostgreSQL later normalizes
-		// its optional string when storing the exact silence scope.
-		Region *string `json:"region"` // optional silence region text
-		Until  string  `json:"until"`  // RFC3339
-		Reason string  `json:"reason"` // administrator silence reason text
-	}
+	var payload CreateAlertSilenceRequest
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		response.BadRequest(c, "Invalid request body")
 		return

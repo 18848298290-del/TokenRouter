@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"github.com/gin-gonic/gin"
+
+	billinghttpapi "github.com/TokenFlux/TokenRouter/internal/billing/httpapi"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
 // routes.go registers buyer, public recovery, webhook, and administrative
@@ -120,38 +123,38 @@ func RegisterRoutes(
 	adminGroup.Use(guards.Panel)
 	adminGroup.Use(guards.Audit)
 	{
-		adminGroup.GET("/dashboard", adminPaymentHandler.GetDashboard)
+		adminapi.Register(adminGroup, ManagementOperations["payment.dashboard.list"], adminPaymentHandler.GetDashboard)
 
-		adminGroup.GET("/config", adminPaymentHandler.GetConfig)
-		adminGroup.PUT("/config", adminPaymentHandler.UpdateConfig)
+		adminapi.Register(adminGroup, ManagementOperations["payment.config.list"], adminPaymentHandler.GetConfig)
+		adminapi.Register(adminGroup, ManagementOperations["payment.config.update"], adminPaymentHandler.UpdateConfig)
 
 		adminOrders := adminGroup.Group("/orders")
 		{
-			adminOrders.GET("", adminPaymentHandler.ListOrders)
-			adminOrders.GET("/:id", adminPaymentHandler.GetOrderDetail)
-			adminOrders.GET("/:id/invoice", adminPaymentHandler.GetOrderInvoice)
-			adminOrders.POST("/:id/cancel", adminPaymentHandler.CancelOrder)
-			adminOrders.POST("/:id/force-expire", adminPaymentHandler.ForceExpireOrder)
-			adminOrders.POST("/:id/retry", adminPaymentHandler.RetryFulfillment)
-			adminOrders.POST("/:id/refund", adminPaymentHandler.ProcessRefund)
-			adminOrders.POST("/:id/refund/query", adminPaymentHandler.QueryAndFinalizeRefund)
+			adminapi.Register(adminOrders, ManagementOperations["payment.orders.list"], adminPaymentHandler.ListOrders)
+			adminapi.Register(adminOrders, ManagementOperations["payment.orders.get"], adminPaymentHandler.GetOrderDetail)
+			adminapi.Register(adminOrders, ManagementOperations["payment.orders.invoice.list"], adminPaymentHandler.GetOrderInvoice)
+			adminapi.Register(adminOrders, ManagementOperations["payment.orders.cancel.create"], adminPaymentHandler.CancelOrder)
+			adminapi.Register(adminOrders, ManagementOperations["payment.orders.force_expire.create"], adminPaymentHandler.ForceExpireOrder)
+			adminapi.Register(adminOrders, ManagementOperations["payment.orders.retry.create"], adminPaymentHandler.RetryFulfillment)
+			adminapi.Register(adminOrders, ManagementOperations["payment.orders.refund.create"], adminPaymentHandler.ProcessRefund)
+			adminapi.Register(adminOrders, ManagementOperations["payment.orders.refund.query.create"], adminPaymentHandler.QueryAndFinalizeRefund)
 		}
 
 		plans := adminGroup.Group("/plans")
 		{
-			plans.GET("", planHandler.ListPlans)
-			plans.POST("", planHandler.CreatePlan)
-			plans.PUT("/:id", planHandler.UpdatePlan)
-			plans.DELETE("/:id", planHandler.DeletePlan)
+			adminapi.Register(plans, billinghttpapi.ManagementOperations["payment.plans.list"], planHandler.ListPlans)
+			adminapi.Register(plans, billinghttpapi.ManagementOperations["payment.plans.create"], planHandler.CreatePlan)
+			adminapi.Register(plans, billinghttpapi.ManagementOperations["payment.plans.update"], planHandler.UpdatePlan)
+			adminapi.Register(plans, billinghttpapi.ManagementOperations["payment.plans.delete"], planHandler.DeletePlan)
 		}
 
 		providers := adminGroup.Group("/providers")
 		{
-			providers.GET("", adminPaymentHandler.ListProviders)
-			providers.POST("", adminPaymentHandler.CreateProvider)
-			providers.POST("/test", adminPaymentHandler.TestProvider)
-			providers.PUT("/:id", adminPaymentHandler.UpdateProvider)
-			providers.DELETE("/:id", adminPaymentHandler.DeleteProvider)
+			adminapi.Register(providers, ManagementOperations["payment.providers.list"], adminPaymentHandler.ListProviders)
+			adminapi.Register(providers, ManagementOperations["payment.providers.create"], adminPaymentHandler.CreateProvider)
+			adminapi.Register(providers, ManagementOperations["payment.providers.test.create"], adminPaymentHandler.TestProvider)
+			adminapi.Register(providers, ManagementOperations["payment.providers.update"], adminPaymentHandler.UpdateProvider)
+			adminapi.Register(providers, ManagementOperations["payment.providers.delete"], adminPaymentHandler.DeleteProvider)
 		}
 	}
 }

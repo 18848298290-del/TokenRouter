@@ -112,16 +112,7 @@ func (h *AdminHandler) GetUsage(c *gin.Context) {
 // remains supplied, and binding/service errors precede the created response;
 // routes authorize the administrator.
 func (h *AdminHandler) Create(c *gin.Context) {
-	var req struct {
-		OwnerUserID int64 `json:"owner_user_id" binding:"required"` // requested team owner identity
-		// Name supplies required creation text. The service trims and validates the
-		// team name before creating the requested owner's team.
-		Name string `json:"name" binding:"required"`
-		// MemberLimit supplies the requested creation ceiling when present. Nil
-		// selects the service's configured or built-in default; zero admits no
-		// ordinary members and negatives fail service validation.
-		MemberLimit *int `json:"member_limit"`
-	}
+	var req AdminTeamCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
@@ -143,20 +134,7 @@ func (h *AdminHandler) Update(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req struct {
-		// Name supplies replacement text when present. Nil leaves the team name
-		// unchanged, while the service validates and trims a selected value before
-		// writing.
-		Name *string `json:"name"`
-		// Status selects a replacement team status when nonnil. Omission or JSON
-		// null leaves it nil, and service validation admits active or suspended
-		// text.
-		Status *string `json:"status"`
-		// MemberLimit replaces the stored ceiling when present. Nil leaves the
-		// existing ceiling unchanged; zero admits no ordinary members and negatives
-		// fail service validation.
-		MemberLimit *int `json:"member_limit"`
-	}
+	var req AdminTeamUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
@@ -180,9 +158,7 @@ func (h *AdminHandler) ForceTransfer(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req struct {
-		TargetUserID int64 `json:"target_user_id" binding:"required"` // requested successor account identity
-	}
+	var req AdminTeamTransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return

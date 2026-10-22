@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/server"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
@@ -44,6 +45,12 @@ func TestNativeRouteInventory(t *testing.T) {
 	require.NoError(t, err)
 	var expected []string
 	require.NoError(t, json.Unmarshal(raw, &expected))
+	catalog, catalogErr := adminapi.FromRoutes(r.Routes())
+	require.NoError(t, catalogErr)
+	descriptions := map[string]*adminapi.Operation{}
+	for _, operation := range catalog.Operations() {
+		descriptions[operation.Method+" "+operation.Path] = operation
+	}
 	actual := make([]string, 0, len(r.Routes()))
 	for _, route := range r.Routes() {
 		actual = append(actual, route.Method+" "+route.Path)
@@ -68,7 +75,15 @@ func TestNativeRouteInventory(t *testing.T) {
 			}
 			return -1
 		}
+		if position("inventoryAdmin") >= 0 {
+			require.NotNil(t, descriptions[route.Method+" "+route.Path], "administrator route lacks operation metadata: "+route.Path)
+		}
 		if strings.HasPrefix(route.Path, "/api/v1/admin/") {
+			if position("inventoryStepUp") >= 0 {
+				operation := descriptions[route.Method+" "+route.Path]
+				require.True(t, operation.StepUp, operation.ID)
+				require.True(t, operation.Sensitive, operation.ID)
+			}
 			require.GreaterOrEqual(t, position("inventoryAdmin"), 0, route.Path)
 			require.Greater(t, position("inventoryAudit"), position("inventoryAdmin"), route.Path)
 		}
@@ -88,6 +103,15 @@ func TestNativeRouteInventory(t *testing.T) {
 		t.Logf("TEST_ROUTE_CHAIN %s", encoded)
 	}
 	sort.Strings(expected)
+	expectedAdminCount := 0
+	for _, registered := range expected {
+		if strings.Contains(registered, " /api/v1/admin/") {
+			expectedAdminCount++
+		}
+	}
+	require.Len(t, catalog.Operations(), expectedAdminCount)
+	_, missingMetadata := adminapi.FromRoutes(append(r.Routes(), gin.RouteInfo{Method: "POST", Path: "/api/v1/admin/undocumented"}))
+	require.ErrorContains(t, missingMetadata, "missing management operation")
 	sort.Strings(actual)
 	require.Equal(t, expected, actual)
 	// Retired administrative routes return 404; callers need to use current endpoints.

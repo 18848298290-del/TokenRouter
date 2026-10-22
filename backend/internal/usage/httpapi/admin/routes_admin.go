@@ -2,6 +2,8 @@ package admin
 
 import (
 	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
 // routes_admin.go registers administrator dashboard, usage-query, and
@@ -18,18 +20,18 @@ import (
 func RegisterDashboardRoutes(admin *gin.RouterGroup, endpoint *DashboardHandler) {
 	dashboard := admin.Group("/dashboard")
 	{
-		dashboard.GET("/snapshot-v2", endpoint.GetSnapshotV2)
-		dashboard.GET("/stats", endpoint.GetStats)
-		dashboard.GET("/realtime", endpoint.GetRealtimeMetrics)
-		dashboard.GET("/trend", endpoint.GetUsageTrend)
-		dashboard.GET("/models", endpoint.GetModelStats)
-		dashboard.GET("/groups", endpoint.GetGroupStats)
-		dashboard.GET("/api-keys-trend", endpoint.GetAPIKeyUsageTrend)
-		dashboard.GET("/users-trend", endpoint.GetUserUsageTrend)
-		dashboard.GET("/users-ranking", endpoint.GetUserSpendingRanking)
-		dashboard.POST("/users-usage", endpoint.GetBatchUsersUsage)
-		dashboard.POST("/api-keys-usage", endpoint.GetBatchAPIKeysUsage)
-		dashboard.GET("/user-breakdown", endpoint.GetUserBreakdown)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.snapshot_v2.list"], endpoint.GetSnapshotV2)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.stats.list"], endpoint.GetStats)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.realtime.list"], endpoint.GetRealtimeMetrics)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.trend.list"], endpoint.GetUsageTrend)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.models.list"], endpoint.GetModelStats)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.groups.list"], endpoint.GetGroupStats)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.api_keys_trend.list"], endpoint.GetAPIKeyUsageTrend)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.users_trend.list"], endpoint.GetUserUsageTrend)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.users_ranking.list"], endpoint.GetUserSpendingRanking)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.users_usage.create"], endpoint.GetBatchUsersUsage)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.api_keys_usage.create"], endpoint.GetBatchAPIKeysUsage)
+		adminapi.Register(dashboard, ManagementOperations["dashboard.user_breakdown.list"], endpoint.GetUserBreakdown)
 	}
 }
 
@@ -40,12 +42,12 @@ func RegisterDashboardRoutes(admin *gin.RouterGroup, endpoint *DashboardHandler)
 func RegisterUsageRoutes(admin *gin.RouterGroup, endpoint *UsageHandler) {
 	usage := admin.Group("/usage")
 	{
-		usage.GET("", endpoint.List)
-		usage.GET("/stats", endpoint.Stats)
-		usage.GET("/search-users", endpoint.SearchUsers)
-		usage.GET("/search-api-keys", endpoint.SearchAPIKeys)
-		usage.GET("/cleanup-tasks", endpoint.ListCleanupTasks)
-		usage.POST("/cleanup-tasks", endpoint.CreateCleanupTask)
-		usage.POST("/cleanup-tasks/:id/cancel", endpoint.CancelCleanupTask)
+		adminapi.Register(usage, ManagementOperations["usage.list"], endpoint.List)
+		adminapi.Register(usage, ManagementOperations["usage.stats.list"], endpoint.Stats)
+		adminapi.Register(usage, ManagementOperations["usage.search_users.list"], endpoint.SearchUsers)
+		adminapi.Register(usage, ManagementOperations["usage.search_api_keys.list"], endpoint.SearchAPIKeys)
+		adminapi.Register(usage, ManagementOperations["usage.cleanup_tasks.list"], endpoint.ListCleanupTasks)
+		adminapi.Register(usage, ManagementOperations["usage.cleanup_tasks.create"], endpoint.CreateCleanupTask)
+		adminapi.Register(usage, ManagementOperations["usage.cleanup_tasks.cancel.create"], endpoint.CancelCleanupTask)
 	}
 }

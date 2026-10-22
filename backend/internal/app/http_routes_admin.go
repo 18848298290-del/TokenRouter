@@ -21,6 +21,7 @@ import (
 	routingdto "github.com/TokenFlux/TokenRouter/internal/routing/httpapi/dto"
 	routescheduler "github.com/TokenFlux/TokenRouter/internal/scheduler/httpapi"
 	routesearch "github.com/TokenFlux/TokenRouter/internal/search/httpapi"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 	serverhttp "github.com/TokenFlux/TokenRouter/internal/server/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 	routesettings "github.com/TokenFlux/TokenRouter/internal/settings/httpapi"
@@ -101,7 +102,7 @@ func provideAdminRouteMount(eAdminTLSFingerprintProfile *routeegress.TLSFingerpr
 		admin.Use(middleware.ProviderTerminology())
 		{
 			// Provider and group forms share this read-only capability catalogue.
-			admin.GET("/protocol-capabilities", protocolCatalog)
+			adminapi.Register(admin, ManagementOperations["protocol_capabilities.list"], protocolCatalog)
 			// Dashboard routes.
 			{
 				routeusageadmin.RegisterDashboardRoutes(admin, eAdminDashboard)
@@ -278,14 +279,14 @@ func provideAdminRouteMount(eAdminTLSFingerprintProfile *routeegress.TLSFingerpr
 			// Team administration.
 			teams := admin.Group("/teams")
 			{
-				teams.GET("", eAdminTeam.List)
-				teams.POST("", eAdminTeam.Create)
-				teams.GET("/:id", eAdminTeam.Get)
-				teams.GET("/:id/members", eAdminTeam.ListMembers)
-				teams.GET("/:id/usage", eAdminTeam.GetUsage)
-				teams.PATCH("/:id", eAdminTeam.Update)
-				teams.POST("/:id/force-transfer", security.StepUp, eAdminTeam.ForceTransfer)
-				teams.DELETE("/:id", security.StepUp, eAdminTeam.Dissolve)
+				adminapi.Register(teams, httpapi.ManagementOperations["teams.list"], eAdminTeam.List)
+				adminapi.Register(teams, httpapi.ManagementOperations["teams.create"], eAdminTeam.Create)
+				adminapi.Register(teams, httpapi.ManagementOperations["teams.get"], eAdminTeam.Get)
+				adminapi.Register(teams, httpapi.ManagementOperations["teams.members.list"], eAdminTeam.ListMembers)
+				adminapi.Register(teams, httpapi.ManagementOperations["teams.usage.list"], eAdminTeam.GetUsage)
+				adminapi.Register(teams, httpapi.ManagementOperations["teams.update"], eAdminTeam.Update)
+				adminapi.Register(teams, httpapi.ManagementOperations["teams.force_transfer.create"], security.StepUp, eAdminTeam.ForceTransfer)
+				adminapi.Register(teams, httpapi.ManagementOperations["teams.delete"], security.StepUp, eAdminTeam.Dissolve)
 			}
 		}
 	}

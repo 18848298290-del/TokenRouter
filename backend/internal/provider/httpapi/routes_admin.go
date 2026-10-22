@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
 // routes_admin.go registers provider management, authorization, usage, and
@@ -34,9 +36,9 @@ type ProviderRouteEndpoints struct {
 func RegisterAntigravityOAuthRoutes(admin *gin.RouterGroup, endpoint *AntigravityOAuthHandler) {
 	antigravity := admin.Group("/antigravity")
 	{
-		antigravity.POST("/oauth/auth-url", endpoint.GenerateAuthURL)
-		antigravity.POST("/oauth/exchange-code", endpoint.ExchangeCode)
-		antigravity.POST("/oauth/refresh-token", endpoint.RefreshToken)
+		adminapi.Register(antigravity, ManagementOperations["antigravity.oauth.auth_url.create"], endpoint.GenerateAuthURL)
+		adminapi.Register(antigravity, ManagementOperations["antigravity.oauth.exchange_code.create"], endpoint.ExchangeCode)
+		adminapi.Register(antigravity, ManagementOperations["antigravity.oauth.refresh_token.create"], endpoint.RefreshToken)
 	}
 }
 
@@ -47,9 +49,9 @@ func RegisterAntigravityOAuthRoutes(admin *gin.RouterGroup, endpoint *Antigravit
 func RegisterGeminiOAuthRoutes(admin *gin.RouterGroup, endpoint *GeminiOAuthHandler) {
 	gemini := admin.Group("/gemini")
 	{
-		gemini.POST("/oauth/auth-url", endpoint.GenerateAuthURL)
-		gemini.POST("/oauth/exchange-code", endpoint.ExchangeCode)
-		gemini.GET("/oauth/capabilities", endpoint.GetCapabilities)
+		adminapi.Register(gemini, ManagementOperations["gemini.oauth.auth_url.create"], endpoint.GenerateAuthURL)
+		adminapi.Register(gemini, ManagementOperations["gemini.oauth.exchange_code.create"], endpoint.ExchangeCode)
+		adminapi.Register(gemini, ManagementOperations["gemini.oauth.capabilities.list"], endpoint.GetCapabilities)
 	}
 }
 
@@ -60,19 +62,19 @@ func RegisterGeminiOAuthRoutes(admin *gin.RouterGroup, endpoint *GeminiOAuthHand
 func RegisterGrokOAuthRoutes(admin *gin.RouterGroup, endpoint *GrokOAuthHandler) {
 	grok := admin.Group("/grok")
 	{
-		grok.GET("/oauth/capabilities", endpoint.GetCapabilities)
-		grok.POST("/oauth/auth-url", endpoint.GenerateAuthURL)
-		grok.POST("/oauth/exchange-code", endpoint.ExchangeCode)
-		grok.POST("/oauth/refresh-token", endpoint.RefreshToken)
-		grok.POST("/oauth/sso-token", endpoint.ValidateSSOToken)
-		grok.POST("/oauth/password", endpoint.AuthorizePassword)
-		grok.POST("/oauth/create-from-oauth", endpoint.CreateProviderFromOAuth)
-		grok.POST("/sso-to-oauth", endpoint.CreateProvidersFromSSO)
-		grok.POST("/oauth/reconcile", endpoint.ReconcileOAuthProviders)
-		grok.POST("/providers/:id/refresh", endpoint.RefreshProviderToken)
-		grok.GET("/providers/:id/quota", endpoint.QueryQuota)
-		grok.POST("/providers/:id/reset-quota", endpoint.ResetQuota)
-		grok.GET("/runtime-sanity", endpoint.RuntimeSanity)
+		adminapi.Register(grok, ManagementOperations["grok.oauth.capabilities.list"], endpoint.GetCapabilities)
+		adminapi.Register(grok, ManagementOperations["grok.oauth.auth_url.create"], endpoint.GenerateAuthURL)
+		adminapi.Register(grok, ManagementOperations["grok.oauth.exchange_code.create"], endpoint.ExchangeCode)
+		adminapi.Register(grok, ManagementOperations["grok.oauth.refresh_token.create"], endpoint.RefreshToken)
+		adminapi.Register(grok, ManagementOperations["grok.oauth.sso_token.create"], endpoint.ValidateSSOToken)
+		adminapi.Register(grok, ManagementOperations["grok.oauth.password.create"], endpoint.AuthorizePassword)
+		adminapi.Register(grok, ManagementOperations["grok.oauth.create_from_oauth.create"], endpoint.CreateProviderFromOAuth)
+		adminapi.Register(grok, ManagementOperations["grok.sso_to_oauth.create"], endpoint.CreateProvidersFromSSO)
+		adminapi.Register(grok, ManagementOperations["grok.oauth.reconcile.create"], endpoint.ReconcileOAuthProviders)
+		adminapi.Register(grok, ManagementOperations["grok.providers.refresh.create"], endpoint.RefreshProviderToken)
+		adminapi.Register(grok, ManagementOperations["grok.providers.quota.list"], endpoint.QueryQuota)
+		adminapi.Register(grok, ManagementOperations["grok.providers.reset_quota.create"], endpoint.ResetQuota)
+		adminapi.Register(grok, ManagementOperations["grok.runtime_sanity.list"], endpoint.RuntimeSanity)
 	}
 }
 
@@ -83,15 +85,15 @@ func RegisterGrokOAuthRoutes(admin *gin.RouterGroup, endpoint *GrokOAuthHandler)
 func RegisterOpenAIOAuthRoutes(admin *gin.RouterGroup, endpoint *OpenAIOAuthHandler) {
 	openai := admin.Group("/openai")
 	{
-		openai.POST("/generate-auth-url", endpoint.GenerateAuthURL)
-		openai.POST("/exchange-code", endpoint.ExchangeCode)
-		openai.POST("/refresh-token", endpoint.RefreshToken)
-		openai.POST("/providers/:id/refresh", endpoint.RefreshProviderToken)
-		openai.POST("/create-from-oauth", endpoint.CreateProviderFromOAuth)
-		openai.POST("/create-from-codex-pat", endpoint.CreateProviderFromCodexPAT)
-		openai.GET("/providers/:id/quota", endpoint.QueryQuota)
-		openai.POST("/providers/:id/quota/refresh", endpoint.RefreshQuota)
-		openai.POST("/providers/:id/reset-quota", endpoint.ResetQuota)
+		adminapi.Register(openai, ManagementOperations["openai.generate_auth_url.create"], endpoint.GenerateAuthURL)
+		adminapi.Register(openai, ManagementOperations["openai.exchange_code.create"], endpoint.ExchangeCode)
+		adminapi.Register(openai, ManagementOperations["openai.refresh_token.create"], endpoint.RefreshToken)
+		adminapi.Register(openai, ManagementOperations["openai.providers.refresh.create"], endpoint.RefreshProviderToken)
+		adminapi.Register(openai, ManagementOperations["openai.create_from_oauth.create"], endpoint.CreateProviderFromOAuth)
+		adminapi.Register(openai, ManagementOperations["openai.create_from_codex_pat.create"], endpoint.CreateProviderFromCodexPAT)
+		adminapi.Register(openai, ManagementOperations["openai.providers.quota.list"], endpoint.QueryQuota)
+		adminapi.Register(openai, ManagementOperations["openai.providers.quota.refresh.create"], endpoint.RefreshQuota)
+		adminapi.Register(openai, ManagementOperations["openai.providers.reset_quota.create"], endpoint.ResetQuota)
 	}
 }
 
@@ -102,9 +104,9 @@ func RegisterOpenAIOAuthRoutes(admin *gin.RouterGroup, endpoint *OpenAIOAuthHand
 func RegisterQoderOAuthRoutes(admin *gin.RouterGroup, endpoint *QoderOAuthHandler) {
 	qoder := admin.Group("/qoder")
 	{
-		qoder.POST("/oauth/auth-url", endpoint.GenerateAuthURL)
-		qoder.POST("/oauth/exchange-code", endpoint.ExchangeCode)
-		qoder.POST("/oauth/poll", endpoint.Poll)
+		adminapi.Register(qoder, ManagementOperations["qoder.oauth.auth_url.create"], endpoint.GenerateAuthURL)
+		adminapi.Register(qoder, ManagementOperations["qoder.oauth.exchange_code.create"], endpoint.ExchangeCode)
+		adminapi.Register(qoder, ManagementOperations["qoder.oauth.poll.create"], endpoint.Poll)
 	}
 }
 
@@ -114,13 +116,13 @@ func RegisterQoderOAuthRoutes(admin *gin.RouterGroup, endpoint *QoderOAuthHandle
 func RegisterScheduledTestRoutes(admin *gin.RouterGroup, endpoint *ScheduledTestHandler) {
 	plans := admin.Group("/scheduled-test-plans")
 	{
-		plans.POST("", endpoint.Create)
-		plans.PUT("/:id", endpoint.Update)
-		plans.DELETE("/:id", endpoint.Delete)
-		plans.GET("/:id/results", endpoint.ListResults)
+		adminapi.Register(plans, ManagementOperations["scheduled_test_plans.create"], endpoint.Create)
+		adminapi.Register(plans, ManagementOperations["scheduled_test_plans.update"], endpoint.Update)
+		adminapi.Register(plans, ManagementOperations["scheduled_test_plans.delete"], endpoint.Delete)
+		adminapi.Register(plans, ManagementOperations["scheduled_test_plans.results.list"], endpoint.ListResults)
 	}
 	// Nested under providers
-	admin.GET("/providers/:id/scheduled-test-plans", endpoint.ListByProvider)
+	adminapi.Register(admin, ManagementOperations["providers.scheduled_test_plans.list"], endpoint.ListByProvider)
 }
 
 // RegisterProviderRoutes mounts provider administration and invokes the
@@ -130,74 +132,74 @@ func RegisterScheduledTestRoutes(admin *gin.RouterGroup, endpoint *ScheduledTest
 func RegisterProviderRoutes(admin *gin.RouterGroup, endpoints ProviderRouteEndpoints, stepUp gin.HandlerFunc, registerDiagnostics func(*gin.RouterGroup)) {
 	providers := admin.Group("/providers")
 	{
-		providers.GET("", endpoints.ProviderManagement.List)
-		providers.GET("/ollama-cloud-usage/settings", endpoints.ProviderOllama.GetOllamaCloudUsageSettings)
-		providers.PUT("/ollama-cloud-usage/settings", endpoints.ProviderOllama.UpdateOllamaCloudUsageSettings)
-		providers.GET("/:id", endpoints.ProviderManagement.GetByID)
-		providers.POST("", endpoints.ProviderManagement.Create)
-		providers.POST("/:id/duplicate", endpoints.ProviderManagement.Duplicate)
-		providers.POST("/import/codex-session", endpoints.ProviderCodexImport.ImportCodexSession)
-		providers.POST("/sync/crs", endpoints.ProviderCRS.SyncFromCRS)
-		providers.POST("/sync/crs/preview", endpoints.ProviderCRS.PreviewFromCRS)
-		providers.PUT("/:id", endpoints.ProviderManagement.Update)
+		adminapi.Register(providers, ManagementOperations["providers.list"], endpoints.ProviderManagement.List)
+		adminapi.Register(providers, ManagementOperations["providers.ollama_cloud_usage.settings.list"], endpoints.ProviderOllama.GetOllamaCloudUsageSettings)
+		adminapi.Register(providers, ManagementOperations["providers.ollama_cloud_usage.settings.update"], endpoints.ProviderOllama.UpdateOllamaCloudUsageSettings)
+		adminapi.Register(providers, ManagementOperations["providers.get"], endpoints.ProviderManagement.GetByID)
+		adminapi.Register(providers, ManagementOperations["providers.create"], endpoints.ProviderManagement.Create)
+		adminapi.Register(providers, ManagementOperations["providers.duplicate.create"], endpoints.ProviderManagement.Duplicate)
+		adminapi.Register(providers, ManagementOperations["providers.import.codex_session.create"], endpoints.ProviderCodexImport.ImportCodexSession)
+		adminapi.Register(providers, ManagementOperations["providers.sync.crs.create"], endpoints.ProviderCRS.SyncFromCRS)
+		adminapi.Register(providers, ManagementOperations["providers.sync.crs.preview.create"], endpoints.ProviderCRS.PreviewFromCRS)
+		adminapi.Register(providers, ManagementOperations["providers.update"], endpoints.ProviderManagement.Update)
 		registerDiagnostics(providers)
-		providers.GET("/:id/ollama-cloud-usage", endpoints.ProviderOllama.GetOllamaCloudUsage)
-		providers.PUT("/:id/ollama-cloud-usage/session", endpoints.ProviderOllama.SaveOllamaCloudUsageSession)
-		providers.DELETE("/:id/ollama-cloud-usage/session", endpoints.ProviderOllama.DeleteOllamaCloudUsageSession)
-		providers.PUT("/:id/ollama-cloud-usage/auto-refresh", endpoints.ProviderOllama.SetOllamaCloudUsageAutoRefresh)
-		providers.POST("/:id/ollama-cloud-usage/refresh", endpoints.ProviderOllama.RefreshOllamaCloudUsage)
-		providers.DELETE("/:id", endpoints.ProviderManagement.Delete)
-		providers.POST("/:id/test", endpoints.ProviderTests.Test)
-		providers.POST("/:id/recover-state", endpoints.ProviderManagement.RecoverState)
-		providers.POST("/:id/refresh", endpoints.ProviderManagement.Refresh)
-		providers.POST("/:id/apply-oauth-credentials", endpoints.ProviderManagement.ApplyOAuthCredentials)
-		providers.POST("/:id/set-privacy", endpoints.ProviderManagement.SetPrivacy)
-		providers.POST("/:id/refresh-tier", endpoints.ProviderManagement.RefreshTier)
-		providers.GET("/:id/stats", endpoints.ProviderManagement.GetStats)
-		providers.POST("/:id/clear-error", endpoints.ProviderManagement.ClearError)
-		providers.POST("/:id/revert-proxy-fallback", endpoints.ProviderManagement.RevertProxyFallback)
-		providers.GET("/:id/usage", endpoints.ProviderOAuthUsage.GetUsage)
-		providers.GET("/:id/today-stats", endpoints.ProviderOAuthUsage.GetTodayStats)
-		providers.POST("/usage/batch", endpoints.ProviderOAuthUsage.GetBatchUsage)
-		providers.POST("/today-stats/batch", endpoints.ProviderOAuthUsage.GetBatchTodayStats)
-		providers.POST("/:id/clear-rate-limit", endpoints.ProviderManagement.ClearRateLimit)
-		providers.POST("/:id/reset-quota", endpoints.ProviderManagement.ResetQuota)
-		providers.POST("/:id/upstream-usage/query", endpoints.UpstreamUsage.QueryUpstreamUsage)
-		providers.GET("/:id/upstream-balance-alert", endpoints.UpstreamUsage.BalanceAlertStatus)
-		providers.POST("/upstream-usage/query/batch", endpoints.UpstreamUsage.QueryBatchUpstreamUsage)
-		providers.GET("/:id/temp-unschedulable", endpoints.ProviderManagement.GetTempUnschedulable)
-		providers.DELETE("/:id/temp-unschedulable", endpoints.ProviderManagement.ClearTempUnschedulable)
-		providers.POST("/:id/schedulable", endpoints.ProviderManagement.SetSchedulable)
-		providers.POST("/models/sync-upstream-preview", endpoints.ProviderManagement.SyncUpstreamModelsPreview)
-		providers.GET("/:id/models", endpoints.ProviderManagement.GetAvailableModels)
-		providers.POST("/:id/models/sync-upstream", endpoints.ProviderManagement.SyncUpstreamModels)
-		providers.POST("/batch", endpoints.ProviderManagement.BatchCreate)
+		adminapi.Register(providers, ManagementOperations["providers.ollama_cloud_usage.list"], endpoints.ProviderOllama.GetOllamaCloudUsage)
+		adminapi.Register(providers, ManagementOperations["providers.ollama_cloud_usage.session.update"], endpoints.ProviderOllama.SaveOllamaCloudUsageSession)
+		adminapi.Register(providers, ManagementOperations["providers.ollama_cloud_usage.session.delete"], endpoints.ProviderOllama.DeleteOllamaCloudUsageSession)
+		adminapi.Register(providers, ManagementOperations["providers.ollama_cloud_usage.auto_refresh.update"], endpoints.ProviderOllama.SetOllamaCloudUsageAutoRefresh)
+		adminapi.Register(providers, ManagementOperations["providers.ollama_cloud_usage.refresh.create"], endpoints.ProviderOllama.RefreshOllamaCloudUsage)
+		adminapi.Register(providers, ManagementOperations["providers.delete"], endpoints.ProviderManagement.Delete)
+		adminapi.Register(providers, ManagementOperations["providers.test.create"], endpoints.ProviderTests.Test)
+		adminapi.Register(providers, ManagementOperations["providers.recover_state.create"], endpoints.ProviderManagement.RecoverState)
+		adminapi.Register(providers, ManagementOperations["providers.refresh.create"], endpoints.ProviderManagement.Refresh)
+		adminapi.Register(providers, ManagementOperations["providers.apply_oauth_credentials.create"], endpoints.ProviderManagement.ApplyOAuthCredentials)
+		adminapi.Register(providers, ManagementOperations["providers.set_privacy.create"], endpoints.ProviderManagement.SetPrivacy)
+		adminapi.Register(providers, ManagementOperations["providers.refresh_tier.create"], endpoints.ProviderManagement.RefreshTier)
+		adminapi.Register(providers, ManagementOperations["providers.stats.list"], endpoints.ProviderManagement.GetStats)
+		adminapi.Register(providers, ManagementOperations["providers.clear_error.create"], endpoints.ProviderManagement.ClearError)
+		adminapi.Register(providers, ManagementOperations["providers.revert_proxy_fallback.create"], endpoints.ProviderManagement.RevertProxyFallback)
+		adminapi.Register(providers, ManagementOperations["providers.usage.list"], endpoints.ProviderOAuthUsage.GetUsage)
+		adminapi.Register(providers, ManagementOperations["providers.today_stats.list"], endpoints.ProviderOAuthUsage.GetTodayStats)
+		adminapi.Register(providers, ManagementOperations["providers.usage.batch.create"], endpoints.ProviderOAuthUsage.GetBatchUsage)
+		adminapi.Register(providers, ManagementOperations["providers.today_stats.batch.create"], endpoints.ProviderOAuthUsage.GetBatchTodayStats)
+		adminapi.Register(providers, ManagementOperations["providers.clear_rate_limit.create"], endpoints.ProviderManagement.ClearRateLimit)
+		adminapi.Register(providers, ManagementOperations["providers.reset_quota.create"], endpoints.ProviderManagement.ResetQuota)
+		adminapi.Register(providers, ManagementOperations["providers.upstream_usage.query.create"], endpoints.UpstreamUsage.QueryUpstreamUsage)
+		adminapi.Register(providers, ManagementOperations["providers.upstream_balance_alert.list"], endpoints.UpstreamUsage.BalanceAlertStatus)
+		adminapi.Register(providers, ManagementOperations["providers.upstream_usage.query.batch.create"], endpoints.UpstreamUsage.QueryBatchUpstreamUsage)
+		adminapi.Register(providers, ManagementOperations["providers.temp_unschedulable.list"], endpoints.ProviderManagement.GetTempUnschedulable)
+		adminapi.Register(providers, ManagementOperations["providers.temp_unschedulable.delete"], endpoints.ProviderManagement.ClearTempUnschedulable)
+		adminapi.Register(providers, ManagementOperations["providers.schedulable.create"], endpoints.ProviderManagement.SetSchedulable)
+		adminapi.Register(providers, ManagementOperations["providers.models.sync_upstream_preview.create"], endpoints.ProviderManagement.SyncUpstreamModelsPreview)
+		adminapi.Register(providers, ManagementOperations["providers.models.list"], endpoints.ProviderManagement.GetAvailableModels)
+		adminapi.Register(providers, ManagementOperations["providers.models.sync_upstream.create"], endpoints.ProviderManagement.SyncUpstreamModels)
+		adminapi.Register(providers, ManagementOperations["providers.batch.create"], endpoints.ProviderManagement.BatchCreate)
 		// Raw provider and proxy secrets are part of the backup format. Add the
 		// supplied step-up middleware here before the archive exporter can return those values.
-		providers.GET("/data", stepUp, endpoints.ProviderArchive.ExportData)
-		providers.POST("/data", endpoints.ProviderArchive.ImportData)
-		providers.POST("/batch-update-credentials", endpoints.ProviderManagement.BatchUpdateCredentials)
-		providers.POST("/batch-refresh-tier", endpoints.ProviderManagement.BatchRefreshTier)
-		providers.POST("/bulk-update", endpoints.ProviderManagement.BulkUpdate)
-		providers.POST("/batch-delete", endpoints.ProviderManagement.BatchDelete)
-		providers.POST("/batch-clear-error", endpoints.ProviderManagement.BatchClearError)
-		providers.POST("/batch-refresh", endpoints.ProviderManagement.BatchRefresh)
-		providers.GET("/:id/codex/invite-reset/status", endpoints.CodexInviteReset.GetStatus)
-		providers.POST("/:id/codex/invite-reset/invite", endpoints.CodexInviteReset.SendInvite)
-		providers.POST("/:id/codex/invite-reset/consume", endpoints.CodexInviteReset.Consume)
+		adminapi.Register(providers, ManagementOperations["providers.data.list"], stepUp, endpoints.ProviderArchive.ExportData)
+		adminapi.Register(providers, ManagementOperations["providers.data.create"], endpoints.ProviderArchive.ImportData)
+		adminapi.Register(providers, ManagementOperations["providers.batch_update_credentials.create"], endpoints.ProviderManagement.BatchUpdateCredentials)
+		adminapi.Register(providers, ManagementOperations["providers.batch_refresh_tier.create"], endpoints.ProviderManagement.BatchRefreshTier)
+		adminapi.Register(providers, ManagementOperations["providers.bulk_update.create"], endpoints.ProviderManagement.BulkUpdate)
+		adminapi.Register(providers, ManagementOperations["providers.batch_delete.create"], endpoints.ProviderManagement.BatchDelete)
+		adminapi.Register(providers, ManagementOperations["providers.batch_clear_error.create"], endpoints.ProviderManagement.BatchClearError)
+		adminapi.Register(providers, ManagementOperations["providers.batch_refresh.create"], endpoints.ProviderManagement.BatchRefresh)
+		adminapi.Register(providers, ManagementOperations["providers.codex.invite_reset.status.list"], endpoints.CodexInviteReset.GetStatus)
+		adminapi.Register(providers, ManagementOperations["providers.codex.invite_reset.invite.create"], endpoints.CodexInviteReset.SendInvite)
+		adminapi.Register(providers, ManagementOperations["providers.codex.invite_reset.consume.create"], endpoints.CodexInviteReset.Consume)
 
 		// Antigravity default model mapping.
-		providers.GET("/antigravity/default-model-mapping", endpoints.ProviderManagement.GetAntigravityDefaultModelMapping)
+		adminapi.Register(providers, ManagementOperations["providers.antigravity.default_model_mapping.list"], endpoints.ProviderManagement.GetAntigravityDefaultModelMapping)
 
 		// Spark shadow providers.
-		providers.POST("/:id/shadow", endpoints.OpenAIOAuth.CreateShadow)
+		adminapi.Register(providers, ManagementOperations["providers.shadow.create"], endpoints.OpenAIOAuth.CreateShadow)
 
 		// Claude OAuth routes
-		providers.POST("/generate-auth-url", endpoints.OAuth.GenerateAuthURL)
-		providers.POST("/generate-setup-token-url", endpoints.OAuth.GenerateSetupTokenURL)
-		providers.POST("/exchange-code", endpoints.OAuth.ExchangeCode)
-		providers.POST("/exchange-setup-token-code", endpoints.OAuth.ExchangeSetupTokenCode)
-		providers.POST("/cookie-auth", endpoints.OAuth.CookieAuth)
-		providers.POST("/setup-token-cookie-auth", endpoints.OAuth.SetupTokenCookieAuth)
+		adminapi.Register(providers, ManagementOperations["providers.generate_auth_url.create"], endpoints.OAuth.GenerateAuthURL)
+		adminapi.Register(providers, ManagementOperations["providers.generate_setup_token_url.create"], endpoints.OAuth.GenerateSetupTokenURL)
+		adminapi.Register(providers, ManagementOperations["providers.exchange_code.create"], endpoints.OAuth.ExchangeCode)
+		adminapi.Register(providers, ManagementOperations["providers.exchange_setup_token_code.create"], endpoints.OAuth.ExchangeSetupTokenCode)
+		adminapi.Register(providers, ManagementOperations["providers.cookie_auth.create"], endpoints.OAuth.CookieAuth)
+		adminapi.Register(providers, ManagementOperations["providers.setup_token_cookie_auth.create"], endpoints.OAuth.SetupTokenCookieAuth)
 	}
 }

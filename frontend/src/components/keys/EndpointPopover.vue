@@ -6,16 +6,23 @@ import { useClipboard } from '@/composables/useClipboard'
 import { COPY_FEEDBACK_MS } from '@/constants/ui'
 import type { CustomEndpoint } from '@/api/settings.types'
 
-// EndpointPopover.vue lists the default and custom API endpoints for key setup. Each
-// endpoint can be copied with temporary per-URL confirmation, while custom entries also
-// retain their configured names and descriptions for users choosing a destination.
+// EndpointPopover.vue lists named connection addresses for API-key and MCP setup.
+// Each endpoint can be copied with temporary per-URL confirmation, while custom
+// entries retain their names and descriptions. Consumers can hide the external
+// diagnostic link when it does not apply to their connection workflow.
 
 // The configured API base and custom endpoint records supply the copyable destinations shown
 // for the current key usage flow.
-const props = defineProps<{
-  apiBaseUrl: string // Default API base URL.
-  customEndpoints: CustomEndpoint[] // Configured alternate endpoint records.
-}>()
+const props = withDefaults(
+  defineProps<{
+    apiBaseUrl: string // Default API base URL.
+    customEndpoints: CustomEndpoint[] // Configured alternate endpoint records.
+    // showSpeedTest keeps the external diagnostic link visible by default;
+    // management transports can hide it while retaining the clipboard actions.
+    showSpeedTest?: boolean
+  }>(),
+  { showSpeedTest: true },
+)
 
 // Clipboard feedback uses translated messages; copiedEndpoint and its reset timer retain the
 // last successfully copied URL for a short visual confirmation.
@@ -158,6 +165,7 @@ onBeforeUnmount(() => {
         </button>
 
         <a
+          v-if="showSpeedTest"
           :href="speedTestUrl(item.endpoint)"
           target="_blank"
           rel="noopener noreferrer"

@@ -46,7 +46,7 @@ type CreateProviderRequest struct {
 	// Credentials is the required authorization object passed to creation.
 	// Administration validates platform-specific values and may normalize this
 	// borrowed map before constructing the stored provider.
-	Credentials map[string]any `json:"credentials" binding:"required"` // platform authorization creation values
+	Credentials map[string]any `json:"credentials" binding:"required" jsonschema:"API Key providers use api_key and base_url. Optional upstream_protocols contains IDs from protocol_capabilities.list, such as openai_responses or openai_chat_completions. Complete OAuth authorization in provider management."` // platform authorization creation values
 	// Extra optionally supplies provider configuration. Deprecated keys are
 	// discarded in place before idempotency fingerprinting, and creation validates
 	// its platform-specific configuration before storage.

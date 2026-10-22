@@ -74,10 +74,15 @@
               <FilterField :label="t('admin.audit.filters.method')">
                 <Select v-model="filters.method" :options="methodOptions" @change="search" />
               </FilterField>
-              <FilterField :label="t('admin.audit.filters.authMethod')">
+              <FilterField
+                :label="t('admin.audit.filters.authMethod')"
+                :value-text="authMethodLabel(filters.auth_method)"
+                @clear="clearAuditFilter('auth_method')"
+              >
                 <Select
                   v-model="filters.auth_method"
                   :options="authMethodOptions"
+                  :aria-label="t('admin.audit.filters.authMethod')"
                   @change="search"
                 />
               </FilterField>
@@ -427,8 +432,9 @@
 <script setup lang="ts">
 import RequestIdLink from '@/components/common/RequestIdLink.vue'
 import ContentSkeleton from '@/components/common/ContentSkeleton.vue'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { adminAPI, type AuditLog } from '@/api/admin'
 import { totpAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -458,6 +464,8 @@ import { useAppStore } from '@/stores'
 // audit page controls.
 const { t } = useI18n()
 const appStore = useAppStore()
+// route carries the token-prefix filter from the MCP management audit link.
+const route = useRoute()
 
 // List loading, rows, total, page, and page size describe the current audit table
 // request and pagination.
@@ -466,6 +474,8 @@ const logs = ref<AuditLog[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+// requestVersion prevents an older filter response from replacing a newer route's rows.
+let requestVersion = 0
 
 // Text filters remain editable between requests; empty strings are omitted when
 // building endpoint query parameters.
@@ -584,7 +594,9 @@ function handleCustomTimeRangeConfirm() {
 }
 
 // clearAuditFilter removes one supported text condition and searches page one.
-function clearAuditFilter(key: 'request_id' | 'actor_email' | 'action' | 'client_ip') {
+function clearAuditFilter(
+  key: 'request_id' | 'actor_email' | 'action' | 'client_ip' | 'auth_method',
+) {
   filters[key] = ''
   search()
 }
@@ -633,6 +645,7 @@ const authMethodOptions = computed(() => [
   { value: '', label: t('admin.audit.filters.all') },
   { value: 'jwt', label: 'JWT' },
   { value: 'admin_api_key', label: 'Admin API Key' },
+  { value: 'mcp_token', label: t('admin.mcp.authMethod') },
 ])
 
 const resultOptions = computed(() => [
@@ -700,19 +713,25 @@ function buildQuery() {
   }
 }
 
-// fetchLogs replaces audit rows and total after the current query succeeds. It reports
-// failures through the application store, retains previous rows on failure, and
-// releases the loading flag when the request settles.
+// fetchLogs reads the currently displayed filters and publishes their audit rows.
+// A route change can start a later request before the preceding one finishes;
+// only the latest request version may update rows, errors, or loading state.
+// This keeps an old token's records from appearing beneath another token's filters.
+//
+// Existing rows remain visible when the current request fails. Component disposal
+// advances the version so a late response cannot publish after leaving the page.
 async function fetchLogs() {
+  const version = ++requestVersion
   loading.value = true
   try {
     const res = await adminAPI.audit.list(buildQuery())
+    if (version !== requestVersion) return
     logs.value = res.items
     total.value = res.total
   } catch (err: any) {
-    appStore.showError(err?.message || t('admin.audit.loadFailed'))
+    if (version === requestVersion) appStore.showError(err?.message || t('admin.audit.loadFailed'))
   } finally {
-    loading.value = false
+    if (version === requestVersion) loading.value = false
   }
 }
 
@@ -876,9 +895,24 @@ function statusDotClass(status: number): string {
   return 'bg-green-500'
 }
 
-// Fetch the first audit page after mounting so the initial controls and application
-// store are ready to receive results.
-onMounted(() => {
-  fetchLogs()
+// Reused route components receive incoming filters before fetching the corresponding
+// records. Missing query keys clear earlier link filters instead of retaining another token.
+watch(
+  () => route.query,
+  (query) => {
+    for (const key of Object.keys(filters) as Array<keyof typeof filters>) {
+      filters[key] = typeof query[key] === 'string' ? query[key] : ''
+    }
+    timeRange.value = ''
+    customStartTime.value = ''
+    customEndTime.value = ''
+    search()
+  },
+  { immediate: true },
+)
+
+// Responses already in flight cannot publish rows or errors after page disposal.
+onBeforeUnmount(() => {
+  requestVersion++
 })
 </script>

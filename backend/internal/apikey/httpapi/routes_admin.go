@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
 // routes_admin.go registers the administrative Key-update route for binding
@@ -16,6 +18,6 @@ import (
 func RegisterAdminAPIKeyRoutes[G any](admin *gin.RouterGroup, endpoint *AdminAPIKeyHandler[G]) {
 	apiKeys := admin.Group("/api-keys")
 	{
-		apiKeys.PUT("/:id", endpoint.UpdateGroup)
+		adminapi.Register(apiKeys, ManagementOperations["api_keys.update"], endpoint.UpdateGroup)
 	}
 }

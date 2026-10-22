@@ -115,16 +115,17 @@ type TotpCache interface {
 	HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error)
 }
 
-// SecretEncryptor converts plaintext enrollment secrets to and from their
-// stored ciphertext representation.
+// SecretEncryptor protects enrollment secrets and recoverable administrator credentials
+// using authenticated ciphertext. Consumers of durable stored values require a
+// stable deployment key.
 type SecretEncryptor interface {
-	// Encrypt returns the encryptor's stored representation of a plaintext TOTP
-	// secret. Encryption failures remain errors and prevent the account-secret
-	// write; callers keep enrollment text out of persistent account fields.
+	// Encrypt returns an authenticated ciphertext representation of the supplied
+	// secret. Encryption failures prevent persistence; callers store ciphertext
+	// while delivering plaintext only through their authorized setup or copy flow.
 	Encrypt(plaintext string) (string, error)
-	// Decrypt restores a stored TOTP secret for proof validation. Errors reject
-	// VerifyCode through its common verification error, while CompleteSetup uses
-	// this method only for its diagnostic ciphertext round-trip observation.
+	// Decrypt authenticates stored ciphertext before returning its original secret.
+	// Callers authorize disclosure or proof verification before using the plaintext;
+	// failures must not return a partial or unchecked secret value.
 	Decrypt(ciphertext string) (string, error)
 }
 

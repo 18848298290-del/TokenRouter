@@ -7,6 +7,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway"
 	gatewaydto "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi/dto"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
@@ -69,10 +70,10 @@ type UpdateBetaPolicySettingsRequest struct {
 // that parent group before registration; these routes reuse the supplied
 // settings endpoint implementation.
 func RegisterGatewaySettingsRoutes(adminSettings *gin.RouterGroup, endpoint GatewaySettingsEndpoints) {
-	adminSettings.GET("/rectifier", endpoint.GetRectifierSettings)
-	adminSettings.PUT("/rectifier", endpoint.UpdateRectifierSettings)
-	adminSettings.GET("/beta-policy", endpoint.GetBetaPolicySettings)
-	adminSettings.PUT("/beta-policy", endpoint.UpdateBetaPolicySettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.rectifier.list"], endpoint.GetRectifierSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.rectifier.update"], endpoint.UpdateRectifierSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.beta_policy.list"], endpoint.GetBetaPolicySettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.beta_policy.update"], endpoint.UpdateBetaPolicySettings)
 }
 
 // NewRuntimeSettingsHandler binds the shared service used for gateway settings.

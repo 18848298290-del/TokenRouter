@@ -29,6 +29,7 @@ const state = vi.hoisted(() => ({
   collapsed: false, // Sidebar width fixture switch.
   scrollTop: 0, // Remembered navigation scroll offset.
   settings: {} as Record<string, boolean>, // Public navigation feature flags.
+  closeMobile: vi.fn(), // Shared mobile-drawer close observation.
 }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ path: '/dashboard', fullPath: '/dashboard' }) }))
@@ -45,7 +46,7 @@ vi.mock('@/stores', () => ({
     set sidebarScrollTop(value: number) {
       state.scrollTop = value
     },
-    setMobileOpen: vi.fn(),
+    setMobileOpen: state.closeMobile,
   }),
   useAuthStore: () => ({ isAdmin: state.isAdmin }),
   useOnboardingStore: () => ({ isCurrentStep: () => false }),
@@ -66,6 +67,7 @@ beforeEach(() => {
   state.collapsed = false
   state.scrollTop = 0
   state.settings = {}
+  state.closeMobile.mockClear()
 })
 
 // Parsed production sources expose stylesheet ownership and parent layout structure to these assertions.
@@ -81,6 +83,15 @@ function mountSidebar() {
 }
 
 describe('AppSidebar layout controls', () => {
+  // Selecting a different administrator page can unmount the current sidebar before
+  // its route watcher runs. The click must close shared mobile state immediately.
+  it('closes the mobile drawer when selecting the MCP management route', async () => {
+    state.isAdmin = true
+    const wrapper = mountSidebar()
+    await nextTick()
+    await wrapper.get('[to="/admin/mcp"]').trigger('click')
+    expect(state.closeMobile).toHaveBeenCalledWith(false)
+  })
   // Expanded and collapsed sidebars use the shared width tokens. The content
   // column references the corresponding margin tokens so the two widths agree.
   it.each([false, true])('uses shared widths when collapsed=%s', (collapsed) => {

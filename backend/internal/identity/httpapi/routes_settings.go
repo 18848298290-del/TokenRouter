@@ -1,6 +1,10 @@
 package httpapi
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
+)
 
 // routes_settings.go registers administrator endpoints for reading,
 // regenerating, and deleting the management API key.
@@ -31,7 +35,7 @@ type IdentitySettingsEndpoints interface {
 // authentication and auditing on the supplied group before exposing the
 // credential operations.
 func RegisterIdentitySettingsRoutes(adminSettings *gin.RouterGroup, endpoint IdentitySettingsEndpoints) {
-	adminSettings.GET("/admin-api-key", endpoint.GetAdminAPIKey)
-	adminSettings.POST("/admin-api-key/regenerate", endpoint.RegenerateAdminAPIKey)
-	adminSettings.DELETE("/admin-api-key", endpoint.DeleteAdminAPIKey)
+	adminapi.Register(adminSettings, ManagementOperations["settings.admin_api_key.list"], endpoint.GetAdminAPIKey)
+	adminapi.Register(adminSettings, ManagementOperations["settings.admin_api_key.regenerate.create"], endpoint.RegenerateAdminAPIKey)
+	adminapi.Register(adminSettings, ManagementOperations["settings.admin_api_key.delete"], endpoint.DeleteAdminAPIKey)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
@@ -49,16 +50,16 @@ func NewModelAttributeHandler(service *routing.ModelAttributeService, catalogue 
 // directly to that router group.
 func RegisterModelAttributeRoutes(admin *gin.RouterGroup, h *ModelAttributeHandler) {
 	routes := admin.Group("/model-attributes")
-	routes.GET("/configs", h.List)
-	routes.GET("/configs/:id", h.Get)
-	routes.POST("/configs", h.Save)
-	routes.PUT("/configs/:id", h.Save)
-	routes.DELETE("/configs/:id", h.Delete)
-	routes.GET("/defaults", h.Defaults)
-	routes.GET("/defaults/model", h.Model)
-	routes.GET("/defaults/models", h.Models)
-	routes.POST("/defaults/update", h.Update)
-	routes.POST("/preview", h.Preview)
+	adminapi.Register(routes, ManagementOperations["model_attributes.configs.list"], h.List)
+	adminapi.Register(routes, ManagementOperations["model_attributes.configs.get"], h.Get)
+	adminapi.Register(routes, ManagementOperations["model_attributes.configs.create"], h.Save)
+	adminapi.Register(routes, ManagementOperations["model_attributes.configs.update"], h.Save)
+	adminapi.Register(routes, ManagementOperations["model_attributes.configs.delete"], h.Delete)
+	adminapi.Register(routes, ManagementOperations["model_attributes.defaults.list"], h.Defaults)
+	adminapi.Register(routes, ManagementOperations["model_attributes.defaults.model.list"], h.Model)
+	adminapi.Register(routes, ManagementOperations["model_attributes.defaults.models.list"], h.Models)
+	adminapi.Register(routes, ManagementOperations["model_attributes.defaults.update.create"], h.Update)
+	adminapi.Register(routes, ManagementOperations["model_attributes.preview.create"], h.Preview)
 }
 
 // Preview returns effective attributes for the requested group's matching
@@ -68,16 +69,7 @@ func RegisterModelAttributeRoutes(admin *gin.RouterGroup, h *ModelAttributeHandl
 // client protocol includes matching routes across entries. A successful
 // preview with no matching route returns an empty routes list.
 func (h *ModelAttributeHandler) Preview(c *gin.Context) {
-	var input struct {
-		GroupID int64  `json:"group_id"` // positive preview group identifier
-		Model   string `json:"model"`    // requested preview model ID
-		// ClientProtocol restricts preview results to one entry when nonempty; an
-		// empty value keeps every matching route returned by the service.
-		ClientProtocol string `json:"client_protocol"` // optional preview client entry
-		// Config supplies a draft profile for this preview; nil makes the service
-		// read the stored profile associated with GroupID.
-		Config *routing.ModelAttributeConfig `json:"config,omitempty"` // optional draft attribute profile
-	}
+	var input ModelAttributePreviewRequest
 	if err := httpx.BindJSONStrict(c, &input); err != nil || input.GroupID <= 0 || strings.TrimSpace(input.Model) == "" {
 		httpx.ErrorFrom(c, apperror.BadRequest("INVALID_ATTRIBUTE_PREVIEW", "group ID and model are required"))
 		return

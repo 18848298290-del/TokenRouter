@@ -1,6 +1,10 @@
 package httpapi
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
+)
 
 // routes_settings.go registers administrator routes for creative model
 // candidates and worker status.
@@ -27,6 +31,6 @@ type CreativeSettingsEndpoints interface {
 // authentication and audit middleware on that group before making either
 // endpoint reachable.
 func RegisterCreativeSettingsRoutes(adminSettings *gin.RouterGroup, endpoint CreativeSettingsEndpoints) {
-	adminSettings.GET("/creative-model-candidates", endpoint.ListCreativeModelCandidates)
-	adminSettings.GET("/creative-worker-status", endpoint.GetCreativeWorkerStatus)
+	adminapi.Register(adminSettings, ManagementOperations["settings.creative_model_candidates.list"], endpoint.ListCreativeModelCandidates)
+	adminapi.Register(adminSettings, ManagementOperations["settings.creative_worker_status.list"], endpoint.GetCreativeWorkerStatus)
 }

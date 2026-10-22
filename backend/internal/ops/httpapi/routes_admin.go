@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
 // routes_admin.go registers administrator Ops and system-maintenance HTTP
@@ -21,93 +23,93 @@ func RegisterOpsRoutes(admin *gin.RouterGroup, endpoint *OpsHandler) {
 	ops := admin.Group("/ops")
 	{
 		// Realtime operational signals.
-		ops.GET("/concurrency", endpoint.GetConcurrencyStats)
-		ops.GET("/user-concurrency", endpoint.GetUserConcurrencyStats)
-		ops.GET("/provider-availability", endpoint.GetProviderAvailability)
-		ops.GET("/realtime-traffic", endpoint.GetRealtimeTrafficSummary)
+		adminapi.Register(ops, ManagementOperations["ops.concurrency.list"], endpoint.GetConcurrencyStats)
+		adminapi.Register(ops, ManagementOperations["ops.user_concurrency.list"], endpoint.GetUserConcurrencyStats)
+		adminapi.Register(ops, ManagementOperations["ops.provider_availability.list"], endpoint.GetProviderAvailability)
+		adminapi.Register(ops, ManagementOperations["ops.realtime_traffic.list"], endpoint.GetRealtimeTrafficSummary)
 
 		// Alert rules and events.
-		ops.GET("/alert-rules", endpoint.ListAlertRules)
-		ops.POST("/alert-rules", endpoint.CreateAlertRule)
-		ops.PUT("/alert-rules/:id", endpoint.UpdateAlertRule)
-		ops.DELETE("/alert-rules/:id", endpoint.DeleteAlertRule)
-		ops.GET("/alert-events", endpoint.ListAlertEvents)
-		ops.GET("/alert-events/:id", endpoint.GetAlertEvent)
-		ops.PUT("/alert-events/:id/status", endpoint.UpdateAlertEventStatus)
-		ops.POST("/alert-silences", endpoint.CreateAlertSilence)
+		adminapi.Register(ops, ManagementOperations["ops.alert_rules.list"], endpoint.ListAlertRules)
+		adminapi.Register(ops, ManagementOperations["ops.alert_rules.create"], endpoint.CreateAlertRule)
+		adminapi.Register(ops, ManagementOperations["ops.alert_rules.update"], endpoint.UpdateAlertRule)
+		adminapi.Register(ops, ManagementOperations["ops.alert_rules.delete"], endpoint.DeleteAlertRule)
+		adminapi.Register(ops, ManagementOperations["ops.alert_events.list"], endpoint.ListAlertEvents)
+		adminapi.Register(ops, ManagementOperations["ops.alert_events.get"], endpoint.GetAlertEvent)
+		adminapi.Register(ops, ManagementOperations["ops.alert_events.status.update"], endpoint.UpdateAlertEventStatus)
+		adminapi.Register(ops, ManagementOperations["ops.alert_silences.create"], endpoint.CreateAlertSilence)
 
 		// Persisted email notification configuration.
-		ops.GET("/email-notification/config", endpoint.GetEmailNotificationConfig)
-		ops.PUT("/email-notification/config", endpoint.UpdateEmailNotificationConfig)
+		adminapi.Register(ops, ManagementOperations["ops.email_notification.config.list"], endpoint.GetEmailNotificationConfig)
+		adminapi.Register(ops, ManagementOperations["ops.email_notification.config.update"], endpoint.UpdateEmailNotificationConfig)
 
 		// Persisted runtime settings.
 		runtime := ops.Group("/runtime")
 		{
-			runtime.GET("/alert", endpoint.GetAlertRuntimeSettings)
-			runtime.PUT("/alert", endpoint.UpdateAlertRuntimeSettings)
-			runtime.GET("/logging", endpoint.GetRuntimeLogConfig)
-			runtime.PUT("/logging", endpoint.UpdateRuntimeLogConfig)
-			runtime.POST("/logging/reset", endpoint.ResetRuntimeLogConfig)
+			adminapi.Register(runtime, ManagementOperations["ops.runtime.alert.list"], endpoint.GetAlertRuntimeSettings)
+			adminapi.Register(runtime, ManagementOperations["ops.runtime.alert.update"], endpoint.UpdateAlertRuntimeSettings)
+			adminapi.Register(runtime, ManagementOperations["ops.runtime.logging.list"], endpoint.GetRuntimeLogConfig)
+			adminapi.Register(runtime, ManagementOperations["ops.runtime.logging.update"], endpoint.UpdateRuntimeLogConfig)
+			adminapi.Register(runtime, ManagementOperations["ops.runtime.logging.reset.create"], endpoint.ResetRuntimeLogConfig)
 		}
 
 		// Persisted advanced settings.
-		ops.GET("/advanced-settings", endpoint.GetAdvancedSettings)
-		ops.PUT("/advanced-settings", endpoint.UpdateAdvancedSettings)
+		adminapi.Register(ops, ManagementOperations["ops.advanced_settings.list"], endpoint.GetAdvancedSettings)
+		adminapi.Register(ops, ManagementOperations["ops.advanced_settings.update"], endpoint.UpdateAdvancedSettings)
 
 		// Persisted metric threshold settings.
 		settings := ops.Group("/settings")
 		{
-			settings.GET("/metric-thresholds", endpoint.GetMetricThresholds)
-			settings.PUT("/metric-thresholds", endpoint.UpdateMetricThresholds)
+			adminapi.Register(settings, ManagementOperations["ops.settings.metric_thresholds.list"], endpoint.GetMetricThresholds)
+			adminapi.Register(settings, ManagementOperations["ops.settings.metric_thresholds.update"], endpoint.UpdateMetricThresholds)
 		}
 
 		// Realtime QPS/TPS over WebSocket.
 		ws := ops.Group("/ws")
 		{
-			ws.GET("/qps", endpoint.QPSWSHandler)
+			adminapi.Register(ws, ManagementOperations["ops.ws.qps.list"], endpoint.QPSWSHandler)
 		}
 
 		// Legacy error log routes.
-		ops.GET("/errors", endpoint.GetErrorLogs)
-		ops.GET("/errors/:id", endpoint.GetErrorLogByID)
-		ops.PUT("/errors/:id/resolve", endpoint.UpdateErrorResolution)
+		adminapi.Register(ops, ManagementOperations["ops.errors.list"], endpoint.GetErrorLogs)
+		adminapi.Register(ops, ManagementOperations["ops.errors.get"], endpoint.GetErrorLogByID)
+		adminapi.Register(ops, ManagementOperations["ops.errors.resolve.update"], endpoint.UpdateErrorResolution)
 
 		// Request-error list, shared detail, and resolution aliases.
-		ops.GET("/request-errors", endpoint.ListRequestErrors)
-		ops.GET("/request-errors/:id", endpoint.GetRequestError)
-		ops.GET("/request-errors/:id/upstream-errors", endpoint.ListRequestErrorUpstreamErrors)
-		ops.PUT("/request-errors/:id/resolve", endpoint.ResolveRequestError)
+		adminapi.Register(ops, ManagementOperations["ops.request_errors.list"], endpoint.ListRequestErrors)
+		adminapi.Register(ops, ManagementOperations["ops.request_errors.get"], endpoint.GetRequestError)
+		adminapi.Register(ops, ManagementOperations["ops.request_errors.upstream_errors.list"], endpoint.ListRequestErrorUpstreamErrors)
+		adminapi.Register(ops, ManagementOperations["ops.request_errors.resolve.update"], endpoint.ResolveRequestError)
 
 		// Bounded ingress rejection aggregates.
-		ops.GET("/ingress-rejections", endpoint.ListIngressRejects)
-		ops.GET("/ingress-rejections/health", endpoint.GetIngressRejectHealth)
-		ops.GET("/auth-cache-invalidation/health", endpoint.GetAuthCacheInvalidationHealth)
+		adminapi.Register(ops, ManagementOperations["ops.ingress_rejections.list"], endpoint.ListIngressRejects)
+		adminapi.Register(ops, ManagementOperations["ops.ingress_rejections.health.list"], endpoint.GetIngressRejectHealth)
+		adminapi.Register(ops, ManagementOperations["ops.auth_cache_invalidation.health.list"], endpoint.GetAuthCacheInvalidationHealth)
 
 		// Independent upstream failures.
-		ops.GET("/upstream-errors", endpoint.ListUpstreamErrors)
-		ops.GET("/upstream-errors/:id", endpoint.GetUpstreamError)
-		ops.PUT("/upstream-errors/:id/resolve", endpoint.ResolveUpstreamError)
+		adminapi.Register(ops, ManagementOperations["ops.upstream_errors.list"], endpoint.ListUpstreamErrors)
+		adminapi.Register(ops, ManagementOperations["ops.upstream_errors.get"], endpoint.GetUpstreamError)
+		adminapi.Register(ops, ManagementOperations["ops.upstream_errors.resolve.update"], endpoint.ResolveUpstreamError)
 
 		// Successful and failed request details.
-		ops.GET("/requests", endpoint.ListRequestDetails)
+		adminapi.Register(ops, ManagementOperations["ops.requests.list"], endpoint.ListRequestDetails)
 
 		// Indexed system logs.
-		ops.GET("/system-logs", endpoint.ListSystemLogs)
-		ops.POST("/system-logs/cleanup", endpoint.CleanupSystemLogs)
-		ops.GET("/system-logs/health", endpoint.GetSystemLogIngestionHealth)
+		adminapi.Register(ops, ManagementOperations["ops.system_logs.list"], endpoint.ListSystemLogs)
+		adminapi.Register(ops, ManagementOperations["ops.system_logs.cleanup.create"], endpoint.CleanupSystemLogs)
+		adminapi.Register(ops, ManagementOperations["ops.system_logs.health.list"], endpoint.GetSystemLogIngestionHealth)
 
 		// Dashboard snapshots and historical statistics.
-		ops.GET("/dashboard/snapshot-v2", endpoint.GetDashboardSnapshotV2)
-		ops.GET("/dashboard/overview", endpoint.GetDashboardOverview)
-		ops.GET("/dashboard/throughput-trend", endpoint.GetDashboardThroughputTrend)
-		ops.GET("/dashboard/latency-histogram", endpoint.GetDashboardLatencyHistogram)
-		ops.GET("/dashboard/error-trend", endpoint.GetDashboardErrorTrend)
-		ops.GET("/dashboard/error-distribution", endpoint.GetDashboardErrorDistribution)
-		ops.GET("/dashboard/token-stats", endpoint.GetDashboardTokenStats)
+		adminapi.Register(ops, ManagementOperations["ops.dashboard.snapshot_v2.list"], endpoint.GetDashboardSnapshotV2)
+		adminapi.Register(ops, ManagementOperations["ops.dashboard.overview.list"], endpoint.GetDashboardOverview)
+		adminapi.Register(ops, ManagementOperations["ops.dashboard.throughput_trend.list"], endpoint.GetDashboardThroughputTrend)
+		adminapi.Register(ops, ManagementOperations["ops.dashboard.latency_histogram.list"], endpoint.GetDashboardLatencyHistogram)
+		adminapi.Register(ops, ManagementOperations["ops.dashboard.error_trend.list"], endpoint.GetDashboardErrorTrend)
+		adminapi.Register(ops, ManagementOperations["ops.dashboard.error_distribution.list"], endpoint.GetDashboardErrorDistribution)
+		adminapi.Register(ops, ManagementOperations["ops.dashboard.token_stats.list"], endpoint.GetDashboardTokenStats)
 		// The historical OpenAI token-stats URL uses the same general token handler.
 		// Its filters and response shape follow that endpoint, preserving clients
 		// that still request the older route.
-		ops.GET("/dashboard/openai-token-stats", endpoint.GetDashboardTokenStats)
+		adminapi.Register(ops, ManagementOperations["ops.dashboard.openai_token_stats.list"], endpoint.GetDashboardTokenStats)
 	}
 }
 
@@ -118,11 +120,11 @@ func RegisterOpsRoutes(admin *gin.RouterGroup, endpoint *OpsHandler) {
 func RegisterSystemRoutes(admin *gin.RouterGroup, endpoint *SystemHandler) {
 	system := admin.Group("/system")
 	{
-		system.GET("/version", endpoint.GetVersion)
-		system.GET("/check-updates", endpoint.CheckUpdates)
-		system.GET("/rollback-versions", endpoint.GetRollbackVersions)
-		system.POST("/update", endpoint.PerformUpdate)
-		system.POST("/rollback", endpoint.Rollback)
-		system.POST("/restart", endpoint.RestartService)
+		adminapi.Register(system, ManagementOperations["system.version.list"], endpoint.GetVersion)
+		adminapi.Register(system, ManagementOperations["system.check_updates.list"], endpoint.CheckUpdates)
+		adminapi.Register(system, ManagementOperations["system.rollback_versions.list"], endpoint.GetRollbackVersions)
+		adminapi.Register(system, ManagementOperations["system.update.create"], endpoint.PerformUpdate)
+		adminapi.Register(system, ManagementOperations["system.rollback.create"], endpoint.Rollback)
+		adminapi.Register(system, ManagementOperations["system.restart.create"], endpoint.RestartService)
 	}
 }

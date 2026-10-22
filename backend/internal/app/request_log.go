@@ -11,6 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/requestlog"
 	"github.com/TokenFlux/TokenRouter/internal/requestlog/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/requestlog/postgres"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
 // request_log.go constructs request recording, registers its writer lifecycle,
@@ -38,7 +39,7 @@ func provideRequestLog(db *sql.DB, cfg *config.Config, manager *lifecycle.Manage
 func registerRequestLogRoutes(v1 *gin.RouterGroup, requests *requestlog.Service, adminAuth, auditLog, limiter gin.HandlerFunc) {
 	handler := httpapi.NewHandler(requests)
 	group := v1.Group("/admin/requests", adminAuth, auditLog, limiter)
-	group.GET("", handler.Find)
-	group.GET("/health", handler.Health)
-	group.GET("/:request_id", handler.Find)
+	adminapi.Register(group, ManagementOperations["requests.list"], handler.Find)
+	adminapi.Register(group, ManagementOperations["requests.health"], handler.Health)
+	adminapi.Register(group, ManagementOperations["requests.get"], handler.Find)
 }

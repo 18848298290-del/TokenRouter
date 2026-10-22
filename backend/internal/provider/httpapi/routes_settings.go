@@ -1,6 +1,10 @@
 package httpapi
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
+)
 
 // routes_settings.go registers administrator routes for provider cooldown and
 // stream-timeout policies.
@@ -64,14 +68,14 @@ type ProviderSettingsEndpoints interface {
 // and auditing first and keeps the handler implementation available throughout
 // mounted requests.
 func RegisterProviderSettingsRoutes(adminSettings *gin.RouterGroup, endpoint ProviderSettingsEndpoints) {
-	adminSettings.GET("/stream-timeout", endpoint.GetStreamTimeoutSettings)
-	adminSettings.PUT("/stream-timeout", endpoint.UpdateStreamTimeoutSettings)
-	adminSettings.GET("/overload-cooldown", endpoint.GetOverloadCooldownSettings)
-	adminSettings.PUT("/overload-cooldown", endpoint.UpdateOverloadCooldownSettings)
-	adminSettings.GET("/openai-403-cooldown", endpoint.GetOpenAI403CooldownSettings)
-	adminSettings.PUT("/openai-403-cooldown", endpoint.UpdateOpenAI403CooldownSettings)
-	adminSettings.GET("/rate-limit-429-cooldown", endpoint.GetRateLimit429CooldownSettings)
-	adminSettings.PUT("/rate-limit-429-cooldown", endpoint.UpdateRateLimit429CooldownSettings)
-	adminSettings.GET("/openai-images-oauth-unavailable-cooldown", endpoint.GetOpenAIImagesOAuthUnavailableCooldownSettings)
-	adminSettings.PUT("/openai-images-oauth-unavailable-cooldown", endpoint.UpdateOpenAIImagesOAuthUnavailableCooldownSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.stream_timeout.list"], endpoint.GetStreamTimeoutSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.stream_timeout.update"], endpoint.UpdateStreamTimeoutSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.overload_cooldown.list"], endpoint.GetOverloadCooldownSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.overload_cooldown.update"], endpoint.UpdateOverloadCooldownSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.openai_403_cooldown.list"], endpoint.GetOpenAI403CooldownSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.openai_403_cooldown.update"], endpoint.UpdateOpenAI403CooldownSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.rate_limit_429_cooldown.list"], endpoint.GetRateLimit429CooldownSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.rate_limit_429_cooldown.update"], endpoint.UpdateRateLimit429CooldownSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.openai_images_oauth_unavailable_cooldown.list"], endpoint.GetOpenAIImagesOAuthUnavailableCooldownSettings)
+	adminapi.Register(adminSettings, ManagementOperations["settings.openai_images_oauth_unavailable_cooldown.update"], endpoint.UpdateOpenAIImagesOAuthUnavailableCooldownSettings)
 }

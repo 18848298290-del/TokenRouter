@@ -9,6 +9,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/notification"
 	"github.com/TokenFlux/TokenRouter/internal/notification/httpapi/dto"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
@@ -464,11 +465,11 @@ func New(email *notification.Mailer, n *notification.NotificationEmailService, s
 // The caller supplies the administrator group's authentication and other middleware
 // before registration, so all bound handler routes inherit that configured request policy.
 func RegisterSettingsRoutes(adminSettings *gin.RouterGroup, endpoint *Handler) {
-	adminSettings.POST("/test-smtp", endpoint.TestSMTPConnection)
-	adminSettings.POST("/send-test-email", endpoint.SendTestEmail)
-	adminSettings.GET("/email-templates", endpoint.ListEmailTemplates)
-	adminSettings.POST("/email-template-preview", endpoint.PreviewEmailTemplate)
-	adminSettings.GET("/email-templates/:event/:locale", endpoint.GetEmailTemplate)
-	adminSettings.PUT("/email-templates/:event/:locale", endpoint.UpdateEmailTemplate)
-	adminSettings.POST("/email-templates/:event/:locale/restore-official", endpoint.RestoreOfficialEmailTemplate)
+	adminapi.Register(adminSettings, ManagementOperations["settings.test_smtp.create"], endpoint.TestSMTPConnection)
+	adminapi.Register(adminSettings, ManagementOperations["settings.send_test_email.create"], endpoint.SendTestEmail)
+	adminapi.Register(adminSettings, ManagementOperations["settings.email_templates.list"], endpoint.ListEmailTemplates)
+	adminapi.Register(adminSettings, ManagementOperations["settings.email_template_preview.create"], endpoint.PreviewEmailTemplate)
+	adminapi.Register(adminSettings, ManagementOperations["settings.email_templates.get"], endpoint.GetEmailTemplate)
+	adminapi.Register(adminSettings, ManagementOperations["settings.email_templates.update"], endpoint.UpdateEmailTemplate)
+	adminapi.Register(adminSettings, ManagementOperations["settings.email_templates.restore_official.create"], endpoint.RestoreOfficialEmailTemplate)
 }

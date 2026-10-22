@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
 // routes_admin.go registers group and pricing administration endpoints on the
@@ -17,16 +19,16 @@ import (
 // authentication, rate limits, and auditing on admin before these routes
 // serve requests.
 func RegisterPricingRoutes(admin *gin.RouterGroup, endpoint *PricingHandler) {
-	admin.GET("/pricing/defaults", endpoint.ListDefaultPricing)
-	admin.GET("/pricing/defaults/model", endpoint.GetModelDefaultPricing)
-	admin.POST("/pricing/defaults/update", endpoint.UpdateDefaultPricing)
+	adminapi.Register(admin, ManagementOperations["pricing.defaults.list"], endpoint.ListDefaultPricing)
+	adminapi.Register(admin, ManagementOperations["pricing.defaults.model.list"], endpoint.GetModelDefaultPricing)
+	adminapi.Register(admin, ManagementOperations["pricing.defaults.update.create"], endpoint.UpdateDefaultPricing)
 	pricingConfigs := admin.Group("/pricing/configs")
 	{
-		pricingConfigs.GET("", endpoint.List)
-		pricingConfigs.GET("/:id", endpoint.GetByID)
-		pricingConfigs.POST("", endpoint.Create)
-		pricingConfigs.PUT("/:id", endpoint.Update)
-		pricingConfigs.DELETE("/:id", endpoint.Delete)
+		adminapi.Register(pricingConfigs, ManagementOperations["pricing.configs.list"], endpoint.List)
+		adminapi.Register(pricingConfigs, ManagementOperations["pricing.configs.get"], endpoint.GetByID)
+		adminapi.Register(pricingConfigs, ManagementOperations["pricing.configs.create"], endpoint.Create)
+		adminapi.Register(pricingConfigs, ManagementOperations["pricing.configs.update"], endpoint.Update)
+		adminapi.Register(pricingConfigs, ManagementOperations["pricing.configs.delete"], endpoint.Delete)
 	}
 }
 
@@ -37,23 +39,23 @@ func RegisterPricingRoutes(admin *gin.RouterGroup, endpoint *PricingHandler) {
 func RegisterGroupRoutes(admin *gin.RouterGroup, endpoint *GroupHandler) {
 	groups := admin.Group("/groups")
 	{
-		groups.GET("", endpoint.List)
-		groups.GET("/all", endpoint.GetAll)
-		groups.GET("/usage-summary", endpoint.GetUsageSummary)
-		groups.GET("/capacity-summary", endpoint.GetCapacitySummary)
-		groups.GET("/live-capability", endpoint.GetLiveCapability)
-		groups.PUT("/sort-order", endpoint.UpdateSortOrder)
-		groups.GET("/:id/models-list-candidates", endpoint.GetModelsListCandidates)
-		groups.GET("/:id", endpoint.GetByID)
-		groups.POST("", endpoint.Create)
-		groups.POST("/:id/duplicate", endpoint.Duplicate)
-		groups.PUT("/:id", endpoint.Update)
-		groups.DELETE("/:id", endpoint.Delete)
-		groups.GET("/:id/rate-multipliers", endpoint.GetGroupRateMultipliers)
-		groups.PUT("/:id/rate-multipliers", endpoint.BatchSetGroupRateMultipliers)
-		groups.DELETE("/:id/rate-multipliers", endpoint.ClearGroupRateMultipliers)
-		groups.PUT("/:id/rpm-overrides", endpoint.BatchSetGroupRPMOverrides)
-		groups.DELETE("/:id/rpm-overrides", endpoint.ClearGroupRPMOverrides)
-		groups.GET("/:id/api-keys", endpoint.GetGroupAPIKeys)
+		adminapi.Register(groups, ManagementOperations["groups.list"], endpoint.List)
+		adminapi.Register(groups, ManagementOperations["groups.all.list"], endpoint.GetAll)
+		adminapi.Register(groups, ManagementOperations["groups.usage_summary.list"], endpoint.GetUsageSummary)
+		adminapi.Register(groups, ManagementOperations["groups.capacity_summary.list"], endpoint.GetCapacitySummary)
+		adminapi.Register(groups, ManagementOperations["groups.live_capability.list"], endpoint.GetLiveCapability)
+		adminapi.Register(groups, ManagementOperations["groups.sort_order.update"], endpoint.UpdateSortOrder)
+		adminapi.Register(groups, ManagementOperations["groups.models_list_candidates.list"], endpoint.GetModelsListCandidates)
+		adminapi.Register(groups, ManagementOperations["groups.get"], endpoint.GetByID)
+		adminapi.Register(groups, ManagementOperations["groups.create"], endpoint.Create)
+		adminapi.Register(groups, ManagementOperations["groups.duplicate.create"], endpoint.Duplicate)
+		adminapi.Register(groups, ManagementOperations["groups.update"], endpoint.Update)
+		adminapi.Register(groups, ManagementOperations["groups.delete"], endpoint.Delete)
+		adminapi.Register(groups, ManagementOperations["groups.rate_multipliers.list"], endpoint.GetGroupRateMultipliers)
+		adminapi.Register(groups, ManagementOperations["groups.rate_multipliers.update"], endpoint.BatchSetGroupRateMultipliers)
+		adminapi.Register(groups, ManagementOperations["groups.rate_multipliers.delete"], endpoint.ClearGroupRateMultipliers)
+		adminapi.Register(groups, ManagementOperations["groups.rpm_overrides.update"], endpoint.BatchSetGroupRPMOverrides)
+		adminapi.Register(groups, ManagementOperations["groups.rpm_overrides.delete"], endpoint.ClearGroupRPMOverrides)
+		adminapi.Register(groups, ManagementOperations["groups.api_keys.list"], endpoint.GetGroupAPIKeys)
 	}
 }

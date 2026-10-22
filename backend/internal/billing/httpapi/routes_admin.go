@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
 // routes_admin.go registers administrator redemption and subscription HTTP
@@ -20,16 +22,16 @@ import (
 func RegisterRedeemCodeRoutes(admin *gin.RouterGroup, endpoint *AdminRedeemHandler) {
 	codes := admin.Group("/redeem-codes")
 	{
-		codes.GET("", endpoint.List)
-		codes.GET("/export", endpoint.Export)
-		codes.GET("/:id", endpoint.GetByID)
-		codes.POST("/create-and-redeem", endpoint.CreateAndRedeem)
-		codes.POST("/generate", endpoint.Generate)
-		codes.PUT("/:id", endpoint.Update)
-		codes.DELETE("/:id", endpoint.Delete)
-		codes.POST("/batch-delete", endpoint.BatchDelete)
-		codes.POST("/batch-update", endpoint.BatchUpdate)
-		codes.POST("/:id/expire", endpoint.Expire)
+		adminapi.Register(codes, ManagementOperations["redeem_codes.list"], endpoint.List)
+		adminapi.Register(codes, ManagementOperations["redeem_codes.export.list"], endpoint.Export)
+		adminapi.Register(codes, ManagementOperations["redeem_codes.get"], endpoint.GetByID)
+		adminapi.Register(codes, ManagementOperations["redeem_codes.create_and_redeem.create"], endpoint.CreateAndRedeem)
+		adminapi.Register(codes, ManagementOperations["redeem_codes.generate.create"], endpoint.Generate)
+		adminapi.Register(codes, ManagementOperations["redeem_codes.update"], endpoint.Update)
+		adminapi.Register(codes, ManagementOperations["redeem_codes.delete"], endpoint.Delete)
+		adminapi.Register(codes, ManagementOperations["redeem_codes.batch_delete.create"], endpoint.BatchDelete)
+		adminapi.Register(codes, ManagementOperations["redeem_codes.batch_update.create"], endpoint.BatchUpdate)
+		adminapi.Register(codes, ManagementOperations["redeem_codes.expire.create"], endpoint.Expire)
 	}
 }
 
@@ -40,19 +42,19 @@ func RegisterRedeemCodeRoutes(admin *gin.RouterGroup, endpoint *AdminRedeemHandl
 func RegisterSubscriptionRoutes(admin *gin.RouterGroup, endpoint *AdminSubscriptionHandler) {
 	subscriptions := admin.Group("/subscriptions")
 	{
-		subscriptions.GET("", endpoint.List)
-		subscriptions.GET("/:id", endpoint.GetByID)
-		subscriptions.GET("/:id/progress", endpoint.GetProgress)
-		subscriptions.POST("/assign", endpoint.Assign)
-		subscriptions.POST("/bulk-assign", endpoint.BulkAssign)
-		subscriptions.POST("/:id/extend", endpoint.Extend)
-		subscriptions.POST("/:id/reset-quota", endpoint.ResetQuota)
-		subscriptions.POST("/:id/revoke", endpoint.Revoke)
-		subscriptions.POST("/:id/restore", endpoint.Restore)
-		subscriptions.DELETE("/:id", endpoint.Revoke)
+		adminapi.Register(subscriptions, ManagementOperations["subscriptions.list"], endpoint.List)
+		adminapi.Register(subscriptions, ManagementOperations["subscriptions.get"], endpoint.GetByID)
+		adminapi.Register(subscriptions, ManagementOperations["subscriptions.progress.list"], endpoint.GetProgress)
+		adminapi.Register(subscriptions, ManagementOperations["subscriptions.assign.create"], endpoint.Assign)
+		adminapi.Register(subscriptions, ManagementOperations["subscriptions.bulk_assign.create"], endpoint.BulkAssign)
+		adminapi.Register(subscriptions, ManagementOperations["subscriptions.extend.create"], endpoint.Extend)
+		adminapi.Register(subscriptions, ManagementOperations["subscriptions.reset_quota.create"], endpoint.ResetQuota)
+		adminapi.Register(subscriptions, ManagementOperations["subscriptions.revoke.create"], endpoint.Revoke)
+		adminapi.Register(subscriptions, ManagementOperations["subscriptions.restore.create"], endpoint.Restore)
+		adminapi.Register(subscriptions, ManagementOperations["subscriptions.delete"], endpoint.Revoke)
 	}
 
-	admin.GET("/plans/:id/subscriptions", endpoint.ListByPlan)
+	adminapi.Register(admin, ManagementOperations["plans.subscriptions.list"], endpoint.ListByPlan)
 
-	admin.GET("/users/:id/subscriptions", endpoint.ListByUser)
+	adminapi.Register(admin, ManagementOperations["users.subscriptions.list"], endpoint.ListByUser)
 }

@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
 )
 
 // routes_admin.go registers audit-history listing, detail, and clearing
@@ -17,9 +19,9 @@ import (
 func RegisterAuditLogRoutes(admin *gin.RouterGroup, endpoint *AuditLogHandler) {
 	auditLogs := admin.Group("/audit-logs")
 	{
-		auditLogs.GET("", endpoint.List)
-		auditLogs.GET("/:id", endpoint.Get)
+		adminapi.Register(auditLogs, ManagementOperations["audit_logs.list"], endpoint.List)
+		adminapi.Register(auditLogs, ManagementOperations["audit_logs.get"], endpoint.Get)
 		// The handler requires a fresh TOTP code even within an active step-up window.
-		auditLogs.POST("/clear", endpoint.Clear)
+		adminapi.Register(auditLogs, ManagementOperations["audit_logs.clear.create"], endpoint.Clear)
 	}
 }

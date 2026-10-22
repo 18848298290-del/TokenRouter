@@ -504,7 +504,7 @@ func tryServeOverrideFile(c *gin.Context, overrideDir, cleanPath string) bool {
 // The shared /models path first permits browser marketplace navigation through
 // shouldServeModelMarketplace. Other /models requests bypass the frontend. API,
 // versioned, backend, setup, Antigravity, response, image, and video path
-// families are forwarded, along with health and AlphaSearch entry paths.
+// families are forwarded, along with MCP, health, and AlphaSearch entry paths.
 // Unrecognized paths stay available for the frontend's SPA fallback.
 func shouldBypassEmbeddedFrontend(request *http.Request) bool {
 	if request == nil || request.URL == nil {
@@ -518,6 +518,8 @@ func shouldBypassEmbeddedFrontend(request *http.Request) bool {
 	}
 
 	return strings.HasPrefix(trimmed, "/api/") ||
+		trimmed == "/mcp" ||
+		strings.HasPrefix(trimmed, "/mcp/") ||
 		strings.HasPrefix(trimmed, "/v1/") ||
 		strings.HasPrefix(trimmed, "/v1beta/") ||
 		strings.HasPrefix(trimmed, "/backend-api/") ||

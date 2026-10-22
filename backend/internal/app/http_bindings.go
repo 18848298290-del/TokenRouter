@@ -14,6 +14,7 @@ import (
 	gatewayhttpapi "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	identityhttp "github.com/TokenFlux/TokenRouter/internal/identity/httpapi"
 	redisinfra "github.com/TokenFlux/TokenRouter/internal/infra/redis"
+	mcphttp "github.com/TokenFlux/TokenRouter/internal/mcp/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/requestlog"
@@ -43,7 +44,7 @@ type httpRouteMount func(*gin.Engine, httpRouteSecurity, gin.HandlerFunc, func(*
 // and retains prior values when either settings refresh fails. Embedded
 // frontend construction can return an error after hooks have been registered;
 // the application rollback owns their cleanup.
-func provideRouterRuntime(requests *requestlog.Service, public *site.PublicService, pages *sitehttp.PageHandler, backendMode *admission.BackendMode, store *settings.Store, redisClient *redis.Client, manager *lifecycle.Manager, cfg *config.Config, mount httpRouteMount, panelSettings *runtimeconfig.PanelSettings, opsService *ops.OpsService, jwtAuth identityhttp.JWTAuthMiddleware, adminAuth identityhttp.AdminAuthMiddleware, auditLog middleware.AuditLogMiddleware, stepUpAuth identityhttp.StepUpAuthMiddleware,
+func provideRouterRuntime(requests *requestlog.Service, public *site.PublicService, pages *sitehttp.PageHandler, backendMode *admission.BackendMode, store *settings.Store, redisClient *redis.Client, manager *lifecycle.Manager, cfg *config.Config, mount httpRouteMount, panelSettings *runtimeconfig.PanelSettings, opsService *ops.OpsService, jwtAuth identityhttp.JWTAuthMiddleware, adminAuth identityhttp.AdminAuthMiddleware, auditLog middleware.AuditLogMiddleware, stepUpAuth identityhttp.StepUpAuthMiddleware, mcpHandler *mcphttp.Handler,
 ) (*server.RouterRuntime, error) {
 	// Seal update admission before waiting for HTTP handlers, then wait for
 	// accepted settings work so later settings subscribers and shared stores can close safely.
@@ -123,6 +124,9 @@ func provideRouterRuntime(requests *requestlog.Service, public *site.PublicServi
 			pages.Register(v1, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth))
 			registerRequestLogRoutes(v1, requests, gin.HandlerFunc(adminAuth), gin.HandlerFunc(auditLog), panelLimiter.Heavy())
 		})
+		if err := mcpHandler.Mount(r, gin.HandlerFunc(adminAuth), gin.HandlerFunc(auditLog)); err != nil {
+			panic(err)
+		}
 	}}
 
 	return rt, nil

@@ -20,9 +20,7 @@ import (
 // reports partial failures through successful HTTP batch results.
 // POST /api/v1/admin/providers/batch-delete
 func (h *ManagementHandler) BatchDelete(c *gin.Context) {
-	var req struct {
-		ProviderIDs []int64 `json:"provider_ids"` // requested provider identifier list
-	}
+	var req ProviderBatchDeleteRequest
 	if err := response.BindJSONStrict(c, &req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
@@ -49,9 +47,7 @@ func (h *ManagementHandler) BatchDelete(c *gin.Context) {
 // warnings alongside successes; this handler does not normalize duplicates.
 // POST /api/v1/admin/providers/batch-refresh
 func (h *ManagementHandler) BatchRefresh(c *gin.Context) {
-	var req struct {
-		ProviderIDs []int64 `json:"provider_ids"` // requested provider identifier list
-	}
+	var req ProviderBatchRefreshRequest
 	if err := response.BindJSONStrict(c, &req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
@@ -74,9 +70,7 @@ func (h *ManagementHandler) BatchRefresh(c *gin.Context) {
 // success, while binding and batch-level errors end the request.
 // POST /api/v1/admin/providers/batch-clear-error
 func (h *ManagementHandler) BatchClearError(c *gin.Context) {
-	var req struct {
-		ProviderIDs []int64 `json:"provider_ids"` // requested provider identifier list
-	}
+	var req ProviderBatchClearErrorRequest
 	if err := response.BindJSONStrict(c, &req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return

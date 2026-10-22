@@ -1,0 +1,596 @@
+package httpapi
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/gin-gonic/gin"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
+
+	"github.com/TokenFlux/TokenRouter/internal/identity"
+	identityhttp "github.com/TokenFlux/TokenRouter/internal/identity/httpapi"
+	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
+	"github.com/TokenFlux/TokenRouter/internal/infra/crypto"
+	control "github.com/TokenFlux/TokenRouter/internal/mcp"
+	mcpredis "github.com/TokenFlux/TokenRouter/internal/mcp/rediscache"
+	"github.com/TokenFlux/TokenRouter/internal/server/adminapi"
+)
+
+// transport_test.go exercises the real MCP SDK over HTTP with existing Gin
+// administrator admission, Redis confirmation transitions, and AES-encrypted
+// artifacts. A memory token repository supplies live grant changes while a
+// deterministic browser-auth fixture represents already verified JWT sessions.
+// These tests cover MCP authorization and dispatch; JWT cryptographic validation
+// remains covered by the identity HTTP tests.
+
+// tokenFixture holds one synchronized credential and its digest for transport tests.
+type tokenFixture struct {
+	// Unused persistence methods deliberately remain unavailable; transport cases
+	// exercise issuance and authorization without pretending to cover PostgreSQL mutations.
+	identity.MCPTokenRepository
+	mu     sync.Mutex        // token snapshot mutation lock
+	token  identity.MCPToken // current credential metadata
+	digest string            // stored credential digest
+	sealed string            // encrypted fixture credential
+}
+
+// accountFixture represents the current active administrator consulted by token admission.
+type accountFixture struct {
+	role atomic.Value // current global role string
+}
+
+// grantFixture represents the current browser TOTP authorization state.
+type grantFixture struct {
+	enabled bool        // configured step-up policy
+	granted atomic.Bool // current browser grant availability
+}
+
+// bearerTransport adds one dedicated credential to the SDK's HTTP requests.
+type bearerTransport struct {
+	credential string // fixture-issued MCP credential
+}
+
+// mcpFixture retains the real HTTP server and its observable test operation state.
+type mcpFixture struct {
+	handler    *Handler           // configured control plane
+	repo       *tokenFixture      // mutable persisted grants
+	accounts   *accountFixture    // current user role reader
+	grants     *grantFixture      // mutable TOTP grant reader
+	server     *httptest.Server   // local protocol listener
+	session    *mcp.ClientSession // official SDK client session
+	token      *identity.MCPToken // initially issued public metadata
+	credential string             // fixture credential for negative admission tests
+	writes     atomic.Int64       // executed business mutations
+}
+
+// Create stores the issued digest and fills the fixture's generated identity.
+func (f *tokenFixture) Create(_ context.Context, token *identity.MCPToken, digest, sealed string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	token.ID = 1
+	token.CreatedAt = time.Now().UTC()
+	token.UpdatedAt = token.CreatedAt
+	f.token = *token
+	f.digest = digest
+	f.sealed = sealed
+	return nil
+}
+
+// Credential returns ciphertext only for the fixture's owning administrator.
+// Revoked records use the same not-found outcome as mismatched identities,
+// allowing HTTP tests to exercise the separate authenticated disclosure path.
+func (f *tokenFixture) Credential(_ context.Context, userID, id int64) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id != f.token.ID || userID != f.token.UserID || f.token.RevokedAt != nil {
+		return "", "", identity.ErrMCPTokenNotFound
+	}
+	return f.sealed, f.digest, nil
+}
+
+// Get returns an independent permission snapshot for the fixture's stored credential.
+func (f *tokenFixture) Get(_ context.Context, id int64) (*identity.MCPToken, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id != f.token.ID {
+		return nil, identity.ErrMCPTokenNotFound
+	}
+	token := f.token
+	token.Permissions = slices.Clone(token.Permissions)
+	return &token, nil
+}
+
+// FindHash matches the presented digest before returning fresh authorization metadata.
+func (f *tokenFixture) FindHash(ctx context.Context, digest string) (*identity.MCPToken, error) {
+	f.mu.Lock()
+	matched := digest == f.digest
+	f.mu.Unlock()
+	if !matched {
+		return nil, identity.ErrMCPTokenInvalid
+	}
+	return f.Get(ctx, 1)
+}
+
+// Touch accepts usage observation independently of the fixture's token settings version.
+func (*tokenFixture) Touch(context.Context, int64) error { return nil }
+
+// GetByID returns current role state for the fixture's owning administrator.
+func (f *accountFixture) GetByID(_ context.Context, id int64) (*identity.User, error) {
+	if id != 1 && id != 2 {
+		return nil, errors.New("unknown fixture account")
+	}
+	role, _ := f.role.Load().(string)
+	return &identity.User{ID: id, Role: role, Status: identity.StatusActive, TotpEnabled: true}, nil
+}
+
+// IsStepUpEnabled supplies the configured strong-authentication switch for these test requests.
+func (f *grantFixture) IsStepUpEnabled(context.Context) bool { return f.enabled }
+
+// HasStepUpGrant checks the verified browser session and its current grant availability.
+func (f *grantFixture) HasStepUpGrant(_ context.Context, userID int64, sessionID string) (bool, error) {
+	return userID == 1 && sessionID == "fixture-session" && f.granted.Load(), nil
+}
+
+// RoundTrip clones requests before installing the fixture's Bearer authentication header.
+func (b bearerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	cloned := request.Clone(request.Context())
+	cloned.Header.Set("Authorization", "Bearer "+b.credential)
+	return http.DefaultTransport.RoundTrip(cloned)
+}
+
+// newMCPFixture mounts real SDK transport and route admission around bounded test handlers.
+// Browser authentication is a fixture, while token checks, schema validation,
+// approval storage, and SDK serialization use the production implementations.
+func newMCPFixture(t *testing.T) *mcpFixture {
+	t.Helper()
+	fixture := &mcpFixture{repo: &tokenFixture{}, accounts: &accountFixture{}, grants: &grantFixture{enabled: true}}
+	fixture.accounts.role.Store(identity.RoleAdmin)
+	fixture.grants.granted.Store(true)
+	cache := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: cache.Addr()})
+	t.Cleanup(func() { require.NoError(t, redisClient.Close()) })
+	cipher, err := crypto.NewAESEncryptor(bytes.Repeat([]byte{1}, 32))
+	require.NoError(t, err)
+	tokens := identity.NewMCPTokenService(fixture.repo, fixture.accounts, cipher)
+	fixture.handler = NewHandler(tokens, mcpredis.NewState(redisClient, cipher), fixture.grants, fixture.accounts, fixture.grants, Options{Origins: func(context.Context) []string { return []string{"https://management.example"} }})
+	router := gin.New()
+	normal := func(c *gin.Context) {
+		id := int64(1)
+		if c.GetHeader("Authorization") == "Bearer other-browser" {
+			id = 2
+		} else if c.GetHeader("Authorization") != "Bearer browser" {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		authctx.SetPrincipal(c, identity.Principal{UserID: id, Role: identity.RoleAdmin, CredentialKind: "jwt", SessionID: "fixture-session"}, 1, "fixture@example.invalid")
+		c.Next()
+	}
+	admin := identityhttp.MCPAdminAuth(tokens, normal)
+	group := router.Group("/api/v1/admin", admin)
+	group.GET("/fixture/:id", func(c *gin.Context) {
+		c.JSON(200, gin.H{"code": 0, "data": gin.H{"id": c.Param("id"), "api_key": "must-not-reach-model"}})
+	})
+	group.POST("/fixture", func(c *gin.Context) {
+		fixture.writes.Add(1)
+		c.JSON(200, gin.H{"code": 0, "data": gin.H{"created": true}})
+	})
+	group.POST("/protected", identityhttp.StepUpAuth(fixture.grants, fixture.accounts, fixture.grants), func(c *gin.Context) {
+		fixture.writes.Add(1)
+		c.JSON(200, gin.H{"code": 0, "data": gin.H{"saved": true}})
+	})
+	fixture.handler.registerManagement(router.Group("/api/v1/admin/mcp", admin))
+	operations := []*adminapi.Operation{
+		{ID: "fixture.get", Method: "GET", Path: "/api/v1/admin/fixture/:id", ReadOnly: true, Input: adminapi.Arguments("/api/v1/admin/fixture/:id", nil, nil)},
+		{ID: "fixture.create", Method: "POST", Path: "/api/v1/admin/fixture", Input: adminapi.Arguments("/api/v1/admin/fixture", nil, map[string]any{})},
+		{ID: "fixture.protected", Method: "POST", Path: "/api/v1/admin/protected", Sensitive: true, StepUp: true, Input: adminapi.Arguments("/api/v1/admin/protected", nil, map[string]any{})},
+	}
+	for _, operation := range managementOperations {
+		operations = append(operations, operation)
+	}
+	fixture.handler.catalog, err = adminapi.NewCatalog(operations)
+	require.NoError(t, err)
+	fixture.handler.router = router
+	router.Any("/mcp", gin.WrapH(http.HandlerFunc(fixture.handler.serveMCP)))
+	fixture.token, fixture.credential, err = tokens.Create(t.Context(), 1, identity.MCPTokenInput{Name: "SDK fixture", Enabled: true, Permissions: []string{"fixture.get", "fixture.create", "fixture.protected", "mcp.confirmations.approve"}})
+	require.NoError(t, err)
+	fixture.server = httptest.NewServer(router)
+	t.Cleanup(fixture.server.Close)
+	client := mcp.NewClient(&mcp.Implementation{Name: "acceptance", Version: "1"}, nil)
+	fixture.session, err = client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: fixture.server.URL + "/mcp", HTTPClient: &http.Client{Transport: bearerTransport{fixture.credential}}, MaxRetries: -1, DisableStandaloneSSE: true}, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, fixture.session.Close()) })
+	return fixture
+}
+
+// invoke calls a tool through the official client and decodes its structured result.
+func (f *mcpFixture) invoke(t *testing.T, tool string, arguments map[string]any) (*mcp.CallToolResult, map[string]any) {
+	t.Helper()
+	result, err := f.session.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: arguments})
+	require.NoError(t, err)
+	raw, err := json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	return result, decoded
+}
+
+// browser sends a workflow request with the fixture's already-verified browser identity.
+func (f *mcpFixture) browser(t *testing.T, method, path, credential string) *http.Response {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), method, f.server.URL+path, nil)
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer "+credential)
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, response.Body.Close()) })
+	return response
+}
+
+// TestSDKDiscoveryDispatchAndRevocation connects the official MCP client to the mounted
+// management transport. It verifies schema rejection, exact permissions, redacted output,
+// mutation isolation from the query tool, and live revocation after discovery.
+func TestSDKDiscoveryDispatchAndRevocation(t *testing.T) {
+	f := newMCPFixture(t)
+	tools, err := f.session.ListTools(t.Context(), nil)
+	require.NoError(t, err)
+	require.Len(t, tools.Tools, 4)
+	result, data := f.invoke(t, "search_operations", map[string]any{})
+	require.False(t, result.IsError)
+	require.Equal(t, float64(4), data["total"])
+	result, data = f.invoke(t, "read_operation", map[string]any{"operation_id": "fixture.get", "path": map[string]string{"id": "7"}})
+	require.False(t, result.IsError)
+	require.Equal(t, "***", jsonTestValue[map[string]any](t, jsonTestValue[map[string]any](t, data["data"])["data"])["api_key"])
+	for _, arguments := range []map[string]any{
+		{"operation_id": "fixture.create"},
+		{"operation_id": "fixture.get", "path": map[string]string{"id": "../protected"}},
+		{"operation_id": "fixture.get", "path": map[string]string{"id": "%2fprotected"}},
+		{"operation_id": "fixture.get", "path": map[string]string{"id": "7"}, "query": map[string]string{"unknown": "x"}},
+		{"operation_id": "mcp.tokens.create"},
+	} {
+		result, _ = f.invoke(t, "read_operation", arguments)
+		require.True(t, result.IsError)
+	}
+	require.Zero(t, f.writes.Load())
+	result, _ = f.invoke(t, "execute_operation", map[string]any{"operation_id": "fixture.create", "body": map[string]any{"name": "example"}})
+	require.False(t, result.IsError)
+	require.Equal(t, int64(1), f.writes.Load())
+	f.repo.mu.Lock()
+	f.repo.token.Permissions = []string{}
+	f.repo.mu.Unlock()
+	result, _ = f.invoke(t, "describe_operation", map[string]any{"operation_id": "fixture.get"})
+	require.True(t, result.IsError)
+	f.accounts.role.Store(identity.RoleUser)
+	response := f.browser(t, "POST", "/mcp", f.credential)
+	require.Equal(t, http.StatusUnauthorized, response.StatusCode)
+}
+
+// TestBrowserApprovalBindsOwnerPayloadAndSingleExecution requests a sensitive operation
+// through the SDK. Different owners, changed arguments, expired TOTP grants, and
+// reused approvals must fail without adding another business mutation.
+func TestBrowserApprovalBindsOwnerPayloadAndSingleExecution(t *testing.T) {
+	f := newMCPFixture(t)
+	arguments := map[string]any{"operation_id": "fixture.protected", "body": map[string]any{"password": "hidden", "name": "reviewed"}}
+	result, pending := f.invoke(t, "execute_operation", arguments)
+	require.False(t, result.IsError)
+	require.Equal(t, "confirmation_required", pending["status"])
+	id := jsonTestValue[string](t, pending["confirmation_id"])
+	approval, err := f.handler.state.GetApproval(t.Context(), id)
+	require.NoError(t, err)
+	require.NotContains(t, approval.Preview, "hidden")
+	response := f.browser(t, "POST", "/api/v1/admin/mcp/confirmations/"+id+"/approve", "other-browser")
+	require.Equal(t, http.StatusNotFound, response.StatusCode)
+	response = f.browser(t, "POST", "/api/v1/admin/mcp/confirmations/"+id+"/approve", "browser")
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	arguments["confirmation_id"] = id
+	arguments["body"] = map[string]any{"password": "hidden", "name": "changed"}
+	result, _ = f.invoke(t, "execute_operation", arguments)
+	require.True(t, result.IsError)
+	arguments["body"] = map[string]any{"password": "hidden", "name": "reviewed"}
+	f.grants.granted.Store(false)
+	result, _ = f.invoke(t, "execute_operation", arguments)
+	require.True(t, result.IsError)
+	require.Zero(t, f.writes.Load())
+	f.grants.granted.Store(true)
+	result, _ = f.invoke(t, "execute_operation", arguments)
+	require.False(t, result.IsError)
+	require.Equal(t, int64(1), f.writes.Load())
+	result, _ = f.invoke(t, "execute_operation", arguments)
+	require.True(t, result.IsError)
+	require.Equal(t, int64(1), f.writes.Load())
+}
+
+// TestMCPOriginAndCredentialIsolation supplies an attacker-controlled Host and Origin
+// plus a valid token. Origin admission rejects it, and the same credential never
+// becomes a public REST administrator credential.
+func TestMCPOriginAndCredentialIsolation(t *testing.T) {
+	f := newMCPFixture(t)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, f.server.URL+"/mcp", nil)
+	require.NoError(t, err)
+	request.Host = "attacker.example"
+	request.Header.Set("Origin", "https://attacker.example")
+	request.Header.Set("Authorization", "Bearer "+f.credential)
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, http.StatusForbidden, response.StatusCode)
+	response = f.browser(t, "POST", "/api/v1/admin/fixture", f.credential)
+	require.Equal(t, http.StatusUnauthorized, response.StatusCode)
+	require.Zero(t, f.writes.Load())
+}
+
+// TestConfirmationConcurrentConsumptionAndGrantChange races shared approval claims
+// and then changes token permissions after a separate approval. Exactly one claim
+// succeeds, and the stale grant never reaches the protected business handler.
+func TestConfirmationConcurrentConsumptionAndGrantChange(t *testing.T) {
+	f := newMCPFixture(t)
+	args := map[string]any{"operation_id": "fixture.protected", "body": map[string]any{"name": "reviewed"}}
+	_, pending := f.invoke(t, "execute_operation", args)
+	id := jsonTestValue[string](t, pending["confirmation_id"])
+	require.Equal(t, 200, f.browser(t, "POST", "/api/v1/admin/mcp/confirmations/"+id+"/approve", "browser").StatusCode)
+	approval, err := f.handler.state.GetApproval(t.Context(), id)
+	require.NoError(t, err)
+	var accepted atomic.Int64
+	var workers sync.WaitGroup
+	for range 16 {
+		workers.Go(func() {
+			if f.handler.state.Consume(t.Context(), approval) == nil {
+				accepted.Add(1)
+			}
+		})
+	}
+	workers.Wait()
+	require.Equal(t, int64(1), accepted.Load())
+	_, pending = f.invoke(t, "execute_operation", args)
+	id = jsonTestValue[string](t, pending["confirmation_id"])
+	require.Equal(t, 200, f.browser(t, "POST", "/api/v1/admin/mcp/confirmations/"+id+"/approve", "browser").StatusCode)
+	f.repo.mu.Lock()
+	f.repo.token.UpdatedAt = time.Now().Add(time.Second)
+	f.repo.mu.Unlock()
+	args["confirmation_id"] = id
+	result, _ := f.invoke(t, "execute_operation", args)
+	require.True(t, result.IsError)
+	require.Zero(t, f.writes.Load())
+}
+
+// TestProtectedFileOwnershipAndRevocation stores an encrypted result for one token.
+// Another administrator cannot download it, and revocation removes access even
+// from its original owner before the temporary file expires.
+func TestProtectedFileOwnershipAndRevocation(t *testing.T) {
+	f := newMCPFixture(t)
+	file := &control.Artifact{ID: "owned-result", UserID: 1, TokenID: f.token.ID, OperationID: "fixture.get", Name: "result.json", ContentType: "application/json", Data: []byte(`{"secret":"browser-only"}`), ExpiresAt: time.Now().Add(time.Minute)}
+	require.NoError(t, f.handler.state.SaveArtifact(t.Context(), file))
+	response := f.browser(t, "GET", "/api/v1/admin/mcp/files/owned-result", "other-browser")
+	require.Equal(t, http.StatusNotFound, response.StatusCode)
+	response = f.browser(t, "GET", "/api/v1/admin/mcp/files/owned-result", "browser")
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	data, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, file.Data, data)
+	f.repo.mu.Lock()
+	f.repo.token.Enabled = false
+	f.repo.mu.Unlock()
+	response = f.browser(t, "GET", "/api/v1/admin/mcp/files/owned-result", "browser")
+	require.Equal(t, http.StatusForbidden, response.StatusCode)
+}
+
+// TestStreamCompletionAndOutputBounds supplies complete, failed, and truncated event
+// streams. A transport success cannot mask a stream error or missing terminal,
+// and oversized output cancels capture without returning truncated success data.
+func TestStreamCompletionAndOutputBounds(t *testing.T) {
+	f := newMCPFixture(t)
+	op := &adminapi.Operation{ID: "fixture.test", TerminalEvent: "test_complete"}
+	for _, test := range []struct {
+		name   string // scenario identification label
+		body   string // finite SSE wire data
+		status string // expected operation state
+	}{
+		{"complete", "data: {\"type\":\"content\",\"text\":\"ok\"}\n\ndata: {\"type\":\"test_complete\",\"success\":true}\n\n", "succeeded"},
+		{"error", "data: {\"type\":\"error\",\"error\":\"upstream failed\"}\n\ndata: {\"type\":\"test_complete\",\"success\":true}\n\n", "failed"},
+		{"truncated", "data: {\"type\":\"content\",\"text\":\"partial\"}\n\n", "outcome_unknown"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := f.handler.streamResult(op, []byte(test.body), "request-fixture")
+			require.Equal(t, test.status, jsonTestValue[map[string]any](t, result.StructuredContent)["status"])
+		})
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	writer := newCapture(ctx, cancel)
+	defer writer.close()
+	_, err := writer.Write(make([]byte, maxResultBytes+1))
+	require.Error(t, err)
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+}
+
+// TestConfirmationRetainsExactLargeNumbers approves an integer beyond floating-point
+// precision and then substitutes its adjacent value. The changed payload must
+// be rejected even though both integers round to the same float64 value.
+func TestConfirmationRetainsExactLargeNumbers(t *testing.T) {
+	f := newMCPFixture(t)
+	args := map[string]any{"operation_id": "fixture.protected", "body": map[string]any{"limit": int64(9007199254740993)}}
+	_, pending := f.invoke(t, "execute_operation", args)
+	id := jsonTestValue[string](t, pending["confirmation_id"])
+	require.Equal(t, 200, f.browser(t, "POST", "/api/v1/admin/mcp/confirmations/"+id+"/approve", "browser").StatusCode)
+	args["confirmation_id"] = id
+	args["body"] = map[string]any{"limit": int64(9007199254740992)}
+	result, _ := f.invoke(t, "execute_operation", args)
+	require.True(t, result.IsError)
+	require.Zero(t, f.writes.Load())
+}
+
+// jsonTestValue extracts a decoded result value for a typed assertion. Unexpected
+// JSON shapes fail at the test caller, avoiding an unrelated type-assertion panic
+// that would hide which response field changed.
+func jsonTestValue[T any](t *testing.T, value any) T {
+	t.Helper()
+	result, ok := value.(T)
+	require.True(t, ok, "unexpected JSON value type %T", value)
+	return result
+}
+
+// TestTokenConfirmationPreferenceRetainsTOTPAndLiveRevocation opts one credential
+// into direct sensitive execution. Ordinary confirmations disappear, existing TOTP
+// still requires a browser session, and disabling the preference takes effect immediately.
+func TestTokenConfirmationPreferenceRetainsTOTPAndLiveRevocation(t *testing.T) {
+	f := newMCPFixture(t)
+	operations := f.handler.catalog.Operations()
+	var sensitive *adminapi.Operation
+	for i, operation := range operations {
+		if operation.ID == "fixture.create" {
+			clone := *operation
+			clone.Sensitive = true
+			sensitive = &clone
+			operations[i] = sensitive
+		}
+	}
+	var err error
+	f.handler.catalog, err = adminapi.NewCatalog(operations)
+	require.NoError(t, err)
+	args := map[string]any{"operation_id": "fixture.create", "body": map[string]any{"name": "direct"}}
+	_, pending := f.invoke(t, "execute_operation", args)
+	require.Equal(t, "confirmation_required", pending["status"])
+	f.repo.mu.Lock()
+	f.repo.token.SkipBrowserConfirmation = true
+	f.repo.token.UpdatedAt = time.Now().Add(time.Second)
+	f.repo.mu.Unlock()
+	result, done := f.invoke(t, "execute_operation", args)
+	require.False(t, result.IsError)
+	require.Equal(t, "succeeded", done["status"])
+	require.Equal(t, int64(1), f.writes.Load())
+	_, description := f.invoke(t, "describe_operation", map[string]any{"operation_id": "fixture.create"})
+	require.Equal(t, false, description["requires_confirmation"])
+	_, protected := f.invoke(t, "execute_operation", map[string]any{"operation_id": "fixture.protected", "body": map[string]any{}})
+	require.Equal(t, "confirmation_required", protected["status"])
+	require.Equal(t, int64(1), f.writes.Load())
+
+	token, err := f.repo.Get(t.Context(), 1)
+	require.NoError(t, err)
+	request, err := f.handler.request(t.Context(), token, sensitive, sensitive, control.Call{Body: json.RawMessage(`{}`)}, nil)
+	require.NoError(t, err)
+	dispatch, ok := authctx.GetMCPDispatch(request.Context())
+	require.True(t, ok)
+	require.True(t, dispatch.ConfirmationSkipped)
+	f.repo.mu.Lock()
+	f.repo.token.SkipBrowserConfirmation = false
+	f.repo.token.UpdatedAt = f.repo.token.UpdatedAt.Add(time.Second)
+	f.repo.mu.Unlock()
+	response := httptest.NewRecorder()
+	f.handler.router.ServeHTTP(response, request)
+	require.Equal(t, 403, response.Code)
+	require.Equal(t, int64(1), f.writes.Load())
+	_, pending = f.invoke(t, "execute_operation", args)
+	require.Equal(t, "confirmation_required", pending["status"])
+
+	f.repo.mu.Lock()
+	f.repo.token.SkipBrowserConfirmation = true
+	f.repo.mu.Unlock()
+	f.grants.enabled = false
+	result, done = f.invoke(t, "execute_operation", map[string]any{"operation_id": "fixture.protected", "body": map[string]any{}})
+	require.False(t, result.IsError)
+	require.Equal(t, "succeeded", done["status"])
+}
+
+// TestMutationServerErrorRetainsUnknownOutcome models a write whose handler returns
+// an error after dispatch. Server errors cannot establish rollback, while rejected
+// client arguments and failed queries remain ordinary failures.
+func TestMutationServerErrorRetainsUnknownOutcome(t *testing.T) {
+	f := newMCPFixture(t)
+	for _, test := range []struct {
+		readOnly bool   // operation side effect classification
+		code     int    // returned HTTP error status
+		status   string // expected client outcome state
+	}{{false, 500, "outcome_unknown"}, {false, 400, "failed"}, {true, 500, "failed"}} {
+		writer := newCapture(t.Context(), func() {})
+		writer.WriteHeader(test.code)
+		_, err := writer.Write([]byte(`{"message":"storage unavailable"}`))
+		require.NoError(t, err)
+		result := f.handler.operationResult(t.Context(), f.token, &adminapi.Operation{ReadOnly: test.readOnly}, writer)
+		writer.close()
+		require.True(t, result.IsError)
+		require.Equal(t, test.status, jsonTestValue[map[string]any](t, result.StructuredContent)["status"])
+	}
+}
+
+// TestConfirmationStatusBelongsToOriginatingToken reads a pending review through
+// the SDK. The originating token sees its state and redacted parameters, while
+// another token identifier cannot reuse that confirmation reference.
+func TestConfirmationStatusBelongsToOriginatingToken(t *testing.T) {
+	f := newMCPFixture(t)
+	f.repo.mu.Lock()
+	f.repo.token.Permissions = append(f.repo.token.Permissions, "mcp.confirmations.get")
+	f.repo.mu.Unlock()
+	_, pending := f.invoke(t, "execute_operation", map[string]any{"operation_id": "fixture.protected", "body": map[string]any{"password": "private"}})
+	id := jsonTestValue[string](t, pending["confirmation_id"])
+	args := map[string]any{"operation_id": "mcp.confirmations.get", "path": map[string]string{"id": id}}
+	result, data := f.invoke(t, "read_operation", args)
+	require.False(t, result.IsError)
+	review := jsonTestValue[map[string]any](t, jsonTestValue[map[string]any](t, data["data"])["data"])
+	require.Equal(t, "pending", review["state"])
+	require.NotContains(t, review["preview"], "private")
+	approval, err := f.handler.state.GetApproval(t.Context(), id)
+	require.NoError(t, err)
+	approval.ID = "other-token-review"
+	approval.TokenID = 2
+	require.NoError(t, f.handler.state.CreateApproval(t.Context(), approval))
+	args["path"] = map[string]string{"id": approval.ID}
+	result, _ = f.invoke(t, "read_operation", args)
+	require.True(t, result.IsError)
+}
+
+// TestRedactionRetainsEditableConfiguration supplies safe configuration beside secrets.
+// Returned credentials and extra containers remain inspectable, while their nested
+// credential values cannot enter the model's response context.
+func TestRedactionRetainsEditableConfiguration(t *testing.T) {
+	f := newMCPFixture(t)
+	input := map[string]any{"credentials": map[string]any{"base_url": "https://upstream.invalid", "api_key": "private"}, "extra": map[string]any{"priority": float64(7), "refresh_token": "private"}, "has_api_key": true}
+	result := jsonTestValue[map[string]any](t, f.handler.redact(input, 0))
+	credentials := jsonTestValue[map[string]any](t, result["credentials"])
+	require.Equal(t, "https://upstream.invalid", credentials["base_url"])
+	require.Equal(t, "***", credentials["api_key"])
+	require.Equal(t, "private", jsonTestValue[map[string]any](t, input["credentials"])["api_key"])
+	extra := jsonTestValue[map[string]any](t, result["extra"])
+	require.Equal(t, float64(7), extra["priority"])
+	require.Equal(t, "***", extra["refresh_token"])
+	require.Equal(t, true, result["has_api_key"])
+}
+
+// TestArchiveDownloadUsesCurrentBrowserGrant exercises a protected streaming file.
+// The current owner's browser session satisfies TOTP; removing its grant blocks
+// the same link before the archive handler can deliver any bytes.
+func TestArchiveDownloadUsesCurrentBrowserGrant(t *testing.T) {
+	f := newMCPFixture(t)
+	op := &adminapi.Operation{ID: "fixture.archive", Method: http.MethodGet, Path: "/api/v1/admin/fixture-archive/download", ReadOnly: true, Sensitive: true, StepUp: true, Response: adminapi.ResponseFile, Input: adminapi.Arguments("/api/v1/admin/fixture-archive/download", nil, nil)}
+	catalog, err := adminapi.NewCatalog(append(f.handler.catalog.Operations(), op))
+	require.NoError(t, err)
+	f.handler.catalog = catalog
+	router := jsonTestValue[*gin.Engine](t, f.handler.router)
+	router.GET(op.Path, identityhttp.MCPAdminAuth(f.handler.tokens, func(c *gin.Context) { c.AbortWithStatus(401) }), identityhttp.StepUpAuth(f.grants, f.accounts, f.grants), func(c *gin.Context) { c.Data(200, "application/gzip", []byte("archive-content")) })
+	f.repo.mu.Lock()
+	f.repo.token.Permissions = append(f.repo.token.Permissions, op.ID)
+	f.repo.mu.Unlock()
+	file := f.handler.newArtifact(f.token, op.ID)
+	file.Download = &control.Call{OperationID: op.ID}
+	file.TokenVersion = f.token.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	require.NoError(t, f.handler.state.SaveArtifact(t.Context(), file))
+	response := f.browser(t, "GET", "/api/v1/admin/mcp/files/"+file.ID, "browser")
+	require.Equal(t, 200, response.StatusCode)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, "archive-content", string(body))
+	f.grants.granted.Store(false)
+	response = f.browser(t, "GET", "/api/v1/admin/mcp/files/"+file.ID, "browser")
+	require.Equal(t, 403, response.StatusCode)
+}

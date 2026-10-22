@@ -32,12 +32,7 @@ func New(s *search.ConfigService) *Handler { return &Handler{settingService: s} 
 //
 // POST /api/v1/admin/settings/web-search-emulation/test
 func (h *Handler) TestWebSearchEmulation(c *gin.Context) {
-	var req struct {
-		// Query is submitted as supplied when it contains non-whitespace text. An
-		// omitted, empty, or whitespace-only value selects the handler's built-in
-		// test query.
-		Query string `json:"query"`
-	}
+	var req WebSearchEmulationTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
@@ -60,12 +55,7 @@ func (h *Handler) TestWebSearchEmulation(c *gin.Context) {
 //
 // POST /api/v1/admin/settings/web-search-emulation/reset-usage
 func (h *Handler) ResetWebSearchUsage(c *gin.Context) {
-	var req struct {
-		// ProviderType selects a literal Redis counter suffix. The handler rejects
-		// the empty string and passes other values through without trimming or
-		// supplier validation.
-		ProviderType string `json:"provider_type"`
-	}
+	var req WebSearchUsageResetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return

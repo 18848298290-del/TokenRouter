@@ -40,6 +40,8 @@ Key 的使用方直接使用 `apikey.APIKey`、`APIKeyRepository` 和 `APIKeySer
 
 `User.role` 里的 `admin` 是全局后台角色；`TeamMember.role` 的 `owner` 和 `member` 只在一个团队内有效。两套角色互相独立。请求是否允许，由用户状态、团队状态、成员关系和具体资源的归属共同决定。
 
+MCP 专用令牌属于签发它的管理员，保存独立的操作权限、有效期和撤销状态。认证使用摘要，完整令牌加密存储，所属管理员可以在浏览器中复制。每次调用读取当前用户和令牌；内部管理请求使用 `mcp_token` 身份，敏感操作默认通过所属管理员的浏览器会话确认；每个令牌可选择跳过 MCP 确认，既有近期 TOTP 要求继续生效。完整规则见 [MCP 管理接口](../interfaces/mcp_management.md#access_tokens)。
+
 管理员用户列表和详情的最近使用时间来自事务内维护的[用户活动汇总](../operations/observability_and_data_lifecycle.md#user_activity_summary)。排序在筛选后、分页前完成，升序把空时间放在前面，降序放在末尾；相同时间再按同方向的用户 ID 排序。搜索按邮箱、用户名、备注和 API Key 内容匹配，各字段分别查询候选用户 ID，再去重合并。计数和分页使用同一组条件。
 
 `User.preferred_locale` 是可为空的账户语言偏好，当前用户资料接口负责查询和修改。主动选择使用规范语言代码，登录、浏览器保存和邮件选择的顺序见[用户侧国际化](../interfaces/user_localization.md#language_selection)。管理员用户属性表单的定义和值按原文保存。
