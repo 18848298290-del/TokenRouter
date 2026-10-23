@@ -361,6 +361,17 @@ type RefundQueryProvider interface {
 	QueryRefund(ctx context.Context, req RefundQueryRequest) (*RefundResponse, error)
 }
 
+// NotificationConfirmer adds upstream verification for gateways whose signed
+// callbacks are not sufficient payment proof by themselves. Webhook handling
+// invokes it on the same provider instance that accepted the callback before
+// local fulfillment.
+type NotificationConfirmer interface {
+	Provider // base payment and identity operations
+	// ConfirmNotification checks a verified success observation against upstream
+	// state and may fill provider-owned references on the notification.
+	ConfirmNotification(ctx context.Context, notification *PaymentNotification) error
+}
+
 // CancelableProvider adds provider-side closing for a still-pending payment
 // reference.
 type CancelableProvider interface {
