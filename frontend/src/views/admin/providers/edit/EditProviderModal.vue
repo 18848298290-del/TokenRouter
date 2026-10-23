@@ -686,6 +686,7 @@
           <ProviderProtocolSelector
             v-if="!provider.parent_provider_id"
             v-model="upstreamProtocols"
+            v-model:image-modes="imageModes"
             :platform="provider.platform"
             :type="provider.type"
             :auth-mode="
@@ -1066,6 +1067,7 @@ import { buildModelMappingObject, type QoderSite } from '@/composables/useModelW
 const draft = createProviderEditDraft()
 const {
   upstreamProtocols,
+  imageModes,
   editBaseUrl,
   editApiKey,
   upstreamUsageEnabled,
@@ -2043,6 +2045,13 @@ const submitUpdateProvider = async (providerID: number, updatePayload: ProviderE
           ),
         ),
       )
+    }
+    if (
+      props.provider?.platform === 'openai' &&
+      props.provider.type === 'apikey' &&
+      !props.provider.parent_provider_id
+    ) {
+      updatePayload.credentials = { ...updatePayload.credentials, ...imageModes.value }
     }
     const updatedProvider = await adminAPI.providers.update(providerID, updatePayload)
     appStore.showSuccess(t('admin.providers.providerUpdated'))

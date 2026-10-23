@@ -1,32 +1,26 @@
 package openai
 
 import (
-	"bufio"
-	"bytes"
-	"fmt"
+	"context"
 	"io"
 	"net/http"
-	"strings"
-	"sync/atomic"
 	"time"
 
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// images_apikey_response.go forwards API-key image responses while collecting
-// image counts, dimensions, usage, and stream timing.
-// API-key image streams can contain SSE events or a plain JSON response despite
-// being requested as streams. Raw lines reach the client as they arrive, while
-// event payloads feed usage and completed-image accounting independently of
-// downstream write success. A plain-body observation is retained only before
-// the first SSE data event and within the caller's fallback limit.
+// images_apikey_response.go presents API-key Images responses to clients.
+// Native JSON can retain optional URL backfill, while native SSE uses the
+// shared frame reader for progressive delivery or buffered aggregation. Upstream
+// observations are retained independently from successful downstream writes.
 //
-// Idle checks use the reader's upstream arrival timestamp, while heartbeats use
-// the last successful downstream write. The timed path separates reading from
-// consumption through a bounded channel. Returning signals queued sends to
-// stop; the executor still owns closing the response body to release a blocked
-// read. Generated image counts and usage remain available after disconnection.
+// Streaming delivery latches a client write failure and continues consuming
+// upstream frames for settlement. Buffered SSE delivery waits for all requested
+// completions and rejects errors or incomplete streams before writing JSON.
+// Heartbeats and actual image events use distinct output markers so a waiting
+// connection does not commit the gateway's image retry window. The executor
+// owns the upstream response body and presents errors in the client format.
 
 // ReadImagesNonStreaming reads an API-key image body, captures upstream usage
 // and image dimensions, and writes the backfilled representation with the
@@ -61,235 +55,65 @@ func ReadImagesNonStreaming(resp *http.Response, sink upstream.OutputSink, optio
 	return usage, imageCount, imageSizes, nil
 }
 
-// ReadImagesStreaming forwards API-key image lines while accumulating usage,
-// image counts and sizes. The writer needs http.Flusher;
-// ReadLimit, ResponseHeaders, StreamInterval, KeepaliveInterval, and Logf
-// support the selected paths. The executor closes resp.Body after return,
-// including when a timed reader remains blocked.
+// ReadImagesStreaming delivers native Images frames through the shared SSE reader.
+// Client write failures stop delivery while reading continues for accounting.
+// The executor owns response closure, error presentation, and the upstream context.
 //
-// SSE data supersedes the bounded plain-body buffer. EOF flushes a pending SSE
-// event and examines a retained plain JSON body, while read errors flush SSE
-// alone. A failed downstream write disables further writes but keeps reading
-// for accounting until EOF, an error, or idle timeout.
-func ReadImagesStreaming(resp *http.Response, c *upstream.OutputContext, options ImageResponseOptions, startTime time.Time) (wire.ForwardUsage, int, []string, error) {
+// Frame and heartbeat callbacks run synchronously on the reader's consumer
+// goroutine. They share a disconnect latch and the timestamp of the last
+// successful write, so heartbeats stop after departure and cannot race image
+// delivery. Completed-image observations come from the reader even when delivery
+// failed; the final DONE marker is sent only after successful stream validation.
+func ReadImagesStreaming(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options ImageResponseOptions) (wire.ForwardUsage, int, []string, error) {
 	options.ResponseHeaders(c.Writer.Header(), resp.Header)
-	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
-	if contentType == "" {
-		contentType = "text/event-stream"
-	}
+	c.Writer.Header().Del("Content-Length")
 	c.Status(resp.StatusCode)
-	c.Header("Content-Type", contentType)
-
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		return wire.ForwardUsage{}, 0, nil, fmt.Errorf("streaming is not supported by response writer")
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("X-Accel-Buffering", "no")
+	disconnected := false
+	lastWrite := time.Now()
+	emit := func(name string, body []byte) {
+		// Latch failed downstream writes while the shared reader continues collecting
+		// generated images and usage from the selected upstream attempt.
+		TryWriteImagesStreamEvent(c, options, c.Writer, &disconnected, &lastWrite, name, body)
 	}
-
-	usage := wire.ForwardUsage{}
-	imageCounter := wire.NewOpenAIImageOutputCounter()
-
-	clientDisconnected := false
-	lastDownstreamWriteAt := time.Now()
-	var fallbackBody bytes.Buffer
-	fallbackBytes := int64(0)
-	fallbackLimit := options.ReadLimit()
-	seenSSEData := false
-	fallbackTooLarge := false
-	var sseData wire.SSEDataAccumulator
-
-	processSSEData := func(dataBytes []byte) {
-		// Once an SSE payload is observed, discard speculative plain-body bytes so
-		// framing text cannot also be billed as JSON.
-		seenSSEData = true
-		fallbackBody.Reset()
-		fallbackBytes = 0
-		wire.MergeImageResponseUsage(&usage, dataBytes)
-		imageCounter.AddSSEData(dataBytes)
-	}
-
-	flushSSEEvent := func() {
-		sseData.Flush(processSSEData)
-	}
-
-	processLine := func(line []byte) {
-		if len(line) == 0 {
+	heartbeat := func() {
+		if disconnected || (options.KeepaliveInterval != nil && time.Since(lastWrite) < options.KeepaliveInterval()) {
 			return
 		}
-		// Latch a failed sink write while continuing payload observation, so usage
-		// can still be collected from later upstream events.
-		if !clientDisconnected {
-			if _, writeErr := c.Writer.Write(line); writeErr != nil {
-				clientDisconnected = true
-				options.Logf("[OpenAI] Images stream client disconnected, continue draining upstream for billing")
-			} else {
-				flusher.Flush()
-				lastDownstreamWriteAt = time.Now()
-			}
+		n, err := io.WriteString(c.Writer, ":\n\n")
+		if options.RecordKeepalive != nil {
+			options.RecordKeepalive(n)
 		}
-
-		trimmedLine := strings.TrimRight(string(line), "\r\n")
-		if _, ok := wire.ExtractSSEDataLine(trimmedLine); ok || strings.TrimSpace(trimmedLine) == "" {
-			sseData.AddLine(trimmedLine, processSSEData)
+		if err != nil {
+			disconnected = true
 			return
 		}
-		// Keep possible plain JSON only before SSE data. Overflow clears retained
-		// bytes and disables further retention, while line reads remain uncapped
-		// here.
-		if !seenSSEData && !fallbackTooLarge {
-			fallbackBytes += int64(len(line))
-			if fallbackBytes <= fallbackLimit {
-				_, _ = fallbackBody.Write(line)
-			} else {
-				fallbackTooLarge = true
-				fallbackBody.Reset()
-			}
+		c.Writer.Flush()
+		lastWrite = time.Now()
+	}
+	result, err := ReadImagesSSE(ctx, resp, options, emit, heartbeat)
+	if err == nil && !disconnected {
+		c.NextEvent(false, false)
+		if _, writeErr := io.WriteString(c.Writer, "data: [DONE]\n\n"); writeErr == nil {
+			c.Writer.Flush()
 		}
 	}
+	return result.Usage, result.Counter.Count(), result.Counter.Sizes(), err
+}
 
-	finalizeFallbackBody := func() {
-		if seenSSEData || fallbackBody.Len() == 0 {
-			return
-		}
-		body := bytes.TrimSpace(fallbackBody.Bytes())
-		if len(body) == 0 {
-			return
-		}
-		// Plain-body accounting is an EOF alternative to event parsing, preventing
-		// the same response from contributing through both representations.
-		wire.MergeImageResponseUsage(&usage, body)
-		imageCounter.AddJSONResponse(body)
+// ReadImagesSSEToJSON aggregates native Images events for a buffered client.
+// Failed streams retain completed-image and usage observations without delivering
+// a partial JSON success. The caller owns error presentation and response closure.
+func ReadImagesSSEToJSON(ctx context.Context, resp *http.Response, sink upstream.OutputSink, options ImageResponseOptions, responseFormat string) (wire.ForwardUsage, int, []string, error) {
+	body, result, err := ReadImagesBufferedResponse(ctx, resp, options, responseFormat)
+	if err == nil {
+		c := upstream.NewOutputContext(sink)
+		options.ResponseHeaders(c.Writer.Header(), resp.Header)
+		c.Writer.Header().Del("Content-Length")
+		c.Header("Content-Type", "application/json")
+		c.Data(http.StatusOK, "application/json", body)
 	}
-
-	streamInterval := options.StreamInterval()
-	keepaliveInterval := options.KeepaliveInterval()
-	if streamInterval <= 0 && keepaliveInterval <= 0 {
-		reader := bufio.NewReader(resp.Body)
-		for {
-			line, err := reader.ReadBytes('\n')
-			processLine(line)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				flushSSEEvent()
-				return usage, imageCounter.Count(), imageCounter.Sizes(), err
-			}
-		}
-		flushSSEEvent()
-		finalizeFallbackBody()
-		return usage, imageCounter.Count(), imageCounter.Sizes(), nil
-	}
-
-	// readEvent carries one owned read line or failure to the timed consumer.
-	type readEvent struct {
-		line []byte // upstream read line
-		err  error  // upstream read failure
-	}
-	// Bound pending lines while the consumer writes or checks timers; done
-	// releases blocked sends when that consumer returns.
-	events := make(chan readEvent, 16)
-	done := make(chan struct{})
-	sendEvent := func(ev readEvent) bool {
-		select {
-		case events <- ev:
-			return true
-		case <-done:
-			return false
-		}
-	}
-	var lastReadAt int64
-	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
-	// Publish arrival time before enqueueing, so downstream work does not look
-	// like upstream silence. Body closure belongs to the executor.
-	go func() {
-		defer close(events)
-		reader := bufio.NewReader(resp.Body)
-		for {
-			line, err := reader.ReadBytes('\n')
-			if len(line) > 0 {
-				atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
-			}
-			if len(line) > 0 && !sendEvent(readEvent{line: line}) {
-				return
-			}
-			if err == io.EOF {
-				return
-			}
-			if err != nil {
-				_ = sendEvent(readEvent{err: err})
-				return
-			}
-		}
-	}()
-	// Stop sends on every exit. Closing done cannot interrupt ReadBytes; the
-	// response owner closes Body to release that read.
-	defer close(done)
-
-	var intervalTicker *time.Ticker
-	if streamInterval > 0 {
-		intervalTicker = time.NewTicker(streamInterval)
-		defer intervalTicker.Stop()
-	}
-	var intervalCh <-chan time.Time
-	if intervalTicker != nil {
-		intervalCh = intervalTicker.C
-	}
-
-	var keepaliveTicker *time.Ticker
-	if keepaliveInterval > 0 {
-		keepaliveTicker = time.NewTicker(keepaliveInterval)
-		defer keepaliveTicker.Stop()
-	}
-	var keepaliveCh <-chan time.Time
-	if keepaliveTicker != nil {
-		keepaliveCh = keepaliveTicker.C
-	}
-
-	for {
-		select {
-		case ev, ok := <-events:
-			if !ok {
-				flushSSEEvent()
-				finalizeFallbackBody()
-				return usage, imageCounter.Count(), imageCounter.Sizes(), nil
-			}
-			if ev.err != nil {
-				flushSSEEvent()
-				return usage, imageCounter.Count(), imageCounter.Sizes(), ev.err
-			}
-			processLine(ev.line)
-		case <-intervalCh:
-			// Recheck actual upstream arrival after a coarse tick, since queued lines
-			// and downstream processing can delay timer consumption.
-			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
-			if time.Since(lastRead) < streamInterval {
-				continue
-			}
-			if clientDisconnected {
-				return usage, imageCounter.Count(), imageCounter.Sizes(), fmt.Errorf("image stream incomplete after timeout")
-			}
-			options.Logf("[OpenAI] Images stream data interval timeout: interval=%s", streamInterval)
-			// Report idle failure even if its diagnostic write fails; this return
-			// carries the observed usage and the timeout outcome.
-			_ = WriteImagesStreamEvent(c, options, flusher, "error", BuildOpenAIImagesStreamErrorBody(fmt.Sprintf("upstream image stream idle for %s", streamInterval)))
-			return usage, imageCounter.Count(), imageCounter.Sizes(), fmt.Errorf("image stream data interval timeout")
-		case <-keepaliveCh:
-			// Heartbeats depend on successful client writes; a heartbeat failure latches
-			// disconnection and leaves upstream accounting active.
-			if clientDisconnected || time.Since(lastDownstreamWriteAt) < keepaliveInterval {
-				continue
-			}
-			n, writeErr := io.WriteString(c.Writer, ":\n\n")
-			if options.RecordKeepalive != nil {
-				options.RecordKeepalive(n)
-			}
-			if writeErr != nil {
-				clientDisconnected = true
-				options.Logf("[OpenAI] Images stream client disconnected during keepalive, continue draining upstream for billing")
-				continue
-			}
-			flusher.Flush()
-			lastDownstreamWriteAt = time.Now()
-		}
-	}
+	return result.Usage, result.Counter.Count(), result.Counter.Sizes(), err
 }

@@ -74,6 +74,10 @@ Antigravity 对 Google 内部接口的封装，算作 `gemini_generate_content` 
 
 `credentials.upstream_protocols` 是原生协议 ID 的数组，空数组表示这个提供商不再承接新的调用。创建、编辑、复制、导入和批量编辑使用同一套校验：不允许重复、未知，或者提供商认证方式不支持的项，出错时返回 HTTP 400 / `UPSTREAM_PROTOCOLS_INVALID`。批量更新先验证全部提供商，再用同一条 SQL 原子地写入每个提供商的协议补丁。显式协议集合在旧 WS 桥接配置转换之前完成类型、重复项和选项校验。连接方式的完整保存、批量更新和 Extra 按键更新共用枚举校验，非法值在写入前返回错误。
 
+OpenAI API Key 提供商的 `credentials.images_generations_mode` 和 `credentials.images_edits_mode` 分别声明生成、编辑端点接受的请求模式：`non_streaming`、`streaming`、`both`，缺省为 `both`。模式配置不会开启协议，关闭协议时保存的模式仍可保留。管理端创建、编辑、批量更新、复制和导入共用保存校验，非法枚举或不适用的提供商类型返回 `IMAGE_STREAM_MODE_INVALID`。两个字段按独立的顶层键合并，批量修改生成模式不会覆盖编辑模式。
+
+客户端的 `stream` 决定返回 JSON 还是 SSE。选中提供商后，原生支持该模式就直接使用，否则网关自动双向转换；这些转换属于 Images 协议内部处理，不受分组 `protocol_fallbacks` 控制。OpenAI OAuth 继续使用 Responses 图片工具适配，Grok 使用自己的媒体执行器。转换规则见 [图片结果回填与模式转换](openai_upstream.md#images_url_backfill)。
+
 各平台的原生协议：
 
 - Jev API Key：SystemOne，支持同步决策请求。

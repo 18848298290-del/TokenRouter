@@ -34,6 +34,19 @@ import (
 // ImageResponseOptions binds image readers to request-specific output,
 // accounting, and error policy callbacks.
 type ImageResponseOptions struct {
+	// ExpectedImages is the requested final image count; zero uses one when
+	// validating a native Images stream before buffered or streaming delivery.
+	ExpectedImages int
+	// EventPrefix selects generation or editing completions when a native
+	// upstream mislabeled its buffered JSON response as an event stream.
+	EventPrefix string
+	// RequireBase64 makes native Images JSON conversion supply encoded data for
+	// every completion; OAuth's existing JSON compatibility path remains independent.
+	RequireBase64 bool
+	// FetchImage downloads URL-only outputs with the selected provider proxy and
+	// public-target validation. Failure ends delivery after retaining upstream observations.
+	FetchImage func(string) (string, error)
+
 	// StartKeepalive optionally starts the HTTP SSE controller before a streamed
 	// exchange. Its idempotent cleanup waits for writes and restores the writer.
 	StartKeepalive func() func()
@@ -43,8 +56,8 @@ type ImageResponseOptions struct {
 	// Backfill converts the API-key nonstream body after usage observation; that
 	// reader requires this callback even when it returns unchanged bytes.
 	Backfill func([]byte) []byte
-	// ReadLimit supplies the API-key stream's plain-JSON retention limit in bytes;
-	// SSE line allocation is independent of this value.
+	// ReadLimit supplies the native image byte budget. It bounds SSE frames,
+	// buffered JSON, retained completions, and expanded Base64 delivery payloads.
 	ReadLimit func() int64
 	// ReadBody consumes buffered JSON under the caller's size and error policy.
 	// Nonstream readers and streamed Images JSON conversion require this callback.

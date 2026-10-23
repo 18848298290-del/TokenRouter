@@ -82,6 +82,7 @@ func (s *CreativeTargets) ForProvider(provider *ExecutionProvider) *creativeprov
 		},
 	}
 	target.OpenAI = &creativeprovider.OpenAIOptions{
+		ImageMode:  ExecutionProtocolRecord(provider).ImageStreamMode,
 		FetchImage: imageDownload.FetchBase64,
 		Token:      token,
 		URL: func(endpoint string) (string, error) {

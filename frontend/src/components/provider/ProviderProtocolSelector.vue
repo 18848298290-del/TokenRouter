@@ -22,31 +22,51 @@
     <p v-else-if="!protocolCatalog" class="input-hint">{{ t('common.loading') }}</p>
     <!-- Each native protocol uses a row switch with its endpoint beside the name, matching the group protocol controls. -->
     <div v-else class="divide-y divide-gray-100 dark:divide-dark-700">
-      <div v-for="id in options" :key="id" class="flex items-center gap-3 py-2.5">
-        <div class="flex min-w-0 flex-1 items-baseline gap-x-2">
-          <span
-            class="shrink-0 text-sm font-medium"
-            :class="
-              modelValue?.includes(id)
-                ? 'text-primary-900 dark:text-dark-50'
-                : 'text-gray-400 dark:text-dark-400'
-            "
-            >{{ protocolName(id) }}</span
-          >
-          <code
-            v-if="protocolEndpoint(id)"
-            class="hidden min-w-0 truncate text-xs text-gray-400 dark:text-dark-500 sm:inline"
-            >{{ protocolEndpoint(id) }}</code
-          >
+      <div v-for="id in options" :key="id" class="py-2.5">
+        <div class="flex items-center gap-3">
+          <div class="flex min-w-0 flex-1 items-baseline gap-x-2">
+            <span
+              class="shrink-0 text-sm font-medium"
+              :class="
+                modelValue?.includes(id)
+                  ? 'text-primary-900 dark:text-dark-50'
+                  : 'text-gray-400 dark:text-dark-400'
+              "
+              >{{ protocolName(id) }}</span
+            >
+            <code
+              v-if="protocolEndpoint(id)"
+              class="hidden min-w-0 truncate text-xs text-gray-400 dark:text-dark-500 sm:inline"
+              >{{ protocolEndpoint(id) }}</code
+            >
+          </div>
+          <Toggle
+            size="sm"
+            class="shrink-0"
+            :model-value="!!modelValue?.includes(id)"
+            :data-native-protocol="id"
+            :aria-label="protocolName(id)"
+            @update:model-value="toggle(id)"
+          />
         </div>
-        <Toggle
-          size="sm"
-          class="shrink-0"
-          :model-value="!!modelValue?.includes(id)"
-          :data-native-protocol="id"
-          :aria-label="protocolName(id)"
-          @update:model-value="toggle(id)"
-        />
+        <Collapse v-if="supportsImageMode(id)" :open="!!modelValue?.includes(id)">
+          <SettingsSubpanel class="mt-3">
+            <SettingRow
+              field
+              :id="`image-mode-${id}`"
+              :setting="`image-mode-${id}`"
+              :label="t('admin.protocols.imageModes.title')"
+              :hint="t('admin.protocols.imageModes.hint')"
+            >
+              <Select
+                :model-value="selectedImageMode(id)"
+                :options="imageModeOptions"
+                :aria-label="`${protocolName(id)} ${t('admin.protocols.imageModes.title')}`"
+                @update:model-value="updateImageMode(id, $event)"
+              />
+            </SettingRow>
+          </SettingsSubpanel>
+        </Collapse>
       </div>
     </div>
   </SettingsSection>
@@ -56,6 +76,17 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ProtocolID } from '@/api/protocols.types'
 import Toggle from '@/components/common/Toggle.vue'
+import Collapse from '@/components/common/Collapse.vue'
+import SettingRow from '@/components/common/settings/SettingRow.vue'
+import SettingsSubpanel from '@/components/common/settings/SettingsSubpanel.vue'
+import Select from '@/components/common/Select.vue'
+import {
+  imageModeField,
+  imageStreamModeOptions,
+  type ImageStreamMode,
+  type ImageStreamModes,
+} from './form/imageStreamModes'
+
 import SettingsSection from '@/components/common/settings/SettingsSection.vue'
 import {
   loadProtocolCatalog,
@@ -73,7 +104,9 @@ import {
 // An undefined selection receives all current native options when the catalog becomes
 // available. An explicit empty selection remains empty during ordinary display. Changing
 // platform, type, or authentication mode replaces the selection with the new native set,
-// while toggling an item emits selected options in catalog order.
+// while toggling an item emits selected options in catalog order. OpenAI
+// API-key forms retain separate Images mode drafts when their rows collapse;
+// choosing a mode leaves the protocol selection unchanged.
 
 // props exposes caller-owned inputs used by the template and derived state in this
 // component.
@@ -95,14 +128,49 @@ const props = defineProps<{
   authMode?: string
   // Hides the section title when an enclosing bulk application row already provides it.
   hideTitle?: boolean
+  // imageModes enables endpoint controls when supplied by an OpenAI API-key form.
+  // Hidden protocol rows retain their parent-owned draft values during toggling.
+  imageModes?: ImageStreamModes
 }>()
 // emit publishes typed draft changes and actions to the parent that owns this component.
 const emit = defineEmits<{
+  'update:imageModes': [value: ImageStreamModes] // Replacement endpoint mode draft.
   'update:modelValue': [value: ProtocolID[]] // Replacement model value draft value.
 }>()
 // t resolves interface labels from the active component locale while reactive consumers
 // update their displayed text.
 const { t } = useI18n()
+// imageModeOptions follows the active locale while retaining the persisted enum values.
+const imageModeOptions = computed(() => imageStreamModeOptions(t))
+
+// supportsImageMode limits capability controls to configured OpenAI API-key Images rows.
+function supportsImageMode(id: ProtocolID) {
+  return (
+    props.platform === 'openai' &&
+    props.type === 'apikey' &&
+    !!props.imageModes &&
+    !!imageModeField(id)
+  )
+}
+
+// selectedImageMode reads the endpoint draft without modifying another protocol's value.
+function selectedImageMode(id: ProtocolID): ImageStreamMode {
+  const key = imageModeField(id)
+  return key && props.imageModes ? props.imageModes[key] : 'both'
+}
+
+// updateImageMode emits an independent replacement of the parent-owned mode draft.
+// Null selections are ignored because this required capability has no deselected
+// state; protocol enablement remains owned by the separate native protocol toggle.
+function updateImageMode(id: ProtocolID, value: unknown) {
+  const key = imageModeField(id)
+  if (
+    key &&
+    (value === 'both' || value === 'streaming' || value === 'non_streaming') &&
+    props.imageModes
+  )
+    emit('update:imageModes', { ...props.imageModes, [key]: value })
+}
 // options derives native protocols from the shared catalog using platform, provider type,
 // and authentication mode together.
 const options = computed(() => nativeProtocolOptions(props.platform, props.type, props.authMode))

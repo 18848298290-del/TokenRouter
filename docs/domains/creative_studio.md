@@ -33,6 +33,8 @@ TokenRouter 创作台（Creative Studio）提供面向个人用户的图片生�
 
 provider.Target 负责实际平台分派。app 直接绑定原生选择器与 gateway/provider.CreativeTargets；目标工厂按本次提供商绑定 OpenAI/Grok/Gemini 的凭据、代理、Header 和传输，执行时才读取凭据。请求构造、HTTP 池和 Gemini token 源与现有入口共享。worker 首轮沿用完整设置的批量读取与解析，热更新继续由设置应用器驱动。
 
+OpenAI API Key 创作任务读取提供商的生成／编辑模式设置。仅流式的端点发送 `stream=true` 和 `partial_images=0`，共享 Images 读取器收集完成图片后交给结果解析；流错误、缺少终态图片或转换失败以不可重试的结果错误结束，worker 不会因此重新提交生图。
+
 新创作任务按操作使用统一协议：OpenAI/Grok 的 generate 对应 Images 生成，edit/inpaint 对应 Images 编辑；Gemini 对应 GenerateContent。目录和提交只提供分组已开放的操作，执行器复用提供商原生集合及分组指定转换目标筛选候选。Responses 图片策略不阻断 Images 内部适配。Claude Code 专用分组不进入创作台目录，提交在创建托管 Key 和预留资金前返回 `CREATIVE_GROUP_FORBIDDEN`。创作台不解析客户端限制回退；worker 只使用任务持久化的分组和 provider，原组受限时停止本次执行。已创建任务的读取、下载和清理仍遵循原资源权限。
 
 创作台路由挂在用户 JWT 面板前缀下（`backend/internal/creative/httpapi/routes_user.go` 与 `backend/internal/app/http_routes.go`），响应统一 envelope `{code, message, data}`；`POST /creative/runs` 额外经过面板 heavy 限流：

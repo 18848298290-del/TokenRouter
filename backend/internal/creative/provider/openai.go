@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -14,16 +15,18 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/creative"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
+	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
 // openai.go builds OpenAI creative image requests and obtains image bytes from
 // base64 or URL results.
 // OpenAI creative tasks need image bytes for transient delivery even when the
-// generation response supplies only a signed URL. The adapter first reads and
-// closes the generation response, then prefers a usable base64 result or
-// downloads the first nonblank image URL through a separate callback. That
-// callback owns download transport and credential isolation.
+// generation response supplies only a signed URL. Buffered JSON closes before
+// its first nonblank result URL is downloaded. Native SSE uses the shared reader
+// to aggregate completion events, downloading URL-only events through the same
+// callback. That callback owns download transport and credential isolation.
 //
 // Generation uses JSON and editing uses multipart references with an optional
 // mask, while both request one PNG result. GPT Image bodies omit the legacy
@@ -37,11 +40,12 @@ import (
 // creative operation and model parameters before execution.
 //
 // Generation authentication and provider headers belong to the POST request.
-// The response body is read through the shared sixty-four-MiB limiter and
-// closed before result URL fetching uses the selected transport pool. HTTP
-// failures use status-class retry decisions, while a successful response with
-// unusable image delivery returns the nonretryable result classifications
-// produced by parseOpenAIImageOutputs.
+// JSON responses use the shared sixty-four-MiB reader, while native streams
+// aggregate completed images under the same byte budget. Stream-only providers
+// receive stream=true with partial_images=0. Buffered JSON is closed before its
+// result URL fetch; streamed URL completions use the protected download callback
+// during aggregation. HTTP failures use status-class retry decisions, while
+// conversion failures after a successful exchange end the creative attempt.
 func (e *Target) ExecuteOpenAI(ctx context.Context, run creative.CreativeRun, payload creative.CreativeRunPayload, upstreamModel string) ([]creative.CreativeOutput, error) {
 	if e.OpenAI == nil {
 		return nil, errors.New("creative openai gateway is not configured")
@@ -53,6 +57,21 @@ func (e *Target) ExecuteOpenAI(ctx context.Context, run creative.CreativeRun, pa
 	body, contentType, err := BuildCreativeOpenAIRequestBody(run, payload, upstreamModel)
 	if err != nil {
 		return nil, err
+	}
+	operation := protocol.ProtocolImagesGenerations
+	if endpoint == upstream.OpenAIImagesEditsEndpoint {
+		operation = protocol.ProtocolImagesEdits
+	}
+	mode := protocol.ImageModeBoth
+	if e.OpenAI.ImageMode != nil {
+		mode, err = e.OpenAI.ImageMode(operation)
+		if err != nil {
+			return nil, creative.CreativeNonRetryableError("invalid image stream mode")
+		}
+	}
+	body, contentType, err = upstream.RewriteImageRequest(body, contentType, upstreamModel, mode, false)
+	if err != nil {
+		return nil, creative.CreativeNonRetryableError("invalid image request")
 	}
 	token, err := e.OpenAI.Token(ctx)
 	if err != nil {
@@ -88,19 +107,31 @@ func (e *Target) ExecuteOpenAI(ctx context.Context, run creative.CreativeRun, pa
 	if err != nil {
 		return nil, creative.CreativeHTTPStatusError(0, err.Error())
 	}
-	// The shared reader returns a successful prefix when this cap is reached.
-	// Image parsing therefore receives bounded JSON and determines whether that
-	// prefix still contains a usable result.
-	respBody, err := ReadCreativeUpstreamBody(resp.Body, 64<<20)
-	// Image download uses a separate callback after this generation read. Close
-	// the response first so the provider pool can supply a connection to that
-	// download; a close error does not replace the read or HTTP result.
-	_ = resp.Body.Close()
-	if err != nil {
-		return nil, creative.CreativeHTTPStatusError(0, err.Error())
+	var respBody []byte
+	if resp.StatusCode >= 400 {
+		respBody, err = ReadCreativeUpstreamBody(resp.Body, 64<<20)
+	} else {
+		options := openai.ImageResponseOptions{
+			ExpectedImages: 1,
+			ReadLimit:      func() int64 { return 64 << 20 },
+			ReadBody:       func(reader io.Reader) ([]byte, error) { return ReadCreativeUpstreamBody(reader, 64<<20) },
+			FetchImage: func(rawURL string) (string, error) {
+				if e.OpenAI.FetchImage == nil {
+					return "", errors.New("image downloader unavailable")
+				}
+				return e.OpenAI.FetchImage(ctx, rawURL)
+			},
+		}
+		respBody, _, err = openai.ReadImagesBufferedResponse(ctx, resp, options, "b64_json")
 	}
+	// Release the generation connection before buffered-result downloads. A successful
+	// HTTP exchange followed by a conversion failure must not enqueue generation again.
+	_ = resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		return nil, creative.CreativeHTTPStatusError(resp.StatusCode, upstream.ExtractErrorMessage(respBody))
+	}
+	if err != nil {
+		return nil, creative.CreativeImageResultError("INVALID_IMAGE_RESPONSE", "creative platform returned an incomplete image response")
 	}
 	return e.parseOpenAIImageOutputs(ctx, respBody)
 }

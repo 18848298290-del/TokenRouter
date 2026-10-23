@@ -1225,6 +1225,7 @@
         <template #request>
           <ProviderProtocolSelector
             v-model="upstreamProtocols"
+            v-model:image-modes="imageModes"
             :platform="form.platform"
             :type="form.type"
             :auth-mode="
@@ -1782,6 +1783,7 @@ import {
   buildAnthropicCreateExtra,
 } from './providerCreatePayload'
 import ProviderProtocolSelector from '../../../../components/provider/ProviderProtocolSelector.vue'
+import { readImageStreamModes } from '@/components/provider/form/imageStreamModes'
 import { loadProtocolCatalog, nativeProtocolOptions } from '@/api/admin/protocolCapabilities'
 import type { ProtocolID } from '@/api/protocols.types'
 import OpenAICompactionToggle from '../../../../components/provider/OpenAICompactionToggle.vue'
@@ -1914,6 +1916,8 @@ import OAuthAuthorizationFlow from '../../../../components/provider/OAuthAuthori
 // upstreamProtocols distinguishes an untouched selection from an explicitly
 // empty native set; submission filters either against the loaded catalog.
 const upstreamProtocols = ref<ProtocolID[] | undefined>(undefined)
+// imageModes owns separate endpoint capabilities until the create dialog is reset.
+const imageModes = ref(readImageStreamModes())
 // OAuthFlowExposed represents public authorization input after Vue unwraps
 // exposed refs.
 interface OAuthFlowExposed {
@@ -3323,6 +3327,9 @@ async function createProtocolProvider(payload: CreateProviderRequest) {
     ...payload.credentials,
     upstream_protocols: (upstreamProtocols.value ?? options).filter((id) => options.includes(id)),
   }
+  if (payload.platform === 'openai' && payload.type === 'apikey') {
+    Object.assign(payload.credentials, imageModes.value)
+  }
   delete payload.credentials.api_protocol
   delete payload.credentials.openai_workload_capabilities
   if (payload.extra) delete payload.extra.openai_text_route_mode
@@ -3380,6 +3387,7 @@ const resetForm = () => {
   form.type = 'oauth'
   form.credentials = {}
   upstreamProtocols.value = undefined
+  imageModes.value = readImageStreamModes()
   form.proxy_id = null
   form.concurrency = 10
   form.load_factor = null

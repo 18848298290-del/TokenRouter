@@ -45,34 +45,29 @@ func WriteImagesJSONStreaming(
 	eventName string,
 ) (wire.ForwardUsage, int, []string, error) {
 	if !gjson.ValidBytes(body) {
-		return wire.ForwardUsage{}, 0, nil, imagesJSONProtocolError("Upstream image response contains invalid JSON")
+		return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image response contains invalid JSON")
 	}
 	root := gjson.ParseBytes(body)
 	if !root.IsObject() {
-		return wire.ForwardUsage{}, 0, nil, imagesJSONProtocolError("Upstream image response must be a JSON object")
+		return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image response must be a JSON object")
 	}
 	if value := root.Get("error"); value.Exists() && value.Type != gjson.Null {
 		return wire.ForwardUsage{}, 0, nil, OpenAIImagesUpstreamErrorFromGJSON(value, "")
 	}
 	data := root.Get("data")
 	if !data.IsArray() {
-		return wire.ForwardUsage{}, 0, nil, imagesJSONProtocolError("Upstream image JSON response must contain a nonempty data array")
+		return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image JSON response must contain a nonempty data array")
 	}
 	images := data.Array()
 	if len(images) == 0 {
-		return wire.ForwardUsage{}, 0, nil, imagesJSONProtocolError("Upstream image JSON response must contain a nonempty data array")
+		return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image JSON response must contain a nonempty data array")
 	}
 	sizes := make([]string, 0, len(images))
 	// Validate the whole array before emission. A malformed final item must not
 	// leave earlier completion events paired with a failed, unbillable result.
 	for _, image := range images {
-		base64 := image.Get("b64_json")
-		url := image.Get("url")
-		if !image.IsObject() ||
-			(base64.Exists() && base64.Type != gjson.String && base64.Type != gjson.Null) ||
-			(url.Exists() && url.Type != gjson.String && url.Type != gjson.Null) ||
-			(strings.TrimSpace(base64.Str) == "" && strings.TrimSpace(url.Str) == "") {
-			return wire.ForwardUsage{}, 0, nil, imagesJSONProtocolError("Upstream image data entries require a string url or b64_json")
+		if !validImagesDataItem(image) {
+			return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image data entries require a string url or b64_json")
 		}
 		size := image.Get("size").String()
 		if size == "" {
@@ -84,13 +79,30 @@ func WriteImagesJSONStreaming(
 	}
 	usageValue := root.Get("usage")
 	if usageValue.Exists() && usageValue.Type != gjson.Null && !usageValue.IsObject() {
-		return wire.ForwardUsage{}, 0, nil, imagesJSONProtocolError("Upstream image usage must be a JSON object")
+		return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image usage must be a JSON object")
 	}
 	usage, _ := wire.ExtractOpenAIUsageFromJSONBytes(body)
 	createdAt := root.Get("created").Int()
 	if createdAt <= 0 {
 		// Images timestamps use Unix seconds when the upstream omits creation time.
 		createdAt = time.Now().Unix()
+	}
+	// Resolve delivery bytes after observing the complete upstream document. All
+	// downloads finish before the first completion, so a later URL failure cannot
+	// leave a successful prefix followed by a missing image.
+	if options.RequireBase64 {
+		retained := int64(0)
+		for index, image := range images {
+			normalized, err := imageStreamBase64(image, options.FetchImage)
+			if err != nil {
+				return usage, len(images), sizes, err
+			}
+			retained += int64(len(normalized))
+			if retained > imageResponseReadLimit(options) {
+				return usage, len(images), sizes, imagesProtocolError("Converted image results exceed the response size limit")
+			}
+			images[index] = gjson.ParseBytes(normalized)
+		}
 	}
 	options.ResponseHeaders(c.Writer.Header(), resp.Header)
 	c.Writer.Header().Del("Content-Length")
@@ -106,7 +118,7 @@ func WriteImagesJSONStreaming(
 	for index, image := range images {
 		payload, err := imagesJSONCompletedPayload(root, image, eventName, createdAt, index == len(images)-1)
 		if err != nil {
-			return usage, len(images), sizes, imagesJSONProtocolError("Failed to encode upstream image completion")
+			return usage, len(images), sizes, imagesProtocolError("Failed to encode upstream image completion")
 		}
 		if !TryWriteImagesStreamEvent(c, options, flusher, &clientDisconnected, nil, eventName, payload) {
 			break
@@ -161,14 +173,26 @@ func imagesJSONCompletedPayload(
 	return json.Marshal(payload)
 }
 
-// imagesJSONProtocolError classifies invalid buffered results as terminal image
+// imagesProtocolError classifies invalid native responses as terminal image
 // failures. The image loop ends these failures before another generation can run.
 // The executor attaches request identity before presenting this failure.
-func imagesJSONProtocolError(message string) *OpenAIImagesUpstreamError {
+func imagesProtocolError(message string) *OpenAIImagesUpstreamError {
 	return &OpenAIImagesUpstreamError{
 		StatusCode: http.StatusBadGateway,
 		ErrorType:  "upstream_error",
 		Code:       "invalid_upstream_response",
 		Message:    message,
 	}
+}
+
+// validImagesDataItem checks native image content fields before recording output.
+// Both optional representations must be strings or null when present, and at
+// least one must contain nonblank image data or a download URL.
+func validImagesDataItem(image gjson.Result) bool {
+	encoded := image.Get("b64_json")
+	url := image.Get("url")
+	return image.IsObject() &&
+		(!encoded.Exists() || encoded.Type == gjson.String || encoded.Type == gjson.Null) &&
+		(!url.Exists() || url.Type == gjson.String || url.Type == gjson.Null) &&
+		(strings.TrimSpace(encoded.Str) != "" || strings.TrimSpace(url.Str) != "")
 }

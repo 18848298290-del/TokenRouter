@@ -815,7 +815,9 @@ func (s *OpenAIProviderTest) reconcileOpenAI429State(ctx context.Context, value 
 // ExecuteImageAPIKey requests one image using the supplied model and prompt
 // with API-key authentication. It validates the configured root, applies route
 // and header policy, closes the response, and requires HTTP 200 with decodable
-// image entries.
+// image entries. The configured generation capability selects the outgoing
+// mode; native streams aggregate through the shared Images reader with partial
+// previews disabled. Conversion failures end this probe without another POST.
 //
 // A base64 value wins over an entry's URL. Otherwise HTTPS or data:image/
 // values are displayable, and revised prompts can be emitted before their
@@ -852,6 +854,14 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 	// collections. Their fixed shape allows direct encoding before the request
 	// body is constructed.
 	payloadBytes, _ := json.Marshal(payload)
+	mode, err := value.ImageStreamMode(capability.ProtocolImagesGenerations)
+	if err != nil {
+		return (TestStreamOutput{}).Error(c, err.Error())
+	}
+	payloadBytes, _, err = upstream.RewriteImageRequest(payloadBytes, "application/json", modelID, mode, false)
+	if err != nil {
+		return (TestStreamOutput{}).Error(c, "Failed to prepare image request")
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -878,7 +888,24 @@ func (s *OpenAIProviderTest) ExecuteImageAPIKey(c *TestRun, ctx context.Context,
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	download := openai.ImageBackfillOptions{
+		ValidateURL: s.ValidateURL,
+		Do: func(req *http.Request) (*http.Response, error) {
+			return s.Transport.DoWithTLS(req, proxyURL, value.ID, value.Concurrency, s.ResolveTLS(c, value))
+		},
+	}
+	options := openai.ImageResponseOptions{
+		ExpectedImages: 1,
+		ReadLimit:      func() int64 { return 64 << 20 },
+		ReadBody:       func(reader io.Reader) ([]byte, error) { return httpclient.ReadResponseBodyLimited(reader, 64<<20) },
+		FetchImage:     func(rawURL string) (string, error) { return download.FetchBase64(ctx, rawURL) },
+	}
+	var body []byte
+	if resp.StatusCode >= 400 {
+		body, err = options.ReadBody(resp.Body)
+	} else {
+		body, _, err = openai.ReadImagesBufferedResponse(ctx, resp, options, "b64_json")
+	}
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Failed to read response: %s", err.Error()))
 	}

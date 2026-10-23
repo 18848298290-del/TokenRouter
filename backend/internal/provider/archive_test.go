@@ -113,3 +113,22 @@ func TestArchiveImportRetainsPartialResults(t *testing.T) {
 	require.Equal(t, map[string]any{"id_token": "fixture"}, input.Data.Providers[0].Credentials)
 	require.Equal(t, "decoded@example.test", records.created[0].Credentials["email"])
 }
+
+// TestArchiveRoundTripsImageModes carries independent endpoint capabilities
+// through export and import. Editing an exported copy must not modify the
+// source provider, and both capability values must reach the creation input.
+func TestArchiveRoundTripsImageModes(t *testing.T) {
+	events := []string{}
+	credentials := map[string]any{"api_key": "fixture", ImagesGenerationsModeKey: "non_streaming", ImagesEditsModeKey: "streaming"}
+	records := &archiveProvidersFixture{events: &events, values: []*Record{{ID: 1, Name: "images", Platform: PlatformOpenAI, Type: ProviderTypeAPIKey, Credentials: credentials}}}
+	archive := NewArchive(records, archiveProxiesFixture{events: &events}, ArchiveOptions{Now: time.Now})
+	payload, err := archive.Export(t.Context(), ArchiveExportQuery{IDs: []int64{1}, IncludeProxies: func() (bool, error) { return false, nil }})
+	require.NoError(t, err)
+	result, err := archive.Import(t.Context(), transfer.DataImportRequest{Data: payload})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.ProviderCreated)
+	require.Equal(t, "non_streaming", records.created[0].Credentials[ImagesGenerationsModeKey])
+	require.Equal(t, "streaming", records.created[0].Credentials[ImagesEditsModeKey])
+	payload.Providers[0].Credentials[ImagesGenerationsModeKey] = "both"
+	require.Equal(t, "non_streaming", credentials[ImagesGenerationsModeKey])
+}

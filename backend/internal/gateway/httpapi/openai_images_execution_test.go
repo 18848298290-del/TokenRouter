@@ -247,7 +247,7 @@ func TestForwardImagesJSONBodyKeepalive(t *testing.T) {
 							require.Zero(t, headerBytes)
 						}
 						releaseOnce.Do(func() { close(releaseHeaders) })
-						responseBody := `{"created":1710000000,"data":[{"url":"https://example.invalid/a.png","size":"512x512"},{"b64_json":"second","size":"1024x1024"}],"usage":{"input_tokens":3,"output_tokens":4}}`
+						responseBody := `{"created":1710000000,"data":[{"b64_json":"first","size":"512x512"},{"b64_json":"second","size":"1024x1024"}],"usage":{"input_tokens":3,"output_tokens":4}}`
 						if outcome == "error" || outcome == "http_error" {
 							responseBody = `{"error":{"type":"invalid_request_error","code":"content_policy_violation","param":"prompt","message":"fixture policy"}}`
 						}
@@ -2297,7 +2297,9 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyStreamRawJSONEventStreamFallbac
 	require.Equal(t, 10, result.Usage.InputTokens)
 	require.Equal(t, 18, result.Usage.OutputTokens)
 	require.Equal(t, 8, result.Usage.ImageOutputTokens)
-	require.Equal(t, "ZmluYWw=", gjson.Get(rec.Body.String(), "data.0.b64_json").String())
+	event, found := findOpenAIImageTestSSEEvent(parseOpenAIImageTestSSEEvents(rec.Body.String()), "image_generation.completed")
+	require.True(t, found)
+	require.Equal(t, "ZmluYWw=", gjson.Get(event.Data, "b64_json").String())
 }
 
 // TestOpenAIGatewayServiceForwardImages_APIKeyStreamMultilineSSEDataBillsImage
@@ -3321,6 +3323,151 @@ func TestImagesRejectUnknownCapabilityBeforeTransport(t *testing.T) {
 			require.True(t, WriteOpenAIModelAttributeError(c, err, false))
 			require.Equal(t, http.StatusBadRequest, recorder.Code)
 			require.Equal(t, tc.reason, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
+		})
+	}
+}
+
+// TestForwardImagesModeMatrix submits JSON generations and JSON/multipart edits
+// through the actual request builder and executor. Every capability/client-mode
+// combination must send an accepted upstream request and deliver the client format.
+func TestForwardImagesModeMatrix(t *testing.T) {
+	for _, format := range []string{"generation", "edit_json", "edit_multipart"} {
+		for _, mode := range []string{"both", "streaming", "non_streaming"} {
+			for _, clientStream := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/client_%t", format, mode, clientStream), func(t *testing.T) {
+					endpoint := "/v1/images/generations"
+					contentType := "application/json"
+					body := []byte(fmt.Sprintf(`{"model":"gpt-image-2","prompt":"draw","stream":%t,"partial_images":2}`, clientStream))
+					if format != "generation" {
+						endpoint = "/v1/images/edits"
+						body = []byte(fmt.Sprintf(`{"model":"gpt-image-2","prompt":"edit","stream":%t,"partial_images":2,"images":[{"image_url":"https://example.invalid/reference.png"}]}`, clientStream))
+					}
+					if format == "edit_multipart" {
+						var buffer bytes.Buffer
+						writer := multipart.NewWriter(&buffer)
+						require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+						require.NoError(t, writer.WriteField("prompt", "edit"))
+						require.NoError(t, writer.WriteField("stream", fmt.Sprint(clientStream)))
+						require.NoError(t, writer.WriteField("partial_images", "2"))
+						file, err := writer.CreateFormFile("image", "reference.png")
+						require.NoError(t, err)
+						_, err = file.Write([]byte("reference"))
+						require.NoError(t, err)
+						require.NoError(t, writer.Close())
+						body = buffer.Bytes()
+						contentType = writer.FormDataContentType()
+					}
+					parsed, err := media.ParseImageRequest(endpoint, contentType, body, true)
+					require.NoError(t, err)
+					upstreamStream := mode == "streaming" || (mode == "both" && clientStream)
+					calls := 0
+					transport := &auxiliaryHTTPRecorder{onRequest: func(req *http.Request) (*http.Response, error) {
+						calls++
+						sent, err := io.ReadAll(req.Body)
+						require.NoError(t, err)
+						request, err := upstreamcore.ParseImageRequest(endpoint, req.Header.Get("Content-Type"), sent)
+						require.NoError(t, err)
+						require.Equal(t, upstreamStream, request.Stream)
+						if mode == "non_streaming" {
+							require.Nil(t, request.PartialImages)
+						}
+						if mode == "streaming" && !clientStream {
+							require.Equal(t, 0, *request.PartialImages)
+						}
+						result := `{"created":123,"data":[{"b64_json":"aW1hZ2U="}],"usage":{"input_tokens":4,"output_tokens":6}}`
+						mediaType := "application/json"
+						if upstreamStream {
+							family := "image_generation"
+							if format != "generation" {
+								family = "image_edit"
+							}
+							result = fmt.Sprintf("data: {\"type\":%q,\"b64_json\":\"aW1hZ2U=\",\"usage\":{\"input_tokens\":4,\"output_tokens\":6}}\n\n", family+".completed")
+							mediaType = "text/event-stream; charset=utf-8"
+						}
+						return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {mediaType}}, Body: io.NopCloser(strings.NewReader(result))}, nil
+					}}
+					svc := newImagesFixture(imagesFixtureInputs{transport: transport})
+					provider := newOpenAIImagesAPIKeyProvider()
+					key := providerimages.ImagesGenerationsModeKey
+					if format != "generation" {
+						key = providerimages.ImagesEditsModeKey
+					}
+					provider.Record.Credentials[key] = mode
+					recorder := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(recorder)
+					c.Request = httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+					c.Request.Header.Set("Content-Type", contentType)
+					result, err := svc.ForwardImages(t.Context(), c, provider, body, parsed, "")
+					require.NoError(t, err)
+					require.Equal(t, 1, calls)
+					require.Equal(t, 1, result.ImageCount)
+					require.Equal(t, 4, result.Usage.InputTokens)
+					require.Equal(t, 6, result.Usage.OutputTokens)
+					require.Equal(t, clientStream, parsed.Stream, "the client request remains immutable")
+					if clientStream {
+						require.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
+						require.Contains(t, recorder.Body.String(), ".completed")
+					} else {
+						require.Contains(t, recorder.Header().Get("Content-Type"), "application/json")
+						require.Equal(t, "aW1hZ2U=", gjson.GetBytes(recorder.Body.Bytes(), "data.0.b64_json").String())
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestForwardImagesURLConversionKeepsWaitingAlive delays a public image download
+// after generation completed. JSON and SSE upstreams must retain downstream
+// heartbeats during conversion, isolate download credentials, and submit one generation.
+func TestForwardImagesURLConversionKeepsWaitingAlive(t *testing.T) {
+	for _, responseStream := range []bool{false, true} {
+		synctest.Test(t, func(t *testing.T) {
+			var pngBytes bytes.Buffer
+			require.NoError(t, png.Encode(&pngBytes, image.NewRGBA(image.Rect(0, 0, 1, 1))))
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			body := []byte(`{"model":"gpt-image-2","prompt":"draw","stream":true}`)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			parsed, err := media.ParseImageRequest(c.Request.URL.Path, "application/json", body, true)
+			require.NoError(t, err)
+			generations, downloads := 0, 0
+			transport := &auxiliaryHTTPRecorder{onRequest: func(req *http.Request) (*http.Response, error) {
+				if req.Method == http.MethodGet {
+					downloads++
+					require.Empty(t, req.Header.Get("Authorization"))
+					require.Empty(t, req.Header.Get("Cookie"))
+					time.Sleep(2 * time.Second)
+					// Synchronize the recorder observation with the download's waiting writer,
+					// since virtual-time advancement can make the next heartbeat ready together.
+					value, _ := c.Get(openAICompactSSEKeepaliveKey)
+					waiting, ok := value.(*openAICompactSSEKeepalive)
+					require.True(t, ok)
+					waiting.mu.Lock()
+					received := rec.Body.String()
+					waiting.mu.Unlock()
+					require.Contains(t, received, ": keepalive")
+					require.NotContains(t, received, ".completed")
+					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"image/png"}}, Body: io.NopCloser(bytes.NewReader(pngBytes.Bytes()))}, nil
+				}
+				generations++
+				response := `{"data":[{"url":"https://cdn.example.com/image.png"}],"usage":{"output_tokens":7}}`
+				mediaType := "application/json"
+				if responseStream {
+					response = "data: {\"type\":\"image_generation.completed\",\"url\":\"https://cdn.example.com/image.png\",\"usage\":{\"output_tokens\":7}}\n\n"
+					mediaType = "text/event-stream"
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {mediaType}}, Body: io.NopCloser(strings.NewReader(response))}, nil
+			}}
+			svc := newImagesFixture(imagesFixtureInputs{transport: transport, ImageStreamKeepaliveInterval: 1})
+			result, err := svc.ForwardImages(t.Context(), c, newOpenAIImagesAPIKeyProvider(), body, parsed, "")
+			require.NoError(t, err)
+			require.Equal(t, 1, generations)
+			require.Equal(t, 1, downloads)
+			require.Equal(t, 1, result.ImageCount)
+			require.Equal(t, 7, result.Usage.OutputTokens)
+			require.Contains(t, rec.Body.String(), `"b64_json":`)
 		})
 	}
 }

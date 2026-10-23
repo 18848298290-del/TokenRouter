@@ -1,3 +1,4 @@
+import { readImageStreamModes } from '@/components/provider/form/imageStreamModes'
 import type { Provider, OpenAIOAuthClientPolicy } from '@/api/admin/providers.types'
 import type { ProtocolID } from '@/api/protocols.types'
 import type { ProviderEditDraft } from './providerEditDraft'
@@ -462,6 +463,7 @@ export function hydrateProviderEditDraft(
     providerSchedulingThresholdOverrideEnabled.value = value !== null
     providerSchedulingThresholdOverrideValue.value = value ?? 100
   }
+  draft.imageModes.value = readImageStreamModes(newProvider.credentials)
   draft.upstreamProtocols.value = Array.isArray(newProvider.credentials?.upstream_protocols)
     ? ([...newProvider.credentials.upstream_protocols] as ProtocolID[])
     : undefined

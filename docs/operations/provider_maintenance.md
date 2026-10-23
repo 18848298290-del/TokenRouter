@@ -161,7 +161,7 @@ OpenAI 的额度和重置，由 `provider.OpenAIQuotaService` 统一编排，app
 
 Codex 的邀请资格、规则和 credit 查询的汇总，由 `provider.CodexInviteResetService` 执行；资格接口失败时，只关闭邀请入口，已有的次数照常按顺序查询。提供商 provider 在准备时读取共享的 token、代理和专用的 TLS 和 UA，`upstream/openai.CodexInviteClient` 负责 HTTP 报文和关闭响应体。管理员路由直接绑定这个用例。
 
-OpenAI API Key 不会自动探测 Responses 能力；创建、编辑、批量更新和复制，都以管理员选择的上游协议为准，历史的探测字段已经清除，不参与调度。两种压缩也由各自的管理员开关决定，手动连接测试不更新能力配置，但额度观测、401 认证错误的记录和 429 限流的处理照常进行。提供商写入时统一清理历史探测状态，并将兼容的压缩开关值规范为开启或关闭。API Key 的文字测试可以明确选择 Responses 或 Chat Completions，OAuth 使用 Codex Responses。HTTP continuation 是独立的开关，没有配置时关闭。
+OpenAI API Key 不会自动探测 Responses 能力；创建、编辑、批量更新和复制，都以管理员选择的上游协议为准，历史的探测字段已经清除，不参与调度。两种压缩也由各自的管理员开关决定，手动连接测试不更新能力配置，但额度观测、401 认证错误的记录和 429 限流的处理照常进行。提供商写入时统一清理历史探测状态，并将兼容的压缩开关值规范为开启或关闭。API Key 的文字测试可以明确选择 Responses 或 Chat Completions，OAuth 使用 Codex Responses。OpenAI API Key 生图测试读取生成端点的模式配置；仅流式时请求 `stream=true`、`partial_images=0`，使用与网关和创作台相同的读取器聚合预览结果。手动测试和定时测试共用该执行方法，失败不会改模式重发生图。HTTP continuation 是独立的开关，没有配置时关闭。
 
 调度数据要保留原生协议集合、认证方式、两种压缩开关和 continuation 设置，配置变化时按提供商数据的失效机制传播。国产供应商不会异步写回旧的 OpenAI 文本路由镜像。Grok 的计费和媒体资格、Ollama Cloud 和各平台的额度探测，各自是独立的流程。
 

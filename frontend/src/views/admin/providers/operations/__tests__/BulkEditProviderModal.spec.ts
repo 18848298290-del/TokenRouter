@@ -1373,6 +1373,35 @@ describe('BulkEditProviderModal', () => {
     expect(body.attributes('inert')).toBeUndefined()
     wrapper.unmount()
   })
+  // A batch changes only generation mode and then encounters a save failure.
+  // Editing mode remains absent from the payload, while the selected generation
+  // mode and application checkbox remain available for retrying the same change.
+  it('批量生图模式独立提交，保存失败后保留选择', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey'] })
+    await wrapper.get('[data-settings-tab-button="request"]').trigger('click')
+    await wrapper.get('#bulk-images_generations_mode-enabled').setValue(true)
+    await wrapper
+      .get('#bulk-images_generations_mode-body')
+      .findAll('[role="radio"]')[1]
+      .trigger('click')
+    vi.mocked(adminAPI.providers.bulkUpdate).mockRejectedValueOnce(new Error('save failed'))
+    await wrapper.get('#bulk-edit-provider-form').trigger('submit.prevent')
+    await flushPromises()
+    const credentials = vi.mocked(adminAPI.providers.bulkUpdate).mock.calls.at(-1)?.[1]?.credentials
+    expect(credentials).toEqual({ images_generations_mode: 'non_streaming' })
+    expect(wrapper.get('#bulk-images_generations_mode-enabled').element).toHaveProperty(
+      'checked',
+      true,
+    )
+    expect(
+      wrapper
+        .get('#bulk-images_generations_mode-body')
+        .findAll('[role="radio"]')[1]
+        .attributes('aria-checked'),
+    ).toBe('true')
+    expect(wrapper.emitted('close')).toBeUndefined()
+    wrapper.unmount()
+  })
 })
 
 useProtocolCatalogFixture()

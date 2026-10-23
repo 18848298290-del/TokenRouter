@@ -120,13 +120,17 @@ func (r *Record) UpstreamProtocolsForLegacy(legacyMode string) []capability.Prot
 // can leave earlier changes on the record. Callers discard rejected candidates.
 // Legacy fields are removed and endpoint slots migrated after all these checks
 // succeed. Jev credential errors retain their own reason; selection errors use
-// UPSTREAM_PROTOCOLS_INVALID.
+// UPSTREAM_PROTOCOLS_INVALID. Invalid Images endpoint modes return their own
+// IMAGE_STREAM_MODE_INVALID reason before protocol normalization mutates the record.
 // @project-doc docs/interfaces/protocol_capabilities.md#account_native_protocols
 func NormalizeProviderProtocols(provider *Record) error {
 	if provider == nil || provider.IsCredentialShadow() {
 		return nil
 	}
 	if err := ValidateJevCredentials(provider); err != nil {
+		return err
+	}
+	if err := validateImageStreamModes(provider); err != nil {
 		return err
 	}
 	protocols := provider.UpstreamProtocols()

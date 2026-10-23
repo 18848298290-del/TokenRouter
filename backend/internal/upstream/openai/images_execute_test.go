@@ -141,6 +141,10 @@ func TestImagesExecuteJSONStreamAccounting(t *testing.T) {
 					active := false
 					stops := 0
 					options := imagesTestResponseOptions()
+					options.FetchImage = func(rawURL string) (string, error) {
+						require.Equal(t, "https://example.invalid/second.png", rawURL)
+						return "downloaded-image", nil
+					}
 					options.StartKeepalive = func() func() {
 						active = true
 						return func() {
@@ -205,6 +209,9 @@ func TestImagesExecuteJSONStreamAccounting(t *testing.T) {
 					require.Equal(t, 2, strings.Count(stream, "event: "+eventName+"\n"))
 					require.Equal(t, 1, strings.Count(stream, `"usage":`))
 					require.Contains(t, stream, `"url":"https://example.invalid/second.png"`)
+					if !oauth {
+						require.Contains(t, stream, `"b64_json":"downloaded-image"`)
+					}
 					require.Contains(t, stream, `"revised_prompt":"revised"`)
 					require.Contains(t, stream, `"created_at":1710000000`)
 					require.Contains(t, stream, "data: [DONE]\n\n")
@@ -541,5 +548,33 @@ func imagesTestResponseOptions() ImageResponseOptions {
 		ReadLimit:         func() int64 { return 1 << 20 },
 		Backfill:          func(body []byte) []byte { return body },
 		Logf:              func(string, ...any) {},
+	}
+}
+
+// TestImagesExecuteDeliveryFailureKeepsObservations rejects an image URL download
+// after upstream generation completed. Both client representations retain one
+// observed image and usage while a single exchange returns a terminal error.
+func TestImagesExecuteDeliveryFailureKeepsObservations(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		options := imagesTestResponseOptions()
+		options.FetchImage = func(string) (string, error) { return "", errors.New("download unavailable") }
+		body := `{"data":[{"url":"https://image.invalid/result"}],"usage":{"output_tokens":9}}`
+		mediaType := "application/json"
+		if !stream {
+			body = "data: {\"type\":\"image_generation.completed\",\"url\":\"https://image.invalid/result\",\"usage\":{\"output_tokens\":9}}\n\n"
+			mediaType = "text/event-stream"
+		}
+		calls := 0
+		target := &ImagesTarget{Model: "gpt-image-2", Options: options, Request: httptest.NewRequest(http.MethodPost, "https://example.invalid/images", nil), Do: func(*http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {mediaType}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+		}}
+		sink := &imagesContractSink{}
+		result, err := (ImagesExecutor{}).Execute(t.Context(), upstream.AttemptInput{Protocol: protocol.ProtocolImagesGenerations, Stream: stream, Target: target}, sink)
+		require.Error(t, err)
+		require.Equal(t, 1, calls)
+		require.Equal(t, 1, result.ObservedImages)
+		require.Equal(t, 9, result.Usage.OutputTokens)
+		require.Empty(t, sink.chunks)
 	}
 }

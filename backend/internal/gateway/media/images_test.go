@@ -67,7 +67,9 @@ func TestImageOutcomePreservesPartialAndTransportBoundaries(t *testing.T) {
 		count              int   // expected retained image count
 		retain             bool  // expected result retention decision
 	}{
-		{"nonstream error", false, false, false, 1, failure, 0, false},
+		{"native buffered delivery error", false, false, false, 1, failure, 1, true},
+		{"OAuth buffered error", false, true, true, 1, failure, 0, false},
+		{"native aggregated stream error", false, false, true, 1, failure, 1, true},
 		{"stream partial", true, false, true, 2, failure, 2, true},
 		{"stream empty error", true, true, true, 0, failure, 0, false},
 		{"API SSE no fallback", true, false, true, 0, nil, 0, true},

@@ -16,6 +16,16 @@ import audit from './audit'
 
 export default {
   protocols: {
+    imageModes: {
+      title: '上游支持模式',
+      hint: '请求模式自动转换。仅非流式的上游返回最终图片，不提供中间预览。',
+      both: '两者支持',
+      non_streaming: '仅非流式',
+      streaming: '仅流式',
+      generationMode: '图片生成模式',
+      editMode: '图片编辑模式',
+    },
+
     responsesWebSocketHTTPHint:
       '允许转换时，客户端继续使用长连接，上游通过普通 HTTP Responses 接收请求。',
     responsesWebSocket: '长连接对话（WebSocket）',

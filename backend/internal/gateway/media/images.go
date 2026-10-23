@@ -353,9 +353,9 @@ func ResolveImageModels(requested, groupMapped, fallback string, resolve func(st
 }
 
 // ImageOutcome selects retained image count from observed output, requested
-// count, transport format and failure state. A failure retains results only
-// for streaming requests with positive observed images; other failed paths
-// return zero and false.
+// count, transport format and failure state. API-key failures retain positive
+// completed-image observations in either client mode; OAuth failures retain
+// them only for streaming clients under the Responses conversion policy.
 //
 // Successful OAuth, nonstream or non-SSE handling can use requested count
 // when observation is nonpositive. Successful API-key SSE keeps its
@@ -363,10 +363,10 @@ func ResolveImageModels(requested, groupMapped, fallback string, resolve func(st
 // distinguish retention from a positive count before deciding whether image
 // completion observations are available.
 func ImageOutcome(stream, oauth, eventStream bool, requested, observed int, failure error) (int, bool) {
-	// A failed request has retainable image evidence only after positive
-	// streamed output; discarding the other paths prevents requested-count
-	// fallback from inventing completed images.
-	if failure != nil && (!stream || observed <= 0) {
+	// Native streams can feed buffered clients, and URL conversion can fail
+	// after generation. Retain their observed completions while keeping OAuth's
+	// existing buffered failure policy and never substituting requested counts.
+	if failure != nil && (observed <= 0 || (oauth && !stream)) {
 		return 0, false
 	}
 	count := observed

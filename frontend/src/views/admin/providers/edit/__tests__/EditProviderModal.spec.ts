@@ -400,6 +400,40 @@ function mountModal(provider = buildProvider()) {
 }
 
 describe('EditProviderModal', () => {
+  // Stored modes hydrate independently, and a saved provider can reopen with the
+  // same capabilities. A disabled Images protocol keeps its mode without enabling itself.
+  it('round-trips independent image modes while retaining disabled protocols', async () => {
+    const provider = buildProvider()
+    provider.credentials = {
+      ...provider.credentials,
+      upstream_protocols: ['openai_images_generations'],
+      images_generations_mode: 'non_streaming',
+      images_edits_mode: 'streaming',
+    }
+    const wrapper = mountModal(provider)
+    await flushPromises()
+    await wrapper.get('[data-settings-tab-button="request"]').trigger('click')
+    const row = wrapper.get('[data-setting-row="image-mode-openai_images_generations"]')
+    expect(row.get('select').element).toHaveProperty('value', 'non_streaming')
+    updateProviderMock.mockImplementation(async (_id, patch) => ({ ...provider, ...patch }))
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+    const saved = updateProviderMock.mock.calls.at(-1)?.[1]
+    expect(saved.credentials).toMatchObject({
+      images_generations_mode: 'non_streaming',
+      images_edits_mode: 'streaming',
+      upstream_protocols: ['openai_images_generations'],
+    })
+    wrapper.unmount()
+    const reopened = mountModal({ ...provider, ...saved })
+    await flushPromises()
+    await reopened.get('[data-settings-tab-button="request"]').trigger('click')
+    expect(
+      reopened.get('[data-setting-row="image-mode-openai_images_generations"] select').element,
+    ).toHaveProperty('value', 'non_streaming')
+    reopened.unmount()
+  })
+
   beforeEach(() => {
     updateProviderMock.mockReset()
     checkMixedChannelRiskMock.mockReset()

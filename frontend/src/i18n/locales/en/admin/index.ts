@@ -15,6 +15,16 @@ import audit from './audit'
 
 export default {
   protocols: {
+    imageModes: {
+      title: 'Upstream modes',
+      hint: 'Requests are converted automatically. Non-streaming upstreams return the final image without intermediate previews.',
+      both: 'Both modes',
+      non_streaming: 'Non-streaming only',
+      streaming: 'Streaming only',
+      generationMode: 'Image generation modes',
+      editMode: 'Image editing modes',
+    },
+
     responsesWebSocketHTTPHint:
       'When conversion is allowed, the client keeps its WebSocket connection while the upstream receives regular HTTP Responses requests.',
     responsesWebSocket: 'Long conversations (WebSocket)',

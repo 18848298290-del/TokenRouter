@@ -2,6 +2,7 @@ import { useProtocolCatalogFixture } from '@/__tests__/helpers/protocolCatalog'
 import { describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ProviderProtocolSelector from '../ProviderProtocolSelector.vue'
+import Select from '@/components/common/Select.vue'
 // ProviderProtocolSelector.spec.ts tests native protocol options and shared catalog
 // recovery across provider and group selectors. Authentication changes replace provider
 // selections, while explicit empty arrays stay empty when a failed catalog load later
@@ -124,4 +125,32 @@ it('提供商与分组选项共享错误恢复，保留显式关闭的提供商�
     provider.unmount()
     group.unmount()
   }
+})
+
+// Endpoint modes belong to independent enabled Images rows. Editing one mode must
+// retain the other endpoint and toggling a protocol must not clear either draft value.
+it('编辑生图模式时保留另一个端点与关闭协议的草稿', async () => {
+  const wrapper = mount(ProviderProtocolSelector, {
+    props: {
+      platform: 'openai',
+      type: 'apikey',
+      modelValue: ['openai_images_generations', 'openai_images_edits'],
+      imageModes: { images_generations_mode: 'both', images_edits_mode: 'streaming' },
+    },
+  })
+  await flushPromises()
+  const row = wrapper.get('[data-setting-row="image-mode-openai_images_generations"]')
+  row.findComponent(Select).vm.$emit('update:modelValue', 'non_streaming')
+  await flushPromises()
+  expect(wrapper.emitted('update:imageModes')?.at(-1)?.[0]).toEqual({
+    images_generations_mode: 'non_streaming',
+    images_edits_mode: 'streaming',
+  })
+  await wrapper.setProps({ modelValue: ['openai_images_edits'] })
+  expect(wrapper.props('imageModes')).toEqual({
+    images_generations_mode: 'both',
+    images_edits_mode: 'streaming',
+  })
+  expect(wrapper.emitted('update:imageModes')).toHaveLength(1)
+  wrapper.unmount()
 })

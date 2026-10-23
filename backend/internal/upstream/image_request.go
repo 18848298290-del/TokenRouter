@@ -10,9 +10,11 @@ import (
 	"strings"
 
 	"github.com/tidwall/sjson"
+
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
-// image_request.go rewrites image request models in JSON or multipart bodies
+// image_request.go rewrites image models and modes in JSON or multipart bodies
 // while retaining the other parsed parts.
 // An image request can keep client prompt and upload data while routing
 // selects a different upstream model. JSON requests replace the model path
@@ -27,40 +29,85 @@ import (
 // content is carried into the rebuilt body rather than preserving the original
 // wire encoding.
 
-// RewriteImageModel replaces a nonblank trimmed model in JSON or recognized
-// multipart input. Blank model returns the supplied body storage and content
-// type unchanged; other content types, including MIME parse failures, use JSON
-// mutation.
+// RewriteImageModel replaces the routed model while retaining transport fields.
+// Blank models retain their original value. Both JSON and multipart callers
+// receive a body and matching content type for the prepared request.
 func RewriteImageModel(body []byte, contentType string, model string) ([]byte, string, error) {
+	return RewriteImageRequest(body, contentType, model, protocol.ImageModeBoth, false)
+}
+
+// RewriteImageRequest applies the selected model and endpoint transport capability.
+// Both-mode requests retain the client's transport fields; forced nonstream
+// removes stream and partial_images, while forced streaming sets stream and
+// suppresses previews for clients awaiting a buffered response.
+//
+// JSON fields are patched without decoding unrelated numeric or extension
+// values. Multipart parts are copied in order with uploaded bytes and headers
+// retained. Every duplicate transport text field is replaced or removed, so
+// an upstream parser cannot select a stale client mode from a later part.
+func RewriteImageRequest(body []byte, contentType string, model string, mode protocol.ImageStreamMode, clientStream bool) ([]byte, string, error) {
+	fields := map[string]*string{}
 	model = strings.TrimSpace(model)
-	if model == "" {
+	if model != "" {
+		fields["model"] = &model
+	}
+	switch mode {
+	case protocol.ImageModeNonStreaming:
+		fields["stream"] = nil
+		fields["partial_images"] = nil
+	case protocol.ImageModeStreaming:
+		stream := "true"
+		fields["stream"] = &stream
+		if !clientStream {
+			partial := "0"
+			fields["partial_images"] = &partial
+		}
+	}
+	if len(fields) == 0 {
 		return body, contentType, nil
 	}
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err == nil && strings.EqualFold(mediaType, "multipart/form-data") {
-		rewrittenBody, rewrittenType, rewriteErr := RewriteImageMultipartModel(body, contentType, model)
-		return rewrittenBody, rewrittenType, rewriteErr
+		return rewriteImageMultipartFields(body, contentType, fields)
 	}
-	// A content type that is not successfully recognized as multipart follows
-	// JSON mutation. Retain the supplied content type for the forwarding caller
-	// while allowing the JSON mutator to report payload errors.
-	rewritten, err := sjson.SetBytes(body, "model", model)
-	if err != nil {
-		return nil, "", fmt.Errorf("rewrite image request model: %w", err)
+	for _, key := range []string{"model", "stream", "partial_images"} {
+		value, exists := fields[key]
+		if !exists {
+			continue
+		}
+		if value == nil {
+			body, err = sjson.DeleteBytes(body, key)
+		} else if key == "model" {
+			body, err = sjson.SetBytes(body, key, *value)
+		} else {
+			// Transport values are validated literals, so retain boolean and numeric
+			// JSON types rather than sending their multipart string representations.
+			body, err = sjson.SetRawBytes(body, key, []byte(*value))
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("rewrite image request %s: %w", key, err)
+		}
 	}
-	return rewritten, contentType, nil
+	return body, contentType, nil
 }
 
-// RewriteImageMultipartModel rebuilds multipart input with the supplied model
-// text and a new boundary. It requires a parseable content type with a
-// nonblank boundary and uses model exactly as supplied.
-//
-// Every text part whose trimmed name is model is replaced, while file parts
-// with that name retain their payload content. If no model text part exists,
-// one is appended. Parsed headers and decoded part content are copied in
-// source order; quoted-printable handling belongs to multipart.NextPart, and
-// part close errors are discarded after read or write handling.
+// RewriteImageMultipartModel replaces model text parts while retaining uploads.
+// It accepts the supplied model spelling exactly and appends a missing model
+// field before closing the newly generated multipart boundary.
 func RewriteImageMultipartModel(body []byte, contentType string, model string) ([]byte, string, error) {
+	return rewriteImageMultipartFields(body, contentType, map[string]*string{"model": &model})
+}
+
+// rewriteImageMultipartFields patches text fields and copies uploaded content.
+// Nil replacement values remove all matching text parts. Missing nonnil fields
+// are appended in a fixed order, and the returned content type owns the new
+// boundary. File parts with matching names remain uploads.
+//
+// Multipart decoding belongs to NextPart, matching the existing model rewrite.
+// The writer retains parsed part headers and decoded bytes for unrelated parts.
+// Repeated fields are all patched to prevent parser-dependent mode selection,
+// while upload headers and their content remain independent from text policy.
+func rewriteImageMultipartFields(body []byte, contentType string, fields map[string]*string) ([]byte, string, error) {
 	_, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		return nil, "", fmt.Errorf("parse multipart content-type: %w", err)
@@ -69,61 +116,56 @@ func RewriteImageMultipartModel(body []byte, contentType string, model string) (
 	if boundary == "" {
 		return nil, "", fmt.Errorf("multipart boundary is required")
 	}
-
 	reader := multipart.NewReader(bytes.NewReader(body), boundary)
 	var buffer bytes.Buffer
 	writer := multipart.NewWriter(&buffer)
-	modelWritten := false
-
-	// NextPart supplies parsed headers and transfer-decoded body bytes. Each
-	// branch closes the current part after copying or replacing it, keeping
-	// cleanup errors separate from the read/write result selected for the caller.
+	written := map[string]bool{}
 	for {
-		part, err := reader.NextPart()
-		if err == io.EOF {
+		part, readErr := reader.NextPart()
+		if readErr == io.EOF {
 			break
 		}
-		if err != nil {
-			return nil, "", fmt.Errorf("read multipart body: %w", err)
+		if readErr != nil {
+			return nil, "", fmt.Errorf("read multipart body: %w", readErr)
 		}
-
-		formName := strings.TrimSpace(part.FormName())
-		partHeader := CloneMultipartHeader(part.Header)
-		target, err := writer.CreatePart(partHeader)
-		if err != nil {
-			_ = part.Close()
-			return nil, "", fmt.Errorf("create multipart part: %w", err)
-		}
-
-		// Routing replaces model text fields while retaining a file named model
-		// as upload content. Repeated text fields receive the same selected model.
-		if formName == "model" && part.FileName() == "" {
-			if _, err := target.Write([]byte(model)); err != nil {
-				_ = part.Close()
-				return nil, "", fmt.Errorf("rewrite multipart model: %w", err)
-			}
-			modelWritten = true
+		name := strings.TrimSpace(part.FormName())
+		replacement, replace := fields[name]
+		replace = replace && part.FileName() == ""
+		if replace && replacement == nil {
+			// A forced nonstream request must omit every transport-only text field;
+			// otherwise some providers reject even an explicitly false stream flag.
 			_ = part.Close()
 			continue
 		}
-		if _, err := io.Copy(target, part); err != nil {
+		target, createErr := writer.CreatePart(CloneMultipartHeader(part.Header))
+		if createErr != nil {
 			_ = part.Close()
-			return nil, "", fmt.Errorf("copy multipart part: %w", err)
+			return nil, "", createErr
 		}
+		if replace {
+			_, err = io.WriteString(target, *replacement)
+			written[name] = true
+		} else {
+			_, err = io.Copy(target, part)
+		}
+		// Each source part is released before advancing the multipart reader;
+		// copying errors remain the primary failure returned by this rewrite.
 		_ = part.Close()
-	}
-
-	// A request can omit its model text field and rely on routing defaults.
-	// Append the selected upstream model after the copied parts in that case.
-	if !modelWritten {
-		if err := writer.WriteField("model", model); err != nil {
-			return nil, "", fmt.Errorf("append multipart model field: %w", err)
+		if err != nil {
+			return nil, "", err
 		}
 	}
-	// Closing writes the final delimiter for the newly chosen multipart boundary.
-	// Return that complete body together with its generated content type to forwarding.
+	for _, key := range []string{"model", "stream", "partial_images"} {
+		if value := fields[key]; value != nil && !written[key] {
+			if err := writer.WriteField(key, *value); err != nil {
+				return nil, "", err
+			}
+		}
+	}
+	// Complete the generated boundary before exposing either the bytes or their
+	// content type, so callers cannot submit a partially framed edit request.
 	if err := writer.Close(); err != nil {
-		return nil, "", fmt.Errorf("finalize multipart body: %w", err)
+		return nil, "", err
 	}
 	return buffer.Bytes(), writer.FormDataContentType(), nil
 }

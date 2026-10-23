@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -12,8 +13,10 @@ import (
 	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/creative"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
 // OpenAI image fixtures simulate response bodies and download callbacks to
@@ -236,4 +239,62 @@ func TestOpenAIImageBase64Preferred(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []byte("image"), outputs[0].Bytes)
 	})
+}
+
+// TestCreativeOpenAIStreamingMode adapts a streaming-only provider for creative
+// generation and editing. The adapter submits one stream request, aggregates its
+// final image, and classifies truncated streams as nonretryable delivery failures.
+func TestCreativeOpenAIStreamingMode(t *testing.T) {
+	for _, operation := range []string{"generate", "edit"} {
+		for _, failed := range []bool{false, true} {
+			calls := 0
+			target := &Target{OpenAI: &OpenAIOptions{
+				ImageMode: func(id protocol.ProtocolID) (protocol.ImageStreamMode, error) {
+					if operation == "edit" {
+						require.Equal(t, protocol.ProtocolImagesEdits, id)
+					} else {
+						require.Equal(t, protocol.ProtocolImagesGenerations, id)
+					}
+					return protocol.ImageModeStreaming, nil
+				},
+				Token:        func(context.Context) (string, error) { return "token", nil },
+				URL:          func(endpoint string) (string, error) { return "https://relay.invalid" + endpoint, nil },
+				Prepare:      func(req *http.Request) *http.Request { return req },
+				AuthHeaders:  func(context.Context, string) (http.Header, error) { return http.Header{}, nil },
+				ApplyHeaders: func(http.Header) {},
+				Do: func(req *http.Request) (*http.Response, error) {
+					calls++
+					raw, err := io.ReadAll(req.Body)
+					require.NoError(t, err)
+					if operation == "generate" {
+						require.True(t, gjson.GetBytes(raw, "stream").Bool())
+						require.EqualValues(t, 0, gjson.GetBytes(raw, "partial_images").Int())
+					} else {
+						require.Contains(t, string(raw), "name=\"stream\"\r\n\r\ntrue")
+					}
+					family := "image_generation"
+					if operation == "edit" {
+						family = "image_edit"
+					}
+					body := fmt.Sprintf("data: {\"type\":%q,\"b64_json\":\"aW1hZ2U=\"}\n\n", family+".completed")
+					if failed {
+						body += "data: {"
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+				},
+			}}
+			outputs, err := target.ExecuteOpenAI(t.Context(), creative.CreativeRun{Operation: operation, ImageSize: "1K"}, creative.CreativeRunPayload{Prompt: "test"}, "gpt-image-2")
+			require.Equal(t, 1, calls)
+			if failed {
+				require.Error(t, err)
+				var failure *creative.CreativeUpstreamError
+				require.ErrorAs(t, err, &failure)
+				require.False(t, failure.Retryable)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, outputs, 1)
+				require.Equal(t, []byte("image"), outputs[0].Bytes)
+			}
+		}
+	}
 }

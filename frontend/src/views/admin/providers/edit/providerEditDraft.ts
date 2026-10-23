@@ -1,4 +1,5 @@
 import { ref, reactive } from 'vue'
+import { readImageStreamModes } from '@/components/provider/form/imageStreamModes'
 import type { ProtocolID } from '@/api/protocols.types'
 import type {
   OpenAICompactMode,
@@ -39,6 +40,7 @@ export function createProviderEditDraft() {
   return {
     // Undefined selects native catalog defaults at submission; an explicit empty array
     // remains an empty administrator selection.
+    imageModes: ref(readImageStreamModes()), // Independent native Images capabilities.
     upstreamProtocols: ref<ProtocolID[] | undefined>(undefined), // Selected native protocol identifiers.
     editBaseUrl: ref('https://api.anthropic.com'), // Editable forwarding base URL.
     // An empty replacement keeps the stored secret when credentials_status or legacy

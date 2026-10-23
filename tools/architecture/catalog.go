@@ -161,7 +161,7 @@ internal/server/clientip/policy internal/server/httpconfig`, Tests: ""},
 internal/creative/... internal/identity/httpapi/authctx internal/infra/postgres/... internal/infra/telemetry/... internal/pkg/
 internal/protocol internal/protocol/gemini internal/routing internal/routing/capability internal/routing/modelmap
 internal/scheduler internal/server/httpx internal/settings internal/upstream
-internal/upstream/gemini internal/upstream/grok internal/usage`, Tests: `internal/modelcatalog/testkit internal/apikey internal/billing/provider internal/billing/testkit internal/config
+internal/upstream/gemini internal/upstream/grok internal/upstream/openai internal/usage`, Tests: `internal/modelcatalog/testkit internal/apikey internal/billing/provider internal/billing/testkit internal/config
 internal/gateway/completion internal/gateway/media internal/gateway/provider/modelidentity
 internal/identity internal/infra/telemetry/... internal/moderation internal/routing/capability
 internal/testutil/assertion`},
@@ -405,6 +405,9 @@ internal/upstream/zhipu/...`, Tests: ""},
 
 	// 窄权限属于指定文件，不能由相邻文件或目标子包继承。
 	filePermissions = []filePermission{
+		// Creative's OpenAI adapter uses the shared native Images reader for mode
+		// conversion; adjacent creative files retain their existing dependency limits.
+		{Scope: "internal/creative", Imports: "internal/upstream/openai", Files: "provider/openai.go"},
 		{Scope: "internal/gateway", Imports: "internal/modelcatalog/testkit", Files: "httpapi/grok_media_execution_test.go httpapi/helpers_test.go provider/creative_catalog_test.go provider/googleforward/gemini_attempts_external_test.go provider/googleforward/gemini_openai_external_test.go provider/googleforward/helpers_external_test.go provider/grok_codec_test.go provider/model_attributes_test.go provider/model_qualification_test.go provider/selection/candidate_policy_test.go testkit/runtime_settings.go ws/httpapi/openai_ws_http_bridge_test.go"},
 		// Timing observers and response-body decoding tests inspect protocol events through these permitted files.
 		{Scope: "internal/infra", Imports: "github.com/tidwall/gjson", Files: "telemetry/timing/events.go telemetry/timing/performance.go httpclient/response_body_test.go"},

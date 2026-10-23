@@ -357,6 +357,31 @@
             />
           </BulkApplyField>
 
+          <template
+            v-if="
+              targetSelectedPlatforms.length === 1 &&
+              targetSelectedPlatforms[0] === 'openai' &&
+              targetSelectedTypes.length === 1 &&
+              targetSelectedTypes[0] === 'apikey'
+            "
+          >
+            <BulkApplyField
+              v-for="field in IMAGE_MODE_FIELDS"
+              :id="`bulk-${field.key}`"
+              :key="field.key"
+              v-model="applyImageModes[field.key]"
+              :label="t(`admin.protocols.imageModes.${field.label}`)"
+              :hint="t('admin.protocols.imageModes.hint')"
+            >
+              <SettingsSegmented
+                :model-value="imageModes[field.key]"
+                :options="imageModeOptions"
+                :ariaLabel="t(`admin.protocols.imageModes.${field.label}`)"
+                @update:model-value="imageModes[field.key] = $event ?? 'both'"
+              />
+            </BulkApplyField>
+          </template>
+
           <BulkApplyField
             v-if="allHeaderOverrideCapable"
             id="bulk-edit-header-override"
@@ -666,8 +691,13 @@ import { vContentReveal } from '@/directives/contentReveal'
 import Collapse from '@/components/common/Collapse.vue'
 
 import ProviderProtocolSelector from '../../../../components/provider/ProviderProtocolSelector.vue'
+import {
+  IMAGE_MODE_FIELDS,
+  imageStreamModeOptions,
+  readImageStreamModes,
+} from '@/components/provider/form/imageStreamModes'
 import type { ProtocolID } from '@/api/protocols.types'
-import { ref, watch, computed } from 'vue'
+import { reactive, ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
@@ -1014,11 +1044,19 @@ const enableOpenAIFlattenNamespaces = ref(false)
 const enableCodexImageToolMode = ref(false)
 const enableUpstreamProtocols = ref(false)
 const upstreamProtocols = ref<ProtocolID[] | undefined>(undefined)
+// Image modes and their application flags are independent per endpoint. Selection
+// changes clear application flags so hidden fields cannot affect another provider type.
+const imageModes = ref(readImageStreamModes())
+const applyImageModes = reactive({ images_generations_mode: false, images_edits_mode: false })
+const imageModeOptions = computed(() => imageStreamModeOptions(t))
 watch(
   () => [targetSelectedPlatforms.value.join(','), targetSelectedTypes.value.join(',')],
   () => {
     enableUpstreamProtocols.value = false
     upstreamProtocols.value = undefined
+    imageModes.value = readImageStreamModes()
+    applyImageModes.images_generations_mode = false
+    applyImageModes.images_edits_mode = false
   },
 )
 /**
@@ -1678,6 +1716,20 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     credentialsChanged = true
   }
 
+  if (
+    targetSelectedPlatforms.value.length === 1 &&
+    targetSelectedPlatforms.value[0] === 'openai' &&
+    targetSelectedTypes.value.length === 1 &&
+    targetSelectedTypes.value[0] === 'apikey'
+  ) {
+    for (const field of IMAGE_MODE_FIELDS) {
+      if (applyImageModes[field.key]) {
+        credentials[field.key] = imageModes.value[field.key]
+        credentialsChanged = true
+      }
+    }
+  }
+
   if (credentialsChanged) {
     updates.credentials = credentials
   }
@@ -1704,6 +1756,8 @@ const handleSubmit = async () => {
   }
 
   const hasAnyFieldEnabled =
+    applyImageModes.images_generations_mode ||
+    applyImageModes.images_edits_mode ||
     enableUpstreamProtocols.value ||
     (enableBaseUrl.value && allBaseUrlCapable.value) ||
     enableOpenAIPassthrough.value ||
@@ -1838,6 +1892,9 @@ const resetBulkEditFormState = () => {
   enableCodexImageToolMode.value = false
   enableUpstreamProtocols.value = false
   upstreamProtocols.value = undefined
+  imageModes.value = readImageStreamModes()
+  applyImageModes.images_generations_mode = false
+  applyImageModes.images_edits_mode = false
   enableOpenAIResponsesContinuationSupported.value = false
   enableResponsesWSConnectionMode.value = false
   enableOpenAIAPIKeyWSMode.value = false

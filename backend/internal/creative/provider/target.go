@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/TokenFlux/TokenRouter/internal/creative"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
@@ -19,6 +20,9 @@ import (
 // OpenAIOptions binds credential, generation transport, and public image
 // download callbacks for one provider.
 type OpenAIOptions struct {
+	// ImageMode reads the selected endpoint capability. Nil follows the default
+	// both-mode behavior for callers that do not bind provider configuration.
+	ImageMode func(protocol.ProtocolID) (protocol.ImageStreamMode, error)
 	// Token resolves generation credentials when Execute invokes the provider.
 	// Configure it with the selected provider token source before calling the
 	// platform adapter.

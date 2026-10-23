@@ -26,9 +26,10 @@ import (
 // The prepared request owns transport context, and optional admission stays
 // held through response reading and cleanup. HTTP failures close the original
 // body before replaying redacted bytes into health handling. Successful
-// streamed responses select OAuth/API-key SSE readers or convert a standard
-// Images JSON document into completion events. A shared waiting heartbeat
-// covers response headers and buffered JSON reads, then stops before output
+// responses select OAuth readers or native JSON/SSE readers independently of
+// the client mode. Native streams can aggregate into JSON, while standard
+// Images JSON documents can produce completed SSE events. A shared waiting
+// heartbeat covers response headers and buffered JSON reads, then stops before output
 // begins. Invalid JSON ends the attempt before requested-count substitution.
 // A synchronous sink wrapper retains commitment, semantic, and write-failure
 // observations across those branches,
@@ -184,7 +185,7 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	if err != nil &&
 		!errors.Is(err, context.Canceled) &&
 		!errors.Is(err, context.DeadlineExceeded) {
-		err = imagesJSONProtocolError("Failed to read upstream image JSON response: " + logredact.SanitizeUpstreamQueries(err.Error()))
+		err = imagesProtocolError("Failed to read upstream image JSON response: " + logredact.SanitizeUpstreamQueries(err.Error()))
 	}
 	observed := &imagesObservedSink{OutputSink: sink}
 	sink = observed
@@ -204,6 +205,11 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 	before := 0
 	if t.OAuth {
 		before = t.Options.AdjustedWrittenSize()
+	}
+	t.Options.RequireBase64 = !t.OAuth
+	t.Options.EventPrefix = "image_generation"
+	if input.Protocol == protocol.ProtocolImagesEdits {
+		t.Options.EventPrefix = "image_edit"
 	}
 	if input.Stream {
 		output = upstream.NewOutputContext(sink)
@@ -227,12 +233,25 @@ func (ImagesExecutor) Execute(ctx context.Context, input upstream.AttemptInput, 
 		} else if t.OAuth {
 			usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesOAuthStreaming(resp, output, t.Options, started, t.ResponseFormat, t.StreamPrefix, input.ResponseModel)
 		} else {
-			usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesStreaming(resp, output, t.Options, started)
+			usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesStreaming(ctx, resp, output, t.Options)
 		}
 	} else if t.OAuth {
 		usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesOAuthNonStreaming(resp, sink, t.Options, t.ResponseFormat, input.ResponseModel)
+	} else if mediaErr == nil && mediaType == "text/event-stream" {
+		usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesSSEToJSON(ctx, resp, sink, t.Options, t.ResponseFormat)
 	} else {
 		usage, result.ObservedImages, result.ImageOutputSizes, err = ReadImagesNonStreaming(resp, sink, t.Options)
+	}
+	if !t.OAuth && !streamJSON {
+		if imageErr, ok := errors.AsType[*OpenAIImagesUpstreamError](err); ok {
+			imageErr.UpstreamRequestID = result.RequestID
+			if t.Options.ObserveError != nil {
+				t.Options.ObserveError(resp.StatusCode, imageErr.Message, "")
+			}
+			if t.Options.WriteHTTPError != nil {
+				t.Options.WriteHTTPError(imageErr)
+			}
+		}
 	}
 	result.Usage = upstream.TokenUsage{
 		InputTokens:              usage.InputTokens,

@@ -108,17 +108,21 @@ OpenAI 兼容非流式响应的 usage，按 `usage`、`response.usage`、`data.u
 推理历史的读取、请求回填和响应缓存，由 `gateway/session.ReasoningHistory` 使用同一个可选的缓存能力完成：保留客户端的 reasoning item ID，TTL 七天，单独的操作预算两秒，读取失败时放行，写入失败时只记日志。这份数据在缓存过期或丢失后无法恢复。
 
 <a id="images_url_backfill"></a>
-### 图片结果回填
+### 图片结果回填与模式转换
 
-图片 API Key 和 OAuth 的单次发送和响应释放由 ImagesExecutor 执行，网关的入站编排决定提供商恢复、失败重试和完成处理。图片的实际产出、HTTP 提交和失败分别记录；非流式时按张数回退、部分结果的返回，各入口按自己的规则处理。
+图片 API Key 和 OAuth 的单次发送和响应释放由 ImagesExecutor 执行，网关的入站编排决定提供商恢复、失败重试和完成处理。图片的实际产出、HTTP 提交和失败分别记录。API Key 的原生图片结果可以双向转换，OAuth 继续使用 Responses 图片转换。
 
 图片入口由 `gateway/httpapi.OpenAIImagesExecutor` 组合请求和输出能力，app 把同一个实例直接绑定到媒体运行时。API Key 和 OAuth 两个分支各有协议转换、实际产出计数和失败资格。图片请求在原位置和客户端的取消脱钩，读取完成后才交付已观测的用量；JSON 心跳不算实际的图片输出。结构化的"图片工具不可用"事件，由 `provider/provider.ImageToolCooldown` 写入模型级冷却；模型改用文字回复时，不触发这项写入。
 
 `stream=true` 的图片请求，在每次实际发送上游 HTTP 请求前启动 SSE 注释心跳，覆盖等待响应头的阶段。API Key 和 OAuth 使用同一个 `gateway.image_stream_keepalive_interval`，默认 10 秒，设为 `0` 关闭。首个周期到达前可以直接返回原有 HTTP 错误；上游返回 SSE 时，取得响应头后交给 SSE 读取器接续保活。上游返回普通 JSON 或 HTTP 错误时，等待心跳持续到有大小限制的读体结束，再停止并交给输出逻辑。心跳字节和已提交的响应格式跨尝试保留，仅有注释时仍按现有规则决定是否重试。
 
-流式请求按上游响应选择读取方式：合法的 `text/event-stream`（包括媒体类型参数）使用 SSE 读取器，其余成功响应按标准图片 JSON 解析。完整 JSON 需要非空的 `data[]`，每项包含非空字符串 `b64_json` 或 `url`。生成接口逐项输出 `image_generation.completed`，编辑接口逐项输出 `image_edit.completed`，最后发送 `data: [DONE]`。图片内容、修订提示词、创建时间和图片元数据随完成事件返回；响应级总 usage 只放在最后一个完成事件中。
+OpenAI API Key 的生成和编辑分别读取 `credentials.images_generations_mode`、`credentials.images_edits_mode`。`both` 跟随客户端；`non_streaming` 从 JSON 或 multipart 中移除 `stream` 和 `partial_images`；`streaming` 设置 `stream=true`，客户端要求非流式时另设 `partial_images=0`。每次提供商尝试都从原始请求构造出站载荷，上传图片、mask、其他字段和客户端模式独立保留。未配置的旧提供商按 `both` 处理。
 
-JSON 转换先验证完整文档，再交付完成事件。实际图片数量和尺寸从原始 `data[]` 观察一次，usage 也只解析一次，转换后的 SSE 不再次参与结算计数。HTTP 200 中的 `error` 对象按失败处理；非取消类的读取失败、无效 JSON、空或异常 `data` 结构以 `invalid_upstream_response` 结束，不再次发起生成，也不保留成功图片用于结算。读取的取消和超时原因传给外层终止处理。图片客户端断开后的用量收集继续使用已读取完整 JSON 中的实际结果。非流式请求继续返回 JSON；错误提交规则见[网关错误响应策略](gateway_error_policy.md#处理位置)。
+成功响应按实际 Content-Type 选择读取器。JSON 转 SSE 先验证完整文档与全部 `data[]`，再逐项输出 `image_generation.completed` 或 `image_edit.completed`，最后发送 `data: [DONE]`。每项包含非空字符串 `b64_json` 或 `url`。原生 API Key 的 URL 项经过安全下载补上 `b64_json`，总 usage 只随最后一张图发送。这项流式格式转换不依赖可选的 `images_url_to_b64_json` 开关；下载等待期间继续发送 SSE 注释心跳。中间预览无法从非流式结果重建。
+
+SSE 转 JSON 收集、去重完成图片，输出 `created`、`data[]` 和 usage。预览事件不作为最终图片；错误事件、读体失败、帧中断、字节超限和完成图片少于请求张数都会结束尝试。客户端要求 `response_format=url` 而结果只有 Base64 时，沿用 data URL 格式。原生 SSE 的逐帧转发与聚合共用读取器；事件多行 data 会合并，声明 SSE 却返回完整 Images JSON 的兼容上游也会转换成客户端要求的格式。
+
+图片数量、尺寸和 usage 从上游原始结果观察，转换后的内容不再次参与结算。HTTP 200 中的 `error` 对象按失败处理。转换和下载失败不会再次提交生图；已经观测到的原生完成图片和用量在失败时保留，包括非流式客户端聚合到一半的情况。客户端断开后，原生流停止下游写入并继续收集上游结果；等待心跳和实际输出仍分别决定 HTTP 提交与重试窗口。诊断记录客户端模式、出站模式、响应格式和是否转换。错误提交规则见[网关错误响应策略](gateway_error_policy.md#处理位置)。
 
 原生 Images 的 `image_generation.completed` 和 `image_edit.completed` 都按实际图片内容计数，沿用 ID、call ID 和内容摘要的去重规则。部分图片事件与没有图片内容的完成事件不增加完成图片数，完成事件中的尺寸和用量照常保留。
 
@@ -130,7 +134,7 @@ OpenAI API Key 提供商可以通过 `extra.images_url_to_b64_json=true` 开启�
 
 ### 创作台的 Images 请求
 
-创作台的异步执行器，`generate` 使用 `/v1/images/generations` 的 JSON，`edit` 和 `inpaint` 使用 `/v1/images/edits` 的 multipart；固定发送 PNG、单张 `n=1`，并按最终模型的能力透传尺寸、质量和背景。GPT Image 模型不发送 `response_format`，只有 DALL-E 模型带 `response_format=b64_json`。inpaint 的 mask 需要是和源图同尺寸、4 MiB 以内的 PNG，透明像素表示需要重绘的区域。
+创作台的异步执行器读取同一套端点模式能力，流式上游由共享 Images 读取器汇总为最终图片。`generate` 使用 `/v1/images/generations` 的 JSON，`edit` 和 `inpaint` 使用 `/v1/images/edits` 的 multipart；固定发送 PNG、单张 `n=1`，并按最终模型的能力透传尺寸、质量和背景。GPT Image 模型不发送 `response_format`，只有 DALL-E 模型带 `response_format=b64_json`。inpaint 的 mask 需要是和源图同尺寸、4 MiB 以内的 PNG，透明像素表示需要重绘的区域。
 
 兼容上游可能只返回 `data[].url`。创作台优先解析可用的 `b64_json`，没有可用的 Base64 时下载 URL 图片；这条路径一定要拿到图片的字节，不依赖普通 API 的 `images_url_to_b64_json` 开关。下载复用上面的回填下载器和提供商代理，保留签名 URL，不带生图的认证和自定义请求头，并应用相同的公网、重定向、格式、20 MiB 大小和单次 60 秒的限制。生图的响应在下载之前关闭，释放连接。
 
