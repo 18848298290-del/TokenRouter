@@ -13,6 +13,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,6 +61,11 @@ var easyPayNotifyAllowedParams = map[string]struct{}{
 	"api_trade_no": {}, "addtime": {}, "endtime": {}, "buyer": {},
 	"timestamp": {}, "sign": {}, "sign_type": {},
 }
+
+// easyPayRefundSuccessTextPattern is the complete plain-text success format
+// observed from V1-compatible refund endpoints. Captured money is compared
+// with the amount submitted for the current attempt before success is exposed.
+var easyPayRefundSuccessTextPattern = regexp.MustCompile(`^退款成功！退款金额¥([0-9]+(?:\.[0-9]{1,2})?)$`)
 
 // EasyPay sends signed checkout, query and refund requests for one configured
 // aggregation instance.
@@ -546,9 +552,12 @@ func parseEasyPayQueryResponse(statusCode int, body []byte, outTradeNo string) (
 	}, nil
 }
 
-// ConfirmNotification checks a verified success callback against the
-// upstream order before local fulfillment. Paid state, amount and any returned
-// upstream trade number must agree with the signed callback.
+// ConfirmNotification is called for a verified EasyPay success notification
+// after webhook handling establishes that its local order exists. It queries
+// the same merchant configuration that verified the callback; paid state,
+// amount and any returned upstream trade number must agree. On success it may
+// fill the notification's TradeNo before local fulfillment, while every error
+// leaves the local order unchanged and asks the gateway to retry the callback.
 func (e *EasyPay) ConfirmNotification(ctx context.Context, notification *payment.PaymentNotification) error {
 	if notification == nil || notification.Status != payment.NotificationStatusSuccess {
 		return nil
@@ -682,8 +691,9 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 
 // Refund submits available merchant-order and upstream-trade forms in that
 // order, returning the identity of the successful attempt. A transport error
-// stops submission immediately; a parsed order-not-found diagnostic permits
-// the next form, while other parsed failures return at once.
+// stops submission immediately with pending progress because request outcome
+// is unknown; a parsed order-not-found diagnostic permits the next form, while
+// other explicit failures return at once.
 //
 // Each form carries the requested amount but omits the workflow OperationID.
 // The alternative is another order lookup representation, so callers should
@@ -699,9 +709,13 @@ func (e *EasyPay) Refund(ctx context.Context, req payment.RefundRequest) (*payme
 	for i, attempt := range attempts {
 		body, status, err := e.postRaw(ctx, e.apiBase()+"/api.php?act=refund", attempt.params)
 		if err != nil {
-			return nil, fmt.Errorf("easypay refund request: %w", err)
+			return &payment.RefundResponse{
+				RefundID: attempt.refundID,
+				Status:   payment.ProviderStatusPending,
+			}, fmt.Errorf("easypay refund request outcome unknown: %w", err)
 		}
-		if err := parseEasyPayRefundResponse(status, body); err != nil {
+		refundStatus, err := parseEasyPayRefundResponse(status, body, req.Amount)
+		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -712,7 +726,7 @@ func (e *EasyPay) Refund(ctx context.Context, req payment.RefundRequest) (*payme
 			}
 			return nil, err
 		}
-		return &payment.RefundResponse{RefundID: attempt.refundID, Status: payment.ProviderStatusSuccess}, nil
+		return &payment.RefundResponse{RefundID: attempt.refundID, Status: refundStatus}, nil
 	}
 	return nil, firstErr
 }
@@ -767,54 +781,61 @@ func isEasyPayRefundOrderNotFound(err error) bool {
 		strings.Contains(lower, "not exist")
 }
 
-// parseEasyPayRefundResponse accepts successful HTTP responses in the JSON and
-// text forms returned by EasyPay V1 implementations. JSON code one is accepted
-// directly; code zero needs an explicit success message, and non-JSON text must
-// contain an unambiguous refund-success result. Other responses use a bounded
-// body summary unless JSON supplies a nonblank diagnostic message.
-func parseEasyPayRefundResponse(status int, body []byte) error {
+// parseEasyPayRefundResponse classifies one submitted refund response as
+// success, pending manual verification, or explicit failure. JSON code one and
+// exact plain acknowledgements establish success. The complete Chinese success
+// format must report the submitted amount; other successful HTTP responses are
+// pending because they do not prove that this attempt completed. Transport and
+// non-2xx outcomes are also pending at the adapter boundary; documented JSON
+// code zero responses are explicit failures.
+func parseEasyPayRefundResponse(status int, body []byte, expectedAmount string) (string, error) {
 	summary := summarizeEasyPayResponse(body)
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return fmt.Errorf("easypay refund HTTP %d: %s", status, summary)
+		return payment.ProviderStatusPending, nil
 	}
 
 	trimmed := strings.TrimSpace(string(body))
 	if trimmed == "" {
-		return fmt.Errorf("easypay refund empty response (HTTP %d): %s", status, summary)
+		return payment.ProviderStatusPending, nil
 	}
 
 	lower := strings.ToLower(trimmed)
 	if strings.HasPrefix(lower, "<!doctype html") || strings.HasPrefix(lower, "<html") ||
 		(strings.HasPrefix(lower, "<") && strings.Contains(lower, "html")) {
-		return fmt.Errorf("easypay refund non-JSON response (HTTP %d): %s", status, summary)
+		return payment.ProviderStatusPending, nil
 	}
 
 	if strings.HasPrefix(trimmed, "{") {
 		var resp struct {
 			Code any `json:"code"` // numeric or textual response code
-			// Msg supplies the V1 refund result or failure diagnostic. Code zero uses
-			// this text to distinguish a successful refund from a rejected request.
+			// Msg supplies the V1 refund result, optional returned money, or failure
+			// diagnostic. Code zero remains failure regardless of success-looking text.
 			Msg string `json:"msg"`
 		}
 		if err := json.Unmarshal(body, &resp); err != nil {
-			return fmt.Errorf("easypay refund non-JSON response (HTTP %d): %s", status, summary)
+			return payment.ProviderStatusPending, nil
 		}
-		if easyPayResponseCodeIsSuccess(resp.Code) ||
-			(easyPayResponseCodeIsZero(resp.Code) && easyPayRefundTextIsSuccess(resp.Msg)) {
-			return nil
+		if easyPayResponseCodeIsSuccess(resp.Code) {
+			if easyPayRefundTextReportsAmount(resp.Msg) && !easyPayRefundTextIsSuccess(resp.Msg, expectedAmount) {
+				return payment.ProviderStatusPending, nil
+			}
+			return payment.ProviderStatusSuccess, nil
 		}
-		msg := strings.TrimSpace(resp.Msg)
-		if msg == "" {
-			// Use the bounded body diagnostic when JSON contains no usable message,
-			// retaining context for refund failure classification.
-			msg = summary
+		if easyPayResponseCodeIsZero(resp.Code) {
+			msg := strings.TrimSpace(resp.Msg)
+			if msg == "" {
+				// Use the bounded body diagnostic when JSON contains no usable message,
+				// retaining context for refund failure classification.
+				msg = summary
+			}
+			return "", fmt.Errorf("easypay refund failed (HTTP %d): %s", status, msg)
 		}
-		return fmt.Errorf("easypay refund failed (HTTP %d): %s", status, msg)
+		return payment.ProviderStatusPending, nil
 	}
-	if easyPayRefundTextIsSuccess(trimmed) {
-		return nil
+	if easyPayRefundTextIsSuccess(trimmed, expectedAmount) {
+		return payment.ProviderStatusSuccess, nil
 	}
-	return fmt.Errorf("easypay refund non-JSON response (HTTP %d): %s", status, summary)
+	return payment.ProviderStatusPending, nil
 }
 
 // easyPayResponseCodeIsSuccess reports whether JSON code is exactly numeric or
@@ -832,8 +853,8 @@ func easyPayResponseCodeIsSuccess(code any) bool {
 }
 
 // easyPayResponseCodeIsZero reports whether JSON code is exactly numeric or
-// textual zero. The refund parser also requires a success message for this V1
-// response variant.
+// textual zero. Refund handling treats this documented result as failure even
+// when its free-text diagnostic contains success-looking words.
 func easyPayResponseCodeIsZero(code any) bool {
 	switch v := code.(type) {
 	case float64:
@@ -846,19 +867,34 @@ func easyPayResponseCodeIsZero(code any) bool {
 	}
 }
 
-// easyPayRefundTextIsSuccess recognizes explicit V1 refund-success text after
-// trimming whitespace and an optional UTF-8 byte-order mark. Exact English
-// acknowledgements and Chinese refund-success prefixes are accepted; unrelated
-// text containing the word success remains a failure diagnostic.
-func easyPayRefundTextIsSuccess(value string) bool {
+// easyPayRefundTextIsSuccess recognizes exact V1 refund-success text after
+// trimming whitespace and an optional UTF-8 byte-order mark. English tokens
+// carry no amount. The observed Chinese format must match completely and its
+// reported money must equal the amount submitted for this refund attempt.
+func easyPayRefundTextIsSuccess(value, expectedAmount string) bool {
 	normalized := strings.TrimSpace(strings.TrimPrefix(value, "\ufeff"))
 	switch strings.ToLower(normalized) {
 	case "1", "ok", "success":
 		return true
 	}
-	return strings.HasPrefix(normalized, "退款成功") ||
-		strings.HasPrefix(normalized, "退款已成功") ||
-		strings.HasPrefix(normalized, "已退款")
+	matches := easyPayRefundSuccessTextPattern.FindStringSubmatch(normalized)
+	if len(matches) != 2 {
+		return false
+	}
+	reported, reportedErr := strconv.ParseFloat(matches[1], 64)
+	expected, expectedErr := strconv.ParseFloat(strings.TrimSpace(expectedAmount), 64)
+	return reportedErr == nil && expectedErr == nil &&
+		payment.IsValidProviderAmount(reported) && payment.IsValidProviderAmount(expected) &&
+		math.Abs(reported-expected) <= easypayAmountTolerance
+}
+
+// easyPayRefundTextReportsAmount reports whether text claims the observed
+// Chinese success format, including malformed or mismatched variants. JSON
+// code one uses this to keep a contradictory amount pending instead of letting
+// the status code override the supplied money.
+func easyPayRefundTextReportsAmount(value string) bool {
+	normalized := strings.TrimSpace(strings.TrimPrefix(value, "\ufeff"))
+	return strings.HasPrefix(normalized, "退款成功！退款金额¥")
 }
 
 // summarizeEasyPayResponse collapses body whitespace and uses an empty marker

@@ -708,63 +708,136 @@ func TestEasyPayRefundRetriesWithTradeNoWhenOutTradeNoNotFound(t *testing.T) {
 	}
 }
 
-// TestEasyPayRefundResponseCompatibility serves the JSON and plain-text success
-// variants used by V1-compatible refund endpoints. Each accepted body must
-// complete the adapter call without a parser error.
+// TestEasyPayRefundResponseCompatibility serves explicit JSON and exact
+// plain-text success variants. Reported Chinese money must match the amount
+// submitted for the current refund attempt.
 func TestEasyPayRefundResponseCompatibility(t *testing.T) {
 	t.Parallel()
 
 	for _, body := range []string{
 		`{"code":1,"msg":"ok"}`,
 		`{"code":"1","msg":"success"}`,
-		`{"code":0,"msg":"退款成功！退款金额¥10.20"}`,
-		`{"code":"0","msg":"退款已成功"}`,
+		`{"code":1,"msg":"退款成功！退款金额¥10.20"}`,
 		"退款成功！退款金额¥10.20",
-		"\ufeff 已退款：10.20元 ",
+		"\ufeff 退款成功！退款金额¥10.20 ",
 		"success",
+		"ok",
 		"1",
 	} {
 		t.Run(body, func(t *testing.T) {
 			t.Parallel()
-			if err := parseEasyPayRefundResponse(http.StatusOK, []byte(body)); err != nil {
+			status, err := parseEasyPayRefundResponse(http.StatusOK, []byte(body), "10.20")
+			if err != nil {
 				t.Fatalf("parseEasyPayRefundResponse(%q): %v", body, err)
+			}
+			if status != payment.ProviderStatusSuccess {
+				t.Fatalf("parseEasyPayRefundResponse(%q) status = %q, want success", body, status)
 			}
 		})
 	}
 }
 
-// TestEasyPayRefundResponseErrors serves HTML, invalid JSON, ambiguous text,
-// rejected JSON, HTTP failure and empty responses. It expects diagnostics with
-// the corresponding status and bounded summary for each short supplied body.
+// TestEasyPayRefundIndeterminateResponsesRemainPending serves successful HTTP
+// responses that do not prove this refund attempt completed. Refund must stop
+// without trying another identifier and expose pending manual verification.
+func TestEasyPayRefundIndeterminateResponsesRemainPending(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string // named indeterminate response case
+		statusCode int    // served HTTP status; zero selects HTTP 200
+		body       string // served response body
+	}{
+		{name: "html response", body: "<html>bad config</html>"},
+		{name: "non json response", body: "not json"},
+		{name: "ambiguous success text", body: "原订单未支付成功"},
+		{name: "previous refund diagnostic", body: "已退款，请勿重复退款"},
+		{name: "fractional JSON code", body: `{"code":1.9,"msg":"invalid code"}`},
+		{name: "empty response", body: ""},
+		{name: "plain amount mismatch", body: "退款成功！退款金额¥10.20"},
+		{name: "JSON amount mismatch", body: `{"code":1,"msg":"退款成功！退款金额¥10.20"}`},
+		{name: "upstream bad gateway", statusCode: http.StatusBadGateway, body: "bad gateway"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var attempts int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				attempts++
+				if tt.statusCode != 0 {
+					w.WriteHeader(tt.statusCode)
+				}
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			provider := newTestEasyPay(t, server.URL)
+			resp, err := provider.Refund(context.Background(), payment.RefundRequest{
+				TradeNo: "trade-123",
+				OrderID: "out-456",
+				Amount:  "1.50",
+			})
+			if err != nil {
+				t.Fatalf("Refund returned error: %v", err)
+			}
+			if resp == nil || resp.Status != payment.ProviderStatusPending || resp.RefundID != "out-456" {
+				t.Fatalf("Refund response = %+v, want pending with merchant refund id", resp)
+			}
+			if attempts != 1 {
+				t.Fatalf("refund attempts = %d, want 1 for indeterminate response", attempts)
+			}
+		})
+	}
+}
+
+// TestEasyPayRefundTransportErrorPreservesPendingProgress closes a loopback
+// endpoint before submission. The adapter must retain the attempted merchant
+// identity with pending state so the workflow can compensate and reconcile it.
+func TestEasyPayRefundTransportErrorPreservesPendingProgress(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	serverURL := server.URL
+	server.Close()
+
+	provider := newTestEasyPay(t, serverURL)
+	resp, err := provider.Refund(context.Background(), payment.RefundRequest{
+		TradeNo: "trade-123",
+		OrderID: "out-456",
+		Amount:  "1.50",
+	})
+	if err == nil {
+		t.Fatal("Refund returned nil error")
+	}
+	if resp == nil || resp.Status != payment.ProviderStatusPending || resp.RefundID != "out-456" {
+		t.Fatalf("Refund response = %+v, want pending with attempted merchant refund id", resp)
+	}
+}
+
+// TestEasyPayRefundResponseErrors serves explicit JSON and HTTP failures. The
+// adapter must return their diagnostics instead of converting them to success
+// or pending progress.
 func TestEasyPayRefundResponseErrors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string // named refund rejection case
+		name       string // named explicit failure case
 		statusCode int    // served HTTP status code
 		body       string // served response body text
 		want       string // expected refund diagnostic fragment
 	}{
-		{name: "html response", statusCode: http.StatusOK, body: "<html>bad config</html>", want: "non-JSON response (HTTP 200): <html>bad config</html>"},
-		{name: "non json response", statusCode: http.StatusOK, body: "not json", want: "non-JSON response (HTTP 200): not json"},
-		{name: "ambiguous success text", statusCode: http.StatusOK, body: "原订单未支付成功", want: "non-JSON response (HTTP 200): 原订单未支付成功"},
 		{name: "zero failure code", statusCode: http.StatusOK, body: `{"code":0,"msg":"退款失败"}`, want: "refund failed (HTTP 200): 退款失败"},
-		{name: "fractional success code", statusCode: http.StatusOK, body: `{"code":1.9,"msg":"invalid code"}`, want: "refund failed (HTTP 200): invalid code"},
-		{name: "non 2xx response", statusCode: http.StatusBadGateway, body: "bad gateway", want: "HTTP 502: bad gateway"},
-		{name: "empty response", statusCode: http.StatusOK, body: "", want: "empty response (HTTP 200): <empty>"},
+		{name: "success-looking failure diagnostic", statusCode: http.StatusOK, body: `{"code":0,"msg":"已退款金额超过订单金额，本次退款失败"}`, want: "refund failed (HTTP 200): 已退款金额超过订单金额，本次退款失败"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				// Serve the fixed response for client parser assertions; handler Write
-				// errors are discarded while callers check channel results or diagnostics.
 				w.WriteHeader(tt.statusCode)
 				_, _ = w.Write([]byte(tt.body))
 			}))
-			// Close the loopback listener when the fixture returns, releasing its HTTP
-			// resources after the request and response assertions finish.
 			defer server.Close()
 
 			provider := newTestEasyPay(t, server.URL)

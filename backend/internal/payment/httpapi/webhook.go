@@ -124,8 +124,8 @@ func (h *PaymentWebhookHandler) AirwallexWebhook(c *gin.Context) {
 // error wins even for an irrelevant nil notification. A missing provider is
 // acknowledged except official WeChat; other lookup failures return 500.
 // Failed verification returns 400 after bounded diagnostics. Verified missing
-// orders are acknowledged, while confirmation or other processing failures
-// remain retryable.
+// orders are acknowledged before optional upstream confirmation, while real
+// lookup, confirmation, or other processing failures remain retryable.
 func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string) {
 	var rawBody string
 	if c.Request.Method == http.MethodGet {
@@ -203,6 +203,29 @@ func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string)
 
 	if confirmer, ok := verifiedProvider.(payment.NotificationConfirmer); ok &&
 		notification.Status == payment.NotificationStatusSuccess {
+		// Preserve the existing missing-order acknowledgement before a gateway
+		// query. Obsolete verified callbacks have no local state to fulfill, while
+		// database failures remain retryable and existing orders still require the
+		// same verified merchant instance to confirm upstream payment.
+		if _, err := h.paymentService.FindPaymentNotificationOrder(c.Request.Context(), notification.OrderID); err != nil {
+			if errors.Is(err, payment.ErrOrderNotFound) {
+				slog.Warn("[Payment Webhook] unknown order before confirmation, acking to stop retries",
+					"provider", resolvedProviderKey,
+					"outTradeNo", notification.OrderID,
+					"tradeNo", notification.TradeNo,
+				)
+				WebhookWriteSuccessResponse(c, resolvedProviderKey)
+				return
+			}
+			slog.Error("[Payment Webhook] pre-confirmation order lookup failed",
+				"provider", resolvedProviderKey,
+				"outTradeNo", notification.OrderID,
+				"tradeNo", notification.TradeNo,
+				"error", err,
+			)
+			c.String(http.StatusInternalServerError, "order lookup failed")
+			return
+		}
 		if err := confirmer.ConfirmNotification(c.Request.Context(), notification); err != nil {
 			slog.Error("[Payment Webhook] upstream confirmation failed",
 				"provider", resolvedProviderKey,
@@ -326,9 +349,12 @@ func WebhookVerifyNotificationWithProviders(ctx context.Context, providers []pay
 	return provider.ProviderKey(), notification, nil
 }
 
-// webhookVerifyNotificationWithProviders retains the exact provider instance
-// that accepted the callback so optional upstream confirmation uses the same
-// merchant configuration before fulfillment.
+// webhookVerifyNotificationWithProviders is the handler-only variant that
+// retains the exact provider instance accepting the callback. Call it after
+// candidate lookup and before any local order mutation. A nil notification is
+// a verified irrelevant event; otherwise the caller may use optional provider
+// capabilities on this same merchant instance before fulfillment. Candidates
+// are tried in order, and the last verification error wins when none accepts.
 func webhookVerifyNotificationWithProviders(ctx context.Context, providers []payment.Provider, rawBody string, headers map[string]string) (payment.Provider, *payment.PaymentNotification, error) {
 	var lastErr error
 	for _, provider := range providers {
