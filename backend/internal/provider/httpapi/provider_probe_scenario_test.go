@@ -1604,9 +1604,9 @@ func TestProviderTestService_OpenAIExplicitTextTypeDoesNotInspectModelName(t *te
 }
 
 // TestProviderTestService_OpenAIImageAPIKeyHandlesURLAndEmptyImages returns a
-// valid HTTPS image URL, missing image data or an invalid URL. Valid output
-// emits image and success, while unusable results report the expected
-// empty-image failure.
+// valid HTTPS image URL, malformed native JSON, or an invalid URL. Valid output
+// emits image and success. Shared validation rejects malformed image arrays and
+// error envelopes before preview output, while URL presentation rejects unsupported schemes.
 func TestProviderTestService_OpenAIImageAPIKeyHandlesURLAndEmptyImages(t *testing.T) {
 	cases := []struct {
 		name    string // scenario description text
@@ -1615,7 +1615,10 @@ func TestProviderTestService_OpenAIImageAPIKeyHandlesURLAndEmptyImages(t *testin
 		want    string // expected event body text
 	}{
 		{"url 返回", `{"data":[{"url":"https://cdn.example/cat.png"}]}`, false, `"image_url":"https://cdn.example/cat.png"`},
-		{"没有图片数据", `{"data":[{"revised_prompt":"draw a cat"}]}`, true, "Upstream returned no image data"},
+		{"没有图片数据", `{"data":[{"revised_prompt":"draw a cat"}]}`, true, "invalid_upstream_response"},
+		{"空图片数组", `{"data":[]}`, true, "invalid_upstream_response"},
+		{"后续图片损坏", `{"data":[{"b64_json":"image"},{"url":7}]}`, true, "invalid_upstream_response"},
+		{"HTTP 200 错误体", `{"error":{"type":"server_error","code":"server_error","message":"failed"}}`, true, "server_error"},
 		{"拒绝非 https 链接", `{"data":[{"url":"javascript:alert(1)"}]}`, true, "Upstream returned no image data"},
 	}
 	for _, tc := range cases {
@@ -1643,6 +1646,10 @@ func TestProviderTestService_OpenAIImageAPIKeyHandlesURLAndEmptyImages(t *testin
 			require.Equal(t, tc.wantErr, err != nil)
 			require.Contains(t, rec.Body.String(), tc.want)
 			require.Equal(t, !tc.wantErr, strings.Contains(rec.Body.String(), `"success":true`))
+			if tc.wantErr {
+				require.Contains(t, rec.Body.String(), `"type":"error"`)
+				require.NotContains(t, rec.Body.String(), `"type":"image"`)
+			}
 		})
 	}
 }

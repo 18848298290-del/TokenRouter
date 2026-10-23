@@ -147,7 +147,7 @@ app 直接构造一个 TestService 和 TestTargets。计划测试和分组探测
 
 Kimi、Zhipu、DeepSeek 的连接测试，只测试提供商 `upstream_protocols` 里启用的原生端点；集合为空时，直接报告没有启用的协议，不发起上游请求。管理端可以用 `protocol=chat_completions|anthropic|responses` 只测其中一个已经启用的协议，选了没启用的协议，在请求上游之前就会失败；省略时，按 Chat、Messages、Responses 的顺序，依次验证所有已启用的协议。测试复用提供商的自定义 Base URL、代理、TLS 指纹和受保护的 Header Override。Anthropic 协议的自定义中继，在模型同步等 OpenAI 格式的请求里，只去掉末尾的 `/anthropic`，host 和之前的路径前缀都保持不变。
 
-管理端的连接测试请求，要明确选择 `test_type=text|image`，并在同一个请求里传自定义的 `prompt`。文字测试不会因为模型名里有图片标记就换端点；图片测试由 OpenAI、Gemini 或 Grok 提供商的平台图片端点执行，和模型名无关。OpenAI 的 `compact` 和 `legacy_compact` 只执行固定载荷的连接测试，不显示也不使用自定义提示词。未传 `test_type` 的调用按所选分组的最终模型输出属性选择文字或图片测试，输出未知时要求明确测试类型或补充属性。图片和文字的结果，分别通过 SSE 的图片事件和内容事件返回；不支持图片端点的平台，直接返回可以诊断的错误，不会悄悄改成文字测试。OpenAI API Key 和 Grok 的图片测试，同时接受 `b64_json` 和图片链接（OpenAI 只接受 `https` 或 `data:image/` 开头的链接）；上游返回了结果、但没有可以展示的图片时，测试判为失败，并附上截断的响应正文。
+管理端的连接测试请求，要明确选择 `test_type=text|image`，并在同一个请求里传自定义的 `prompt`。文字测试不会因为模型名里有图片标记就换端点；图片测试由 OpenAI、Gemini 或 Grok 提供商的平台图片端点执行，和模型名无关。OpenAI 的 `compact` 和 `legacy_compact` 只执行固定载荷的连接测试，不显示也不使用自定义提示词。未传 `test_type` 的调用按所选分组的最终模型输出属性选择文字或图片测试，输出未知时要求明确测试类型或补充属性。图片和文字的结果，分别通过 SSE 的图片事件和内容事件返回；不支持图片端点的平台，直接返回可以诊断的错误，不会悄悄改成文字测试。OpenAI API Key 和 Grok 的图片测试，同时接受 `b64_json` 和图片链接（OpenAI 只接受 `https` 或 `data:image/` 开头的链接）；OpenAI 原生 JSON 先通过共享图片结果校验，HTTP 200 错误体、空数组和损坏图片条目直接返回诊断错误，不发送图片或成功事件。通过结构校验、但没有可展示链接的结果仍判为失败，并附上截断的响应正文。
 
 ## 额度与能力探测
 
