@@ -25,8 +25,8 @@ import (
 
 // transport.go exposes the four management tools through the official MCP
 // Streamable HTTP implementation. Every HTTP request authenticates a dedicated
-// token before the SDK receives it. Stateless transport keeps authorization
-// tied to each request instead of retaining a credential in an MCP session.
+// token and validates any supplied browser Origin before the SDK receives it.
+// Stateless transport ties authorization to each request.
 // The tools discover and execute only operations granted by the current token.
 //
 // The handler is assembled before routing and receives its immutable catalogue
@@ -109,7 +109,15 @@ func NewHandler(tokens *identity.MCPTokenService, state control.StateStore, totp
 	callSchema := map[string]any{"type": "object", "properties": map[string]any{"operation_id": map[string]any{"type": "string"}, "path": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}, "query": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}, "body": map[string]any{}, "idempotency_key": map[string]any{"type": "string"}, "confirmation_id": map[string]any{"type": "string"}, "file_id": map[string]any{"type": "string"}}, "required": []string{"operation_id"}, "additionalProperties": false}
 	server.AddTool(&mcp.Tool{Name: "read_operation", Description: "Execute a granted query using its described arguments. Only operations explicitly marked read_only are accepted.", InputSchema: callSchema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, h.read)
 	server.AddTool(&mcp.Tool{Name: "execute_operation", Description: "Execute a granted management action. When browser confirmation is required, retry identical arguments with confirmation_id after approval. The token preference does not bypass recent TOTP or browser authorization. Mutations are not automatically retried.", InputSchema: callSchema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false}}, h.execute)
-	h.transport = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: maxRequestBytes})
+	// A same-host reverse proxy connects over loopback while retaining the public
+	// Host. This public endpoint uses serveMCP's dedicated Bearer authentication
+	// and explicit browser Origin allowlist before SDK dispatch.
+	h.transport = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
+		Stateless:                  true,
+		JSONResponse:               true,
+		MaxRequestBodyBytes:        maxRequestBytes,
+		DisableLocalhostProtection: true,
+	})
 	return h
 }
 

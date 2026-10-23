@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -319,6 +320,113 @@ func TestBrowserApprovalBindsOwnerPayloadAndSingleExecution(t *testing.T) {
 	result, _ = f.invoke(t, "execute_operation", arguments)
 	require.True(t, result.IsError)
 	require.Equal(t, int64(1), f.writes.Load())
+}
+
+// TestMCPPublicHostOverLoopback reproduces a reverse proxy retaining the public Host
+// while connecting through loopback. Initialization accepts authenticated native and
+// trusted browser clients, while credential and Origin checks still reject invalid requests.
+func TestMCPPublicHostOverLoopback(t *testing.T) {
+	f := newMCPFixture(t)
+	address, ok := f.server.Listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	require.True(t, address.IP.IsLoopback())
+
+	tests := []struct {
+		name       string // descriptive admission scenario
+		host       string // forwarded public authority
+		origin     string // optional browser origin
+		credential string // presented Bearer credential
+		wantStatus int    // expected HTTP status
+		wantError  string // expected admission failure
+	}{
+		{
+			name:       "native client",
+			host:       "api.example.com",
+			credential: f.credential,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "public authority with port",
+			host:       "api.example.com:8443",
+			credential: f.credential,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "trusted browser origin",
+			host:       "api.example.com",
+			origin:     "https://management.example",
+			credential: f.credential,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "missing credential",
+			host:       "api.example.com",
+			wantStatus: http.StatusUnauthorized,
+			wantError:  "MCP access token required",
+		},
+		{
+			name: "invalid credential",
+			host: "api.example.com",
+			// Match the credential format so authentication rejects an unknown digest.
+			credential: "tr_mcp_" + strings.Repeat("x", 43),
+			wantStatus: http.StatusUnauthorized,
+			wantError:  "MCP access token is invalid or expired",
+		},
+		{
+			name:       "Host does not authorize Origin",
+			host:       "api.example.com",
+			origin:     "https://api.example.com",
+			credential: f.credential,
+			wantStatus: http.StatusForbidden,
+			wantError:  "Origin is not permitted",
+		},
+		{
+			name:       "lookalike browser origin",
+			host:       "api.example.com",
+			origin:     "https://management.example.attacker.invalid",
+			credential: f.credential,
+			wantStatus: http.StatusForbidden,
+			wantError:  "Origin is not permitted",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"reverse-proxy-regression","version":"1"}}}`
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, f.server.URL+"/mcp", strings.NewReader(body))
+			require.NoError(t, err)
+			// Keep the TCP destination on loopback while forwarding the public Host,
+			// matching a same-host reverse proxy without replacing the server context.
+			request.Host = tt.host
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Accept", "application/json, text/event-stream")
+			if tt.origin != "" {
+				request.Header.Set("Origin", tt.origin)
+			}
+			if tt.credential != "" {
+				request.Header.Set("Authorization", "Bearer "+tt.credential)
+			}
+			response, err := f.server.Client().Do(request)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, response.Body.Close()) })
+			data, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantStatus, response.StatusCode, string(data))
+			if tt.wantError != "" {
+				require.Equal(t, tt.wantError+"\n", string(data))
+				return
+			}
+			var envelope map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(data, &envelope))
+			require.JSONEq(t, `"2.0"`, string(envelope["jsonrpc"]))
+			require.JSONEq(t, `1`, string(envelope["id"]))
+			require.NotContains(t, envelope, "error")
+			var initialized mcp.InitializeResult
+			require.NoError(t, json.Unmarshal(envelope["result"], &initialized))
+			require.Equal(t, "2025-11-25", initialized.ProtocolVersion)
+			require.NotNil(t, initialized.ServerInfo)
+			require.Equal(t, "TokenRouter", initialized.ServerInfo.Name)
+		})
+	}
 }
 
 // TestMCPOriginAndCredentialIsolation supplies an attacker-controlled Host and Origin

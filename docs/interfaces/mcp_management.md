@@ -111,6 +111,8 @@ JSON 响应提供共享 HTTP envelope schema；已声明的具体响应 DTO 会�
 
 嵌入前端资源的发行构建将 `/mcp` 保留为后端入口，GET、POST 和 DELETE 均跳过 SPA 页面回退。反向代理也需要把这个路径转发给主 HTTP 服务。
 
+同机反向代理可以连接 `127.0.0.1:8080` 并保留公开域名的 `Host`。`/mcp` 在 SDK 分发前执行专用 Bearer 认证和下述 Origin 检查，并关闭 SDK 面向本地 MCP 服务的回环 Host 限制。直接运行二进制和使用 Docker 端口映射时，都可以沿用这一代理配置。
+
 客户端配置 Streamable HTTP 地址及专用 Bearer 令牌。支持读取环境变量的客户端应把凭据留在其密钥配置中。例如 Codex：
 
 ```toml
