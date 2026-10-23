@@ -51,17 +51,15 @@ const (
 	deviceMobile           = "mobile"         // mobile request device label
 )
 
-var (
-	// easyPayNotifyAllowedParams contains genuine asynchronous notification
-	// fields across common V1 implementations. Checkout-only fields stay excluded
-	// because their reusable signatures can otherwise be spliced into callbacks.
-	easyPayNotifyAllowedParams = map[string]struct{}{
-		"pid": {}, "trade_no": {}, "out_trade_no": {}, "type": {},
-		"name": {}, "money": {}, "trade_status": {}, "param": {},
-		"api_trade_no": {}, "addtime": {}, "endtime": {}, "buyer": {},
-		"timestamp": {}, "sign": {}, "sign_type": {},
-	}
-)
+// easyPayNotifyAllowedParams contains genuine asynchronous notification fields
+// across common V1 implementations. Checkout-only fields stay excluded because
+// their reusable signatures can otherwise be spliced into callbacks.
+var easyPayNotifyAllowedParams = map[string]struct{}{
+	"pid": {}, "trade_no": {}, "out_trade_no": {}, "type": {},
+	"name": {}, "money": {}, "trade_status": {}, "param": {},
+	"api_trade_no": {}, "addtime": {}, "endtime": {}, "buyer": {},
+	"timestamp": {}, "sign": {}, "sign_type": {},
+}
 
 // EasyPay sends signed checkout, query and refund requests for one configured
 // aggregation instance.
@@ -116,6 +114,7 @@ type easyPayQueryResult struct {
 	status  string // normalized provider order state
 	money   string // exact returned amount text
 	tradeNo string // exact returned upstream trade reference
+	failure string // explicit upstream failure diagnostic, if any
 }
 
 // easyPayRefundAttempt pairs a request form with the reference returned on its
@@ -472,8 +471,7 @@ func (e *EasyPay) queryOrder(ctx context.Context, outTradeNo string) (*easyPayQu
 	}
 	body, statusCode, err := e.postRaw(ctx, e.apiBase()+"/api.php?"+query.Encode(), params)
 	if err != nil {
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
+		if urlErr, ok := errors.AsType[*url.Error](err); ok {
 			err = urlErr.Err
 		}
 		return nil, fmt.Errorf("easypay query: %w", err)
@@ -483,8 +481,8 @@ func (e *EasyPay) queryOrder(ctx context.Context, outTradeNo string) (*easyPayQu
 
 // parseEasyPayQueryResponse accepts successful HTTP JSON objects and selects
 // status, money and trade identity from optional top-level or nested fields.
-// An explicit failure code or a different echoed merchant order rejects the
-// response before paid-looking status fields are considered.
+// An explicit failure code becomes a pending observation with a retained
+// diagnostic, while a different echoed merchant order rejects the response.
 func parseEasyPayQueryResponse(statusCode int, body []byte, outTradeNo string) (*easyPayQueryResult, error) {
 	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("easypay query HTTP %d", statusCode)
@@ -512,7 +510,11 @@ func parseEasyPayQueryResponse(statusCode int, body []byte, outTradeNo string) (
 		if msg == "" {
 			msg = summarizeEasyPayResponse(body)
 		}
-		return nil, fmt.Errorf("easypay query failed: %s", msg)
+		// QueryOrder is also used as a reachability probe with a fresh random
+		// order number. Preserve explicit upstream failures as pending observations
+		// there, while ConfirmNotification rejects the retained diagnostic before
+		// fulfillment.
+		return &easyPayQueryResult{status: payment.ProviderStatusPending, failure: msg}, nil
 	}
 	echoed := easyPayJSONScalar(pickEasyPayJSON(resp.OutTradeNo, resp.Data.OutTradeNo))
 	if echoed != "" && echoed != strings.TrimSpace(outTradeNo) {
@@ -554,6 +556,9 @@ func (e *EasyPay) ConfirmNotification(ctx context.Context, notification *payment
 	result, err := e.queryOrder(ctx, notification.OrderID)
 	if err != nil {
 		return fmt.Errorf("easypay confirm: %w", err)
+	}
+	if result.failure != "" {
+		return fmt.Errorf("easypay confirm: query failed: %s", result.failure)
 	}
 	if result.status != payment.ProviderStatusPaid {
 		return fmt.Errorf("easypay confirm: upstream reports order %s as not paid", notification.OrderID)

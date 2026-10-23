@@ -324,9 +324,10 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			wantAmount:  3.21,
 		},
 		{
-			name:      "query failure code is rejected",
-			body:      `{"code":0,"msg":"订单不存在"}`,
-			wantError: true,
+			name:        "query failure code remains pending",
+			body:        `{"code":0,"msg":"订单不存在","status":1,"money":"3.21"}`,
+			wantStatus:  payment.ProviderStatusPending,
+			wantTradeNo: orderID,
 		},
 		{
 			name:        "string scalar response is compatible",
@@ -452,12 +453,6 @@ func TestEasyPayQueryOrderRejectsUnsafeResponses(t *testing.T) {
 			statusCode: http.StatusOK,
 			body:       "",
 			wantErr:    "easypay query empty response (HTTP 200)",
-		},
-		{
-			name:       "failure code with paid status",
-			statusCode: http.StatusOK,
-			body:       `{"code":-1,"msg":"签名错误","status":1,"money":"10.00"}`,
-			wantErr:    "easypay query failed: 签名错误",
 		},
 		{
 			name:       "foreign order echo",
@@ -729,7 +724,6 @@ func TestEasyPayRefundResponseCompatibility(t *testing.T) {
 		"success",
 		"1",
 	} {
-		body := body
 		t.Run(body, func(t *testing.T) {
 			t.Parallel()
 			if err := parseEasyPayRefundResponse(http.StatusOK, []byte(body)); err != nil {
