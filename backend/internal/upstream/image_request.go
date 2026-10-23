@@ -2,14 +2,13 @@ package upstream
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/textproto"
 	"strings"
-
-	"github.com/tidwall/sjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
@@ -18,7 +17,8 @@ import (
 // while retaining the other parsed parts.
 // An image request can keep client prompt and upload data while routing
 // selects a different upstream model. JSON requests replace the model path
-// directly; multipart requests need a newly framed body because the model is a
+// through raw member values, consolidating duplicate keys before applying the
+// selected mode. Multipart requests need a newly framed body because model is a
 // text part among uploads and mask parts. Multipart output receives a fresh
 // boundary and a matching content type.
 //
@@ -41,9 +41,10 @@ func RewriteImageModel(body []byte, contentType string, model string) ([]byte, s
 // removes stream and partial_images, while forced streaming sets stream and
 // suppresses previews for clients awaiting a buffered response.
 //
-// JSON fields are patched without decoding unrelated numeric or extension
-// values. Multipart parts are copied in order with uploaded bytes and headers
-// retained. Every duplicate transport text field is replaced or removed, so
+// JSON member values retain raw numeric and extension representations while
+// duplicate keys use their last value before overrides apply. Multipart parts
+// retain uploaded bytes and headers. Every overridden transport field is unique
+// in JSON and consistently replaced or removed from multipart text parts, so
 // an upstream parser cannot select a stale client mode from a later part.
 func RewriteImageRequest(body []byte, contentType string, model string, mode protocol.ImageStreamMode, clientStream bool) ([]byte, string, error) {
 	fields := map[string]*string{}
@@ -70,24 +71,30 @@ func RewriteImageRequest(body []byte, contentType string, model string, mode pro
 	if err == nil && strings.EqualFold(mediaType, "multipart/form-data") {
 		return rewriteImageMultipartFields(body, contentType, fields)
 	}
-	for _, key := range []string{"model", "stream", "partial_images"} {
-		value, exists := fields[key]
-		if !exists {
-			continue
-		}
+	// Decode only top-level member values as raw JSON. This collapses duplicate
+	// control keys before mutation while preserving exact numbers and nested extensions.
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(body, &values); err != nil || values == nil {
+		return nil, "", fmt.Errorf("image request must be a JSON object")
+	}
+	for key, value := range fields {
 		if value == nil {
-			body, err = sjson.DeleteBytes(body, key)
+			delete(values, key)
 		} else if key == "model" {
-			body, err = sjson.SetBytes(body, key, *value)
+			// Encoding a string cannot fail; unrelated raw member values remain
+			// intact until the complete validated object is encoded below.
+			values[key], _ = json.Marshal(*value)
 		} else {
 			// Transport values are validated literals, so retain boolean and numeric
 			// JSON types rather than sending their multipart string representations.
-			body, err = sjson.SetRawBytes(body, key, []byte(*value))
-		}
-		if err != nil {
-			return nil, "", fmt.Errorf("rewrite image request %s: %w", key, err)
+			values[key] = json.RawMessage(*value)
 		}
 	}
+	body, err = json.Marshal(values)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode image request: %w", err)
+	}
+
 	return body, contentType, nil
 }
 

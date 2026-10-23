@@ -221,9 +221,9 @@ func (c *OpenAIImageOutputCounter) addOutputArray(output gjson.Result) {
 
 // addImageOutputItem records an object with a blank type string form or the
 // image_generation_call/image_generation.completed label and a nonblank result,
-// b64_json, or url string form. A raw partial_image substring discards the item,
-// including a match inside an unrelated value. Result fields supply output
-// evidence through gjson string forms, which also accept nonstring JSON values;
+// b64_json, or url string form. Explicit partial-image type labels are excluded;
+// unrelated metadata and URL text do not determine completion. Result fields
+// supply output evidence through gjson string forms, which accept nonstring values;
 // image bytes and URLs are not validated here.
 //
 // Identity prefers id, then call_id, then a hash of the selected trimmed result.
@@ -239,10 +239,22 @@ func (c *OpenAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 	if itemType != "" && itemType != "image_generation_call" && itemType != "image_generation.completed" && itemType != "image_edit.completed" {
 		return
 	}
-	// Exclude payloads carrying the raw partial-image marker before result
-	// selection. The substring screen can also match unrelated field names or values.
-	if strings.Contains(strings.ToLower(item.Raw), "partial_image") {
-		return
+	_ = c.AddCompletedImage(item)
+}
+
+// AddCompletedImage observes an image whose enclosing event already established
+// completion and reports whether its identity is new. Callers validate native
+// image fields or filter Responses item types before invoking this method; item
+// type labels and unrelated metadata do not decide completion here. Construct
+// the receiver with NewOpenAIImageOutputCounter and serialize its observations.
+//
+// Identity prefers id, call_id, and then the selected content hash. A repeated
+// identity can fill a missing size and returns false without increasing the
+// image count. Native readers use that result to suppress duplicate delivery,
+// independently from the generic event decoder's filtering of other item types.
+func (c *OpenAIImageOutputCounter) AddCompletedImage(item gjson.Result) bool {
+	if c == nil || !item.IsObject() {
+		return false
 	}
 	// Output evidence follows result, b64_json, then url, so an earlier nonblank
 	// value defines the hash identity when the item has no supplied identifier.
@@ -254,7 +266,7 @@ func (c *OpenAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		result = strings.TrimSpace(item.Get("url").String())
 	}
 	if result == "" {
-		return
+		return false
 	}
 	// Repeated completion events converge on the supplied ID before hashing
 	// result text. Distinct trimmed IDs can count identical text as separate outputs.
@@ -266,7 +278,7 @@ func (c *OpenAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		key = HashOpenAIImageOutputResult(result)
 	}
 	if key == "" {
-		return
+		return false
 	}
 	size := strings.TrimSpace(item.Get("size").String())
 	// Later terminal snapshots may add a missing size for this identity.
@@ -275,7 +287,7 @@ func (c *OpenAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		if size != "" && strings.TrimSpace(c.seenSizes[key]) == "" {
 			c.seenSizes[key] = size
 		}
-		return
+		return false
 	}
 	c.seen[key] = struct{}{}
 	c.seenOrder = append(c.seenOrder, key)
@@ -283,6 +295,7 @@ func (c *OpenAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		c.seenSizes[key] = size
 	}
 	c.count++
+	return true
 }
 
 // HashOpenAIImageOutputResult returns a lowercase SHA-256 hex digest of trimmed

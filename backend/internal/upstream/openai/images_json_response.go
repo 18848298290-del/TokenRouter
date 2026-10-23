@@ -13,8 +13,8 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// images_json_response.go converts buffered Images JSON into completed SSE
-// events for clients that requested streaming.
+// images_json_response.go validates native Images JSON and converts buffered
+// results into completed SSE events for clients that requested streaming.
 // A successful HTTP status can contain a structured error or incomplete image
 // data. The complete document and every data-array entry are validated before
 // any completion is delivered, preventing an error document from becoming a
@@ -44,31 +44,13 @@ func WriteImagesJSONStreaming(
 	options ImageResponseOptions,
 	eventName string,
 ) (wire.ForwardUsage, int, []string, error) {
-	if !gjson.ValidBytes(body) {
-		return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image response contains invalid JSON")
+	root, err := validateImagesJSONResponse(body)
+	if err != nil {
+		return wire.ForwardUsage{}, 0, nil, err
 	}
-	root := gjson.ParseBytes(body)
-	if !root.IsObject() {
-		return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image response must be a JSON object")
-	}
-	if value := root.Get("error"); value.Exists() && value.Type != gjson.Null {
-		return wire.ForwardUsage{}, 0, nil, OpenAIImagesUpstreamErrorFromGJSON(value, "")
-	}
-	data := root.Get("data")
-	if !data.IsArray() {
-		return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image JSON response must contain a nonempty data array")
-	}
-	images := data.Array()
-	if len(images) == 0 {
-		return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image JSON response must contain a nonempty data array")
-	}
+	images := root.Get("data").Array()
 	sizes := make([]string, 0, len(images))
-	// Validate the whole array before emission. A malformed final item must not
-	// leave earlier completion events paired with a failed, unbillable result.
 	for _, image := range images {
-		if !validImagesDataItem(image) {
-			return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image data entries require a string url or b64_json")
-		}
 		size := image.Get("size").String()
 		if size == "" {
 			size = root.Get("size").String()
@@ -76,10 +58,6 @@ func WriteImagesJSONStreaming(
 		if size != "" {
 			sizes = append(sizes, size)
 		}
-	}
-	usageValue := root.Get("usage")
-	if usageValue.Exists() && usageValue.Type != gjson.Null && !usageValue.IsObject() {
-		return wire.ForwardUsage{}, 0, nil, imagesProtocolError("Upstream image usage must be a JSON object")
 	}
 	usage, _ := wire.ExtractOpenAIUsageFromJSONBytes(body)
 	createdAt := root.Get("created").Int()
@@ -195,4 +173,38 @@ func validImagesDataItem(image gjson.Result) bool {
 		(!encoded.Exists() || encoded.Type == gjson.String || encoded.Type == gjson.Null) &&
 		(!url.Exists() || url.Type == gjson.String || url.Type == gjson.Null) &&
 		(strings.TrimSpace(encoded.Str) != "" || strings.TrimSpace(url.Str) != "")
+}
+
+// validateImagesJSONResponse validates a complete native Images response before
+// delivery or successful accounting. JSON errors, upstream error envelopes, empty
+// output arrays, invalid image entries, and malformed usage return terminal errors.
+//
+// Every entry is checked before callers observe any image as successful. This
+// keeps streaming conversion and buffered delivery on the same acceptance rule,
+// including a late malformed entry following an otherwise valid first image.
+// The returned JSON view retains the original fields for downstream formatting.
+func validateImagesJSONResponse(body []byte) (gjson.Result, error) {
+	if !gjson.ValidBytes(body) {
+		return gjson.Result{}, imagesProtocolError("Upstream image response contains invalid JSON")
+	}
+	root := gjson.ParseBytes(body)
+	if !root.IsObject() {
+		return gjson.Result{}, imagesProtocolError("Upstream image response must be a JSON object")
+	}
+	if value := root.Get("error"); value.Exists() && value.Type != gjson.Null {
+		return gjson.Result{}, OpenAIImagesUpstreamErrorFromGJSON(value, "")
+	}
+	data := root.Get("data")
+	if !data.IsArray() || len(data.Array()) == 0 {
+		return gjson.Result{}, imagesProtocolError("Upstream image JSON response must contain a nonempty data array")
+	}
+	for _, image := range data.Array() {
+		if !validImagesDataItem(image) {
+			return gjson.Result{}, imagesProtocolError("Upstream image data entries require a string url or b64_json")
+		}
+	}
+	if usage := root.Get("usage"); usage.Exists() && usage.Type != gjson.Null && !usage.IsObject() {
+		return gjson.Result{}, imagesProtocolError("Upstream image usage must be a JSON object")
+	}
+	return root, nil
 }

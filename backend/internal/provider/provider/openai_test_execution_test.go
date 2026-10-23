@@ -31,9 +31,10 @@ func (s *imageProbeSink) Emit(_ context.Context, event providercore.TestEvent) e
 // TestExecuteImageAPIKeyStreamOnly probes a provider that accepts only streams.
 // Both successful aggregation and incomplete-stream failure must submit exactly
 // one generation, with the automatic preview request disabling partial images.
+// An unsolicited expired preview cannot trigger a download or abort the probe.
 func TestExecuteImageAPIKeyStreamOnly(t *testing.T) {
 	for _, failed := range []bool{false, true} {
-		body := "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"aW1hZ2U=\"}\n\n"
+		body := "data: {\"type\":\"image_generation.partial_image\",\"url\":\"https://preview.invalid/expired\"}\n\ndata: {\"type\":\"image_generation.completed\",\"b64_json\":\"aW1hZ2U=\"}\n\n"
 		if failed {
 			body += "data: {"
 		}

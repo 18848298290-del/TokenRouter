@@ -88,3 +88,30 @@ func TestRewriteImageRequestModes(t *testing.T) {
 		}
 	}
 }
+
+// TestRewriteImageRequestDuplicateControlFields supplies duplicate JSON transport keys.
+// A forced nonstream provider must receive no stream flag regardless of which
+// duplicate a compatible upstream JSON parser chooses to interpret.
+func TestRewriteImageRequestDuplicateControlFields(t *testing.T) {
+	input := []byte(`{"model":"gpt-image-2","stream":true,"stream":true,"partial_images":2,"partial_images":3}`)
+	body, _, err := RewriteImageRequest(input, "application/json", "gpt-image-2", protocol.ImageModeNonStreaming, true)
+	require.NoError(t, err)
+
+	require.False(t, gjson.GetBytes(body, "stream").Exists())
+	require.False(t, gjson.GetBytes(body, "partial_images").Exists())
+}
+
+// TestRewriteImageRequestDuplicateStreamingMode canonicalizes repeated and escaped
+// transport keys for a streaming-only endpoint. Nested vendor fields and integers
+// above JavaScript's precise range survive while the outgoing stream mode is unique.
+func TestRewriteImageRequestDuplicateStreamingMode(t *testing.T) {
+	input := []byte(`{"stream":false,"str\u0065am":true,"partial_images":3,"partial_images":2,"metadata":{"stream":false,"large":9007199254740993}}`)
+	for _, contentType := range []string{"application/json", ""} {
+		body, _, err := RewriteImageRequest(input, contentType, "", protocol.ImageModeStreaming, false)
+		require.NoError(t, err)
+		require.True(t, gjson.GetBytes(body, "stream").Bool())
+		require.EqualValues(t, 0, gjson.GetBytes(body, "partial_images").Int())
+		require.Equal(t, "9007199254740993", gjson.GetBytes(body, "metadata.large").Raw)
+		require.False(t, gjson.GetBytes(body, "metadata.stream").Bool())
+	}
+}

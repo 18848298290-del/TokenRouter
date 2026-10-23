@@ -132,3 +132,40 @@ func TestReadImagesSSECancellationAndIdle(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, 1, result.Counter.Count())
 }
+
+// TestReadImagesSSECompletionMetadata sends an ordinary completion whose
+// revised prompt contains a diagnostic identifier. It must remain an actual
+// completed image regardless of incidental text inside unrelated metadata.
+func TestReadImagesSSECompletionMetadata(t *testing.T) {
+	for _, payload := range []string{
+		`{"type":"image_generation.completed","b64_json":"aW1hZ2U=","revised_prompt":"draw a diagram labeled partial_image","usage":{"output_tokens":9}}`,
+		`{"type":"image_generation.completed","item":{"type":"image","b64_json":"aW1hZ2U=","revised_prompt":"partial_image"},"usage":{"output_tokens":9}}`,
+		`{"type":"image_generation.completed","b64_json":"aW1hZ2U=","data":[{"b64_json":"unrelated"}],"usage":{"output_tokens":9}}`,
+	} {
+		response := "data: " + payload + "\n\ndata: " + payload + "\n\n"
+		resp := &http.Response{Body: io.NopCloser(strings.NewReader(response))}
+		result, err := ReadImagesSSE(t.Context(), resp, imagesTestResponseOptions(), nil, nil)
+		require.NoError(t, resp.Body.Close())
+		require.NoError(t, err)
+		require.Equal(t, 9, result.Usage.OutputTokens)
+		require.Equal(t, 1, result.Counter.Count())
+		require.Len(t, result.Images, 1)
+	}
+}
+
+// TestReadImagesBufferedResponseSkipsPreviews supplies an unavailable URL
+// preview followed by a valid final image. Buffered consumers discard previews
+// and therefore must not fail their final image because preview delivery failed.
+func TestReadImagesBufferedResponseSkipsPreviews(t *testing.T) {
+	payload := "data: {\"type\":\"image_generation.partial_image\",\"url\":\"https://image.invalid/preview\"}\n\ndata: {\"type\":\"image_generation.completed\",\"b64_json\":\"aW1hZ2U=\"}\n\n"
+	options := imagesTestResponseOptions()
+	calls := 0
+	options.FetchImage = func(string) (string, error) { calls++; return "", errors.New("preview expired") }
+	resp := &http.Response{Body: io.NopCloser(strings.NewReader(payload)), Header: http.Header{"Content-Type": {"text/event-stream"}}}
+	defer func() { _ = resp.Body.Close() }()
+	body, _, err := ReadImagesBufferedResponse(t.Context(), resp, options, "b64_json")
+
+	require.NoError(t, err)
+	require.Zero(t, calls)
+	require.Equal(t, "aW1hZ2U=", gjson.GetBytes(body, "data.0.b64_json").String())
+}

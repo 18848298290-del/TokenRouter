@@ -3471,3 +3471,122 @@ func TestForwardImagesURLConversionKeepsWaitingAlive(t *testing.T) {
 		})
 	}
 }
+
+// TestForwardImagesErrorWire exercises error responses after the native reader has
+// selected its client format. The recorder must expose failures and never retain
+// a requested image count when an upstream JSON error contains no image output.
+func TestForwardImagesErrorWire(t *testing.T) {
+	for _, tc := range []struct {
+		name        string // error-path fixture label
+		payload     string // upstream response body
+		contentType string // upstream response format
+		stream      bool   // client streaming selection
+	}{
+		{"partial_then_error", "data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"preview\"}\n\nevent: error\ndata: {\"error\":{\"message\":\"failed after preview\",\"code\":\"server_error\",\"type\":\"server_error\"}}\n\n", "text/event-stream", true},
+		{"completed_then_error", "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"image\",\"usage\":{\"output_tokens\":9}}\n\nevent: error\ndata: {\"error\":{\"message\":\"failed after image\",\"code\":\"server_error\",\"type\":\"server_error\"}}\n\n", "text/event-stream", true},
+		{"partial_then_eof", "data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"preview\"}\n\n", "text/event-stream", true},
+		{"completed_then_truncation", "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"image\",\"usage\":{\"output_tokens\":9}}\n\ndata: {", "text/event-stream", true},
+		{"buffered_completed_then_error", "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"image\",\"usage\":{\"output_tokens\":9}}\n\nevent: error\ndata: {\"error\":{\"message\":\"failed after image\",\"code\":\"server_error\",\"type\":\"server_error\"}}\n\n", "text/event-stream", false},
+		{"fast_stream_error", "event: error\ndata: {\"error\":{\"message\":\"failed before image\",\"code\":\"server_error\",\"type\":\"server_error\"}}\n\n", "text/event-stream", true},
+		{"nonstream_json_error", `{"error":{"message":"failed","code":"server_error","type":"server_error"}}`, "application/json", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(fmt.Sprintf(`{"model":"gpt-image-2","prompt":"draw","stream":%t,"n":3}`, tc.stream))
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			parsed, err := media.ParseImageRequest(c.Request.URL.Path, "application/json", body, true)
+			require.NoError(t, err)
+			transport := &auxiliaryHTTPRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {tc.contentType}}, Body: io.NopCloser(strings.NewReader(tc.payload))}}
+			svc := newImagesFixture(imagesFixtureInputs{transport: transport})
+			result, err := svc.ForwardImages(t.Context(), c, newOpenAIImagesAPIKeyProvider(), body, parsed, "")
+			count := 0
+			if result != nil {
+				count = result.ImageCount
+			}
+
+			switch tc.name {
+			case "buffered_completed_then_error":
+				require.Error(t, err)
+				require.Equal(t, 1, count)
+				require.Equal(t, 9, result.Usage.OutputTokens)
+				require.Equal(t, http.StatusBadGateway, rec.Code)
+				require.False(t, gjson.GetBytes(rec.Body.Bytes(), "data").Exists())
+				require.True(t, gjson.GetBytes(rec.Body.Bytes(), "error").Exists())
+			case "nonstream_json_error":
+				require.Error(t, err, "an error envelope must not reach successful completion")
+				require.Zero(t, count)
+			case "fast_stream_error":
+				require.Error(t, err)
+				require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+			default:
+				require.Error(t, err)
+				require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error"))
+				require.NotContains(t, rec.Body.String(), "data: [DONE]")
+				observed, ok := GetOpsStreamError(c)
+				require.True(t, ok)
+				require.True(t, observed.CountTowardsSLA)
+				require.Equal(t, http.StatusBadGateway, observed.IntendedStatus)
+				require.Equal(t, http.StatusOK, observed.UpstreamStatus)
+				if tc.name == "completed_then_error" || tc.name == "completed_then_truncation" {
+					require.Equal(t, 1, count)
+					require.Equal(t, 9, result.Usage.OutputTokens)
+				} else {
+					require.Zero(t, count)
+				}
+			}
+		})
+	}
+}
+
+// TestForwardImagesErrorAfterWaitingHeartbeat delays an upstream error until
+// either client format has committed a heartbeat. Errors remain parseable in
+// the selected representation and never retain requested images for billing.
+func TestForwardImagesErrorAfterWaitingHeartbeat(t *testing.T) {
+	for _, clientStream := range []bool{false, true} {
+		for _, upstreamStream := range []bool{false, true} {
+			synctest.Test(t, func(t *testing.T) {
+				body := []byte(fmt.Sprintf(`{"model":"gpt-image-2","prompt":"draw","stream":%t,"n":3}`, clientStream))
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+				c.Request.Header.Set("Content-Type", "application/json")
+				parsed, err := media.ParseImageRequest(c.Request.URL.Path, "application/json", body, true)
+				require.NoError(t, err)
+				if !clientStream {
+					stop := StartOpenAIImagesJSONKeepalive(c, time.Second)
+					defer stop()
+				}
+				calls := 0
+				transport := &auxiliaryHTTPRecorder{onRequest: func(*http.Request) (*http.Response, error) {
+					calls++
+					// A virtual-time header delay lets the existing waiting controller commit
+					// its response before native JSON validation or stream error parsing begins.
+					time.Sleep(2 * time.Second)
+					payload := `{"error":{"message":"blocked","code":"content_policy_violation","type":"invalid_request_error"}}`
+					contentType := "application/json"
+					if upstreamStream {
+						contentType = "text/event-stream"
+						payload = "event: error\ndata: " + payload + "\n\n"
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(strings.NewReader(payload))}, nil
+				}}
+				executor := newImagesFixture(imagesFixtureInputs{transport: transport, ImageStreamKeepaliveInterval: 1})
+				result, err := executor.ForwardImages(t.Context(), c, newOpenAIImagesAPIKeyProvider(), body, parsed, "")
+				require.Error(t, err)
+				require.Nil(t, result)
+				require.Equal(t, 1, calls)
+				require.Equal(t, http.StatusOK, recorder.Code)
+				if clientStream {
+					require.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
+					require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: error"))
+				} else {
+					require.Contains(t, recorder.Header().Get("Content-Type"), "application/json")
+					require.True(t, gjson.ValidBytes(recorder.Body.Bytes()))
+					require.Equal(t, "content_policy_violation", gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
+				}
+			})
+		}
+	}
+}

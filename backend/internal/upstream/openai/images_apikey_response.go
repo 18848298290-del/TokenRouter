@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -27,6 +28,8 @@ import (
 // upstream status. ReadBody, Backfill, and ResponseHeaders are required for
 // this path; the executor retains response-body ownership.
 //
+// Successful JSON is validated before accounting and output. Error envelopes
+// and invalid image arrays return terminal errors with no completed-image count.
 // Usage and output counts are extracted before Backfill can replace URL entries
 // with encoded data. PreserveContentType allows a supplied upstream type to
 // override the JSON default. Sink delivery uses OutputContext.Data, whose write
@@ -34,6 +37,9 @@ import (
 func ReadImagesNonStreaming(resp *http.Response, sink upstream.OutputSink, options ImageResponseOptions) (wire.ForwardUsage, int, []string, error) {
 	body, err := options.ReadBody(resp.Body)
 	if err != nil {
+		return wire.ForwardUsage{}, 0, nil, err
+	}
+	if _, err := validateImagesJSONResponse(body); err != nil {
 		return wire.ForwardUsage{}, 0, nil, err
 	}
 	// Observe accounting before Backfill changes the client representation, so URL
@@ -64,6 +70,8 @@ func ReadImagesNonStreaming(resp *http.Response, sink upstream.OutputSink, optio
 // successful write, so heartbeats stop after departure and cannot race image
 // delivery. Completed-image observations come from the reader even when delivery
 // failed; the final DONE marker is sent only after successful stream validation.
+// Committed streams receive one final error event on failure, while uncommitted
+// responses leave HTTP status and JSON error presentation to the executor.
 func ReadImagesStreaming(ctx context.Context, resp *http.Response, c *upstream.OutputContext, options ImageResponseOptions) (wire.ForwardUsage, int, []string, error) {
 	options.ResponseHeaders(c.Writer.Header(), resp.Header)
 	c.Writer.Header().Del("Content-Length")
@@ -94,6 +102,23 @@ func ReadImagesStreaming(ctx context.Context, resp *http.Response, c *upstream.O
 		lastWrite = time.Now()
 	}
 	result, err := ReadImagesSSE(ctx, resp, options, emit, heartbeat)
+	if err != nil && c.Writer.Written() {
+		upstreamErr, ok := errors.AsType[*OpenAIImagesUpstreamError](err)
+		if !ok {
+			upstreamErr = imagesProtocolError("Upstream image stream was interrupted")
+		}
+		// Once SSE is committed, the native reader owns its final error frame.
+		// The generic HTTP error presenter refuses writes after actual image content.
+		upstreamErr.UpstreamRequestID = resp.Header.Get("x-request-id")
+		if options.ObserveError != nil {
+			options.ObserveError(resp.StatusCode, upstreamErr.Message, "")
+		}
+		if options.ObserveStreamError != nil {
+			options.ObserveStreamError(upstreamErr)
+		}
+		c.NextEvent(false, true)
+		TryWriteImagesStreamEvent(c, options, c.Writer, &disconnected, &lastWrite, "error", BuildOpenAIImagesStreamErrorBodyFromUpstream(upstreamErr))
+	}
 	if err == nil && !disconnected {
 		c.NextEvent(false, false)
 		if _, writeErr := io.WriteString(c.Writer, "data: [DONE]\n\n"); writeErr == nil {

@@ -71,6 +71,9 @@ type ImageResponseOptions struct {
 	// ObserveError records response failures before return, using status and
 	// message plus an optional caller-provided diagnostic summary.
 	ObserveError func(int, string, string)
+	// ObserveStreamError records a terminal native-stream failure after response
+	// commitment. The reader writes its error frame separately on the same goroutine.
+	ObserveStreamError func(*OpenAIImagesUpstreamError)
 	// WriteHTTPError presents nonretryable OAuth nonstream errors and buffered
 	// image-stream failures. JSON validation failures apply to either credential type.
 	WriteHTTPError func(*OpenAIImagesUpstreamError) bool

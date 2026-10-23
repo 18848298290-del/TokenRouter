@@ -26,8 +26,9 @@ import (
 // A bounded reader goroutine keeps upstream arrival separate from downstream
 // output and heartbeat timers. The caller closes the response body immediately
 // after return to release a pending scan. Partial images never enter the final
-// JSON result. Errors and truncated streams retain observed completions for
-// settlement, while callers choose whether their own output has been committed.
+// JSON result, and buffered consumers skip preview validation and downloads.
+// Errors and truncated streams retain observed completions for settlement,
+// while callers choose whether their own output has been committed.
 
 // ImagesStreamResult retains completed image fields and upstream accounting.
 // Images contain only completed outputs; Counter observes their original fields
@@ -95,6 +96,8 @@ func (r ImagesStreamResult) JSON(responseFormat string) ([]byte, error) {
 // frames and heartbeats. ExpectedImages defaults to one; ReadLimit bounds each
 // frame and the retained completed-image payloads. Emit callbacks remain on the
 // calling goroutine and must absorb client write errors when draining is needed.
+// A nil emit skips preview image fields and downloads while retaining frame
+// validation, error detection, and cumulative usage observations.
 //
 // Completion accounting precedes URL downloads and downstream delivery, so
 // delivery failures do not erase generated-image evidence. Repeated completions
@@ -198,6 +201,11 @@ func ReadImagesSSE(ctx context.Context, resp *http.Response, options ImageRespon
 		}
 		completed := name == "image_generation.completed" || name == "image_edit.completed"
 		partial := name == "image_generation.partial_image" || name == "image_edit.partial_image"
+		if partial && emit == nil {
+			// Buffered consumers need completed images only. Ignore preview delivery
+			// fields so expired URLs or omitted preview bytes cannot abort the final result.
+			return nil
+		}
 		if completed || partial {
 			image := root
 			if value := root.Get("item"); value.IsObject() {
@@ -208,12 +216,10 @@ func ReadImagesSSE(ctx context.Context, resp *http.Response, options ImageRespon
 			if !validImagesDataItem(image) {
 				return imagesProtocolError("Upstream image event contains no image data")
 			}
-			if completed {
-				before := result.Counter.Count()
-				result.Counter.AddSSEData(payload)
-				if result.Counter.Count() == before {
-					return nil
-				}
+			// The event label and validated image fields establish completion here.
+			// Only an existing image identity may suppress delivery, not generic event filters.
+			if completed && !result.Counter.AddCompletedImage(image) {
+				return nil
 			}
 			// Observe generated output before fetching its delivery bytes. A failed
 			// public URL download must not cause another generation or erase accounting.
@@ -336,6 +342,9 @@ func imageStreamBase64(image gjson.Result, fetch func(string) (string, error)) (
 func ReadImagesBufferedResponse(ctx context.Context, resp *http.Response, options ImageResponseOptions, responseFormat string) ([]byte, ImagesStreamResult, error) {
 	if !IsEventStreamResponse(resp.Header) {
 		body, err := options.ReadBody(resp.Body)
+		if err == nil {
+			_, err = validateImagesJSONResponse(body)
+		}
 		return body, ImagesStreamResult{}, err
 	}
 	result, err := ReadImagesSSE(ctx, resp, options, nil, nil)
@@ -358,22 +367,11 @@ func ReadImagesBufferedResponse(ctx context.Context, resp *http.Response, option
 // aggregation so URL expansion cannot bypass its memory bound.
 func readImagesMislabeledJSON(body []byte, options ImageResponseOptions, emit func(string, []byte)) (ImagesStreamResult, error) {
 	result := ImagesStreamResult{Counter: wire.NewOpenAIImageOutputCounter()}
-	if !gjson.ValidBytes(body) {
-		return result, imagesProtocolError("Upstream image response contains invalid JSON")
-	}
-	root := gjson.ParseBytes(body)
-	if value := root.Get("error"); value.IsObject() {
-		return result, OpenAIImagesUpstreamErrorFromGJSON(value, "")
+	root, err := validateImagesJSONResponse(body)
+	if err != nil {
+		return result, err
 	}
 	images := root.Get("data")
-	if !images.IsArray() || len(images.Array()) == 0 {
-		return result, imagesProtocolError("Upstream image JSON contains no completed images")
-	}
-	for _, item := range images.Array() {
-		if !validImagesDataItem(item) {
-			return result, imagesProtocolError("Upstream image JSON contains invalid image data")
-		}
-	}
 	result.Counter.AddJSONResponse(body)
 	wire.MergeImageResponseUsage(&result.Usage, body)
 	result.CreatedAt = root.Get("created").Int()

@@ -69,6 +69,16 @@ func (p *OpenAIResponseOutput) ImageOptions(c *gin.Context) upstreamopenai.Image
 
 		ObserveError: func(status int, message, detail string) { SetOpsUpstreamError(c, status, message, detail) },
 
+		ObserveStreamError: func(err *upstreamopenai.OpenAIImagesUpstreamError) {
+			// A client departure retains cancellation as the lifecycle outcome; other
+			// committed stream failures publish their intended status for Ops monitoring.
+			if c.Request != nil && c.Request.Context().Err() != nil {
+				markOpsStreamError(c, OpsStreamError{ErrType: err.ClientErrorType(), Code: err.Code, Message: err.ClientMessage(), IntendedStatus: err.ClientStatusCode()})
+			} else {
+				MarkOpsStreamFailure(c, err.ClientErrorType(), err.Code, err.ClientMessage(), err.ClientStatusCode())
+			}
+		},
+
 		WriteHTTPError: func(err *upstreamopenai.OpenAIImagesUpstreamError) bool {
 			return WriteOpenAIImagesUpstreamErrorResponse(c, err)
 		},

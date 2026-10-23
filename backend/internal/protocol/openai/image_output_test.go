@@ -231,3 +231,21 @@ func TestCollectOpenAIImageOutputSizesFromSSEBody(t *testing.T) {
 	require.Equal(t, 2, CountOpenAIImageOutputsFromSSEBody(body))
 	require.Equal(t, []string{"3840x2160", "1024x1024"}, CollectOpenAIImageOutputSizesFromSSEBody(body))
 }
+
+// TestOpenAIImageOutputCounterUsesEventTypes distinguishes completion labels
+// from incidental partial-image text. Native and Responses completions retain
+// output and size evidence, while explicit preview events remain uncounted.
+func TestOpenAIImageOutputCounterUsesEventTypes(t *testing.T) {
+	for _, payload := range []string{
+		`{"type":"image_generation.completed","b64_json":"image","revised_prompt":"label partial_image","size":"1024x1024"}`,
+		`{"type":"image_edit.completed","url":"https://example.invalid/partial_image_final.png","size":"1024x1024"}`,
+		`{"type":"response.output_item.done","item":{"type":"image_generation_call","result":"image","revised_prompt":"label partial_image","size":"1024x1024"}}`,
+	} {
+		counter := NewOpenAIImageOutputCounter()
+		counter.AddSSEData([]byte(payload))
+		counter.AddSSEData([]byte(payload))
+		counter.AddSSEData([]byte(`{"type":"image_generation.partial_image","b64_json":"preview"}`))
+		require.Equal(t, 1, counter.Count())
+		require.Equal(t, []string{"1024x1024"}, counter.Sizes())
+	}
+}

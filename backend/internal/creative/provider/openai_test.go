@@ -244,6 +244,7 @@ func TestOpenAIImageBase64Preferred(t *testing.T) {
 // TestCreativeOpenAIStreamingMode adapts a streaming-only provider for creative
 // generation and editing. The adapter submits one stream request, aggregates its
 // final image, and classifies truncated streams as nonretryable delivery failures.
+// An unsolicited expired preview is ignored before final-image aggregation.
 func TestCreativeOpenAIStreamingMode(t *testing.T) {
 	for _, operation := range []string{"generate", "edit"} {
 		for _, failed := range []bool{false, true} {
@@ -276,7 +277,7 @@ func TestCreativeOpenAIStreamingMode(t *testing.T) {
 					if operation == "edit" {
 						family = "image_edit"
 					}
-					body := fmt.Sprintf("data: {\"type\":%q,\"b64_json\":\"aW1hZ2U=\"}\n\n", family+".completed")
+					body := "data: {\"type\":\"image_generation.partial_image\",\"url\":\"https://preview.invalid/expired\"}\n\n" + fmt.Sprintf("data: {\"type\":%q,\"b64_json\":\"aW1hZ2U=\"}\n\n", family+".completed")
 					if failed {
 						body += "data: {"
 					}
